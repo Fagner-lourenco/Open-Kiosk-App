@@ -11,7 +11,7 @@ export class PDFReceiptService {
       minute: '2-digit' 
     });
     
-    const total = cartItems.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+    const total = cartItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
     const taxAmount = total * (settings.taxPercentage / 100);
     const finalTotal = total + taxAmount;
 
@@ -111,9 +111,9 @@ export class PDFReceiptService {
         <div class="items">
           ${cartItems.map(item => `
             <div class="item">
-              <span class="item-name">${item.product.title}</span>
+              <span class="item-name">${item.product.title}${item.sizeLabel ? ` (${item.sizeLabel})` : ''}</span>
               <span class="item-qty">x${item.quantity}</span>
-              <span class="item-price">${settings.currency} ${(item.product.price * item.quantity).toFixed(2)}</span>
+              <span class="item-price">${settings.currency} ${(item.unitPrice * item.quantity).toFixed(2)}</span>
             </div>
           `).join('')}
         </div>

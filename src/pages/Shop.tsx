@@ -12,6 +12,8 @@ import AdminAccess from "@/components/AdminAccess";
 import { CartItem, Product } from "@/types/product";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { useSettings } from "@/hooks/useSettings";
+import { getCartItemKey, getMaxQuantity } from "@/utils/productUtils";
+import SizeSelectorModal from "@/components/SizeSelectorModal";
 
 const INITIAL_LOAD_LIMIT = 50;
 
@@ -27,6 +29,8 @@ const Shop = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const { currentCurrency } = useSettings();
+  const [selectedProductForSizeModal, setSelectedProductForSizeModal] = useState<Product | null>(null);
+  const [sizeModalOpen, setSizeModalOpen] = useState(false);
 
   useEffect(() => {
     if (products) {
@@ -69,43 +73,89 @@ const Shop = () => {
   const hasMoreProducts = displayLimit < filteredProducts.length;
 
   const addToCart = async (product: Product) => {
-    // Check if product has sufficient stock
-    if ((product.stock || 0) <= 0) {
-      return; // Product is out of stock
+    // Bebida: abrir modal de seleção de tamanho
+    if (product.isDrink) {
+      setSelectedProductForSizeModal(product);
+      setSizeModalOpen(true);
+      return;
     }
 
+    // Produto normal
+    if ((product.stock || 0) <= 0) return;
+
     setCartItems(prevItems => {
-      const existingItem = prevItems.find(item => item.product.id === product.id);
+      const existingItem = prevItems.find(
+        item => item.product.id === product.id && !item.sizeKey
+      );
+
       if (existingItem) {
-        // Check if we can add more (don't exceed available stock)
         const newQuantity = existingItem.quantity + 1;
-        if (newQuantity <= (product.stock || 0)) {
+        const maxQty = getMaxQuantity(product, undefined, prevItems);
+
+        if (newQuantity <= maxQty) {
           return prevItems.map(item =>
-            item.product.id === product.id
+            item.product.id === product.id && !item.sizeKey
               ? { ...item, quantity: newQuantity }
               : item
           );
         }
-        return prevItems; // Don't add if would exceed stock
+        return prevItems;
       } else {
-        return [...prevItems, { product, quantity: 1 }];
+        return [...prevItems, {
+          product,
+          quantity: 1,
+          unitPrice: product.price
+        }];
       }
     });
   };
 
-  const updateCartQuantity = (productId: string, quantity: number) => {
+  const handleAddBeverageToCart = (selection: {
+    sizeKey: string;
+    sizeLabel: string;
+    mlPerUnit: number;
+    price: number;
+    quantity: number;
+  }) => {
+    const product = selectedProductForSizeModal!;
+    setCartItems(prevItems => {
+      const itemKey = getCartItemKey(product.id, selection.sizeKey);
+      const existingItem = prevItems.find(i => getCartItemKey(i.product.id, i.sizeKey) === itemKey);
+
+      if (existingItem) {
+        const maxQty = getMaxQuantity(product, selection.sizeKey, prevItems);
+        const newQty = Math.min(existingItem.quantity + selection.quantity, maxQty);
+        return prevItems.map(i =>
+          getCartItemKey(i.product.id, i.sizeKey) === itemKey
+            ? { ...i, quantity: newQty }
+            : i
+        );
+      }
+
+      return [...prevItems, {
+        product,
+        quantity: selection.quantity,
+        unitPrice: selection.price,
+        sizeKey: selection.sizeKey,
+        sizeLabel: selection.sizeLabel,
+        mlPerUnit: selection.mlPerUnit,
+      }];
+    });
+    setSizeModalOpen(false);
+  };
+
+  const updateCartQuantity = (cartItemKey: string, quantity: number) => {
     if (quantity <= 0) {
-      setCartItems(prevItems => prevItems.filter(item => item.product.id !== productId));
+      setCartItems(prevItems =>
+        prevItems.filter(item => getCartItemKey(item.product.id, item.sizeKey) !== cartItemKey)
+      );
     } else {
       setCartItems(prevItems =>
         prevItems.map(item => {
-          if (item.product.id === productId) {
-            // Don't allow quantity to exceed stock
-            const maxQuantity = item.product.stock || 0;
-            const finalQuantity = Math.min(quantity, maxQuantity);
-            return { ...item, quantity: finalQuantity };
-          }
-          return item;
+          const key = getCartItemKey(item.product.id, item.sizeKey);
+          if (key !== cartItemKey) return item;
+          const maxQty = getMaxQuantity(item.product, item.sizeKey, prevItems);
+          return { ...item, quantity: Math.min(quantity, maxQty) };
         })
       );
     }
@@ -211,21 +261,30 @@ const Shop = () => {
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-green-600 text-sm">
-                        {currentCurrency.symbol}{product.price.toFixed(2)}
+                        {(() => {
+                          const displayPrice = product.isDrink && product.defaultSizeKey
+                            ? product.sizes?.find(s => s.key === product.defaultSizeKey)?.price ?? product.price
+                            : product.price;
+                          return `${currentCurrency.symbol}${displayPrice.toFixed(2)}`;
+                        })()}
                       </span>
-                      <Badge variant={(product.stock || 0) > 0 ? "default" : "destructive"} className="text-xs">
-                        {(product.stock || 0) > 0 ? `${product.stock} in stock` : "Out of Stock"}
+                      <Badge variant={(product.isDrink ? (product.totalMlAvailable || 0) > 0 : (product.stock || 0) > 0) ? "default" : "destructive"} className="text-xs">
+                        {product.isDrink
+                          ? `${product.totalMlAvailable || 0}ml`
+                          : (product.stock || 0) > 0 ? `${product.stock} in stock` : "Out of Stock"}
                       </Badge>
                     </div>
                   </div>
                   
                   <Button
                     onClick={() => addToCart(product)}
-                    disabled={(product.stock || 0) <= 0}
+                    disabled={product.isDrink ? (product.totalMlAvailable || 0) <= 0 : (product.stock || 0) <= 0}
                     className="w-full text-sm py-2"
                     size="sm"
                   >
-                    {(product.stock || 0) <= 0 ? "Out of Stock" : "Add to Cart"}
+                    {product.isDrink
+                      ? ((product.totalMlAvailable || 0) <= 0 ? "Out of Stock" : "Select Size")
+                      : ((product.stock || 0) <= 0 ? "Out of Stock" : "Add to Cart")}
                   </Button>
                 </div>
               </CardContent>
@@ -255,6 +314,13 @@ const Shop = () => {
         cartItems={cartItems}
         onUpdateQuantity={updateCartQuantity}
         onClearCart={clearCart}
+      />
+      <SizeSelectorModal
+        isOpen={sizeModalOpen}
+        product={selectedProductForSizeModal}
+        currentCartItems={cartItems}
+        onSelect={handleAddBeverageToCart}
+        onClose={() => setSizeModalOpen(false)}
       />
 
       {/* On-Screen Keyboard */}

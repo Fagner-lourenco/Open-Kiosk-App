@@ -95,7 +95,7 @@ export class ESP32PrinterService {
       minute: '2-digit' 
     });
     
-    const total = cartItems.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
+    const total = cartItems.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
     
     return {
       store: {
@@ -108,9 +108,9 @@ export class ESP32PrinterService {
         time: currentTime
       },
       items: cartItems.map(item => ({
-        name: item.product.title,
+        name: `${item.product.title}${item.sizeLabel ? ` (${item.sizeLabel})` : ''}`,
         quantity: `${item.quantity}`,
-        price: item.product.price * item.quantity
+        price: item.unitPrice * item.quantity
       })),
       total: Math.round(total * (1 + settings.taxPercentage / 100)),
       footer: "Thank you! Visit Again!"

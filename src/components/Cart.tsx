@@ -3,6 +3,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Badge } from "@/components/ui/badge";
 import { Minus, Plus, Trash2, ShoppingCart } from "lucide-react";
 import { CartItem } from "@/types/product";
+import { getCartItemKey } from "@/utils/productUtils";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 import { useState } from "react";
 import Checkout from "./Checkout";
@@ -11,7 +12,7 @@ interface CartProps {
   isOpen: boolean;
   onClose: () => void;
   cartItems: CartItem[];
-  onUpdateQuantity: (productId: string, quantity: number) => void;
+  onUpdateQuantity: (cartItemKey: string, quantity: number) => void;
   onClearCart: () => void;
 }
 
@@ -20,7 +21,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
   const [showCheckout, setShowCheckout] = useState(false);
 
   const getTotalPrice = () => {
-    return cartItems.reduce((total, item) => total + item.product.price * item.quantity, 0);
+    return cartItems.reduce((total, item) => total + item.unitPrice * item.quantity, 0);
   };
 
   // On Proceed to Checkout: Close Cart sheet first, then show Checkout
@@ -85,7 +86,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
           <div className="flex-1 overflow-y-auto py-4 min-h-0">
             <div className="space-y-4">
               {cartItems.map((item) => (
-                <div key={item.product.id} className="flex items-start gap-4 p-4 border rounded-lg">
+                <div key={getCartItemKey(item.product.id, item.sizeKey)} className="flex items-start gap-4 p-4 border rounded-lg">
                   {item.product.image ? (
                     <img
                       src={item.product.image}
@@ -98,14 +99,19 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <h4 className="font-medium text-sm line-clamp-2">{item.product.title}</h4>
-                    <p className="text-sm text-gray-500">{currentCurrency.symbol}{item.product.price.toFixed(2)}</p>
+                    <h4 className="font-medium text-sm line-clamp-2">
+                      {item.product.title}
+                      {item.sizeLabel && (
+                        <span className="text-gray-500"> ({item.sizeLabel})</span>
+                      )}
+                    </h4>
+                    <p className="text-sm text-gray-500">{currentCurrency.symbol}{item.unitPrice.toFixed(2)}</p>
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => onUpdateQuantity(item.product.id, item.quantity - 1)}
+                          onClick={() => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), item.quantity - 1)}
                           disabled={item.quantity <= 1}
                           className="h-8 w-8 p-0"
                         >
@@ -117,7 +123,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => onUpdateQuantity(item.product.id, item.quantity + 1)}
+                          onClick={() => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), item.quantity + 1)}
                           className="h-8 w-8 p-0"
                         >
                           <Plus className="w-3 h-3" />
@@ -125,12 +131,12 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold">
-                          {currentCurrency.symbol}{(item.product.price * item.quantity).toFixed(2)}
+                          {currentCurrency.symbol}{(item.unitPrice * item.quantity).toFixed(2)}
                         </span>
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => onUpdateQuantity(item.product.id, 0)}
+                          onClick={() => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), 0)}
                           className="h-8 w-8 p-0 text-red-500 hover:text-red-700"
                         >
                           <Trash2 className="w-3 h-3" />

@@ -36,13 +36,15 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
       product.tags?.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase()));
 
     const matchesStockFilter = (() => {
+      const stock = product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0);
+      const minStock = product.minStock || 5;
       switch (stockFilter) {
         case "in-stock":
-          return (product.stock || 0) > 0;
+          return stock > 0;
         case "out-of-stock":
-          return (product.stock || 0) === 0;
+          return stock === 0;
         case "low-stock":
-          return (product.stock || 0) > 0 && (product.stock || 0) <= (product.minStock || 5);
+          return stock > 0 && stock <= minStock;
         default:
           return true;
       }
@@ -54,7 +56,7 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
   });
 
   // Get unique categories for filter
-  const categories = [...new Set(products.map(p => p.category))];
+  const categories = [...new Set(products.map(p => p.category).filter(cat => cat && cat.trim() !== ""))];
 
   const handleInventoryUpdate = () => {
     if (!selectedProduct || quantity <= 0) {
@@ -105,8 +107,16 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
     setCategoryFilter("all");
   };
 
-  const lowStockProducts = products.filter(p => p.minStock && p.stock <= p.minStock);
-  const outOfStockProducts = products.filter(p => p.stock === 0);
+  const lowStockProducts = products.filter(p => {
+    if (!p.minStock) return false; // Só alerta se minStock foi configurado
+    const stock = p.isDrink ? (p.totalMlAvailable || 0) : (p.stock || 0);
+    return stock > 0 && stock <= p.minStock;
+  });
+  
+  const outOfStockProducts = products.filter(p => {
+    const stock = p.isDrink ? (p.totalMlAvailable || 0) : (p.stock || 0);
+    return stock === 0;
+  });
 
   return (
     <div className="space-y-6">
@@ -161,9 +171,16 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
                               <span>{product.title}</span>
                               <div className="flex items-center gap-2">
                                 <Badge variant="secondary" className="text-xs">{product.category}</Badge>
-                                <span className="text-sm text-gray-500">Stock: {product.stock}</span>
-                                {product.stock === 0 && <Badge variant="destructive" className="text-xs">OUT OF STOCK</Badge>}
-                                {product.stock <= (product.minStock || 5) && product.stock > 0 && 
+                                <span className="text-sm text-gray-500">
+                                  {product.isDrink 
+                                    ? `Stock: ${product.totalMlAvailable || 0} ml` 
+                                    : `Stock: ${product.stock || 0} units`}
+                                </span>
+                                {((product.isDrink ? product.totalMlAvailable : product.stock) || 0) === 0 && 
+                                  <Badge variant="destructive" className="text-xs">OUT OF STOCK</Badge>
+                                }
+                                {((product.isDrink ? product.totalMlAvailable : product.stock) || 0) <= (product.minStock || 5) && 
+                                 ((product.isDrink ? product.totalMlAvailable : product.stock) || 0) > 0 && 
                                   <Badge variant="secondary" className="text-xs">LOW STOCK</Badge>
                                 }
                               </div>
@@ -236,12 +253,16 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
             </CardHeader>
             <CardContent>
               <div className="space-y-2 max-h-32 overflow-y-auto">
-                {lowStockProducts.slice(0, 3).map(product => (
-                  <div key={product.id} className="flex justify-between items-center">
-                    <span className="text-orange-700 text-sm">{product.title}</span>
-                    <Badge variant="destructive" className="text-xs">{product.stock} left</Badge>
-                  </div>
-                ))}
+                {lowStockProducts.slice(0, 3).map(product => {
+                  const stock = product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0);
+                  const unit = product.isDrink ? 'ml' : 'units';
+                  return (
+                    <div key={product.id} className="flex justify-between items-center">
+                      <span className="text-orange-700 text-sm">{product.title}</span>
+                      <Badge variant="destructive" className="text-xs">{stock} {unit} left</Badge>
+                    </div>
+                  );
+                })}
                 {lowStockProducts.length > 3 && (
                   <div className="text-xs text-orange-600">+{lowStockProducts.length - 3} more</div>
                 )}
@@ -264,7 +285,7 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
                 {outOfStockProducts.slice(0, 3).map(product => (
                   <div key={product.id} className="flex justify-between items-center">
                     <span className="text-red-700 text-sm">{product.title}</span>
-                    <Badge variant="destructive" className="text-xs">0 stock</Badge>
+                    <Badge variant="destructive" className="text-xs">0 {product.isDrink ? 'ml' : 'units'}</Badge>
                   </div>
                 ))}
                 {outOfStockProducts.length > 3 && (
@@ -361,12 +382,14 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
                   <div className="flex items-center gap-2">
                     <Badge 
                       variant={
-                        product.stock === 0 ? 'destructive' : 
-                        product.stock <= (product.minStock || 5) ? 'secondary' : 
+                        (product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0)) === 0 ? 'destructive' : 
+                        (product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0)) <= (product.minStock || 5) ? 'secondary' : 
                         'default'
                       }
                     >
-                      {product.stock} in stock
+                      {product.isDrink 
+                        ? `${product.totalMlAvailable || 0} ml in stock` 
+                        : `${product.stock || 0} units in stock`}
                     </Badge>
                   </div>
                 </div>

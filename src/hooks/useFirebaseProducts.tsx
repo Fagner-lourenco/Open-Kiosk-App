@@ -56,6 +56,19 @@ export const useFirebaseProducts = () => {
 
   const addProduct = async (product: Omit<Product, 'id'>) => {
     try {
+      // Validacoes especificas para bebidas (intervencao minima)
+      if (product.isDrink) {
+        if (!product.sizes || product.sizes.length === 0) {
+          throw new Error('Bebidas precisam ter pelo menos um tamanho');
+        }
+        if (!product.totalMlAvailable || product.totalMlAvailable <= 0) {
+          throw new Error('Total ML disponível deve ser maior que 0');
+        }
+        if (!product.defaultSizeKey) {
+          throw new Error('Selecione um tamanho padrão');
+        }
+      }
+
       const db = getFirebaseDb();
       const productsCollection = collection(db, 'products');
       const docRef = await addDoc(productsCollection, {
@@ -75,7 +88,7 @@ export const useFirebaseProducts = () => {
       console.error('Error adding product:', error);
       toast({
         title: "Error",
-        description: "Failed to add product",
+        description: (error as Error)?.message || "Failed to add product",
         variant: "destructive"
       });
       throw error;

@@ -69,15 +69,19 @@ const ProductList = ({ products, onUpdate, onDelete }: ProductListProps) => {
     }
   };
 
-  const getStockBadgeVariant = (stock: number, minStock?: number) => {
+  const getStockBadgeVariant = (product: Product) => {
+    const stock = product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0);
+    const minStock = product.minStock || 5;
     if (stock === 0) return "destructive";
-    if (stock <= (minStock || 5)) return "secondary";
+    if (stock <= minStock) return "secondary";
     return "default";
   };
 
-  const getStockStatus = (stock: number, minStock?: number) => {
+  const getStockStatus = (product: Product) => {
+    const stock = product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0);
+    const minStock = product.minStock || 5;
     if (stock === 0) return "Out of Stock";
-    if (stock <= (minStock || 5)) return "Low Stock";
+    if (stock <= minStock) return "Low Stock";
     return "In Stock";
   };
 
@@ -156,14 +160,18 @@ const ProductList = ({ products, onUpdate, onDelete }: ProductListProps) => {
                     <span className="font-medium text-green-600">
                       {currentCurrency.symbol}{product.price.toFixed(2)}
                     </span>
-                    <Badge variant={getStockBadgeVariant(product.stock || 0, product.minStock)}>
-                      {getStockStatus(product.stock || 0, product.minStock)}
+                    <Badge variant={getStockBadgeVariant(product)}>
+                      {getStockStatus(product)}
                     </Badge>
                   </div>
                   
                   <div className="text-xs text-gray-500">
                     <div>Category: {product.category}</div>
-                    <div>Stock: {product.stock || 0} units</div>
+                    <div>
+                      {product.isDrink 
+                        ? `Stock: ${product.totalMlAvailable || 0} ml` 
+                        : `Stock: ${product.stock || 0} units`}
+                    </div>
                   </div>
                   
                   <div className="flex flex-wrap gap-1">

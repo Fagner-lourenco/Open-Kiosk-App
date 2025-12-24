@@ -1,4 +1,11 @@
 
+export interface ProductSize {
+  key: string;
+  label: string;
+  price: number;
+  ml: number;
+}
+
 export interface Product {
   id: string;
   title: string;
@@ -10,9 +17,19 @@ export interface Product {
   category: string;
   stock: number;
   minStock?: number;
+
+  isDrink?: boolean;
+  sizes?: ProductSize[];
+  defaultSizeKey?: string;
+  totalMlAvailable?: number;
 }
 
 export interface CartItem {
   product: Product;
   quantity: number;
+  unitPrice: number;
+
+  sizeKey?: string;
+  sizeLabel?: string;
+  mlPerUnit?: number;
 }

@@ -7,10 +7,9 @@ import { ArrowLeft, Receipt, QrCode, Printer, Check, CreditCard, Wifi } from "lu
 import { CartItem } from "@/types/product";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
-import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { esp32Printer } from "@/services/esp32PrinterService";
 import { useToast } from "@/hooks/use-toast";
-import { useFirebaseReports } from "@/hooks/useFirebaseReports";
+import { salesService } from "@/services/salesService";
 import UartPortSelector from "./UartPortSelector";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 
@@ -32,15 +31,13 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   const currentCurrency = useCurrentCurrency();
   const { settings } = useStoreSettings();
   const { toast } = useToast();
-  const { recordSale, generateOrderNumber } = useFirebaseReports();
-  const { updateProduct } = useFirebaseProducts();
 
   // Generate order number when component mounts and keep it consistent
   useEffect(() => {
     if (isOpen && !orderNumber) {
       const fetchOrderNumber = async () => {
         try {
-          const newOrderNumber = await generateOrderNumber();
+          const newOrderNumber = await salesService.generateOrderNumber();
           setOrderNumber(newOrderNumber);
         } catch (error) {
           console.error('Error generating order number:', error);
@@ -58,10 +55,10 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       
       fetchOrderNumber();
     }
-  }, [isOpen, orderNumber, generateOrderNumber]);
+  }, [isOpen, orderNumber]);
 
   const getTotalPrice = () => {
-    return cartItems.reduce((total, item) => total + (item.product.price * item.quantity), 0);
+    return cartItems.reduce((total, item) => total + (item.unitPrice * item.quantity), 0);
   };
 
   const getTotalItems = () => {
@@ -84,26 +81,18 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     setPaymentProcessed(true);
     
     try {
-      // Record the sale first
-      await recordSale(cartItems, getFinalTotal(), currentCurrency.code, orderNumber);
-      console.log('Sale recorded with order number:', orderNumber);
-
-      // Update stock for each item in the cart
-      for (const item of cartItems) {
-        const newStock = Math.max(0, (item.product.stock || 0) - item.quantity);
-        await updateProduct(item.product.id, {
-          ...item.product,
-          stock: newStock,
-          inStock: newStock > 0
-        });
-        console.log(`Updated stock for ${item.product.title}: ${newStock}`);
-      }
-
+      await salesService.recordSaleAndUpdateStock(
+        cartItems,
+        getFinalTotal(),
+        currentCurrency.code,
+        orderNumber
+      );
+      console.log('Sale recorded and stock updated atomically:', orderNumber);
     } catch (error) {
       console.error('Error processing order:', error);
       toast({
         title: "Error",
-        description: "Failed to process order",
+        description: (error as Error)?.message || "Failed to process order",
         variant: "destructive"
       });
       return;
@@ -249,8 +238,10 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
               <div className="space-y-3">
                 {cartItems.map((item) => (
                   <div key={item.product.id} className="flex justify-between text-sm">
-                    <span>{item.product.title} x{item.quantity}</span>
-                    <span>{currentCurrency.symbol}{(item.product.price * item.quantity).toFixed(2)}</span>
+                    <span>
+                      {item.product.title}{item.sizeLabel ? ` (${item.sizeLabel})` : ''} x{item.quantity}
+                    </span>
+                    <span>{currentCurrency.symbol}{(item.unitPrice * item.quantity).toFixed(2)}</span>
                   </div>
                 ))}
                 

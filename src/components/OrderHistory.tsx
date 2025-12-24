@@ -26,6 +26,9 @@ interface SaleRecord {
     quantity: number;
     total: number;
     image?: string;
+    sizeKey?: string;
+    sizeLabel?: string;
+    mlPerUnit?: number;
   }>;
   subtotal: number;
   tax: number;
@@ -125,8 +128,13 @@ const OrderHistory = () => {
           tags: [],
           inStock: true,
           category: "",
+          isDrink: !!item.sizeKey,
         } as Product,
         quantity: item.quantity,
+        unitPrice: item.price,
+        sizeKey: item.sizeKey,
+        sizeLabel: item.sizeLabel,
+        mlPerUnit: item.mlPerUnit,
       }));
 
       // Check thermal printer setting

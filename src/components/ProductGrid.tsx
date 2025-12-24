@@ -53,10 +53,17 @@ const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
               
               <div className="flex items-center justify-between">
                 <span className="text-lg sm:text-xl font-bold text-green-600">
-                  {currentCurrency.symbol}{product.price.toFixed(2)}
+                  {(() => {
+                    const displayPrice = product.isDrink && product.defaultSizeKey
+                      ? product.sizes?.find(s => s.key === product.defaultSizeKey)?.price ?? product.price
+                      : product.price;
+                    return `${currentCurrency.symbol}${displayPrice.toFixed(2)}`;
+                  })()}
                 </span>
-                <Badge variant={product.inStock ? "default" : "destructive"} className="text-xs">
-                  {product.inStock ? "In Stock" : "Out of Stock"}
+                <Badge variant={(product.isDrink ? (product.totalMlAvailable || 0) > 0 : product.inStock) ? "default" : "destructive"} className="text-xs">
+                  {product.isDrink
+                    ? `${product.totalMlAvailable || 0}ml`
+                    : (product.inStock ? "In Stock" : "Out of Stock")}
                 </Badge>
               </div>
               
@@ -76,11 +83,11 @@ const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
               <Button 
                 className="w-full text-xs sm:text-sm" 
                 onClick={() => onAddToCart(product)}
-                disabled={!product.inStock}
+                disabled={product.isDrink ? (product.totalMlAvailable || 0) <= 0 : !product.inStock}
                 size="sm"
               >
                 <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
-                Add to Cart
+                {product.isDrink ? 'Select Size' : 'Add to Cart'}
               </Button>
             </div>
           </CardContent>

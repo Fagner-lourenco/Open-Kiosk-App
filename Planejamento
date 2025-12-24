@@ -1,0 +1,1300 @@
+
+# ✅ PLANEJAMENTO FINAL REVISADO — SISTEMA DE BEBIDAS COM TAMANHOS
+
+
+## Resumo Objetivo
+Adicionar suporte a bebidas com múltiplos tamanhos em ML (ex: 300ml, 400ml, 500ml), com preço individual por tamanho, estoque em ML (totalMlAvailable), e venda com decremento de ML — sem quebrar o sistema de produtos regulares existente.
+
+
+---
+
+## 🔍 VALIDAÇÕES DO CÓDIGO ATUAL
+
+### ✅ **Estrutura Confirmada:**
+- **CartItem** usa apenas `product` e `quantity` (sem `unitPrice`)
+- **Shop.tsx** usa `productId: string` em `updateCartQuantity`
+- **Cart.tsx** passa `productId` (não composite key)
+- **Checkout.tsx** tem loop serial de update (linhas 92-101)
+- **useFirebaseReports** usa `addDoc` (não transação)
+- **ProductForm** tem estrutura simples (sem conditional UI)
+
+---
+
+## 🚨 AJUSTES CRÍTICOS IDENTIFICADOS
+
+### **1. unitPrice NÃO existe em CartItem atual**
+```typescript
+// CÓDIGO ATUAL (product.ts)
+export interface CartItem {
+  product: Product;
+  quantity: number;
+  // ❌ SEM unitPrice
+}
+
+// CÓDIGO ATUAL (Cart.tsx linha 23)
+const getTotalPrice = () => {
+  return cartItems.reduce((total, item) => 
+    total + item.product.price * item.quantity, 0
+  );
+};
+```
+
+**Impacto:** Precisamos adicionar `unitPrice` ao CartItem e migrar TODOS os cálculos.
+
+---
+
+### **2. updateCartQuantity usa productId simples**
+```typescript
+// CÓDIGO ATUAL (Shop.tsx linha 98)
+const updateCartQuantity = (productId: string, quantity: number) => {
+  // ...
+};
+
+// CÓDIGO ATUAL (Cart.tsx linha 14)
+onUpdateQuantity: (productId: string, quantity: number) => void;
+```
+
+**Impacto:** Precisamos mudar assinatura para aceitar composite key.
+
+---
+
+### **3. Checkout tem loop serial não-transacional**
+```typescript
+// CÓDIGO ATUAL (Checkout.tsx linhas 92-101)
+for (const item of cartItems) {
+  const newStock = Math.max(0, (item.product.stock || 0) - item.quantity);
+  await updateProduct(item.product.id, {
+    ...item.product,
+    stock: newStock,
+    inStock: newStock > 0
+  });
+}
+```
+
+**Impacto:** Substituir por `salesService.recordSaleAndUpdateStock()` com transação.
+
+---
+
+### **4. ProductForm sem switch isDrink**
+```typescript
+// CÓDIGO ATUAL (ProductForm.tsx linha 28)
+const [inStock, setInStock] = useState(initialProduct?.inStock ?? true);
+const [stock, setStock] = useState(initialProduct?.stock || 0);
+// ❌ SEM estados para isDrink, sizes, totalMlAvailable
+```
+
+**Impacto:** Adicionar UI condicional completa para bebidas.
+
+---
+
+### **5. Impressão usa product.price direto**
+```typescript
+// CÓDIGO ATUAL (pdfReceiptService.ts linha 13)
+const total = cartItems.reduce((sum, item) => 
+  sum + (item.product.price * item.quantity), 0
+);
+
+// CÓDIGO ATUAL (esp32PrinterService.ts linha 92)
+const total = cartItems.reduce((sum, item) => 
+  sum + (item.product.price * item.quantity), 0
+);
+```
+
+**Impacto:** Migrar para `item.unitPrice`.
+
+---
+
+## 📋 PLANO DETALHADO FINAL (REVISADO)
+
+### **PR1: Tipos + Utils (4h)** ✅ VALIDADO
+
+**Arquivos:** types/product.ts, utils/productUtils.ts (novo)
+
+#### 1.1 Estender Product (product.ts)
+```typescript
+export interface ProductSize {
+  key: string;        // "s300", "s400", "s500"
+  label: string;      // "300ml", "400ml", "500ml"
+  price: number;      // Preço específico do tamanho
+  ml: number;         // Volume em ML
+}
+
+export interface Product {
+  id: string;
+  title: string;
+  price: number;              // Fallback para produtos normais
+  description: string;
+  image?: string;
+  tags: string[];
+  inStock: boolean;
+  category: string;
+  stock: number;              // Fallback para produtos normais
+  minStock?: number;
+  
+  // NOVOS (todos opcionais para compatibilidade)
+  isDrink?: boolean;
+  sizes?: ProductSize[];
+  defaultSizeKey?: string;
+  totalMlAvailable?: number;
+}
+```
+
+#### 1.2 Atualizar CartItem (product.ts)
+```typescript
+export interface CartItem {
+  product: Product;
+  quantity: number;
+  unitPrice: number;          // ⚠️ NOVO OBRIGATÓRIO
+  
+  // Opcionais (apenas bebidas)
+  sizeKey?: string;
+  sizeLabel?: string;
+  mlPerUnit?: number;
+}
+```
+
+#### 1.3 Criar productUtils.ts (novo arquivo)
+```typescript
+import { Product, CartItem, ProductSize } from '@/types/product';
+
+export const getCartItemKey = (productId: string, sizeKey?: string): string => {
+  return sizeKey ? `${productId}#${sizeKey}` : productId;
+};
+
+export const getMaxQuantity = (
+  product: Product, 
+  sizeKey?: string,
+  cartItems?: CartItem[]
+): number => {
+  if (product.isDrink && product.sizes && product.totalMlAvailable) {
+    // Calcular ML já no carrinho
+    const mlInCart = cartItems
+      ?.filter(i => i.product.id === product.id)
+      .reduce((sum, i) => sum + ((i.mlPerUnit || 0) * i.quantity), 0) || 0;
+    
+    const mlAvailable = product.totalMlAvailable - mlInCart;
+    
+    const size = sizeKey 
+      ? product.sizes.find(s => s.key === sizeKey)
+      : product.sizes.find(s => s.key === product.defaultSizeKey);
+    
+    if (!size) return 0;
+    return Math.floor(mlAvailable / size.ml);
+  }
+  
+  // Produto normal
+  const qtyInCart = cartItems
+    ?.filter(i => i.product.id === product.id && !i.sizeKey)
+    .reduce((sum, i) => sum + i.quantity, 0) || 0;
+  
+  return Math.max(0, (product.stock || 0) - qtyInCart);
+};
+
+export const getStockDisplay = (product: Product): string => {
+  if (product.isDrink) {
+    return `${product.totalMlAvailable || 0}ml disponível`;
+  }
+  return `${product.stock || 0} em estoque`;
+};
+
+export const isLowStock = (product: Product): boolean => {
+  if (product.isDrink) {
+    return (product.totalMlAvailable || 0) < 500; // threshold 500ml
+  }
+  return (product.stock || 0) > 0 && (product.stock || 0) <= (product.minStock || 5);
+};
+```
+
+**Teste:** TypeScript compila sem erros, produtos antigos ainda funcionam.
+
+---
+
+### **PR2: Hooks de Produto (2h)** ✅ VALIDADO
+
+**Arquivo:** hooks/useFirebaseProducts.tsx
+
+#### 2.1 Atualizar addProduct
+```typescript
+const addProduct = async (product: Omit<Product, 'id'>) => {
+  try {
+    // ⚠️ VALIDAÇÃO para bebidas
+    if (product.isDrink) {
+      if (!product.sizes || product.sizes.length === 0) {
+        throw new Error('Bebidas precisam ter pelo menos um tamanho');
+      }
+      if (!product.totalMlAvailable || product.totalMlAvailable <= 0) {
+        throw new Error('Total ML disponível deve ser maior que 0');
+      }
+      if (!product.defaultSizeKey) {
+        throw new Error('Selecione um tamanho padrão');
+      }
+    }
+    
+    const db = getFirebaseDb();
+    const productsCollection = collection(db, 'products');
+    
+    // Firestore aceita campos extras automaticamente
+    const docRef = await addDoc(productsCollection, {
+      ...product,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    });
+    
+    toast({ title: "Success", description: "Product added successfully" });
+    return docRef.id;
+  } catch (error) {
+    console.error('Error adding product:', error);
+    toast({ 
+      title: "Error", 
+      description: error.message, 
+      variant: "destructive" 
+    });
+    throw error;
+  }
+};
+
+// updateProduct já suporta Partial<Product>, nada a mudar
+```
+
+**Teste:** Criar bebida com 3 tamanhos no admin, verificar Firestore.
+
+---
+
+### **PR3: ProductForm + Admin (8-12h)** ⚠️ COMPLEXO
+
+**Arquivos:** components/ProductForm.tsx, pages/Admin.tsx
+
+#### 3.1 ProductForm - Adicionar Estados
+```typescript
+// Adicionar após linha 28
+const [isDrink, setIsDrink] = useState(initialProduct?.isDrink || false);
+const [sizes, setSizes] = useState<ProductSize[]>(initialProduct?.sizes || []);
+const [defaultSizeKey, setDefaultSizeKey] = useState(initialProduct?.defaultSizeKey || '');
+const [totalMlAvailable, setTotalMlAvailable] = useState(initialProduct?.totalMlAvailable || 0);
+```
+
+#### 3.2 ProductForm - UI Condicional
+```typescript
+{/* ADICIONAR após Input de categoria */}
+<div className="col-span-2 space-y-2">
+  <div className="flex items-center space-x-2">
+    <Switch 
+      checked={isDrink} 
+      onCheckedChange={setIsDrink}
+      id="isDrink" 
+    />
+    <Label htmlFor="isDrink">É uma bebida?</Label>
+  </div>
+</div>
+
+{/* Campos condicionais */}
+{isDrink ? (
+  <>
+    {/* Total ML */}
+    <div className="space-y-2">
+      <Label htmlFor="totalMl">Total ML Disponível</Label>
+      <Input
+        id="totalMl"
+        type="number"
+        value={totalMlAvailable}
+        onChange={(e) => setTotalMlAvailable(Number(e.target.value))}
+        required
+      />
+    </div>
+    
+    {/* Tamanhos */}
+    <div className="col-span-2 space-y-2">
+      <Label>Tamanhos</Label>
+      <div className="border rounded p-4 space-y-3">
+        {sizes.map((size, index) => (
+          <div key={index} className="flex gap-2">
+            <Input
+              placeholder="Key (ex: s300)"
+              value={size.key}
+              onChange={(e) => {
+                const newSizes = [...sizes];
+                newSizes[index].key = e.target.value;
+                setSizes(newSizes);
+              }}
+            />
+            <Input
+              placeholder="Label (ex: 300ml)"
+              value={size.label}
+              onChange={(e) => {
+                const newSizes = [...sizes];
+                newSizes[index].label = e.target.value;
+                setSizes(newSizes);
+              }}
+            />
+            <Input
+              placeholder="Preço"
+              type="number"
+              step="0.01"
+              value={size.price}
+              onChange={(e) => {
+                const newSizes = [...sizes];
+                newSizes[index].price = Number(e.target.value);
+                setSizes(newSizes);
+              }}
+            />
+            <Input
+              placeholder="ML"
+              type="number"
+              value={size.ml}
+              onChange={(e) => {
+                const newSizes = [...sizes];
+                newSizes[index].ml = Number(e.target.value);
+                setSizes(newSizes);
+              }}
+            />
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              onClick={() => setSizes(sizes.filter((_, i) => i !== index))}
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        ))}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => setSizes([...sizes, { key: '', label: '', price: 0, ml: 0 }])}
+        >
+          + Adicionar Tamanho
+        </Button>
+      </div>
+    </div>
+    
+    {/* Select Default Size */}
+    <div className="space-y-2">
+      <Label>Tamanho Padrão</Label>
+      <select
+        className="w-full border rounded px-3 py-2"
+        value={defaultSizeKey}
+        onChange={(e) => setDefaultSizeKey(e.target.value)}
+        required={isDrink}
+      >
+        <option value="">Selecione...</option>
+        {sizes.map(s => (
+          <option key={s.key} value={s.key}>{s.label}</option>
+        ))}
+      </select>
+    </div>
+  </>
+) : (
+  <>
+    {/* Campos originais (linha 88-108) */}
+    <div className="space-y-2">
+      <Label htmlFor="price">Price ({currentCurrency.symbol})</Label>
+      <Input
+        id="price"
+        type="number"
+        step="0.01"
+        value={price}
+        onChange={(e) => setPrice(parseFloat(e.target.value))}
+        required
+      />
+    </div>
+    
+    <div className="space-y-2">
+      <Label htmlFor="stock">Stock Quantity</Label>
+      <Input
+        id="stock"
+        type="number"
+        value={stock}
+        onChange={(e) => setStock(parseInt(e.target.value))}
+        required
+      />
+    </div>
+    
+    <div className="space-y-2">
+      <Label htmlFor="minStock">Minimum Stock Level</Label>
+      <Input
+        id="minStock"
+        type="number"
+        value={minStock}
+        onChange={(e) => setMinStock(parseInt(e.target.value))}
+      />
+    </div>
+  </>
+)}
+```
+
+#### 3.3 ProductForm - Submit Condicional
+```typescript
+const handleSubmit = (e: React.FormEvent) => {
+  e.preventDefault();
+  
+  if (isDrink) {
+    // Validação
+    if (sizes.length === 0) {
+      // toast error
+      return;
+    }
+    
+    onSubmit({
+      title,
+      description,
+      image,
+      category,
+      tags,
+      isDrink: true,
+      sizes,
+      defaultSizeKey,
+      totalMlAvailable,
+      // Valores padrão para compatibilidade
+      price: sizes[0]?.price || 0,
+      stock: 0,
+      inStock: totalMlAvailable > 0,
+      minStock: 0
+    });
+  } else {
+    // Lógica existente (linha 35-47)
+    onSubmit({
+      title,
+      price,
+      description,
+      image,
+      category,
+      tags,
+      inStock: stock > 0,
+      stock,
+      minStock
+    });
+  }
+  
+  // Reset form...
+};
+```
+
+**Teste:** Criar bebida com 3 tamanhos, verificar todos os campos salvos.
+
+---
+
+### **PR4: Shop + SizeSelector + Cart (10-14h)** ⚠️ CRÍTICO
+
+**Arquivos:** pages/Shop.tsx, components/SizeSelectorModal.tsx (novo), components/Cart.tsx, components/ProductGrid.tsx
+
+#### 4.1 Shop.tsx - Mudanças de Assinatura
+
+```typescript
+import { getCartItemKey, getMaxQuantity } from '@/utils/productUtils';
+
+// ADICIONAR estados (após linha 31)
+const [selectedProductForSizeModal, setSelectedProductForSizeModal] = 
+  useState<Product | null>(null);
+const [sizeModalOpen, setSizeModalOpen] = useState(false);
+
+// REFATORAR addToCart (linha 74)
+const addToCart = async (product: Product) => {
+  // Se bebida: abrir modal
+  if (product.isDrink) {
+    setSelectedProductForSizeModal(product);
+    setSizeModalOpen(true);
+    return;
+  }
+  
+  // Produto normal (com unitPrice)
+  if ((product.stock || 0) <= 0) return;
+  
+  setCartItems(prevItems => {
+    const existingItem = prevItems.find(
+      item => item.product.id === product.id && !item.sizeKey
+    );
+    
+    if (existingItem) {
+      const newQuantity = existingItem.quantity + 1;
+      const maxQty = getMaxQuantity(product, undefined, prevItems);
+      
+      if (newQuantity <= maxQty) {
+        return prevItems.map(item =>
+          item.product.id === product.id && !item.sizeKey
+            ? { ...item, quantity: newQuantity }
+            : item
+        );
+      }
+      return prevItems;
+    } else {
+      return [...prevItems, { 
+        product, 
+        quantity: 1,
+        unitPrice: product.price  // ⚠️ SEMPRE incluir
+      }];
+    }
+  });
+};
+
+// NOVO handler para bebidas
+const handleAddBeverageToCart = (selection: {
+  sizeKey: string;
+  sizeLabel: string;
+  mlPerUnit: number;
+  price: number;
+  quantity: number;
+}) => {
+  const product = selectedProductForSizeModal!;
+  
+  setCartItems(prevItems => {
+    const cartItemKey = getCartItemKey(product.id, selection.sizeKey);
+    const existingItem = prevItems.find(
+      i => getCartItemKey(i.product.id, i.sizeKey) === cartItemKey
+    );
+    
+    if (existingItem) {
+      const maxQty = getMaxQuantity(product, selection.sizeKey, prevItems);
+      const newQty = Math.min(
+        existingItem.quantity + selection.quantity, 
+        maxQty
+      );
+      
+      return prevItems.map(i =>
+        getCartItemKey(i.product.id, i.sizeKey) === cartItemKey
+          ? { ...i, quantity: newQty }
+          : i
+      );
+    }
+    
+    return [...prevItems, {
+      product,
+      quantity: selection.quantity,
+      unitPrice: selection.price,  // ⚠️ Price do tamanho
+      sizeKey: selection.sizeKey,
+      sizeLabel: selection.sizeLabel,
+      mlPerUnit: selection.mlPerUnit
+    }];
+  });
+  
+  setSizeModalOpen(false);
+};
+
+// REFATORAR updateCartQuantity (linha 98)
+// ⚠️ MUDAR ASSINATURA: productId → cartItemKey
+const updateCartQuantity = (cartItemKey: string, quantity: number) => {
+  if (quantity <= 0) {
+    setCartItems(prevItems =>
+      prevItems.filter(item => 
+        getCartItemKey(item.product.id, item.sizeKey) !== cartItemKey
+      )
+    );
+  } else {
+    setCartItems(prevItems =>
+      prevItems.map(item => {
+        const itemKey = getCartItemKey(item.product.id, item.sizeKey);
+        if (itemKey !== cartItemKey) return item;
+        
+        const maxQty = getMaxQuantity(
+          item.product,
+          item.sizeKey,
+          prevItems
+        );
+        
+        return { ...item, quantity: Math.min(quantity, maxQty) };
+      })
+    );
+  }
+};
+
+// ADICIONAR modal antes de </div> final
+<SizeSelectorModal
+  isOpen={sizeModalOpen}
+  product={selectedProductForSizeModal}
+  currentCartItems={cartItems}
+  onSelect={handleAddBeverageToCart}
+  onClose={() => setSizeModalOpen(false)}
+/>
+```
+
+#### 4.2 SizeSelectorModal.tsx (NOVO)
+```typescript
+import { useState, useEffect } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Button } from '@/components/ui/button';
+import { Product, CartItem } from '@/types/product';
+
+interface SizeSelectorModalProps {
+  isOpen: boolean;
+  product: Product | null;
+  currentCartItems: CartItem[];
+  onSelect: (selection: {
+    sizeKey: string;
+    sizeLabel: string;
+    mlPerUnit: number;
+    price: number;
+    quantity: number;
+  }) => void;
+  onClose: () => void;
+}
+
+export default function SizeSelectorModal({
+  isOpen,
+  product,
+  currentCartItems,
+  onSelect,
+  onClose
+}: SizeSelectorModalProps) {
+  const [selectedSizeKey, setSelectedSizeKey] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [maxQty, setMaxQty] = useState(0);
+  
+  useEffect(() => {
+    if (product?.sizes && product.sizes.length > 0) {
+      setSelectedSizeKey(product.defaultSizeKey || product.sizes[0].key);
+    }
+  }, [product]);
+  
+  useEffect(() => {
+    if (!product || !selectedSizeKey) return;
+    
+    const size = product.sizes?.find(s => s.key === selectedSizeKey);
+    if (!size) return;
+    
+    // Calcular ML já no carrinho
+    const mlInCart = currentCartItems
+      .filter(i => i.product.id === product.id)
+      .reduce((sum, i) => sum + ((i.mlPerUnit || 0) * i.quantity), 0);
+    
+    const mlAvailable = (product.totalMlAvailable || 0) - mlInCart;
+    const max = Math.floor(mlAvailable / size.ml);
+    
+    setMaxQty(max);
+    setQuantity(Math.min(quantity, max));
+  }, [selectedSizeKey, product, currentCartItems]);
+  
+  if (!product) return null;
+  
+  const selectedSize = product.sizes?.find(s => s.key === selectedSizeKey);
+  
+  const handleConfirm = () => {
+    if (!selectedSize || quantity <= 0) return;
+    
+    onSelect({
+      sizeKey: selectedSize.key,
+      sizeLabel: selectedSize.label,
+      mlPerUnit: selectedSize.ml,
+      price: selectedSize.price,
+      quantity
+    });
+  };
+  
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Selecione o tamanho de {product.title}</DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="text-sm font-medium">Tamanho</label>
+            <Select value={selectedSizeKey} onValueChange={setSelectedSizeKey}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {product.sizes?.map(size => (
+                  <SelectItem key={size.key} value={size.key}>
+                    {size.label} - R$ {size.price.toFixed(2)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          
+          <div>
+            <label className="text-sm font-medium">Quantidade</label>
+            <div className="flex items-center gap-2 mt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                disabled={quantity <= 1}
+              >
+                -
+              </Button>
+              <span className="text-lg font-medium w-12 text-center">
+                {quantity}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setQuantity(Math.min(maxQty, quantity + 1))}
+                disabled={quantity >= maxQty}
+              >
+                +
+              </Button>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Máximo disponível: {maxQty} unidades
+            </p>
+          </div>
+          
+          {selectedSize && (
+            <div className="bg-gray-50 p-3 rounded">
+              <p className="text-sm">
+                Total: R$ {(selectedSize.price * quantity).toFixed(2)}
+              </p>
+            </div>
+          )}
+          
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose} className="flex-1">
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleConfirm} 
+              className="flex-1"
+              disabled={maxQty === 0}
+            >
+              Adicionar ao Carrinho
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+```
+
+#### 4.3 Cart.tsx - Usar Composite Key
+```typescript
+import { getCartItemKey } from '@/utils/productUtils';
+
+// MUDAR assinatura (linha 14)
+onUpdateQuantity: (cartItemKey: string, quantity: number) => void;
+
+// MUDAR getTotalPrice (linha 22)
+const getTotalPrice = () => {
+  return cartItems.reduce(
+    (total, item) => total + item.unitPrice * item.quantity,  // ⚠️ unitPrice
+    0
+  );
+};
+
+// MUDAR key no map (linha 70)
+{cartItems.map((item) => (
+  <div 
+    key={getCartItemKey(item.product.id, item.sizeKey)}  // ⚠️ composite key
+    className="flex items-start gap-4 p-4 border rounded-lg"
+  >
+    {/* ... */}
+    <div className="flex-1 min-w-0">
+      <h4 className="font-medium text-sm line-clamp-2">
+        {item.product.title}
+        {item.sizeLabel && (
+          <span className="text-gray-500"> ({item.sizeLabel})</span>
+        )}
+      </h4>
+      
+      <p className="text-sm text-gray-500">
+        {currentCurrency.symbol}{item.unitPrice.toFixed(2)}  {/* ⚠️ unitPrice */}
+      </p>
+      
+      <div className="flex items-center justify-between mt-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onUpdateQuantity(
+              getCartItemKey(item.product.id, item.sizeKey),  // ⚠️ composite key
+              item.quantity - 1
+            )}
+            disabled={item.quantity <= 1}
+          >
+            <Minus className="w-3 h-3" />
+          </Button>
+          <span>{item.quantity}</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onUpdateQuantity(
+              getCartItemKey(item.product.id, item.sizeKey),  // ⚠️ composite key
+              item.quantity + 1
+            )}
+          >
+            <Plus className="w-3 h-3" />
+          </Button>
+        </div>
+        
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold">
+            {currentCurrency.symbol}{(item.unitPrice * item.quantity).toFixed(2)}  {/* ⚠️ unitPrice */}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onUpdateQuantity(
+              getCartItemKey(item.product.id, item.sizeKey),  // ⚠️ composite key
+              0
+            )}
+          >
+            <Trash2 className="w-3 h-3" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  </div>
+))}
+```
+
+#### 4.4 ProductGrid.tsx - Preço Condicional
+```typescript
+// Após linha 31 (dentro do map)
+const displayPrice = product.isDrink && product.defaultSizeKey
+  ? product.sizes?.find(s => s.key === product.defaultSizeKey)?.price ?? product.price
+  : product.price;
+
+// Linha 56
+<span className="text-lg sm:text-xl font-bold text-green-600">
+  {currentCurrency.symbol}{displayPrice.toFixed(2)}
+</span>
+
+// Linha 58 - badge condicional
+<Badge variant={product.inStock ? "default" : "destructive"} className="text-xs">
+  {product.isDrink 
+    ? `${product.totalMlAvailable || 0}ml` 
+    : `${product.stock} em estoque`
+  }
+</Badge>
+
+// Linha 78 - disabled condicional
+<Button 
+  className="w-full text-xs sm:text-sm" 
+  onClick={() => onAddToCart(product)}
+  disabled={product.isDrink 
+    ? (product.totalMlAvailable || 0) <= 0 
+    : (product.stock || 0) <= 0
+  }
+  size="sm"
+>
+```
+
+**Teste:** Adicionar 2 tamanhos da mesma bebida → 2 items no carrinho.
+
+---
+
+### **PR5: Sales Service + Checkout (8-12h)** 🔥 MAIS CRÍTICO
+
+**Arquivos:** services/salesService.ts (novo), components/Checkout.tsx
+
+#### 5.1 salesService.ts (NOVO ARQUIVO)
+```typescript
+import { getFirebaseDb } from './firebase';
+import { runTransaction, collection, doc } from 'firebase/firestore';
+import { CartItem, Product } from '@/types/product';
+
+export class SalesService {
+  async generateOrderNumber(): Promise<string> {
+    const now = new Date();
+    const year = now.getFullYear().toString().slice(-2);
+    const month = (now.getMonth() + 1).toString().padStart(2, '0');
+    const day = now.getDate().toString().padStart(2, '0');
+    const hour = now.getHours().toString().padStart(2, '0');
+    const minute = now.getMinutes().toString().padStart(2, '0');
+    const second = now.getSeconds().toString().padStart(2, '0');
+    return `${year}${month}${day}${hour}${minute}${second}`;
+  }
+  
+  async recordSaleAndUpdateStock(
+    cartItems: CartItem[],
+    totalAmount: number,
+    currency: string,
+    orderNumber: string
+  ): Promise<string> {
+    const db = getFirebaseDb();
+    
+    return await runTransaction(db, async (transaction) => {
+      // 1. Agregar por productId
+      const requiredByProductId: Record<string, { ml: number; qty: number }> = {};
+      
+      cartItems.forEach(item => {
+        const key = item.product.id;
+        if (!requiredByProductId[key]) {
+          requiredByProductId[key] = { ml: 0, qty: 0 };
+        }
+        
+        if (item.product.isDrink && item.mlPerUnit) {
+          requiredByProductId[key].ml += item.mlPerUnit * item.quantity;
+        } else {
+          requiredByProductId[key].qty += item.quantity;
+        }
+      });
+      
+      // 2. Validar e atualizar produtos
+      for (const [productId, required] of Object.entries(requiredByProductId)) {
+        const prodRef = doc(db, 'products', productId);
+        const prodSnapshot = await transaction.get(prodRef);
+        
+        if (!prodSnapshot.exists()) {
+          throw new Error(`Product ${productId} not found`);
+        }
+        
+        const prod = prodSnapshot.data() as Product;
+        
+        if (prod.isDrink) {
+          if ((prod.totalMlAvailable || 0) < required.ml) {
+            throw new Error(`Estoque insuficiente de ${prod.title}`);
+          }
+          transaction.update(prodRef, {
+            totalMlAvailable: (prod.totalMlAvailable || 0) - required.ml,
+            inStock: (prod.totalMlAvailable || 0) - required.ml > 0
+          });
+        } else {
+          if ((prod.stock || 0) < required.qty) {
+            throw new Error(`Estoque insuficiente de ${prod.title}`);
+          }
+          transaction.update(prodRef, {
+            stock: (prod.stock || 0) - required.qty,
+            inStock: (prod.stock || 0) - required.qty > 0
+          });
+        }
+      }
+      
+      // 3. Criar sale document
+      const saleData = {
+        orderNumber,
+        items: cartItems.map(item => ({
+          productId: item.product.id,
+          title: item.product.title,
+          sizeKey: item.sizeKey,
+          sizeLabel: item.sizeLabel,
+          mlPerUnit: item.mlPerUnit,
+          price: item.unitPrice,  // ⚠️ unitPrice
+          quantity: item.quantity,
+          total: item.unitPrice * item.quantity  // ⚠️ unitPrice
+        })),
+        subtotal: cartItems.reduce(
+          (sum, item) => sum + (item.unitPrice * item.quantity), 
+          0
+        ),
+        tax: totalAmount - cartItems.reduce(
+          (sum, item) => sum + (item.unitPrice * item.quantity), 
+          0
+        ),
+        total: totalAmount,
+        currency,
+        timestamp: new Date(),
+        date: new Date().toISOString().split('T')[0]
+      };
+      
+      const salesRef = collection(db, 'sales');
+      const newDocRef = doc(salesRef); // Gera ID automaticamente
+      transaction.set(newDocRef, saleData);
+      
+      return newDocRef.id;
+    });
+  }
+}
+
+export const salesService = new SalesService();
+```
+
+#### 5.2 Checkout.tsx - Substituir Loop Serial
+```typescript
+import { salesService } from '@/services/salesService';
+
+// REMOVER imports (linha 14)
+// import { useFirebaseReports } from '@/hooks/useFirebaseReports';
+// import { useFirebaseProducts } from '@/hooks/useFirebaseProducts';
+
+// REMOVER hooks (linha 36)
+// const { recordSale, generateOrderNumber } = useFirebaseReports();
+// const { updateProduct } = useFirebaseProducts();
+
+// ATUALIZAR useEffect (linha 39)
+useEffect(() => {
+  if (isOpen && !orderNumber) {
+    const fetchOrderNumber = async () => {
+      try {
+        const newOrderNumber = await salesService.generateOrderNumber();
+        setOrderNumber(newOrderNumber);
+      } catch (error) {
+        console.error('Error generating order number:', error);
+        // Fallback...
+      }
+    };
+    fetchOrderNumber();
+  }
+}, [isOpen, orderNumber]);
+
+// SUBSTITUIR handlePaymentComplete (linha 83)
+const handlePaymentComplete = async () => {
+  setPaymentProcessed(true);
+  
+  try {
+    // ⚠️ TRANSAÇÃO ATÔMICA
+    await salesService.recordSaleAndUpdateStock(
+      cartItems,
+      getFinalTotal(),
+      currentCurrency.code,
+      orderNumber
+    );
+    console.log('Sale recorded and stock updated atomically:', orderNumber);
+    
+    // ❌ REMOVER todo o loop serial (linhas 92-101)
+    // for (const item of cartItems) { ... }
+    
+  } catch (error) {
+    console.error('Error processing order:', error);
+    toast({
+      title: "Erro",
+      description: error.message || "Falha ao processar pedido",
+      variant: "destructive"
+    });
+    return; // Não limpar carrinho se falhar
+  }
+  
+  onClearCart();
+  setTimeout(() => setIsCompleted(true), 1000);
+  
+  // Impressão (resto igual)
+  if (settings?.useThermalPrinter && settings?.comPort) {
+    await handleESP32Print();
+  } else if (!settings?.useThermalPrinter) {
+    await handlePDFPrint();
+  }
+};
+
+// ATUALIZAR getTotalPrice (linha 70)
+const getTotalPrice = () => {
+  return cartItems.reduce(
+    (total, item) => total + (item.unitPrice * item.quantity),  // ⚠️ unitPrice
+    0
+  );
+};
+```
+
+**Teste:** 2 sessões compram último ML simultaneamente → apenas 1 vence.
+
+---
+
+### **PR6: Impressão + OrderHistory (4-6h)** ✅ VALIDADO
+
+**Arquivos:** services/pdfReceiptService.ts, services/esp32PrinterService.ts, components/OrderHistory.tsx
+
+#### 6.1 pdfReceiptService.ts
+```typescript
+// Linha 13 - mudar cálculo
+const total = cartItems.reduce(
+  (sum, item) => sum + (item.unitPrice * item.quantity),  // ⚠️ unitPrice
+  0
+);
+
+// Linha 93 - adicionar sizeLabel
+${cartItems.map(item => `
+  <div class="item">
+    <span class="item-name">
+      ${item.product.title}${item.sizeLabel ? ` (${item.sizeLabel})` : ''}
+    </span>
+    <span class="item-qty">x${item.quantity}</span>
+    <span class="item-price">
+      ${settings.currency} ${(item.unitPrice * item.quantity).toFixed(2)}
+    </span>
+  </div>
+`).join('')}
+```
+
+#### 6.2 esp32PrinterService.ts
+```typescript
+// Linha 92 - mudar cálculo
+const total = cartItems.reduce(
+  (sum, item) => sum + (item.unitPrice * item.quantity),  // ⚠️ unitPrice
+  0
+);
+
+// Linha 99 - adicionar sizeLabel
+items: cartItems.map(item => ({
+  name: `${item.product.title}${item.sizeLabel ? ` (${item.sizeLabel})` : ''}`,
+  quantity: `${item.quantity}`,
+  price: item.unitPrice * item.quantity  // ⚠️ unitPrice
+})),
+```
+
+#### 6.3 OrderHistory.tsx
+```typescript
+// Ao reconstruir CartItem para reprint (função handleReprint)
+const fullCartItems: CartItem[] = order.items.map(item => ({
+  product: {
+    id: item.productId,
+    title: item.title,
+    price: item.price,
+    description: "",
+    image: item.image || "",
+    tags: [],
+    inStock: true,
+    category: "",
+    stock: 0,
+    minStock: 0,
+    isDrink: !!item.sizeKey,
+  } as Product,
+  quantity: item.quantity,
+  unitPrice: item.price,  // ⚠️ unitPrice
+  sizeKey: item.sizeKey,
+  sizeLabel: item.sizeLabel,
+  mlPerUnit: item.mlPerUnit
+}));
+```
+
+**Teste:** Reimpressão mostra sizeLabel corretamente.
+
+---
+
+### **PR7: InventoryManager + Refund (6-8h)** ⚠️ OPCIONAL
+
+**Arquivos:** components/InventoryManager.tsx, services/salesService.ts, components/OrderHistory.tsx
+
+#### 7.1 salesService.ts - Adicionar refundSale
+```typescript
+async refundSale(saleId: string, adminId: string, reason: string): Promise<void> {
+  const db = getFirebaseDb();
+  
+  return await runTransaction(db, async (transaction) => {
+    const saleRef = doc(db, 'sales', saleId);
+    const saleSnapshot = await transaction.get(saleRef);
+    
+    if (!saleSnapshot.exists()) {
+      throw new Error('Sale not found');
+    }
+    
+    const sale = saleSnapshot.data() as any;
+    
+    if (sale.refunded) {
+      throw new Error('Sale already refunded');
+    }
+    
+    // Agregar ML/qty a devolver
+    const mlReturnedByProductId: Record<string, number> = {};
+    const qtyReturnedByProductId: Record<string, number> = {};
+    
+    sale.items.forEach((item: any) => {
+      if (item.mlPerUnit) {
+        mlReturnedByProductId[item.productId] = 
+          (mlReturnedByProductId[item.productId] || 0) + 
+          (item.mlPerUnit * item.quantity);
+      } else {
+        qtyReturnedByProductId[item.productId] = 
+          (qtyReturnedByProductId[item.productId] || 0) + item.quantity;
+      }
+    });
+    
+    // Devolver para produtos
+    for (const [productId, mlReturned] of Object.entries(mlReturnedByProductId)) {
+      const prodRef = doc(db, 'products', productId);
+      const prodSnapshot = await transaction.get(prodRef);
+      const prod = prodSnapshot.data() as Product;
+      
+      transaction.update(prodRef, {
+        totalMlAvailable: (prod.totalMlAvailable || 0) + mlReturned,
+        inStock: true
+      });
+    }
+    
+    for (const [productId, qtyReturned] of Object.entries(qtyReturnedByProductId)) {
+      const prodRef = doc(db, 'products', productId);
+      const prodSnapshot = await transaction.get(prodRef);
+      const prod = prodSnapshot.data() as Product;
+      
+      transaction.update(prodRef, {
+        stock: (prod.stock || 0) + qtyReturned,
+        inStock: true
+      });
+    }
+    
+    // Marcar sale como refunded
+    transaction.update(saleRef, {
+      refunded: true,
+      refundInfo: {
+        by: adminId,
+        at: new Date(),
+        mlReturned: mlReturnedByProductId,
+        qtyReturned: qtyReturnedByProductId,
+        reason
+      }
+    });
+  });
+}
+```
+
+#### 7.2 OrderHistory.tsx - Botão Refund
+```typescript
+import { salesService } from '@/services/salesService';
+
+// Adicionar botão
+<Button
+  size="sm"
+  variant="destructive"
+  onClick={() => handleRefund(order.id)}
+  disabled={order.refunded}
+>
+  {order.refunded ? 'Devolvido' : 'Devolver Pedido'}
+</Button>
+
+// Adicionar handler
+const handleRefund = async (saleId: string) => {
+  if (!confirm('Tem certeza que deseja devolver este pedido?')) return;
+  
+  try {
+    await salesService.refundSale(saleId, 'admin-user-id', 'Customer refund');
+    toast({ title: "Sucesso", description: "Pedido devolvido" });
+    // Recarregar orders
+  } catch (error) {
+    toast({ 
+      title: "Erro", 
+      description: error.message || "Falha ao devolver pedido",
+      variant: "destructive" 
+    });
+  }
+};
+```
+
+---
+
+## 🎯 CRONOGRAMA FINAL
+
+| PR | Complexidade | Tempo | Risco |
+|---|-------------|-------|-------|
+| PR1 | Baixa | 4h | ⭐ Baixo |
+| PR2 | Baixa | 2h | ⭐ Baixo |
+| PR3 | Média | 8-12h | ⭐⭐ Médio |
+| PR4 | Alta | 10-14h | ⭐⭐⭐ Crítico |
+| PR5 | Alta | 8-12h | ⭐⭐⭐ Crítico |
+| PR6 | Média | 4-6h | ⭐ Baixo |
+| PR7 | Média | 6-8h | ⭐⭐ Médio (Opcional) |
+
+**Total:** 42-58 horas (5-7 dias úteis)
+
+---
+
+## ✅ DECISÕES FINAIS CONFIRMADAS
+
+1. **unitPrice é obrigatório** em CartItem (não existe no código atual)
+2. **Composite key necessário** (productId atual é string simples)
+3. **Transação atômica crítica** (código atual usa loop serial)
+4. **ProductForm precisa UI condicional completa** (código atual é simples)
+5. **Todos os cálculos migram para unitPrice** (código atual usa product.price)
+
+---
+
+## 🚀 PRÓXIMOS PASSOS 
+
+Concluído: *Documentar ajustes críticos identificados* (2/2)
+
+**Planejamento finalizado e validado contra o código fonte!**
+
+Principais descobertas da revisão:
+- ✅ Estrutura de tipos confirmada (CartItem sem unitPrice)
+- ✅ Fluxo de Shop/Cart identificado (productId string simples)
+- ✅ Checkout com loop serial não-transacional confirmado
+- ✅ ProductForm sem UI condicional
+- ✅ Serviços de impressão usando product.price direto
+
+**Você está pronto para começar?** Recomendo começar pelo PR1 (tipos + utils) - é o mais seguro e estabelece a fundação para tudo.
+
+______
+
+## 📌 NOTAS FINAIS
+
+1. **Minimal Intervention**: `if(isDrink)` localizado, sem refatoração geral______
