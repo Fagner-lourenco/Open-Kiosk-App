@@ -76,10 +76,12 @@ export const useVoiceSearch = (): VoiceSearchHook => {
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout>();
   const autoStopRef = useRef<NodeJS.Timeout>();
+  const isMountedRef = useRef(true);
 
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (!isSupported) return;
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -90,6 +92,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     recognitionInstance.lang = 'en-US';
 
     recognitionInstance.onresult = (event: SpeechRecognitionEvent) => {
+      if (!isMountedRef.current) return;
       let finalTranscript = '';
       let interimTranscript = '';
       
@@ -122,6 +125,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     };
 
     recognitionInstance.onstart = () => {
+      if (!isMountedRef.current) return;
       setIsListening(true);
       setTranscript('');
       setConfidence(0);
@@ -133,6 +137,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     };
 
     recognitionInstance.onend = () => {
+      if (!isMountedRef.current) return;
       setIsListening(false);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
@@ -143,6 +148,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     };
 
     recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (!isMountedRef.current) return;
       console.error('Speech recognition error:', event.error);
       setIsListening(false);
       if (timeoutRef.current) {
@@ -156,6 +162,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     setRecognition(recognitionInstance);
 
     return () => {
+      isMountedRef.current = false;
       recognitionInstance.stop();
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);

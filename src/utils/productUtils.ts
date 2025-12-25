@@ -20,7 +20,7 @@ export const getMaxQuantity = (
       ? product.sizes.find((s) => s.key === sizeKey)
       : product.sizes.find((s) => s.key === product.defaultSizeKey);
 
-    if (!size) return 0;
+    if (!size || !size.ml || size.ml <= 0) return 0;
     return Math.floor(mlAvailable / size.ml);
   }
 

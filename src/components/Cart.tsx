@@ -26,10 +26,9 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
 
   // On Proceed to Checkout: Close Cart sheet first, then show Checkout
   const handleCheckout = () => {
-    onClose();        // Close cart's sheet
-    setTimeout(() => {
-      setShowCheckout(true); // THEN open the checkout sheet, after sheet close animation
-    }, 220); // match the Sheet's close animation duration (default 200ms + small buffer)
+    onClose();
+    // Open checkout on the next frame to avoid relying on animation timing
+    requestAnimationFrame(() => setShowCheckout(true));
   };
 
   const handleCheckoutComplete = () => {

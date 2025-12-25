@@ -27,36 +27,67 @@ export const currencies: Currency[] = [
 let currentCurrencyGlobal: Currency = currencies[0];
 const currencyListeners: Array<(currency: Currency) => void> = [];
 
+// Ensure we only fetch the currency once across the app
+let currencyInitialized = false;
+let currencyInitPromise: Promise<void> | null = null;
+
 export const useSettings = () => {
   const [currentCurrency, setCurrentCurrency] = useState<Currency>(currentCurrencyGlobal);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
   const fetchCurrency = async () => {
-    setLoading(true);
-    try {
-      console.log('Fetching currency from Firebase...');
-      const db = getFirebaseDb();
-      const docRef = doc(db, 'settings', 'default_currency');
-      const docSnap = await getDoc(docRef);
-
-      if (docSnap.exists()) {
-        console.log('Currency data received:', docSnap.data());
-        const currency = currencies.find(c => c.code === docSnap.data().value) || currencies[0];
-        currentCurrencyGlobal = currency;
-        setCurrentCurrency(currency);
-        // Notify all listeners
-        currencyListeners.forEach(listener => listener(currency));
+    // If already initialized, avoid duplicate network calls
+    if (currencyInitialized) return;
+    if (currencyInitPromise) {
+      setLoading(true);
+      try {
+        await currencyInitPromise;
+      } catch (error) {
+        console.error('Error waiting currency init:', error);
+      } finally {
+        setLoading(false);
       }
-    } catch (error) {
-      console.error('Error fetching currency:', error);
-      toast({
-        title: "Error",
-        description: "Failed to fetch currency setting",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    currencyInitPromise = (async () => {
+      try {
+        console.log('Fetching currency from Firebase...');
+        const db = getFirebaseDb();
+        const docRef = doc(db, 'settings', 'default_currency');
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          console.log('Currency data received:', docSnap.data());
+          const currency = currencies.find(c => c.code === docSnap.data().value) || currencies[0];
+          currentCurrencyGlobal = currency;
+          setCurrentCurrency(currency);
+          // Notify all listeners
+          currencyListeners.forEach(listener => listener(currency));
+        }
+        currencyInitialized = true;
+      } catch (error) {
+        console.error('Error fetching currency:', error);
+        toast({
+          title: "Error",
+          description: "Failed to fetch currency setting",
+          variant: "destructive",
+        });
+        // allow retry on next call
+        currencyInitialized = false;
+        throw error;
+      } finally {
+        setLoading(false);
+        currencyInitPromise = null;
+      }
+    })();
+
+    try {
+      await currencyInitPromise;
+    } catch {
+      // error already logged and handled above; allow caller to continue
     }
   };
 

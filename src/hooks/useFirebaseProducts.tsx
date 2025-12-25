@@ -2,8 +2,18 @@
 import { useState, useEffect } from 'react';
 import { Product } from '@/types/product';
 import { getFirebaseDb } from '@/services/firebase';
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+
+// Shared subscription to avoid duplicate listeners when multiple components mount
+let productsGlobal: Product[] = [];
+let loadingGlobal = true;
+let errorGlobal: string | null = null;
+let unsubscribeGlobal: (() => void) | null = null;
+const productListeners: Array<(products: Product[], loading: boolean, error: string | null) => void> = [];
+let subscriptionActive = false;
+let hasToastedError = false;
+let subscriptionInitializing = false;
 
 export const useFirebaseProducts = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -12,44 +22,70 @@ export const useFirebaseProducts = () => {
   const { toast } = useToast();
 
   useEffect(() => {
-    const fetchProducts = () => {
+    // Register local listener
+    const localListener = (p: Product[], l: boolean, e: string | null) => {
+      setProducts(p);
+      setLoading(l);
+      setError(e);
+    };
+    productListeners.push(localListener);
+
+    // Push current state to this hook immediately
+    localListener(productsGlobal, loadingGlobal, errorGlobal);
+
+    // Ensure single shared Firestore subscription
+    if (!subscriptionActive && !subscriptionInitializing) {
+      subscriptionInitializing = true;
       try {
         const db = getFirebaseDb();
         const productsCollection = collection(db, 'products');
-        
-        // Set up real-time listener
-        const unsubscribe = onSnapshot(productsCollection, (snapshot) => {
-          const productsData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
+        unsubscribeGlobal = onSnapshot(productsCollection, (snapshot) => {
+          const productsData = snapshot.docs.map(d => ({
+            id: d.id,
+            ...d.data()
           })) as Product[];
-          
+          productsGlobal = productsData;
+          loadingGlobal = false;
+          errorGlobal = null;
           console.log('Fetched products from Firebase:', productsData);
-          setProducts(productsData);
-          setLoading(false);
+          productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
         }, (error) => {
           console.error('Error fetching products:', error);
-          setError(error.message);
-          setLoading(false);
-          toast({
-            title: "Error",
-            description: "Failed to fetch products from Firebase",
-            variant: "destructive"
-          });
+          errorGlobal = error.message;
+          loadingGlobal = false;
+          if (!hasToastedError) {
+            toast({
+              title: "Error",
+              description: "Failed to fetch products from Firebase",
+              variant: "destructive"
+            });
+            hasToastedError = true;
+          }
+          productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
         });
-
-        return unsubscribe;
+        subscriptionActive = true;
       } catch (error) {
         console.error('Error setting up products listener:', error);
-        setError(error instanceof Error ? error.message : 'Unknown error');
-        setLoading(false);
+        errorGlobal = error instanceof Error ? error.message : 'Unknown error';
+        loadingGlobal = false;
+        productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
+      } finally {
+        subscriptionInitializing = false;
       }
-    };
+    }
 
-    const unsubscribe = fetchProducts();
+    // Cleanup for this hook instance
     return () => {
-      if (unsubscribe) {
-        unsubscribe();
+      const idx = productListeners.indexOf(localListener);
+      if (idx > -1) productListeners.splice(idx, 1);
+
+      // If no listeners remain, tear down global subscription
+      if (productListeners.length === 0 && unsubscribeGlobal) {
+        unsubscribeGlobal();
+        unsubscribeGlobal = null;
+        subscriptionActive = false;
+        hasToastedError = false;
+        loadingGlobal = true;
       }
     };
   }, [toast]);

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { X } from "lucide-react";
 import { Product, ProductSize } from "@/types/product";
 import { useSettings } from "@/hooks/useSettings";
+import { useToast } from "@/hooks/use-toast";
 
 interface ProductFormProps {
   onSubmit: (product: Omit<Product, "id">) => void;
@@ -19,6 +20,7 @@ interface ProductFormProps {
 
 const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
   const { currentCurrency } = useSettings();
+  const { toast } = useToast();
   const [title, setTitle] = useState(initialProduct?.title || "");
   const [price, setPrice] = useState(initialProduct?.price || 0);
   const [description, setDescription] = useState(initialProduct?.description || "");
@@ -36,14 +38,46 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
   const [defaultSizeKey, setDefaultSizeKey] = useState(initialProduct?.defaultSizeKey || "");
   const [totalMlAvailable, setTotalMlAvailable] = useState(initialProduct?.totalMlAvailable || 0);
 
+  const isValidUrl = (value: string) => {
+    if (!value) return true; // empty allowed
+    try {
+      new URL(value);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (image && !isValidUrl(image)) {
+      toast({
+        title: "Invalid image URL",
+        description: "Please enter a valid URL for the image.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     if (isDrink) {
       // Validação mínima para bebidas
       if (!sizes || sizes.length === 0) {
-        // Sem toast direto aqui para manter intervenção mínima
+        toast({
+          title: "Missing sizes",
+          description: "Add at least one size for drinks.",
+          variant: "destructive"
+        });
         return;
       }
+
+        if (sizes[0]?.ml === 0 || sizes[0]?.ml === undefined) {
+          toast({
+            title: "Invalid size",
+            description: "Size must include volume (ml) greater than 0.",
+            variant: "destructive"
+          });
+          return;
+        }
 
       onSubmit({
         title,

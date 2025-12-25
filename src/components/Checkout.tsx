@@ -53,7 +53,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
         }
       };
       
-      fetchOrderNumber();
+      fetchOrderNumber().catch((err) => {
+        console.error('Error generating order number (unhandled):', err);
+      });
     }
   }, [isOpen, orderNumber]);
 
@@ -90,6 +92,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       console.log('Sale recorded and stock updated atomically:', orderNumber);
     } catch (error) {
       console.error('Error processing order:', error);
+      setPaymentProcessed(false);
       toast({
         title: "Error",
         description: (error as Error)?.message || "Failed to process order",
@@ -98,20 +101,20 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       return;
     }
 
-    // Clear the cart immediately after successful payment and stock update
+    // Print receipt before clearing the cart so data remains available
+    if (settings?.useThermalPrinter && settings?.comPort) {
+      await handleESP32Print();
+    } else if (!settings?.useThermalPrinter) {
+      await handlePDFPrint();
+    }
+
+    // Clear the cart after payment and printing attempts
     onClearCart();
     
     // Show completion screen
     setTimeout(() => {
       setIsCompleted(true);
     }, 1000);
-
-    // Print receipt based on printer type setting
-    if (settings?.useThermalPrinter && settings?.comPort) {
-      await handleESP32Print();
-    } else if (!settings?.useThermalPrinter) {
-      await handlePDFPrint();
-    }
   };
 
   const handleESP32Print = async () => {

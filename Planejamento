@@ -1295,6 +1295,1252 @@ Principais descobertas da revisão:
 
 ______
 
+---
+
+# 🥤 PLANEJAMENTO DETALHADO — CHECKOUT RÁPIDO PARA BEBIDAS (MINIMAL INTERVENTION)
+
+## Resumo Objetivo
+Implementar um fluxo **exclusivo e direto** para bebidas (quando `product.isDrink === true`), substituindo o carrinho tradicional por um checkout em **4 passos integrados**:
+1. **Select Size** → Escolher tamanho + quantidade
+2. **Checkout** → Revisar pedido e preço
+3. **Payment** → Selecionar forma de pagamento (PIX/QR, Cartão, Débito)
+4. **Complete Payment** → Processar pagamento, liberar ESP32 S3, mostrar tela de instrução com contagem regressiva
+
+**Princípio:** Só adicionar condicionais `if(isDrink)` em pontos estratégicos; produtos regulares continuam 100% intactos.
+
+---
+
+## 🔍 ANÁLISE DO CÓDIGO ATUAL (Validação Realizada)
+
+### **Estado da Aplicação Hoje**
+
+#### ✅ Shop.tsx (linhas 1-150)
+- **Fluxo atual para bebidas**: ao clicar → abre `SizeSelectorModal` → usuário seleciona tamanho/quantidade → adiciona ao carrinho normal
+- **O que funciona**: interceptação de clique com `if (product.isDrink)` já existe
+- **Problema**: bebidas entram no carrinho tradicional, depois vão para o Checkout padrão (Sheet multi-produto)
+
+#### ✅ Cart.tsx (linhas 1-150)
+- **Estrutura**: Sheet com lista de items, botão "Proceed to Checkout"
+- **Cálculos**: usa `item.unitPrice * item.quantity` (já suporta bebidas)
+- **Problema**: não distingue bebidas; todas vão pelo mesmo fluxo
+
+#### ✅ Checkout.tsx (linhas 1-372)
+- **Fluxo**: Sheet que abre após Cart → Order Summary → "Proceed to Payment" → Payment UI → "Complete Payment"
+- **Payment UI** (linhas ~200-300): simula pagamento com QR Code placeholder, botão "Complete Order"
+- **Pós-pagamento** (linhas ~180-220): chamada atômica `salesService.recordSaleAndUpdateStock()`, depois impressão (thermal ou PDF)
+- **Completion screen** (linhas ~180-220): mostra "Order Completed" com mensagem e botão "Start New Order"
+- **Problema**: tudo é genérico; não há hook pós-compra para bebidas
+
+#### ✅ ESP32PrinterService.ts (linhas 1-161)
+- **Métodos**: `connectToComPort()`, `disconnect()`, `printReceipt()`
+- **Estrutura**: usa Web Serial API para comunicar com COM port
+- **Payload**: objeto serializado com items, totais, etc.
+- **Oportunidade**: adicionar novo método `releaseDrink({ orderId, sizeLabel, ml, qty })`
+
+#### ✅ SalesService.ts (linhas 1-110)
+- **Método**: `recordSaleAndUpdateStock()` com transação atômica
+- **Já suporta drinks**: `if (item.product.isDrink && item.mlPerUnit)` → decrementa ML; else → decrementa estoque
+- **Sale item include**: sizeKey, sizeLabel, mlPerUnit se bebida
+- **Oportunidade**: nada precisa mudar; reutilizar como-é
+
+---
+
+## 🎯 FLUXO PROPOSTO (Minimal Change)
+
+### **Para Produtos Regulares** (sem mudança)
+```
+Clica no produto → addToCart (não isDrink) → estado cartItems
+                                            ↓
+                                     Abre Cart (Sheet)
+                                            ↓
+                            Usuário vê items, ajusta qtys
+                                            ↓
+                            "Proceed to Checkout" → abre Checkout
+                                            ↓
+                                      Pagamento (QR)
+                                            ↓
+                                    recordSaleAndUpdateStock()
+                                            ↓
+                                     Impressão (se ativo)
+                                            ↓
+                                  "Order Completed" (Sheet)
+                                            ↓
+                                   "Start New Order" → volta à loja
+```
+
+### **Para Bebidas** (novo fluxo com `if(isDrink)`)
+```
+Clica em "Pilsen" (produto com isDrink=true)
+                      ↓
+          if(isDrink) → openDrinkQuickCheckout()
+                      ↓
+    ┌─────────────────────────────────────────────────────┐
+    │   QUICK CHECKOUT MODAL (novo componente)            │
+    │  (4 passos integrados no mesmo modal/stepper)       │
+    ├─────────────────────────────────────────────────────┤
+    │                                                       │
+    │  Passo 1: SELECT SIZE                               │
+    │  ├─ Select: qual tamanho (300ml R$5, 400ml R$6...) │
+    │  ├─ Input: quantidade (max = ML disponível/size) │
+    │  ├─ Display: "Máximo disponível: X unidades"      │
+    │  └─ Botão: "Next" → Passo 2                         │
+    │                                                       │
+    │  Passo 2: CHECKOUT (Resumo)                         │
+    │  ├─ Produto: "Pilsen 400ml"                         │
+    │  ├─ Quantidade: 2 unidades                          │
+    │  ├─ Unit Price: R$6.00                              │
+    │  ├─ Subtotal: R$12.00                               │
+    │  ├─ Tax (18%): R$2.16                               │
+    │  ├─ Total: R$14.16                                  │
+    │  └─ Botões: "Back" | "Proceed to Payment"           │
+    │                                                       │
+    │  Passo 3: PAYMENT (Payment Methods)                 │
+    │  ├─ Radio buttons: PIX/QR | Cartão | Débito        │
+    │  ├─ Display do método selecionado (QR code etc)     │
+    │  └─ Botões: "Back" | "Complete Payment"             │
+    │                                                       │
+    │  Passo 4: (Wait for User Payment)                   │
+    │  └─ "Processando pagamento..." → spinnerassadors   │
+    │                                                       │
+    └─────────────────────────────────────────────────────┘
+                      ↓
+        recordSaleAndUpdateStock() (atômico)
+                      ↓
+        esp32Service.releaseDrink({ orderId, ... })
+        ├─ Envia: { action: "release_drink", orderId, sizeLabel, ml, qty }
+        └─ Se falhar: toast de aviso, não desfaz venda
+                      ↓
+    ┌─────────────────────────────────────┐
+    │  TELA: "RETIRE SUA BEBIDA"          │
+    ├─────────────────────────────────────┤
+    │                                     │
+    │  🥤 Retire sua bebida!             │
+    │                                     │
+    │  Você tem: 25 segundos             │
+    │                                     │
+    │  [████░░░░░░░░░░░░░░░░]  25s       │
+    │                                     │
+    │  Instruções:                        │
+    │  1. Pegar sua caneca                │
+    │  2. Retirar a bebida abaixo         │
+    │  3. Remover a caneca da máquina     │
+    │                                     │
+    │  Ordem #: 251224170617              │
+    │                                     │
+    │  [Voltar agora (opcional)]         │
+    │                                     │
+    └─────────────────────────────────────┘
+                      ↓
+        Timer atinge 0 segundos
+                      ↓
+        redirect('/shop') → volta ao catálogo
+```
+
+---
+
+## 📋 COMPONENTES E MUDANÇAS (Minimal Change)
+
+### **PR1: Novo Componente — DrinkQuickCheckoutModal.tsx** (12-16h)
+
+**Arquivo:** `src/components/DrinkQuickCheckoutModal.tsx` (NOVO)
+
+**Responsabilidade:** Modal stepper com 4 passos integrados para checkout rápido de bebidas.
+
+#### **1.1 Tipos e Interface**
+```typescript
+// No início do arquivo ou em types/drink.ts
+export interface DrinkCheckoutSelection {
+  product: Product;
+  sizeKey: string;
+  sizeLabel: string;
+  mlPerUnit: number;
+  price: number;  // preço do tamanho específico
+  quantity: number;
+  totalAmount: number;  // preço * qty
+}
+
+export interface PaymentMethod {
+  type: 'pix_qr' | 'card' | 'debit';
+  label: string;
+}
+
+interface DrinkQuickCheckoutModalProps {
+  isOpen: boolean;
+  product: Product | null;
+  currentCartItems: CartItem[];
+  onComplete: (data: { orderNumber: string; drinkData: DrinkCheckoutSelection }) => void;
+  onCancel: () => void;
+}
+```
+
+#### **1.2 Estado do Componente**
+```typescript
+export default function DrinkQuickCheckoutModal({
+  isOpen,
+  product,
+  currentCartItems,
+  onComplete,
+  onCancel
+}: DrinkQuickCheckoutModalProps) {
+  // ===== Estados do Stepper =====
+  const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4>(1);
+  
+  // ===== Passo 1: Select Size =====
+  const [selectedSizeKey, setSelectedSizeKey] = useState('');
+  const [quantity, setQuantity] = useState(1);
+  const [maxQty, setMaxQty] = useState(0);
+  
+  // ===== Passo 3: Payment =====
+  const [selectedPayment, setSelectedPayment] = useState<'pix_qr' | 'card' | 'debit'>('pix_qr');
+  const [paymentProcessed, setPaymentProcessed] = useState(false);
+  const [orderNumber, setOrderNumber] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  
+  const currentCurrency = useCurrentCurrency();
+  const { settings } = useStoreSettings();
+  const { toast } = useToast();
+  const { settings: storeSettings } = useStoreSettings();
+```
+
+#### **1.3 Lógica de Cálculo de Estoque (Passo 1)**
+```typescript
+// Efeito para calcular maxQty
+useEffect(() => {
+  if (!product?.sizes || !selectedSizeKey) return;
+
+  const size = product.sizes.find(s => s.key === selectedSizeKey);
+  if (!size) return;
+
+  // ML já no carrinho (para este produto, todos os tamanhos)
+  const mlInCart = currentCartItems
+    .filter(i => i.product.id === product.id)
+    .reduce((sum, i) => sum + ((i.mlPerUnit || 0) * i.quantity), 0);
+
+  const mlAvailable = (product.totalMlAvailable || 0) - mlInCart;
+  const max = Math.floor(mlAvailable / size.ml);
+
+  setMaxQty(max);
+  setQuantity(Math.min(quantity, max));
+}, [selectedSizeKey, product, currentCartItems]);
+
+// Efeito para atualizar selectedSizeKey inicial
+useEffect(() => {
+  if (product?.sizes && product.sizes.length > 0 && !selectedSizeKey) {
+    setSelectedSizeKey(product.defaultSizeKey || product.sizes[0].key);
+  }
+}, [product]);
+```
+
+#### **1.4 Handlers de Navegação entre Passos**
+```typescript
+const getSelectedSize = () => {
+  return product?.sizes?.find(s => s.key === selectedSizeKey);
+};
+
+const handleNext = (fromStep: number) => {
+  if (fromStep === 1) {
+    if (!selectedSizeKey || quantity <= 0) {
+      toast({ title: "Error", description: "Select size and quantity", variant: "destructive" });
+      return;
+    }
+    setCurrentStep(2);
+  } else if (fromStep === 2) {
+    setCurrentStep(3);
+  } else if (fromStep === 3) {
+    handlePaymentComplete();
+  }
+};
+
+const handleBack = (fromStep: number) => {
+  if (fromStep > 1) {
+    setCurrentStep((fromStep - 1) as 1 | 2 | 3 | 4);
+  } else {
+    onCancel();
+  }
+};
+```
+
+#### **1.5 Handler de Conclusão de Pagamento**
+```typescript
+const handlePaymentComplete = async () => {
+  setIsProcessing(true);
+  setPaymentProcessed(true);
+
+  try {
+    // 1. Gerar order number
+    const newOrderNumber = await salesService.generateOrderNumber();
+    setOrderNumber(newOrderNumber);
+
+    // 2. Criar CartItem equivalente
+    const size = getSelectedSize();
+    if (!size || !product) throw new Error('Size not found');
+
+    const drinkCartItem: CartItem = {
+      product,
+      quantity,
+      unitPrice: size.price,
+      sizeKey: selectedSizeKey,
+      sizeLabel: size.label,
+      mlPerUnit: size.ml,
+    };
+
+    // 3. Calcular totais
+    const subtotal = size.price * quantity;
+    const taxRate = (storeSettings?.taxPercentage || 0) / 100;
+    const taxAmount = subtotal * taxRate;
+    const totalAmount = subtotal + taxAmount;
+
+    // 4. Registrar venda atomicamente
+    await salesService.recordSaleAndUpdateStock(
+      [drinkCartItem],
+      totalAmount,
+      currentCurrency.code,
+      newOrderNumber
+    );
+
+    console.log('✅ Sale recorded:', newOrderNumber);
+
+    // 5. Liberar bebida no ESP32
+    try {
+      await esp32Service.releaseDrink({
+        orderId: newOrderNumber,
+        sizeLabel: size.label,
+        mlPerUnit: size.ml,
+        quantity,
+      });
+      console.log('✅ Drink release signal sent to ESP32');
+    } catch (esp32Error) {
+      console.warn('⚠️ ESP32 release failed (non-blocking):', esp32Error);
+      toast({
+        title: "Warning",
+        description: "Drink dispenser may not be available. Please manually remove your drink.",
+        variant: "destructive"
+      });
+    }
+
+    // 6. Callback com sucesso
+    onComplete({
+      orderNumber: newOrderNumber,
+      drinkData: {
+        product,
+        sizeKey: selectedSizeKey,
+        sizeLabel: size.label,
+        mlPerUnit: size.ml,
+        price: size.price,
+        quantity,
+        totalAmount,
+      },
+    });
+
+  } catch (error) {
+    console.error('Payment error:', error);
+    toast({
+      title: "Error",
+      description: (error as Error)?.message || "Payment failed",
+      variant: "destructive"
+    });
+    setPaymentProcessed(false);
+    setCurrentStep(3);  // Volta ao passo 3 para retry
+  } finally {
+    setIsProcessing(false);
+  }
+};
+```
+
+#### **1.6 Render do Modal (Stepper)**
+```typescript
+return (
+  <Dialog open={isOpen} onOpenChange={onCancel}>
+    <DialogContent className="w-full sm:max-w-md">
+      <DialogHeader>
+        <DialogTitle>
+          {currentStep === 1 && 'Select Size'}
+          {currentStep === 2 && 'Checkout'}
+          {currentStep === 3 && 'Payment'}
+          {currentStep === 4 && 'Processing...'}
+        </DialogTitle>
+      </DialogHeader>
+
+      <div className="space-y-4">
+        {/* ===== PASSO 1: SELECT SIZE ===== */}
+        {currentStep === 1 && (
+          <>
+            <div>
+              <Label htmlFor="size-select" className="block text-sm font-medium mb-2">
+                Size
+              </Label>
+              <Select value={selectedSizeKey} onValueChange={setSelectedSizeKey}>
+                <SelectTrigger id="size-select">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {product?.sizes?.map(size => (
+                    <SelectItem key={size.key} value={size.key}>
+                      {size.label} - {currentCurrency.symbol}{size.price.toFixed(2)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <Label htmlFor="qty-input" className="block text-sm font-medium mb-2">
+                Quantity
+              </Label>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                  disabled={quantity <= 1}
+                >
+                  <Minus className="w-4 h-4" />
+                </Button>
+                <Input
+                  id="qty-input"
+                  type="number"
+                  min="1"
+                  max={maxQty}
+                  value={quantity}
+                  onChange={(e) => setQuantity(Math.min(maxQty, Math.max(1, parseInt(e.target.value) || 1)))}
+                  className="w-16 text-center"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setQuantity(Math.min(maxQty, quantity + 1))}
+                  disabled={quantity >= maxQty}
+                >
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                Max available: {maxQty} {maxQty === 1 ? 'unit' : 'units'}
+              </p>
+            </div>
+
+            {getSelectedSize() && (
+              <Card className="bg-gray-50 p-3">
+                <p className="text-sm text-gray-700">
+                  <strong>Total:</strong> {currentCurrency.symbol}{(getSelectedSize()!.price * quantity).toFixed(2)}
+                </p>
+              </Card>
+            )}
+
+            <div className="flex gap-2 pt-4">
+              <Button variant="outline" onClick={() => handleBack(1)} className="flex-1">
+                Cancel
+              </Button>
+              <Button onClick={() => handleNext(1)} className="flex-1">
+                Next
+              </Button>
+            </div>
+          </>
+        )}
+
+        {/* ===== PASSO 2: CHECKOUT (RESUMO) ===== */}
+        {currentStep === 2 && getSelectedSize() && (
+          <>
+            <Card className="bg-blue-50 border-blue-200 p-4">
+              <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Product:</span>
+                  <span className="font-medium">{product?.title}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Size:</span>
+                  <span className="font-medium">{getSelectedSize()!.label}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Unit Price:</span>
+                  <span className="font-medium">{currentCurrency.symbol}{getSelectedSize()!.price.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-700">Quantity:</span>
+                  <span className="font-medium">{quantity} {quantity === 1 ? 'unit' : 'units'}</span>
+                </div>
+                <Separator />
+                <div className="flex justify-between font-medium">
+                  <span>Subtotal:</span>
+                  <span>{currentCurrency.symbol}{(getSelectedSize()!.price * quantity).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-gray-600">
+                  <span>Tax ({storeSettings?.taxPercentage || 0}%):</span>
+                  <span>{currentCurrency.symbol}{((getSelectedSize()!.price * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between font-semibold text-lg">
+                  <span>Total:</span>
+                  <span className="text-green-600">
+                    {currentCurrency.symbol}{(
+                      (getSelectedSize()!.price * quantity) +
+                      ((getSelectedSize()!.price * quantity * (storeSettings?.taxPercentage || 0)) / 100)
+                    ).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            </Card>
+
+            <div className="flex gap-2 pt-4">
+              <Button variant="outline" onClick={() => handleBack(2)} className="flex-1">
+                Back
+              </Button>
+              <Button onClick={() => handleNext(2)} className="flex-1">
+                Proceed to Payment
+              </Button>
+            </div>
+          </>
+        )}
+
+        {/* ===== PASSO 3: PAYMENT (PAYMENT METHODS) ===== */}
+        {currentStep === 3 && !paymentProcessed && (
+          <>
+            <div className="space-y-3">
+              <Label className="block font-medium">Select Payment Method</Label>
+
+              {/* PIX/QR */}
+              <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                onClick={() => setSelectedPayment('pix_qr')}>
+                <input type="radio" name="payment" checked={selectedPayment === 'pix_qr'} onChange={() => setSelectedPayment('pix_qr')} />
+                <label className="cursor-pointer flex-1">PIX / QR Code</label>
+              </div>
+
+              {/* CARTÃO */}
+              <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                onClick={() => setSelectedPayment('card')}>
+                <input type="radio" name="payment" checked={selectedPayment === 'card'} onChange={() => setSelectedPayment('card')} />
+                <label className="cursor-pointer flex-1">Credit / Debit Card</label>
+              </div>
+
+              {/* DÉBITO */}
+              <div className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                onClick={() => setSelectedPayment('debit')}>
+                <input type="radio" name="payment" checked={selectedPayment === 'debit'} onChange={() => setSelectedPayment('debit')} />
+                <label className="cursor-pointer flex-1">Debit Card</label>
+              </div>
+            </div>
+
+            {/* Display do método selecionado */}
+            {selectedPayment === 'pix_qr' && (
+              <Card className="bg-gray-50 p-4 text-center">
+                <p className="text-sm text-gray-600 mb-3">Scan the QR code:</p>
+                <div className="bg-white p-4 rounded border">
+                  <QrCode className="w-32 h-32 mx-auto text-gray-400" />
+                </div>
+              </Card>
+            )}
+
+            {selectedPayment === 'card' && (
+              <Card className="bg-gray-50 p-4">
+                <p className="text-sm text-gray-600 mb-2">Insert or tap your card:</p>
+                <CreditCard className="w-16 h-16 mx-auto text-gray-400" />
+              </Card>
+            )}
+
+            {selectedPayment === 'debit' && (
+              <Card className="bg-gray-50 p-4">
+                <p className="text-sm text-gray-600 mb-2">Insert or tap your debit card:</p>
+                <CreditCard className="w-16 h-16 mx-auto text-gray-400" />
+              </Card>
+            )}
+
+            <div className="flex gap-2 pt-4">
+              <Button variant="outline" onClick={() => handleBack(3)} className="flex-1">
+                Back
+              </Button>
+              <Button 
+                onClick={() => handleNext(3)}
+                disabled={isProcessing}
+                className="flex-1"
+              >
+                {isProcessing ? 'Processing...' : 'Complete Payment'}
+              </Button>
+            </div>
+          </>
+        )}
+
+        {/* ===== PASSO 4: PROCESSANDO ===== */}
+        {(currentStep === 4 || (paymentProcessed && isProcessing)) && (
+          <div className="flex flex-col items-center justify-center gap-4 py-8">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <p className="text-gray-600 font-medium">Processing payment...</p>
+            <p className="text-sm text-gray-500">Please wait</p>
+          </div>
+        )}
+      </div>
+    </DialogContent>
+  </Dialog>
+);
+```
+
+---
+
+### **PR2: Novo Componente — DrinkPickupScreen.tsx** (6-8h)
+
+**Arquivo:** `src/components/DrinkPickupScreen.tsx` (NOVO)
+
+**Responsabilidade:** Tela full-screen exibida após pagamento bem-sucedido de bebida, com contagem regressiva e instruções.
+
+#### **2.1 Tipos**
+```typescript
+export interface DrinkPickupScreenProps {
+  isOpen: boolean;
+  orderNumber: string;
+  drinkData: {
+    productTitle: string;
+    sizeLabel: string;
+    mlPerUnit: number;
+    quantity: number;
+  };
+  timerDuration?: number;  // default 30 segundos
+  onTimerExpired: () => void;
+  onClose?: () => void;
+}
+```
+
+#### **2.2 Estado e Lógica de Timer**
+```typescript
+export default function DrinkPickupScreen({
+  isOpen,
+  orderNumber,
+  drinkData,
+  timerDuration = 30,
+  onTimerExpired,
+  onClose
+}: DrinkPickupScreenProps) {
+  const [timeRemaining, setTimeRemaining] = useState(timerDuration);
+  const { toast } = useToast();
+
+  // Timer principal
+  useEffect(() => {
+    if (!isOpen || timeRemaining <= 0) return;
+
+    const interval = setInterval(() => {
+      setTimeRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          onTimerExpired();  // Callback ao zerar
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isOpen, timeRemaining, onTimerExpired]);
+
+  // Reset timer ao abrir
+  useEffect(() => {
+    if (isOpen) {
+      setTimeRemaining(timerDuration);
+    }
+  }, [isOpen]);
+
+  const percentageRemaining = (timeRemaining / timerDuration) * 100;
+  const isWarning = timeRemaining <= 10;
+
+  const handleClose = () => {
+    if (onClose) onClose();
+    if (timeRemaining > 0) {
+      toast({
+        title: "Drink Retrieved",
+        description: "Thank you! Enjoy your beverage!",
+      });
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gradient-to-b from-blue-50 to-indigo-50 flex flex-col items-center justify-center z-50">
+      {/* Header */}
+      <div className="mb-8 text-center">
+        <h1 className="text-5xl font-bold text-gray-900 mb-2">
+          🥤 Retire sua Bebida!
+        </h1>
+        <p className="text-lg text-gray-600">
+          {drinkData.productTitle} ({drinkData.sizeLabel}) x{drinkData.quantity}
+        </p>
+      </div>
+
+      {/* Main Content */}
+      <div className="bg-white rounded-2xl shadow-2xl p-12 max-w-sm w-full mx-4">
+        {/* Timer Circle */}
+        <div className="relative w-48 h-48 mx-auto mb-8">
+          {/* Background circle */}
+          <svg className="w-full h-full transform -rotate-90">
+            <circle
+              cx="96"
+              cy="96"
+              r="88"
+              fill="none"
+              stroke="#e5e7eb"
+              strokeWidth="4"
+            />
+            {/* Progress circle */}
+            <circle
+              cx="96"
+              cy="96"
+              r="88"
+              fill="none"
+              stroke={isWarning ? '#ef4444' : '#3b82f6'}
+              strokeWidth="4"
+              strokeDasharray={`${(percentageRemaining / 100) * 2 * Math.PI * 88} ${2 * Math.PI * 88}`}
+              className="transition-all duration-300"
+            />
+          </svg>
+
+          {/* Center text */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className={`text-5xl font-bold ${isWarning ? 'text-red-600' : 'text-blue-600'}`}>
+              {timeRemaining}
+            </span>
+            <span className="text-gray-500 text-sm">segundos</span>
+          </div>
+        </div>
+
+        {/* Instructions */}
+        <div className="bg-blue-50 rounded-lg p-4 mb-6">
+          <h3 className="font-semibold text-gray-900 mb-3">Instruções:</h3>
+          <ol className="text-sm text-gray-700 space-y-2">
+            <li className="flex items-start gap-2">
+              <span className="font-bold text-blue-600">1.</span>
+              <span>Pegue sua caneca</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="font-bold text-blue-600">2.</span>
+              <span>Retire a bebida abaixo</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="font-bold text-blue-600">3.</span>
+              <span>Remova a caneca da máquina</span>
+            </li>
+          </ol>
+        </div>
+
+        {/* Order Info */}
+        <div className="border-t-2 border-b-2 border-gray-200 py-4 mb-6">
+          <p className="text-center text-gray-600">
+            <span className="text-sm">Pedido:</span>
+            <br />
+            <span className="text-2xl font-bold text-gray-900">#{orderNumber}</span>
+          </p>
+        </div>
+
+        {/* Close Button */}
+        <Button 
+          onClick={handleClose}
+          className="w-full"
+          variant={isWarning ? 'destructive' : 'default'}
+        >
+          {isWarning ? 'Retirar Agora (Atenção!)' : 'Retirar Agora'}
+        </Button>
+
+        {/* Warning Message */}
+        {isWarning && (
+          <p className="text-xs text-red-600 text-center mt-3 font-semibold">
+            ⚠️ A máquina retornará ao catálogo em breve
+          </p>
+        )}
+      </div>
+
+      {/* Auto-redirect message */}
+      <p className="text-gray-500 text-sm mt-8 text-center">
+        Será redirecionado para o catálogo quando o tempo acabar
+      </p>
+    </div>
+  );
+}
+```
+
+---
+
+### **PR3: Estender ESP32PrinterService.ts** (4-6h)
+
+**Arquivo:** `src/services/esp32PrinterService.ts` (MODIFICAÇÃO)
+
+**Responsabilidade:** Adicionar novo método `releaseDrink()` para enviar comando ao ESP32 liberando a bebida.
+
+#### **3.1 Adicionar Tipos**
+```typescript
+interface ReleaseDrinkPayload {
+  action: 'release_drink';
+  orderId: string;
+  sizeLabel: string;
+  mlPerUnit: number;
+  quantity: number;
+  timestamp: string;
+}
+
+interface DrinkReleaseResponse {
+  success: boolean;
+  message: string;
+}
+```
+
+#### **3.2 Implementar Método releaseDrink()**
+```typescript
+// Adicionar ao interior da classe ESP32PrinterService
+
+async releaseDrink(data: {
+  orderId: string;
+  sizeLabel: string;
+  mlPerUnit: number;
+  quantity: number;
+}): Promise<DrinkReleaseResponse> {
+  try {
+    if (!this.writer) {
+      throw new Error('ESP32 not connected. Connect in Admin > Settings first.');
+    }
+
+    const payload: ReleaseDrinkPayload = {
+      action: 'release_drink',
+      orderId: data.orderId,
+      sizeLabel: data.sizeLabel,
+      mlPerUnit: data.mlPerUnit,
+      quantity: data.quantity,
+      timestamp: new Date().toISOString(),
+    };
+
+    const jsonString = JSON.stringify(payload);
+    const encoder = new TextEncoder();
+    const encodedData = encoder.encode(jsonString + '\n');  // Add newline as delimiter
+
+    console.log('📤 Sending drink release command:', payload);
+
+    await this.writer.write(encodedData);
+
+    console.log('✅ Drink release command sent successfully');
+
+    return {
+      success: true,
+      message: 'Drink release signal sent to ESP32'
+    };
+
+  } catch (error) {
+    console.error('❌ Failed to send drink release command:', error);
+    return {
+      success: false,
+      message: (error as Error)?.message || 'Failed to send drink release signal'
+    };
+  }
+}
+
+// Método auxiliar para disconnect (se ainda não existir)
+async disconnect(): Promise<void> {
+  try {
+    if (this.reader) {
+      await this.reader.cancel();
+      this.reader.releaseLock();
+      this.reader = null;
+    }
+    
+    if (this.writer) {
+      await this.writer.close();
+      this.writer = null;
+    }
+    
+    if (this.port) {
+      await this.port.close();
+      this.port = null;
+    }
+    
+    console.log('✅ ESP32 disconnected');
+  } catch (error) {
+    console.error('Error disconnecting:', error);
+  }
+}
+```
+
+---
+
+### **PR4: Modificar Shop.tsx (Minimal Change)** (4-6h)
+
+**Arquivo:** `src/pages/Shop.tsx` (MODIFICAÇÃO localizada)
+
+**Responsabilidade:** Interceptar clique de bebida e abrir novo modal de checkout rápido em vez de carrinho.
+
+#### **4.1 Adicionar Imports**
+```typescript
+import DrinkQuickCheckoutModal from '@/components/DrinkQuickCheckoutModal';
+import DrinkPickupScreen from '@/components/DrinkPickupScreen';
+```
+
+#### **4.2 Adicionar Estados**
+```typescript
+// Após linha ~36 (outros estados)
+const [drinkCheckoutOpen, setDrinkCheckoutOpen] = useState(false);
+const [drinkPickupOpen, setDrinkPickupOpen] = useState(false);
+const [completedDrinkOrder, setCompletedDrinkOrder] = useState<{
+  orderNumber: string;
+  drinkData: {
+    productTitle: string;
+    sizeLabel: string;
+    mlPerUnit: number;
+    quantity: number;
+  };
+} | null>(null);
+```
+
+#### **4.3 Modificar Função addToCart() (if isDrink)**
+```typescript
+const addToCart = async (product: Product) => {
+  // ✅ NOVA LÓGICA: Se bebida, abrir quick checkout em vez de carrinho
+  if (product.isDrink) {
+    setSelectedProductForSizeModal(product);
+    setDrinkCheckoutOpen(true);  // ⚠️ Abrir o novo modal ao invés de SizeSelectorModal
+    return;
+  }
+
+  // ✅ FLUXO ORIGINAL para produtos regulares (sem mudança)
+  if ((product.stock || 0) <= 0) return;
+
+  setCartItems(prevItems => {
+    const existingItem = prevItems.find(
+      item => item.product.id === product.id && !item.sizeKey
+    );
+
+    if (existingItem) {
+      const newQuantity = existingItem.quantity + 1;
+      const maxQty = getMaxQuantity(product, undefined, prevItems);
+
+      if (newQuantity <= maxQty) {
+        return prevItems.map(item =>
+          item.product.id === product.id && !item.sizeKey
+            ? { ...item, quantity: newQuantity }
+            : item
+        );
+      }
+      return prevItems;
+    } else {
+      return [...prevItems, {
+        product,
+        quantity: 1,
+        unitPrice: product.price
+      }];
+    }
+  });
+};
+```
+
+#### **4.4 Adicionar Handler de Conclusão de Bebida**
+```typescript
+const handleDrinkCheckoutComplete = (data: {
+  orderNumber: string;
+  drinkData: {
+    product: Product;
+    sizeKey: string;
+    sizeLabel: string;
+    mlPerUnit: number;
+    price: number;
+    quantity: number;
+    totalAmount: number;
+  };
+}) => {
+  // 1. Preparar dados para tela de retirada
+  setCompletedDrinkOrder({
+    orderNumber: data.orderNumber,
+    drinkData: {
+      productTitle: data.drinkData.product.title,
+      sizeLabel: data.drinkData.sizeLabel,
+      mlPerUnit: data.drinkData.mlPerUnit,
+      quantity: data.drinkData.quantity,
+    }
+  });
+
+  // 2. Fechar modal de checkout
+  setDrinkCheckoutOpen(false);
+
+  // 3. Abrir tela de retirada
+  setTimeout(() => {
+    setDrinkPickupOpen(true);
+  }, 200);
+};
+
+const handleDrinkPickupComplete = () => {
+  // Ao timer expirar ou usuário clicar "Retirar Agora"
+  setDrinkPickupOpen(false);
+  setCompletedDrinkOrder(null);
+  setSelectedProductForSizeModal(null);
+  
+  // Voltar ao catálogo (sem mudanças de estado necessárias, apenas fechar modal)
+  // A loja já está renderizando normalmente
+};
+```
+
+#### **4.5 Adicionar Componentes ao Render (Final do componente)**
+```tsx
+{/* ===== DRINK QUICK CHECKOUT MODAL ===== */}
+<DrinkQuickCheckoutModal
+  isOpen={drinkCheckoutOpen}
+  product={selectedProductForSizeModal}
+  currentCartItems={cartItems}
+  onComplete={handleDrinkCheckoutComplete}
+  onCancel={() => {
+    setDrinkCheckoutOpen(false);
+    setSelectedProductForSizeModal(null);
+  }}
+/>
+
+{/* ===== DRINK PICKUP SCREEN ===== */}
+{completedDrinkOrder && (
+  <DrinkPickupScreen
+    isOpen={drinkPickupOpen}
+    orderNumber={completedDrinkOrder.orderNumber}
+    drinkData={completedDrinkOrder.drinkData}
+    timerDuration={30}  // 30 segundos para retirar
+    onTimerExpired={handleDrinkPickupComplete}
+    onClose={handleDrinkPickupComplete}
+  />
+)}
+```
+
+---
+
+### **PR5: Nenhuma Mudança Necessária em Outros Arquivos** (Validação)
+
+Os seguintes arquivos **NÃO PRECISAM de mudanças** (reutilizam código existente):
+
+#### ✅ **Cart.tsx** — Nenhuma mudança
+- Bebidas nunca chegam aqui (fluxo direto)
+- Se por algum motivo uma bebida for adicionada via `addToCart` original, funciona normalmente
+
+#### ✅ **Checkout.tsx** — Nenhuma mudança
+- Reutiliza pipeline existente (não é aberto para bebidas)
+- `salesService.recordSaleAndUpdateStock()` já suporta drinks
+
+#### ✅ **SalesService.ts** — Nenhuma mudança
+- Já diferencia bebidas (`if (item.product.isDrink)`)
+- Já inclui campos opcionais (sizeKey, sizeLabel, mlPerUnit)
+
+#### ✅ **pdfReceiptService.ts** — Nenhuma mudança
+- Se bebida for impressa, já suporta (não há impressão no fluxo quick checkout)
+- Usa `item.sizeLabel` se presente
+
+#### ✅ **esp32PrinterService.ts** — MUDANÇA: Adicionar método `releaseDrink()`
+- Novo método isolado
+- Não afeta impressão existente
+
+---
+
+## 📊 RESUMO DE MUDANÇAS (Minimal Intervention)
+
+| Arquivo | Tipo | Mudança | Impacto |
+|---------|------|---------|--------|
+| **DrinkQuickCheckoutModal.tsx** | NOVO | Componente stepper 4 passos | Bebidas só |
+| **DrinkPickupScreen.tsx** | NOVO | Tela com timer | Bebidas só |
+| **esp32PrinterService.ts** | MODIFICAÇÃO | +método `releaseDrink()` | Isolado |
+| **Shop.tsx** | MODIFICAÇÃO | `if(isDrink)` abrir novo modal | Localizado |
+| **Cart.tsx** | Nenhuma | — | — |
+| **Checkout.tsx** | Nenhuma | — | — |
+| **SalesService.ts** | Nenhuma | — | — |
+
+---
+
+## 🔌 PROTOCOLO ESP32 S3 (Payload)
+
+### **Comando de Liberação de Bebida**
+
+```json
+{
+  "action": "release_drink",
+  "orderId": "251224170617",
+  "sizeLabel": "400ml",
+  "mlPerUnit": 400,
+  "quantity": 2,
+  "timestamp": "2025-12-24T17:06:17.123Z"
+}
+```
+
+### **Resposta Esperada (ESP32 para Kiosk)**
+```json
+{
+  "status": "success",
+  "orderId": "251224170617",
+  "releasedAt": "2025-12-24T17:06:18.456Z",
+  "relayState": "ACTIVATED"
+}
+```
+
+### **Protocolo Serial (Web Serial API)**
+- **Baud Rate:** 9600
+- **Data Bits:** 8
+- **Stop Bits:** 1
+- **Parity:** None
+- **Delimiter:** `\n` (newline)
+
+---
+
+## 🧪 FLUXO DE TESTES (Validação)
+
+### **Teste 1: Bebida com Sucesso Completo**
+```
+1. Na loja, clicar em "Pilsen" (isDrink: true)
+2. Abrir DrinkQuickCheckoutModal
+3. Passo 1: Selecionar 400ml, qty=2
+4. Passo 2: Ver resumo (R$12 + R$2.16 tax = R$14.16)
+5. Passo 3: Selecionar PIX/QR
+6. "Complete Payment" → processa pagamento
+7. esp32Service.releaseDrink() enviado ✅
+8. DrinkPickupScreen aparece com timer 30s
+9. Usuário clica "Retirar Agora"
+10. Volta à loja automaticamente ✅
+```
+
+### **Teste 2: Falha do ESP32 (Non-Blocking)**
+```
+1. Mesmos passos 1-6
+2. esp32Service.releaseDrink() falha (COM port off)
+3. Toast de aviso: "Drink dispenser may not be available..."
+4. VENDA AINDA REGISTRADA ✅ (não desfaz)
+5. Timer continua normalmente ✅
+```
+
+### **Teste 3: Múltiplas Bebidas (Se adicionar via carrinho normal)**
+```
+1. Se usar "+Add to Cart" para bebida (fallback)
+2. SizeSelectorModal abre
+3. Bebida adicionada ao cartItems normal
+4. Fluxo padrão (Cart → Checkout) funciona ✅
+```
+
+### **Teste 4: Produto Regular (Sem Mudança)**
+```
+1. Clicar em "Biscoito" (isDrink: false)
+2. Adicionar ao carrinho normalmente ✅
+3. Cart → Checkout → Pagamento padrão ✅
+4. Nenhuma mudança de UX ✅
+```
+
+---
+
+## ⏱️ ESTIMATIVA DE ESFORÇO REVISADO
+
+| PR | Componente | Complexidade | Tempo | Detalhes |
+|----|-----------|----|-------|----------|
+| PR1 | DrinkQuickCheckoutModal | Alta | 12-16h | Stepper 4 passos, lógica de payment |
+| PR2 | DrinkPickupScreen | Média | 6-8h | Timer, instruções, redirect |
+| PR3 | ESP32 releaseDrink() | Baixa | 4-6h | Novo método, serialização |
+| PR4 | Shop.tsx changes | Baixa | 4-6h | 3 adições localizadas com `if(isDrink)` |
+| — | Outros arquivos | Nenhuma | — | Validado: 0 mudanças necessárias |
+| **TOTAL** | — | — | **26-36h** | **3-5 dias (minimal risk)** |
+
+---
+
+## 🎯 PONTOS-CHAVE (Minimal Intervention Mantido)
+
+1. ✅ **if(isDrink) localizado:** Shop.tsx tem apenas 3 adições com condicionais
+2. ✅ **Carrinho intacto:** Produtos regulares continuam 100% iguais
+3. ✅ **Reutilização:** `salesService` e `esp32PrinterService` são extensões, não substituições
+4. ✅ **Falha não-bloqueante:** ESP32 fora = aviso, mas venda é registrada
+5. ✅ **Timer fluido:** Redirecionamento automático sem intervenção
+6. ✅ **Isolamento de componentes:** Novos modais são independentes do fluxo regular
+
+---
+
 ## 📌 NOTAS FINAIS
 
-1. **Minimal Intervention**: `if(isDrink)` localizado, sem refatoração geral______
+1. **Minimal Intervention**: `if(isDrink)` localizado, sem refatoração geral
+2. **Arquivos a criar:** 2 novos componentes (DrinkQuickCheckoutModal.tsx, DrinkPickupScreen.tsx)
+3. **Arquivos a modificar:** 2 existentes (esp32PrinterService.ts +método, Shop.tsx +3 pontos)
+4. **Risco:** BAIXO — isolamento completo de features, fluxo padrão completamente preservado
+5. **Tempo total:** 26-36h (3-5 dias)
+
+---
+
+## 📚 GUIA RÁPIDO DE REFERÊNCIA
+
+### Fluxo Tradicional (Produtos Regulares)
+```
+Shop → Clica Biscoito (isDrink: false)
+  ↓
+addToCart() → cartItems
+  ↓
+Abre Cart (Sheet)
+  ↓
+"Proceed to Checkout" → abre Checkout (Sheet)
+  ↓
+"Proceed to Payment" → Payment UI
+  ↓
+"Complete Order" → recordSaleAndUpdateStock()
+  ↓
+Impressão (se ativo)
+  ↓
+"Order Completed" → "Start New Order"
+```
+
+### Fluxo Novo (Bebidas — Minimal Intervention)
+```
+Shop → Clica Pilsen (isDrink: true)
+  ↓
+if(isDrink) → openDrinkQuickCheckout()
+  ↓
+┌──────────────────────────────────────┐
+│ DrinkQuickCheckoutModal (4 passos)   │
+├──────────────────────────────────────┤
+│ 1. Select Size + Qty                 │
+│ 2. Checkout (Resumo)                 │
+│ 3. Payment Method (PIX/Card/Debit)  │
+│ 4. Complete Payment                  │
+└──────────────────────────────────────┘
+  ↓
+recordSaleAndUpdateStock()
+  ↓
+esp32Service.releaseDrink() [não-bloqueante]
+  ↓
+┌──────────────────────────────────────┐
+│ DrinkPickupScreen (Timer 30s)        │
+├──────────────────────────────────────┤
+│ 🥤 Retire sua Bebida!               │
+│ Você tem: 25 segundos               │
+│ [████░░░░░░░░░░░░░░░░] 25s          │
+│ Instruções...                        │
+│ [Retirar Agora]                      │
+└──────────────────────────────────────┘
+  ↓
+Timer = 0 ou usuário clica "Retirar Agora"
+  ↓
+redirect('/shop') → volta ao catálogo fluido
+```
+
+### Componentes Afetados
+```
+✅ Criação (Novos)
+  ├─ DrinkQuickCheckoutModal.tsx (12-16h)
+  └─ DrinkPickupScreen.tsx (6-8h)
+
+⚠️ Modificação (Localizada)
+  ├─ Shop.tsx: +3 pontos com if(isDrink) (4-6h)
+  └─ esp32PrinterService.ts: +método releaseDrink() (4-6h)
+
+✔️ Sem Mudança (Compatível)
+  ├─ Cart.tsx
+  ├─ Checkout.tsx
+  ├─ SalesService.ts
+  ├─ pdfReceiptService.ts
+  └─ Todos outros serviços/hooks
+```
+
+### Payload ESP32
+```json
+{
+  "action": "release_drink",
+  "orderId": "251224170617",
+  "sizeLabel": "400ml",
+  "mlPerUnit": 400,
+  "quantity": 2,
+  "timestamp": "2025-12-24T17:06:17.123Z"
+}
+```
+
+---
+
+## ✨ Próximos Passos (Pronto para Implementação)
+
+1. **Revisar planejamento** — Validar com UX desejada
+2. **Criar PR1** — DrinkQuickCheckoutModal.tsx (componente isolado)
+3. **Criar PR2** — DrinkPickupScreen.tsx (tela com timer)
+4. **Modificar PR3** — esp32PrinterService.ts (novo método)
+5. **Modificar PR4** — Shop.tsx (3 adições `if(isDrink)`)
+6. **Testar fluxos** — Bebida completa, falhas, produtos regulares
+
+**Status:** ✅ Planejamento finalizado e documentado (4.2.2025)______

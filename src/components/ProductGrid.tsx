@@ -60,11 +60,22 @@ const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
                     return `${currentCurrency.symbol}${displayPrice.toFixed(2)}`;
                   })()}
                 </span>
-                <Badge variant={(product.isDrink ? (product.totalMlAvailable || 0) > 0 : product.inStock) ? "default" : "destructive"} className="text-xs">
-                  {product.isDrink
-                    ? `${product.totalMlAvailable || 0}ml`
-                    : (product.inStock ? "In Stock" : "Out of Stock")}
-                </Badge>
+                {(() => {
+                  const drinkMl = product.totalMlAvailable;
+                  if (product.isDrink) {
+                    const hasStock = (drinkMl ?? 0) > 0;
+                    return (
+                      <Badge variant={hasStock ? "default" : "destructive"} className="text-xs">
+                        {drinkMl != null ? `${drinkMl}ml` : "No stock data"}
+                      </Badge>
+                    );
+                  }
+                  return (
+                    <Badge variant={product.inStock ? "default" : "destructive"} className="text-xs">
+                      {product.inStock ? "In Stock" : "Out of Stock"}
+                    </Badge>
+                  );
+                })()}
               </div>
               
               <div className="flex flex-wrap gap-1 hidden sm:flex">

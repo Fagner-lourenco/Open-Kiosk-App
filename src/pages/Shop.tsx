@@ -13,13 +13,31 @@ import { CartItem, Product } from "@/types/product";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { useSettings } from "@/hooks/useSettings";
 import { getCartItemKey, getMaxQuantity } from "@/utils/productUtils";
-import SizeSelectorModal from "@/components/SizeSelectorModal";
+import DrinkQuickCheckoutModal from "@/components/DrinkQuickCheckoutModal";
+import DrinkPickupScreen from "@/components/DrinkPickupScreen";
+import AttractScreen from "@/components/AttractScreen";
+import { useKioskIdle } from "@/hooks/useKioskIdle";
+import { useStoreSettings } from "@/hooks/useStoreSettings";
+
+type DrinkCheckoutResult = {
+  orderNumber: string;
+  drinkData: {
+    product: Product;
+    sizeKey: string;
+    sizeLabel: string;
+    mlPerUnit: number;
+    price: number;
+    quantity: number;
+    totalAmount: number;
+  };
+};
 
 const INITIAL_LOAD_LIMIT = 50;
 
 const Shop = () => {
   const navigate = useNavigate();
   const { products, loading, updateProduct } = useFirebaseProducts();
+  const { settings } = useStoreSettings();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -29,8 +47,14 @@ const Shop = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const { currentCurrency } = useSettings();
-  const [selectedProductForSizeModal, setSelectedProductForSizeModal] = useState<Product | null>(null);
-  const [sizeModalOpen, setSizeModalOpen] = useState(false);
+  const [selectedDrink, setSelectedDrink] = useState<Product | null>(null);
+  const [isDrinkCheckoutOpen, setIsDrinkCheckoutOpen] = useState(false);
+  const [drinkPickupData, setDrinkPickupData] = useState<DrinkCheckoutResult | null>(null);
+
+  // Kiosk idle overlay (suppressed when any modal/overlay is active)
+  const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible;
+  const attractTimeout = settings?.attractTimeoutSeconds ?? 15;
+  const { isIdle, resetIdle } = useKioskIdle({ timeoutSeconds: attractTimeout, suppressed: isSuppressed });
 
   useEffect(() => {
     if (products) {
@@ -75,8 +99,8 @@ const Shop = () => {
   const addToCart = async (product: Product) => {
     // Bebida: abrir modal de seleção de tamanho
     if (product.isDrink) {
-      setSelectedProductForSizeModal(product);
-      setSizeModalOpen(true);
+      setSelectedDrink(product);
+      setIsDrinkCheckoutOpen(true);
       return;
     }
 
@@ -110,38 +134,19 @@ const Shop = () => {
     });
   };
 
-  const handleAddBeverageToCart = (selection: {
-    sizeKey: string;
-    sizeLabel: string;
-    mlPerUnit: number;
-    price: number;
-    quantity: number;
-  }) => {
-    const product = selectedProductForSizeModal!;
-    setCartItems(prevItems => {
-      const itemKey = getCartItemKey(product.id, selection.sizeKey);
-      const existingItem = prevItems.find(i => getCartItemKey(i.product.id, i.sizeKey) === itemKey);
+  const handleDrinkCheckoutComplete = (data: DrinkCheckoutResult) => {
+    setIsDrinkCheckoutOpen(false);
+    setSelectedDrink(null);
+    setDrinkPickupData(data);
+  };
 
-      if (existingItem) {
-        const maxQty = getMaxQuantity(product, selection.sizeKey, prevItems);
-        const newQty = Math.min(existingItem.quantity + selection.quantity, maxQty);
-        return prevItems.map(i =>
-          getCartItemKey(i.product.id, i.sizeKey) === itemKey
-            ? { ...i, quantity: newQty }
-            : i
-        );
-      }
+  const handleDrinkCheckoutCancel = () => {
+    setIsDrinkCheckoutOpen(false);
+    setSelectedDrink(null);
+  };
 
-      return [...prevItems, {
-        product,
-        quantity: selection.quantity,
-        unitPrice: selection.price,
-        sizeKey: selection.sizeKey,
-        sizeLabel: selection.sizeLabel,
-        mlPerUnit: selection.mlPerUnit,
-      }];
-    });
-    setSizeModalOpen(false);
+  const handleClosePickup = () => {
+    setDrinkPickupData(null);
   };
 
   const updateCartQuantity = (cartItemKey: string, quantity: number) => {
@@ -315,12 +320,20 @@ const Shop = () => {
         onUpdateQuantity={updateCartQuantity}
         onClearCart={clearCart}
       />
-      <SizeSelectorModal
-        isOpen={sizeModalOpen}
-        product={selectedProductForSizeModal}
+      <DrinkQuickCheckoutModal
+        isOpen={isDrinkCheckoutOpen}
+        product={selectedDrink}
         currentCartItems={cartItems}
-        onSelect={handleAddBeverageToCart}
-        onClose={() => setSizeModalOpen(false)}
+        onComplete={handleDrinkCheckoutComplete}
+        onCancel={handleDrinkCheckoutCancel}
+      />
+      <DrinkPickupScreen
+        isOpen={!!drinkPickupData}
+        orderNumber={drinkPickupData?.orderNumber || ""}
+        drinkData={drinkPickupData?.drinkData || null}
+        timeoutSeconds={80}
+        onComplete={handleClosePickup}
+        onTimeout={handleClosePickup}
       />
 
       {/* On-Screen Keyboard */}
@@ -328,6 +341,14 @@ const Shop = () => {
         isVisible={isKeyboardVisible}
         onKeyPress={handleKeyPress}
         onClose={() => setIsKeyboardVisible(false)}
+      />
+
+      {/* Attract Screen Overlay */}
+      <AttractScreen
+        visible={isIdle}
+        onStart={resetIdle}
+        title="Faça seu pedido aqui"
+        subtitle="Toque para iniciar"
       />
     </div>
   );

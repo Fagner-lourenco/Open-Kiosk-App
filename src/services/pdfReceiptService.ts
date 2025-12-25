@@ -3,7 +3,7 @@ import { CartItem } from '@/types/product';
 import { StoreSettings } from '@/types/store';
 
 export class PDFReceiptService {
-  generateReceiptPDF(cartItems: CartItem[], settings: StoreSettings, orderNumber: string): void {
+  generateReceiptPDF(cartItems: CartItem[], settings: StoreSettings, orderNumber: string): boolean {
     const currentDate = new Date().toLocaleDateString('en-GB');
     const currentTime = new Date().toLocaleTimeString('en-US', { 
       hour12: true, 
@@ -19,7 +19,8 @@ export class PDFReceiptService {
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     
     if (!printWindow) {
-      throw new Error('Could not open print window. Please allow popups.');
+      console.error('Could not open print window. Please allow popups.');
+      return false;
     }
 
     const receiptHTML = `
@@ -148,6 +149,7 @@ export class PDFReceiptService {
 
     printWindow.document.write(receiptHTML);
     printWindow.document.close();
+    return true;
   }
 }
 

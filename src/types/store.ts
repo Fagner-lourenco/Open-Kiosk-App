@@ -15,6 +15,8 @@ export interface StoreSettings {
   };
   comPort?: string;
   useThermalPrinter?: boolean;
+  // Optional: tempo de inatividade para mostrar tela de atração
+  attractTimeoutSeconds?: number;
 }
 
 export interface InventoryLog {
