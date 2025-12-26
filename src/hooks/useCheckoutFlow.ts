@@ -24,6 +24,9 @@ const buildInitialState = (initialTimeoutSeconds: number, paymentTimeoutSeconds:
   selectedSize: null,
   quantity: 0,
   selectedPayment: null,
+  mpOrderId: null,
+  mpQrData: null,
+  mpPollingAttempts: 0,
   error: null,
   isPaymentCancellable: true,
   paymentTimeoutSeconds,
@@ -218,6 +221,18 @@ export function useCheckoutFlow(options: UseCheckoutFlowOptions = {}): UseChecko
 
     updateSelectedPayment: useCallback((method) => {
       setState((prev) => ({ ...prev, selectedPayment: method }));
+    }, []),
+
+    setMpOrderId: useCallback((orderId: string | null) => {
+      setState((prev) => ({ ...prev, mpOrderId: orderId }));
+    }, []),
+
+    setMpQrData: useCallback((qrData: string | null) => {
+      setState((prev) => ({ ...prev, mpQrData: qrData }));
+    }, []),
+
+    incrementMpPolling: useCallback(() => {
+      setState((prev) => ({ ...prev, mpPollingAttempts: (prev.mpPollingAttempts || 0) + 1 }));
     }, []),
 
     setError: useCallback(

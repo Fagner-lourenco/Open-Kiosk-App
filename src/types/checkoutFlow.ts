@@ -37,7 +37,12 @@ export interface CheckoutFlowState {
 
   selectedSize: any | null;
   quantity: number;
-  selectedPayment: "pix_qr" | "card" | "debit" | null;
+  selectedPayment: "pix_qr" | "card" | "debit" | "mercadopago_qr" | "mercadopago_point" | null;
+
+  // Mercado Pago integration
+  mpOrderId?: string | null;
+  mpQrData?: string | null;
+  mpPollingAttempts?: number;
 
   error: string | null;
   isPaymentCancellable: boolean;
@@ -60,7 +65,13 @@ export interface CheckoutFlowActions {
 
   updateSelectedSize(size: any): void;
   updateQuantity(qty: number): void;
-  updateSelectedPayment(method: "pix_qr" | "card" | "debit"): void;
+  updateSelectedPayment(method: "pix_qr" | "card" | "debit" | "mercadopago_qr" | "mercadopago_point" | null): void;
+
+  // Mercado Pago actions
+  setMpOrderId(orderId: string | null): void;
+  setMpQrData(qrData: string | null): void;
+  incrementMpPolling(): void;
+
   setError(error: string | null): void;
 
   reset(): void;

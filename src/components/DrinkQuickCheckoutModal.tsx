@@ -5,8 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Minus, Plus, CreditCard, QrCode, Clock } from "lucide-react";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { esp32Printer } from "@/services/esp32PrinterService";
@@ -16,42 +15,8 @@ import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
 import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
-
-const PAYMENT_METHODS = {
-  pix_qr: {
-    icon: QrCode,
-    title: "PIX / QR Code",
-    instruction: "Abra seu app bancário e confirme o pagamento",
-    steps: [
-      "Aproxime seu celular do QR code",
-      "Abra o app do seu banco",
-      "Procure pela opção PIX",
-      "Confirme o pagamento"
-    ]
-  },
-  card: {
-    icon: CreditCard,
-    title: "Cartão de Crédito",
-    instruction: "Insira ou aproxime seu cartão",
-    steps: [
-      "Insira o cartão no leitor",
-      "Ou aproxime se for contactless",
-      "Aguarde a leitura",
-      "Confirme a transação no terminal"
-    ]
-  },
-  debit: {
-    icon: CreditCard,
-    title: "Cartão de Débito",
-    instruction: "Insira seu cartão e digite a senha",
-    steps: [
-      "Insira o cartão no leitor",
-      "Digite sua senha no terminal",
-      "Aguarde a leitura",
-      "Confirme a transação"
-    ]
-  }
-};
+import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
+import QRCode from "react-qr-code";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -75,10 +40,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const [selectedSizeKey, setSelectedSizeKey] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(0);
   const [maxQty, setMaxQty] = useState<number>(0);
-  const [selectedPayment, setSelectedPayment] = useState<"pix_qr" | "card" | "debit">("pix_qr");
-  const [showConfirmation, setShowConfirmation] = useState<boolean>(false);
+  const [selectedPayment, setSelectedPayment] = useState<"pix_qr" | "credit_card" | "debit_card">("pix_qr");
   const [currentTransactionId, setCurrentTransactionId] = useState<string | null>(null);
-  const [pixQRCode, setPixQRCode] = useState<string | null>(null);
+
+  // Estados para Mercado Pago QR
+  const [mpOrderId, setMpOrderId] = useState<string | null>(null);
+  const [mpQrData, setMpQrData] = useState<string | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollingAttempt, setPollingAttempt] = useState(0);
+  const [mpError, setMpError] = useState<string | null>(null);
+  const pollTimeoutRef = useRef<number | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
+
+  // Estados específicos para Mercado Pago Point (Terminal)
+  const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'processing' | 'error'>('idle');
 
   const { currentCurrency } = useSettings();
   const { toast } = useToast();
@@ -190,12 +165,26 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setQuantity(0);
       setMaxQty(0);
       setSelectedPayment("pix_qr");
-      setShowConfirmation(false);
       setCurrentTransactionId(null);
-      setPixQRCode(null);
       flowCancel();
       setTimerActive(false);
       updateProcessingStage("idle");
+      // Reset Point status
+      setPointStatus('idle');
+      // Cleanup: Mercado Pago polling
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+      if (pollAbortRef.current) {
+        pollAbortRef.current.abort();
+        pollAbortRef.current = null;
+      }
+      setMpOrderId(null);
+      setMpQrData(null);
+      setIsPolling(false);
+      setPollingAttempt(0);
+      setMpError(null);
       // Cleanup: cancelar pagamentos pendentes
       if (currentTransactionId) {
         paymentService.cancelPayment(currentTransactionId).catch(console.error);
@@ -207,35 +196,21 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     resetInactivityTimer();
     if (fromStep === 1) {
       if (!product || !selectedSize || !selectedSizeKey || quantity <= 0 || maxQty <= 0) {
-        toast({ title: "Error", description: "Select a valid size and quantity", variant: "destructive" });
+        toast({ title: "Erro", description: "Selecione um tamanho e quantidade válidos", variant: "destructive" });
         return;
       }
       moveToStep(2);
       return;
     }
-    if (fromStep === 2) {
-      moveToStep(3);
-      return;
-    }
-    if (fromStep === 3) {
-      if (!selectedPayment) {
-        toast({ title: "Erro", description: "Selecione um método de pagamento", variant: "destructive" });
-        return;
-      }
-      setShowConfirmation(true);
-      return;
-    }
   };
 
-  const handleBack = (fromStep: number) => {
-    if (fromStep > 1) {
-      moveToStep((fromStep - 1) as 1 | 2 | 3 | 4);
-    } else {
-      onCancel();
+  // Iniciar pagamento diretamente do Step 2
+  const handleStartPayment = async () => {
+    resetInactivityTimer();
+    if (!selectedPayment) {
+      toast({ title: "Erro", description: "Selecione um método de pagamento", variant: "destructive" });
+      return;
     }
-  };
-
-  const confirmPaymentMethod = async () => {
     if (!selectedSize || selectedSize.ml <= 0) {
       toast({ title: "Erro", description: "Tamanho inválido", variant: "destructive" });
       return;
@@ -244,8 +219,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       toast({ title: "Erro", description: "Quantidade indisponível", variant: "destructive" });
       return;
     }
-    setShowConfirmation(false);
     await handlePaymentComplete();
+  };
+
+  const handleBack = (fromStep: number) => {
+    if (fromStep === 2) {
+      moveToStep(1);
+    } else if (fromStep === 1) {
+      onCancel();
+    }
   };
 
   const handleCancelPayment = async () => {
@@ -253,6 +235,22 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       clearTimeout(emergencyTimeoutRef.current);
       emergencyTimeoutRef.current = null;
     }
+    // Cancelar polling do Mercado Pago
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+    if (pollAbortRef.current) {
+      pollAbortRef.current.abort();
+      pollAbortRef.current = null;
+    }
+    setIsPolling(false);
+    setMpOrderId(null);
+    setMpQrData(null);
+    setMpError(null);
+    setPollingAttempt(0);
+    setPointStatus('idle'); // Reset Point status on cancel
+    
     if (currentTransactionId) {
       try {
         await paymentService.cancelPayment(currentTransactionId);
@@ -264,84 +262,21 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     setIsProcessing(false);
     updateProcessingStage("idle");
     setCurrentTransactionId(null);
-    setPixQRCode(null);
     setMaxInactivityTime(60);
     resetInactivityTimer();
-    moveToStep(3);
-    setShowConfirmation(false);
+    moveToStep(2);
   };
 
-  const handlePaymentComplete = async () => {
-    setIsProcessing(true);
-    setMaxInactivityTime(300);
-    resetInactivityTimer();
-    moveToStep(4);
-    updateProcessingStage("awaiting_payment");
+  // Função para processar etapas pós-pagamento (venda, dispensing, etc)
+  const finishPaymentFlow = async (orderNumber: string) => {
+    if (!product || !selectedSize) return;
 
-    // Timeout de emergência: cancela pagamento após 5 minutos
-    if (emergencyTimeoutRef.current) {
-      clearTimeout(emergencyTimeoutRef.current);
-    }
-    emergencyTimeoutRef.current = setTimeout(() => {
-      if (processingStageRef.current === "awaiting_payment") {
-        handleCancelPayment();
-        toast({
-          title: "Timeout",
-          description: "Pagamento não confirmado a tempo",
-          variant: "destructive",
-        });
-      }
-    }, (flowState.paymentTimeoutSeconds ?? 300) * 1000); // usa valor do hook (fallback 5 min)
+    const subtotal = selectedSize.price * quantity;
+    const taxRate = (storeSettings?.taxPercentage || 0) / 100;
+    const taxAmount = subtotal * taxRate;
+    const totalAmount = subtotal + taxAmount;
 
     try {
-      if (!product || !selectedSize) {
-        throw new Error("Invalid product or size");
-      }
-      if (selectedSize.ml <= 0) {
-        throw new Error("Invalid size configuration");
-      }
-      if (quantity <= 0 || maxQty <= 0) {
-        throw new Error("Quantity unavailable for this size");
-      }
-
-      const newOrderNumber = await salesService.generateOrderNumber();
-      const subtotal = selectedSize.price * quantity;
-      const taxRate = (storeSettings?.taxPercentage || 0) / 100;
-      const taxAmount = subtotal * taxRate;
-      const totalAmount = subtotal + taxAmount;
-
-      // STEP 1: Processar pagamento (aguarda confirmação real)
-      let paymentResult;
-      
-      try {
-        if (selectedPayment === "pix_qr") {
-          paymentResult = await paymentService.processPixPayment(totalAmount, newOrderNumber);
-          setPixQRCode(paymentResult.pixCode || null);
-          setCurrentTransactionId(paymentResult.transactionId);
-        } else {
-          const cardType = selectedPayment === "card" ? "credit" : "debit";
-          paymentResult = await paymentService.processCardPayment(totalAmount, cardType, newOrderNumber);
-          setCurrentTransactionId(paymentResult.transactionId);
-        }
-
-        if (!paymentResult.success) {
-          throw new Error(paymentResult.message || "Pagamento rejeitado");
-        }
-
-        toast({ 
-          title: "Pagamento aprovado", 
-          description: paymentResult.message || "Pagamento confirmado com sucesso" 
-        });
-
-        updateProcessingStage("payment_approved");
-      } catch (paymentError: any) {
-        if (paymentError.code === 'PAYMENT_CANCELLED') {
-          // Usuário cancelou - não é erro
-          return;
-        }
-        throw new Error(paymentError.message || "Erro ao processar pagamento");
-      }
-
       // STEP 2: Gravar venda no sistema
       updateProcessingStage("recording_sale");
 
@@ -358,7 +293,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         [drinkCartItem],
         totalAmount,
         currentCurrency.code,
-        newOrderNumber
+        orderNumber
       );
 
       // STEP 3: Dispensar bebida (ESP32)
@@ -367,7 +302,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       try {
         const releaseResult = await esp32Printer.releaseDrink(
           {
-            orderId: newOrderNumber,
+            orderId: orderNumber,
             sizeLabel: selectedSize.label,
             mlPerUnit: selectedSize.ml,
             quantity,
@@ -386,11 +321,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         });
       }
 
-      // STEP 4: Pronto para retirada (com timer)
+      // STEP 4: Pronto para retirada
       updateProcessingStage("ready_pickup");
 
       onComplete({
-        orderNumber: newOrderNumber,
+        orderNumber,
         drinkData: {
           product,
           sizeKey: selectedSize.key,
@@ -402,19 +337,298 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         },
       });
 
-      // Limpar timeout de emergência (pagamento foi aprovado)
+      // Limpar timeout de emergência
       if (emergencyTimeoutRef.current) {
         clearTimeout(emergencyTimeoutRef.current);
         emergencyTimeoutRef.current = null;
       }
 
-      // Mostrar sucesso e finalizar fluxo antes de fechar
+      // Mostrar sucesso e finalizar
       updateProcessingStage("complete");
       setTimerActive(false);
       setIsProcessing(false);
       setTimeout(() => {
         onCancel();
       }, 1500);
+    } catch (error) {
+      console.error("Error in finishPaymentFlow:", error);
+      toast({
+        title: "Error",
+        description: (error as Error)?.message || "Failed to complete order",
+        variant: "destructive",
+      });
+      updateProcessingStage("idle");
+      setMaxInactivityTime(60);
+      resetInactivityTimer();
+      moveToStep(2);
+      setIsProcessing(false);
+    }
+  };
+
+  // Polling para verificar status do pagamento Mercado Pago (QR e Point)
+  const startMercadoPagoPolling = (orderId: string, orderNumber: string, isPointPayment: boolean = false) => {
+    const MAX_ATTEMPTS = 60; // 5 minutos
+    const POLL_INTERVAL = 5000; // 5 segundos
+
+    // Criar AbortController por ciclo de polling
+    if (pollAbortRef.current) {
+      pollAbortRef.current.abort();
+    }
+    pollAbortRef.current = new AbortController();
+
+    // Usar variável local para evitar problemas de closure com state
+    let currentAttempt = 0;
+
+    const poll = async () => {
+      currentAttempt++;
+
+      if (currentAttempt > MAX_ATTEMPTS) {
+        console.log('[DrinkMP Polling] Timeout - pagamento não confirmado em 5 minutos');
+        setIsPolling(false);
+        setMpError('Timeout: Pagamento não confirmado. Tente novamente.');
+        setIsProcessing(false);
+        setPointStatus('idle');
+        updateProcessingStage("idle");
+        moveToStep(2);
+        return;
+      }
+
+      try {
+        console.log(`[DrinkMP Polling] Tentativa ${currentAttempt}/${MAX_ATTEMPTS} - verificando order ${orderId}`);
+        setPollingAttempt(currentAttempt);
+
+        const order = await paymentService.checkMercadoPagoOrderStatus(orderId, pollAbortRef.current?.signal);
+        const paymentStatus = order.transactions?.payments?.[0]?.status;
+
+        console.log(`[DrinkMP Polling] Status: order=${order.status}, payment=${paymentStatus}, type=${order.type}`);
+
+        // Para Point: atualizar status visual quando a order chega no terminal
+        if (isPointPayment && order.status === 'at_terminal') {
+          setPointStatus('at_terminal');
+        }
+
+        // Tratar status de falha
+        if (order.status === 'failed' || order.status === 'expired' || order.status === 'canceled') {
+          console.log(`[DrinkMP Polling] ❌ Pagamento ${order.status}`);
+          setIsPolling(false);
+          setPointStatus('error');
+          const errorMessages: Record<string, string> = {
+            failed: 'Pagamento falhou. Tente novamente.',
+            expired: 'Tempo expirado. Tente novamente.',
+            canceled: 'Pagamento cancelado.'
+          };
+          setMpError(errorMessages[order.status] || 'Erro no pagamento');
+          setIsProcessing(false);
+          updateProcessingStage("idle");
+          moveToStep(2);
+          return;
+        }
+
+        // Tratar action_required (precisa de ação no terminal)
+        if (order.status === 'action_required') {
+          console.log('[DrinkMP Polling] ⚠️ Ação requerida no terminal');
+          setPointStatus('at_terminal'); // Manter visual de aguardando
+          // Continuar polling - usuário precisa agir no terminal
+          pollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL);
+          return;
+        }
+
+        // Verificar se pagamento foi processado
+        const isOrderProcessed = order.status === 'processed' || order.status === 'closed';
+        const isPaymentApproved = paymentStatus === 'approved' || paymentStatus === 'processed';
+
+        if (isOrderProcessed && isPaymentApproved) {
+          console.log('[DrinkMP Polling] ✅ Pagamento aprovado!');
+          setIsPolling(false);
+          setPointStatus('idle');
+          
+          toast({
+            title: "Pagamento aprovado",
+            description: "Pagamento confirmado com sucesso"
+          });
+
+          updateProcessingStage("payment_approved");
+
+          // Continuar com o fluxo pós-pagamento
+          await finishPaymentFlow(orderNumber);
+          return;
+        }
+
+        // Continuar polling
+        pollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL);
+      } catch (error: any) {
+        if (error?.name === 'AbortError') {
+          console.log('[DrinkMP Polling] Aborted');
+          return;
+        }
+        console.error('[DrinkMP Polling] Erro ao verificar status:', error);
+        setMpError(error.message || 'Erro ao verificar pagamento');
+        setIsPolling(false);
+        setPointStatus('error');
+        setIsProcessing(false);
+        updateProcessingStage("idle");
+        moveToStep(2);
+      }
+    };
+
+    poll();
+  };
+
+  const handlePaymentComplete = async () => {
+    setIsProcessing(true);
+    setMaxInactivityTime(300);
+    resetInactivityTimer();
+    moveToStep(3);
+    updateProcessingStage("awaiting_payment");
+    setMpError(null);
+
+    // Timeout de emergência: cancela pagamento após 5 minutos
+    if (emergencyTimeoutRef.current) {
+      clearTimeout(emergencyTimeoutRef.current);
+    }
+    emergencyTimeoutRef.current = setTimeout(() => {
+      if (processingStageRef.current === "awaiting_payment") {
+        handleCancelPayment();
+        toast({
+          title: "Timeout",
+          description: "Pagamento não confirmado a tempo",
+          variant: "destructive",
+        });
+      }
+    }, (flowState.paymentTimeoutSeconds ?? 300) * 1000);
+
+    try {
+      if (!product || !selectedSize) {
+        throw new Error("Invalid product or size");
+      }
+      if (selectedSize.ml <= 0) {
+        throw new Error("Invalid size configuration");
+      }
+      if (quantity <= 0 || maxQty <= 0) {
+        throw new Error("Quantity unavailable for this size");
+      }
+
+      const newOrderNumber = await salesService.generateOrderNumber();
+      const subtotal = selectedSize.price * quantity;
+      const taxRate = (storeSettings?.taxPercentage || 0) / 100;
+      const taxAmount = subtotal * taxRate;
+      const totalAmount = subtotal + taxAmount;
+
+      // STEP 1: Processar pagamento
+      if (selectedPayment === "pix_qr") {
+        // Usar Mercado Pago QR real
+        try {
+          validateMercadoPagoConfig();
+
+          const mpItems = [{
+            title: `${product.title} - ${selectedSize.label}`,
+            unit_price: selectedSize.price.toFixed(2),
+            quantity: quantity,
+            unit_measure: 'unit',
+            total_amount: (selectedSize.price * quantity).toFixed(2),
+          }];
+
+          const externalRef = `KIOSK-${newOrderNumber}-${Date.now()}`;
+
+          console.log('[DrinkQR] Criando QR Order:', {
+            amount: totalAmount,
+            items: mpItems.length,
+            externalRef,
+          });
+
+          const result = await paymentService.processMercadoPagoQR(
+            totalAmount,
+            mpItems,
+            externalRef,
+            MERCADO_PAGO_CONFIG.EXTERNAL_POS_ID
+          );
+
+          console.log('[DrinkQR] QR Order criada:', { orderId: result.orderId });
+
+          setMpOrderId(result.orderId || null);
+          setMpQrData(result.qrData || null);
+          setCurrentTransactionId(result.orderId || null);
+          setIsPolling(true);
+          setPollingAttempt(0);
+
+          // Iniciar polling com orderNumber para usar após aprovação (QR não é Point)
+          startMercadoPagoPolling(result.orderId!, newOrderNumber, false);
+
+        } catch (error: any) {
+          console.error('[DrinkQR] Erro ao criar QR:', error);
+          const errorMsg = error.message || 'Erro ao gerar QR Code';
+          setMpError(errorMsg);
+          setIsProcessing(false);
+          updateProcessingStage("idle");
+          moveToStep(2);
+          toast({
+            title: "Erro no Pagamento",
+            description: errorMsg,
+            variant: "destructive"
+          });
+        }
+      } else if (selectedPayment === "credit_card" || selectedPayment === "debit_card") {
+        // Pagamento via Mercado Pago Point (Terminal físico)
+        const paymentType = selectedPayment === "credit_card" ? "credit_card" : "debit_card";
+        
+        try {
+          setPointStatus('sending');
+
+          const mpItems = [{
+            title: `${product.title} - ${selectedSize.label}`,
+            unit_price: selectedSize.price.toFixed(2),
+            quantity: quantity,
+            unit_measure: 'unit',
+            total_amount: (selectedSize.price * quantity).toFixed(2),
+          }];
+
+          const externalRef = `KIOSK-${newOrderNumber}-${Date.now()}`;
+
+          console.log('[DrinkPoint] Criando Point Order:', {
+            amount: totalAmount,
+            items: mpItems.length,
+            externalRef,
+            paymentType,
+            terminalId: MERCADO_PAGO_CONFIG.TERMINAL_ID || 'auto-detect'
+          });
+
+          const result = await paymentService.processMercadoPagoPoint(
+            totalAmount,
+            mpItems,
+            externalRef,
+            MERCADO_PAGO_CONFIG.TERMINAL_ID || undefined, // Se não configurado, busca automaticamente
+            {
+              defaultPaymentType: paymentType, // Pré-seleciona crédito ou débito no terminal
+              defaultInstallments: paymentType === "debit_card" ? 1 : undefined, // Débito sempre 1x
+            }
+          );
+
+          console.log('[DrinkPoint] Point Order criada:', { orderId: result.orderId, paymentType });
+
+          setMpOrderId(result.orderId || null);
+          setCurrentTransactionId(result.orderId || null);
+          setPointStatus('at_terminal');
+          setIsPolling(true);
+          setPollingAttempt(0);
+
+          // Iniciar polling com flag isPointPayment = true
+          startMercadoPagoPolling(result.orderId!, newOrderNumber, true);
+
+        } catch (error: any) {
+          console.error('[DrinkPoint] Erro ao criar order Point:', error);
+          const errorMsg = error.message || 'Erro ao enviar para terminal';
+          setMpError(errorMsg);
+          setPointStatus('error');
+          setIsProcessing(false);
+          updateProcessingStage("idle");
+          moveToStep(2);
+          toast({
+            title: "Erro no Terminal",
+            description: errorMsg,
+            variant: "destructive"
+          });
+        }
+      }
     } catch (error) {
       if (emergencyTimeoutRef.current) {
         clearTimeout(emergencyTimeoutRef.current);
@@ -427,13 +641,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         variant: "destructive",
       });
       updateProcessingStage("idle");
-      setShowConfirmation(false);
       setMaxInactivityTime(60);
       resetInactivityTimer();
-      moveToStep(3);
-    } finally {
+      moveToStep(2);
       setIsProcessing(false);
     }
+  };
+
+  // Calcular total para exibição
+  const calculateTotal = () => {
+    if (!selectedSize) return 0;
+    const subtotal = selectedSize.price * quantity;
+    const tax = subtotal * (storeSettings?.taxPercentage || 0) / 100;
+    return subtotal + tax;
   };
 
   // Garantir que este modal só opere para produtos de bebida
@@ -444,25 +664,22 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {flowState.currentStep === 1 && "Select Size"}
-            {flowState.currentStep === 2 && "Checkout"}
-            {flowState.currentStep === 3 && "Payment"}
-            {flowState.currentStep === 4 && "Processing..."}
+            {flowState.currentStep === 1 && "Escolha o Tamanho"}
+            {flowState.currentStep === 2 && "Finalizar Pedido"}
+            {flowState.currentStep === 3 && "Processando..."}
           </DialogTitle>
           <DialogDescription>
-            {flowState.currentStep === 1 && "Choose your drink size and quantity"}
-            {flowState.currentStep === 2 && "Review your order details"}
-            {flowState.currentStep === 3 && "Complete your payment"}
-            {flowState.currentStep === 4 && "Please wait while we process your drink"}
+            {flowState.currentStep === 1 && "Selecione o tamanho e quantidade da sua bebida"}
+            {flowState.currentStep === 2 && "Revise seu pedido e escolha a forma de pagamento"}
+            {flowState.currentStep === 3 && "Aguarde enquanto processamos seu pedido"}
           </DialogDescription>
           <StepperIndicator
-            currentStep={flowState.currentStep}
+            currentStep={flowState.currentStep > 2 ? 3 : flowState.currentStep}
             completedSteps={flowState.completedSteps}
             steps={[
               { label: "Tamanho", description: "Seleção" },
-              { label: "Revisão", description: "Confirmação" },
-              { label: "Pagamento", description: "Método" },
-              { label: "Processando", description: "Aguarde" },
+              { label: "Pagamento", description: "Finalizar" },
+              { label: "Pronto", description: "Aguarde" },
             ]}
           />
         </DialogHeader>
@@ -486,17 +703,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             <>
               <div>
                 <Label htmlFor="size-select" className="block text-sm font-medium mb-2">
-                  Size
+                  Tamanho
                 </Label>
                 <Select value={selectedSizeKey} onValueChange={(val) => { flowActions.resetInactivityTimer(); setSelectedSizeKey(val); }}>
-                  <SelectTrigger id="size-select">
-                    <SelectValue placeholder="Select a size" />
+                  <SelectTrigger id="size-select" className="h-12">
+                    <SelectValue placeholder="Selecione o tamanho" />
                   </SelectTrigger>
                   <SelectContent>
                     {product.sizes?.map((size) => (
                       <SelectItem key={size.key} value={size.key}>
-                        {size.label} - {currentCurrency.symbol}
-                        {size.price.toFixed(2)}
+                        {size.label} - {currentCurrency.symbol}{size.price.toFixed(2)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -505,302 +721,323 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
               <div>
                 <Label htmlFor="qty-input" className="block text-sm font-medium mb-2">
-                  Quantity
+                  Quantidade
                 </Label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-center gap-4">
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="lg"
                     onClick={() => { flowActions.resetInactivityTimer(); setQuantity(Math.max(1, quantity - 1)); }}
                     disabled={quantity <= 1}
+                    className="w-12 h-12"
                   >
-                    <Minus className="w-4 h-4" />
+                    <Minus className="w-5 h-5" />
                   </Button>
-                  <Input
-                    id="qty-input"
-                    type="number"
-                    min={1}
-                    max={maxQty}
-                    value={quantity}
-                    onChange={(e) => {
-                      flowActions.resetInactivityTimer();
-                      const value = parseInt(e.target.value, 10);
-                      if (Number.isNaN(value)) return;
-                      setQuantity(Math.min(Math.max(1, value), Math.max(0, maxQty)));
-                    }}
-                    className="w-16 text-center"
-                  />
+                  <span className="text-3xl font-bold w-16 text-center">{quantity}</span>
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="lg"
                     onClick={() => { flowActions.resetInactivityTimer(); setQuantity(Math.min(Math.max(1, quantity + 1), Math.max(0, maxQty))); }}
                     disabled={quantity >= maxQty}
+                    className="w-12 h-12"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus className="w-5 h-5" />
                   </Button>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                      {currentCurrency.symbol}
-                </p>
+                {maxQty > 0 && (
+                  <p className="text-xs text-gray-500 mt-2 text-center">
+                    Máximo disponível: {maxQty}
+                  </p>
+                )}
               </div>
 
               {selectedSize && (
-                <Card className="bg-gray-50 p-3">
-                  <p className="text-sm text-gray-700">
-                      {currentCurrency.symbol}
-                    {(selectedSize.price * quantity).toFixed(2)}
-                  </p>
+                <Card className="bg-green-50 border-green-200 p-4">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-700">Subtotal:</span>
+                    <span className="text-2xl font-bold text-green-600">
+                      {currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}
+                    </span>
+                  </div>
                 </Card>
               )}
 
-              <div className="flex gap-2 pt-4">
+              <div className="flex gap-2 pt-2">
                 <Button variant="outline" onClick={() => handleBack(1)} className="flex-1">
-                  Cancel
+                  Cancelar
                 </Button>
-                <Button onClick={() => handleNext(1)} className="flex-1" disabled={maxQty <= 0}>
-                  Next
+                <Button 
+                  onClick={() => handleNext(1)} 
+                  className="flex-1" 
+                  disabled={maxQty <= 0 || !selectedSizeKey}
+                >
+                  Continuar
                 </Button>
               </div>
             </>
           )}
 
-          {flowState.currentStep === 2 && selectedSize && (
+          {flowState.currentStep === 2 && selectedSize && !flowState.isProcessing && (
             <>
+              {/* Resumo do Pedido */}
               <Card className="bg-blue-50 border-blue-200 p-4">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-gray-700">Product:</span>
+                    <span className="text-gray-700">Produto:</span>
                     <span className="font-medium">{product.title}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-700">Size:</span>
+                    <span className="text-gray-700">Tamanho:</span>
                     <span className="font-medium">{selectedSize.label}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-700">Unit Price:</span>
-                    <span className="font-medium">
-                      {currentCurrency.symbol}
-                      {selectedSize.price.toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-700">Quantity:</span>
+                    <span className="text-gray-700">Quantidade:</span>
                     <span className="font-medium">{quantity}</span>
                   </div>
                   <Separator />
-                  <div className="flex justify-between font-medium">
+                  <div className="flex justify-between text-gray-600">
                     <span>Subtotal:</span>
-                    <span>
-                      {currentCurrency.symbol}
-                      {(selectedSize.price * quantity).toFixed(2)}
-                    </span>
+                    <span>{currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Tax ({storeSettings?.taxPercentage || 0}%):</span>
-                    <span>
-                      {currentCurrency.symbol}
-                      {((selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}
-                    </span>
+                    <span>Taxa ({storeSettings?.taxPercentage || 0}%):</span>
+                    <span>{currentCurrency.symbol}{((selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}</span>
                   </div>
-                  <div className="flex justify-between font-semibold text-lg">
+                  <div className="flex justify-between font-bold text-lg pt-1">
                     <span>Total:</span>
                     <span className="text-green-600">
-                      {currentCurrency.symbol}
-                      {(
-                        selectedSize.price * quantity +
-                        (selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100
-                      ).toFixed(2)}
+                      {currentCurrency.symbol}{calculateTotal().toFixed(2)}
                     </span>
                   </div>
                 </div>
               </Card>
 
-              <div className="flex gap-2 pt-4">
-                <Button variant="outline" onClick={() => handleBack(2)} className="flex-1">
-                  Back
-                </Button>
-                <Button onClick={() => handleNext(2)} className="flex-1">
-                  Proceed to Payment
-                </Button>
-              </div>
-            </>
-          )}
-
-          {flowState.currentStep === 3 && !showConfirmation && !flowState.isProcessing && (
-            <>
-              <div className="space-y-3">
-                <Label className="block font-medium">Método de Pagamento</Label>
-
+              {/* Seleção de Método de Pagamento */}
+              <div className="space-y-2">
+                <Label className="block font-medium text-sm">Forma de Pagamento</Label>
+                
                 <div
-                  className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
+                  className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                    selectedPayment === "pix_qr" 
+                      ? "border-green-500 bg-green-50" 
+                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  }`}
                   onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("pix_qr"); }}
                 >
-                  <input type="radio" name="payment" checked={selectedPayment === "pix_qr"} readOnly />
-                  <label className="cursor-pointer flex-1">PIX / QR Code</label>
+                  <QrCode className={`w-6 h-6 ${selectedPayment === "pix_qr" ? "text-green-600" : "text-gray-400"}`} />
+                  <div className="flex-1">
+                    <p className="font-medium">PIX / QR Code</p>
+                    <p className="text-xs text-gray-500">Pagamento instantâneo</p>
+                  </div>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                    selectedPayment === "pix_qr" ? "border-green-500 bg-green-500" : "border-gray-300"
+                  }`}>
+                    {selectedPayment === "pix_qr" && <div className="w-2 h-2 bg-white rounded-full" />}
+                  </div>
                 </div>
 
                 <div
-                  className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("card"); }}
+                  className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                    selectedPayment === "credit_card" 
+                      ? "border-blue-500 bg-blue-50" 
+                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  }`}
+                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("credit_card"); }}
                 >
-                  <input type="radio" name="payment" checked={selectedPayment === "card"} readOnly />
-                  <label className="cursor-pointer flex-1">Credit Card</label>
+                  <CreditCard className={`w-6 h-6 ${selectedPayment === "credit_card" ? "text-blue-600" : "text-gray-400"}`} />
+                  <div className="flex-1">
+                    <p className="font-medium">Cartão de Crédito</p>
+                    <p className="text-xs text-gray-500">Visa, Mastercard, Elo, Amex</p>
+                  </div>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                    selectedPayment === "credit_card" ? "border-blue-500 bg-blue-500" : "border-gray-300"
+                  }`}>
+                    {selectedPayment === "credit_card" && <div className="w-2 h-2 bg-white rounded-full" />}
+                  </div>
                 </div>
 
                 <div
-                  className="flex items-center space-x-3 p-3 border rounded-lg cursor-pointer hover:bg-gray-50"
-                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("debit"); }}
+                  className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                    selectedPayment === "debit_card" 
+                      ? "border-orange-500 bg-orange-50" 
+                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  }`}
+                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("debit_card"); }}
                 >
-                  <input type="radio" name="payment" checked={selectedPayment === "debit"} readOnly />
-                  <label className="cursor-pointer flex-1">Debit Card</label>
+                  <CreditCard className={`w-6 h-6 ${selectedPayment === "debit_card" ? "text-orange-600" : "text-gray-400"}`} />
+                  <div className="flex-1">
+                    <p className="font-medium">Cartão de Débito</p>
+                    <p className="text-xs text-gray-500">Débito à vista</p>
+                  </div>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                    selectedPayment === "debit_card" ? "border-orange-500 bg-orange-500" : "border-gray-300"
+                  }`}>
+                    {selectedPayment === "debit_card" && <div className="w-2 h-2 bg-white rounded-full" />}
+                  </div>
                 </div>
               </div>
 
-              {selectedPayment === "pix_qr" && (
-                <Card className="bg-gray-50 p-4 text-center">
-                  <p className="text-sm text-gray-600 mb-3">Scan the QR code:</p>
-                  <div className="bg-white p-4 rounded border">
-                    <QrCode className="w-32 h-32 mx-auto text-gray-400" />
-                  </div>
-                </Card>
-              )}
-
-              {selectedPayment !== "pix_qr" && (
-                <Card className="bg-gray-50 p-4 text-center">
-                  <p className="text-sm text-gray-600 mb-2">Insert or tap your card:</p>
-                  <CreditCard className="w-16 h-16 mx-auto text-gray-400" />
-                </Card>
-              )}
-
-              <div className="flex gap-2 pt-4">
-                <Button variant="outline" onClick={() => handleBack(3)} className="flex-1">
+              {/* Botões de Ação */}
+              <div className="flex gap-2 pt-2">
+                <Button variant="outline" onClick={() => handleBack(2)} className="flex-1">
                   Voltar
                 </Button>
-                <Button onClick={() => handleNext(3)} className="flex-1">
-                  Próximo
+                <Button 
+                  onClick={handleStartPayment} 
+                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold"
+                >
+                  Pagar {currentCurrency.symbol}{calculateTotal().toFixed(2)}
                 </Button>
               </div>
             </>
           )}
 
-          {flowState.currentStep === 3 && showConfirmation && !flowState.isProcessing && (
-            <>
-              <Card className="bg-green-50 border-2 border-green-300 p-4">
-                <div className="flex items-start gap-3 mb-4">
-                  {(() => {
-                    const method = PAYMENT_METHODS[selectedPayment];
-                    const Icon = method.icon;
-                    return (
-                      <>
-                        <Icon className="w-6 h-6 text-green-600 mt-1" />
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-green-900">
-                            {method.title}
-                          </h3>
-                          <p className="text-sm text-green-700 mt-1">
-                            {method.instruction}
-                          </p>
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-
-                <div className="space-y-2 mb-4 pl-9">
-                  <p className="text-xs font-medium text-green-800">Passo a passo:</p>
-                  {PAYMENT_METHODS[selectedPayment].steps.map((step, idx) => (
-                    <p key={idx} className="text-xs text-green-700">
-                      {idx + 1}. {step}
-                    </p>
-                  ))}
-                </div>
-
-                <Separator className="bg-green-200 my-3" />
-
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-sm font-medium text-gray-700">Total a pagar:</span>
-                  <span className="text-lg font-semibold text-green-600">
-                    {currentCurrency.symbol}
-                    {selectedSize && (
-                      selectedSize.price * quantity +
-                      (selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100
-                    ).toFixed(2)}
-                  </span>
-                </div>
-
-                <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => setShowConfirmation(false)} 
-                    className="flex-1"
-                  >
-                    Voltar
-                  </Button>
-                  <Button 
-                    onClick={confirmPaymentMethod} 
-                    className="flex-1 bg-green-600 hover:bg-green-700"
-                  >
-                    ✓ Confirmar e Pagar
-                  </Button>
-                </div>
-              </Card>
-            </>
-          )}
-
-          {(flowState.currentStep === 4 || (flowState.currentStep === 3 && flowState.isProcessing)) && (
+          {(flowState.currentStep === 3 || flowState.isProcessing) && (
             <div className="flex flex-col items-center justify-center gap-4 py-8 w-full">
               <ProcessingProgress stage={flowState.processingStage} steps={processingSteps} />
 
               {flowState.processingStage === "awaiting_payment" && (
                 <>
-                  {selectedPayment === "pix_qr" && pixQRCode && (
+                  {selectedPayment === "pix_qr" && (
                     <div className="text-center space-y-4">
-                      <div className="bg-white p-6 rounded-lg border-2 border-blue-300 inline-block">
-                        <QrCode className="w-48 h-48 text-gray-800" />
-                        <p className="text-xs text-gray-500 mt-2">QR Code simulado</p>
-                      </div>
-                      <p className="font-medium text-gray-700">Escaneie o QR code</p>
-                      <p className="text-sm text-gray-500">Confirme o pagamento no app do banco</p>
-                      
-                      <div className="flex items-center justify-center gap-2 text-blue-600">
-                        <Clock className="w-4 h-4 animate-pulse" />
-                        <span className="text-sm">Aguardando confirmação...</span>
-                      </div>
+                      {/* Erro do Mercado Pago */}
+                      {mpError && (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                          <p className="text-red-700 font-medium">Erro no pagamento</p>
+                          <p className="text-red-600 text-sm mt-1">{mpError}</p>
+                          <Button 
+                            variant="outline" 
+                            onClick={handleCancelPayment}
+                            className="mt-4"
+                          >
+                            Tentar novamente
+                          </Button>
+                        </div>
+                      )}
 
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+                      {/* QR Code real do Mercado Pago */}
+                      {mpQrData && !mpError && (
+                        <>
+                          <div className="bg-white p-6 rounded-lg border-2 border-blue-300 inline-block">
+                            <QRCode value={mpQrData} size={192} level="M" />
+                          </div>
+                          <p className="font-medium text-gray-700">Escaneie o QR code com seu app bancário</p>
+                          <p className="text-sm text-gray-500">Use o app do banco para pagar via PIX</p>
+                          
+                          {isPolling && (
+                            <div className="flex items-center justify-center gap-2 text-blue-600">
+                              <Loader className="w-4 h-4 animate-spin" />
+                              <span className="text-sm">
+                                Verificando pagamento... ({pollingAttempt}/60)
+                              </span>
+                            </div>
+                          )}
 
-                      <Button 
-                        variant="ghost" 
-                        onClick={handleCancelPayment}
-                        className="mt-4"
-                      >
-                        Cancelar pagamento
-                      </Button>
+                          <Button 
+                            variant="ghost" 
+                            onClick={handleCancelPayment}
+                            className="mt-4"
+                          >
+                            Cancelar pagamento
+                          </Button>
+                        </>
+                      )}
+
+                      {/* Carregando QR Code */}
+                      {!mpQrData && !mpError && (
+                        <>
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                          <p className="text-gray-600">Gerando QR Code...</p>
+                        </>
+                      )}
                     </div>
                   )}
 
-                  {selectedPayment !== "pix_qr" && (
+                  {(selectedPayment === "credit_card" || selectedPayment === "debit_card") && (
                     <div className="text-center space-y-4">
-                      <CreditCard className="w-20 h-20 mx-auto text-blue-500 animate-pulse" />
-                      <p className="font-medium text-gray-700">
-                        {selectedPayment === "card" ? "Insira ou aproxime seu cartão de crédito" : "Insira seu cartão de débito"}
-                      </p>
-                      <p className="text-sm text-gray-500">Aguardando leitura da máquina...</p>
-                      
-                      <div className="flex items-center justify-center gap-2 text-blue-600">
-                        <Clock className="w-4 h-4 animate-pulse" />
-                        <span className="text-sm">Processando...</span>
-                      </div>
+                      {/* Erro no terminal */}
+                      {(pointStatus === 'error' || mpError) && (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                          <p className="text-red-700 font-medium">Erro no terminal</p>
+                          <p className="text-red-600 text-sm mt-1">{mpError || 'Falha na comunicação com o terminal'}</p>
+                          <Button 
+                            variant="outline" 
+                            onClick={handleCancelPayment}
+                            className="mt-4"
+                          >
+                            Tentar novamente
+                          </Button>
+                        </div>
+                      )}
 
-                      <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto mt-4"></div>
+                      {/* Enviando para o terminal */}
+                      {pointStatus === 'sending' && !mpError && (
+                        <>
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                          <p className="text-gray-600">Enviando para o terminal...</p>
+                          <p className="text-sm text-gray-500">
+                            {selectedPayment === "credit_card" ? "Pagamento em crédito" : "Pagamento em débito"}
+                          </p>
+                        </>
+                      )}
 
-                      <Button 
-                        variant="ghost" 
-                        onClick={handleCancelPayment}
-                        className="mt-4"
-                      >
-                        Cancelar
-                      </Button>
+                      {/* Aguardando no terminal */}
+                      {pointStatus === 'at_terminal' && !mpError && (
+                        <>
+                          <CreditCard className={`w-20 h-20 mx-auto animate-pulse ${
+                            selectedPayment === "credit_card" ? "text-blue-500" : "text-orange-500"
+                          }`} />
+                          <p className="font-medium text-gray-700">
+                            {selectedPayment === "credit_card" 
+                              ? "Insira ou aproxime seu cartão de CRÉDITO" 
+                              : "Insira ou aproxime seu cartão de DÉBITO"
+                            }
+                          </p>
+                          <p className="text-sm text-gray-500">Aguardando leitura no terminal...</p>
+                          
+                          {isPolling && (
+                            <div className={`flex items-center justify-center gap-2 ${
+                              selectedPayment === "credit_card" ? "text-blue-600" : "text-orange-600"
+                            }`}>
+                              <Clock className="w-4 h-4 animate-pulse" />
+                              <span className="text-sm">
+                                Verificando pagamento... ({pollingAttempt}/60)
+                              </span>
+                            </div>
+                          )}
+
+                          <div className={`animate-spin rounded-full h-10 w-10 border-b-2 mx-auto mt-4 ${
+                            selectedPayment === "credit_card" ? "border-blue-600" : "border-orange-600"
+                          }`}></div>
+
+                          <Button 
+                            variant="ghost" 
+                            onClick={handleCancelPayment}
+                            className="mt-4"
+                          >
+                            Cancelar
+                          </Button>
+                        </>
+                      )}
+
+                      {/* Processando pagamento */}
+                      {pointStatus === 'processing' && !mpError && (
+                        <>
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+                          <p className="text-gray-600 font-medium">Processando pagamento...</p>
+                          <p className="text-sm text-gray-500">Aguarde a confirmação</p>
+                        </>
+                      )}
+
+                      {/* Estado inicial/idle - fallback */}
+                      {pointStatus === 'idle' && !mpError && (
+                        <>
+                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                          <p className="text-gray-600">Iniciando pagamento...</p>
+                        </>
+                      )}
                     </div>
                   )}
                 </>

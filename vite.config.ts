@@ -8,6 +8,15 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    proxy: {
+      // Proxy simples para evitar CORS com a API do Mercado Pago
+      '/api/mp': {
+        target: 'https://api.mercadopago.com',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/api\/mp/, ''),
+      },
+    },
   },
   plugins: [
     react(),
