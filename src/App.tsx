@@ -6,6 +6,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { HashRouter, Routes, Route } from "react-router-dom";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { LanguageProvider } from "@/i18n";
+import type { Language } from "@/i18n";
 import StoreInitialization from "@/components/StoreInitialization";
 import Index from "./pages/Index";
 import Admin from "./pages/Admin";
@@ -15,7 +17,7 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
 const AppContent = () => {
-  const { isInitialized, loading, updateSettings } = useStoreSettings();
+  const { isInitialized, loading, updateSettings, settings } = useStoreSettings();
 
   if (loading) {
     return (
@@ -30,15 +32,22 @@ const AppContent = () => {
     return <StoreInitialization onComplete={updateSettings} />;
   }
 
+  // Usar idioma salvo nas configurações da loja (Firebase) ou fallback para 'en'
+  const initialLanguage: Language = (settings?.language as Language) || 'en';
+
+  console.log('[App] initialLanguage:', initialLanguage, 'settings.language:', settings?.language);
+
   return (
-    <HashRouter>
-      <Routes>
-        <Route path="/" element={<Index />} />
-        <Route path="/admin" element={<Admin />} />
-        <Route path="/shop" element={<Shop />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
-    </HashRouter>
+    <LanguageProvider initialLanguage={initialLanguage}>
+      <HashRouter>
+        <Routes>
+          <Route path="/" element={<Index />} />
+          <Route path="/admin" element={<Admin />} />
+          <Route path="/shop" element={<Shop />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </HashRouter>
+    </LanguageProvider>
   );
 };
 

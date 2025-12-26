@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { CartItem, Product } from '@/types/product';
+import { useTranslation } from '@/i18n';
 
 interface SizeSelectorModalProps {
   isOpen: boolean;
@@ -25,6 +26,7 @@ export default function SizeSelectorModal({
   onSelect,
   onClose,
 }: SizeSelectorModalProps) {
+  const { t } = useTranslation();
   const [selectedSizeKey, setSelectedSizeKey] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [maxQty, setMaxQty] = useState(0);
@@ -66,11 +68,11 @@ export default function SizeSelectorModal({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Selecione o tamanho de {product.title}</DialogTitle>
+          <DialogTitle>{t('sizeSelector.selectSizeFor', { product: product.title })}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <label className="text-sm font-medium">Tamanho</label>
+            <label className="text-sm font-medium">{t('sizeSelector.size')}</label>
             <Select value={selectedSizeKey} onValueChange={setSelectedSizeKey}>
               <SelectTrigger>
                 <SelectValue />
@@ -86,7 +88,7 @@ export default function SizeSelectorModal({
           </div>
 
           <div>
-            <label className="text-sm font-medium">Quantidade</label>
+            <label className="text-sm font-medium">{t('sizeSelector.quantity')}</label>
             <div className="flex items-center gap-2 mt-1">
               <Button
                 variant="outline"
@@ -106,21 +108,21 @@ export default function SizeSelectorModal({
                 +
               </Button>
             </div>
-            <p className="text-xs text-gray-500 mt-1">Máximo disponível: {maxQty} unidades</p>
+            <p className="text-xs text-gray-500 mt-1">{t('sizeSelector.maxAvailable', { max: maxQty })}</p>
           </div>
 
           {selectedSize && (
             <div className="bg-gray-50 p-3 rounded">
-              <p className="text-sm">Total: R$ {(selectedSize.price * quantity).toFixed(2)}</p>
+              <p className="text-sm">{t('sizeSelector.total')}: R$ {(selectedSize.price * quantity).toFixed(2)}</p>
             </div>
           )}
 
           <div className="flex gap-2">
             <Button variant="outline" onClick={onClose} className="flex-1">
-              Cancelar
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleConfirm} className="flex-1" disabled={maxQty === 0}>
-              Adicionar ao Carrinho
+              {t('sizeSelector.addToCart')}
             </Button>
           </div>
         </div>

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Minus, Plus, Trash2, ShoppingCart } from "lucide-react";
 import { CartItem } from "@/types/product";
 import { getCartItemKey } from "@/utils/productUtils";
+import { useTranslation } from "@/i18n";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 import { useState } from "react";
 import Checkout from "./Checkout";
@@ -17,6 +18,7 @@ interface CartProps {
 }
 
 const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: CartProps) => {
+  const { t } = useTranslation();
   const currentCurrency = useCurrentCurrency();
   const [showCheckout, setShowCheckout] = useState(false);
 
@@ -44,13 +46,13 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
           <SheetHeader>
             <SheetTitle className="flex items-center">
               <ShoppingCart className="w-5 h-5 mr-2" />
-              Shopping Cart
+              {t('nav.cart')}
             </SheetTitle>
           </SheetHeader>
           <div className="flex flex-col items-center justify-center h-64">
             <ShoppingCart className="w-16 h-16 text-gray-300 mb-4" />
-            <p className="text-gray-500 text-center">Your cart is empty</p>
-            <p className="text-sm text-gray-400 text-center mt-2">Add some products to get started</p>
+            <p className="text-gray-500 text-center">{t('cart.emptyCart')}</p>
+            <p className="text-sm text-gray-400 text-center mt-2">{t('cart.emptyCartHint')}</p>
           </div>
         </SheetContent>
       </Sheet>
@@ -65,17 +67,17 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
             <SheetTitle className="flex items-center justify-between">
               <span className="flex items-center">
                 <ShoppingCart className="w-5 h-5 mr-2" />
-                Shopping Cart
+                {t('cart.shoppingCart')}
               </span>
               <div className="flex items-center gap-2">
-                <Badge variant="secondary">{cartItems.length} items</Badge>
+                <Badge variant="secondary">{cartItems.length} {t('cart.items')}</Badge>
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={onClearCart}
                   className="text-red-600 hover:text-red-700"
                 >
-                  Clear Cart
+                  {t('cart.clearCart')}
                 </Button>
               </div>
             </SheetTitle>
@@ -150,7 +152,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
           
           <div className="border-t pt-4 space-y-4">
             <div className="flex items-center justify-between text-lg font-semibold">
-              <span>Total:</span>
+              <span>{t('cart.total')}:</span>
               <span>{currentCurrency.symbol}{getTotalPrice().toFixed(2)}</span>
             </div>
             <Button 
@@ -158,7 +160,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
               size="lg"
               onClick={handleCheckout}
             >
-              Proceed to Checkout
+              {t('cart.proceedToCheckout')}
             </Button>
           </div>
         </SheetContent>

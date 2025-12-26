@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Settings, Lock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/i18n";
 
 interface AdminAccessProps {
   onAuthenticated: () => void;
@@ -14,6 +15,7 @@ const AdminAccess = ({ onAuthenticated }: AdminAccessProps) => {
   const [password, setPassword] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const { toast } = useToast();
+  const { t } = useTranslation();
   
   const ADMIN_PASSWORD = "admin123"; // In production, this should be environment variable
 
@@ -24,13 +26,13 @@ const AdminAccess = ({ onAuthenticated }: AdminAccessProps) => {
       setIsOpen(false);
       setPassword("");
       toast({
-        title: "Access Granted",
-        description: "Welcome to the admin panel",
+        title: t('admin.accessGranted'),
+        description: t('admin.welcomeAdmin'),
       });
     } else {
       toast({
-        title: "Access Denied",
-        description: "Incorrect password",
+        title: t('admin.accessDenied'),
+        description: t('admin.incorrectPassword'),
         variant: "destructive",
       });
       setPassword("");
@@ -52,26 +54,26 @@ const AdminAccess = ({ onAuthenticated }: AdminAccessProps) => {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lock className="w-5 h-5" />
-            Admin Access
+            {t('admin.adminAccess')}
           </DialogTitle>
         </DialogHeader>
         <form onSubmit={handlePasswordSubmit} className="space-y-4">
           <div>
             <label htmlFor="password" className="block text-sm font-medium mb-2">
-              Enter Admin Password
+              {t('admin.enterAdminPassword')}
             </label>
             <Input
               id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password"
+              placeholder={t('admin.enterPassword')}
               className="w-full"
               autoFocus
             />
           </div>
           <Button type="submit" className="w-full">
-            Access Admin Panel
+            {t('admin.accessAdminPanel')}
           </Button>
         </form>
       </DialogContent>

@@ -17,6 +17,8 @@ export interface StoreSettings {
   useThermalPrinter?: boolean;
   // Optional: tempo de inatividade para mostrar tela de atração
   attractTimeoutSeconds?: number;
+  // Idioma da interface (salvo no Firebase para sincronizar entre dispositivos)
+  language?: 'en' | 'pt-BR';
 }
 
 export interface InventoryLog {

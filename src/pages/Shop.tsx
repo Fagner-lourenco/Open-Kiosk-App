@@ -18,6 +18,7 @@ import DrinkPickupScreen from "@/components/DrinkPickupScreen";
 import AttractScreen from "@/components/AttractScreen";
 import { useKioskIdle } from "@/hooks/useKioskIdle";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { useTranslation } from "@/i18n";
 
 type DrinkCheckoutResult = {
   orderNumber: string;
@@ -38,6 +39,7 @@ const Shop = () => {
   const navigate = useNavigate();
   const { products, loading, updateProduct } = useFirebaseProducts();
   const { settings } = useStoreSettings();
+  const { t } = useTranslation();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -199,7 +201,7 @@ const Shop = () => {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        <p className="ml-4 text-gray-600">Loading products...</p>
+        <p className="ml-4 text-gray-600">{t('shop.loadingProducts')}</p>
       </div>
     );
   }
@@ -213,7 +215,7 @@ const Shop = () => {
             <div className="flex-1 relative">
               <input
                 type="text"
-                placeholder="Search products..."
+                placeholder={t('shop.searchProducts')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsKeyboardVisible(true)}
@@ -229,7 +231,7 @@ const Shop = () => {
               className="relative"
             >
               <ShoppingCart className="w-4 h-4 mr-2" />
-              Cart
+              {t('shop.cart')}
               {getTotalItems() > 0 && (
                 <Badge variant="destructive" className="ml-2 px-1 min-w-[1.2rem] h-5">
                   {getTotalItems()}
@@ -276,7 +278,7 @@ const Shop = () => {
                       <Badge variant={(product.isDrink ? (product.totalMlAvailable || 0) > 0 : (product.stock || 0) > 0) ? "default" : "destructive"} className="text-xs">
                         {product.isDrink
                           ? `${product.totalMlAvailable || 0}ml`
-                          : (product.stock || 0) > 0 ? `${product.stock} in stock` : "Out of Stock"}
+                          : (product.stock || 0) > 0 ? t('shop.stockCount', { count: product.stock }) : t('shop.outOfStock')}
                       </Badge>
                     </div>
                   </div>
@@ -288,8 +290,8 @@ const Shop = () => {
                     size="sm"
                   >
                     {product.isDrink
-                      ? ((product.totalMlAvailable || 0) <= 0 ? "Out of Stock" : "Select Size")
-                      : ((product.stock || 0) <= 0 ? "Out of Stock" : "Add to Cart")}
+                      ? ((product.totalMlAvailable || 0) <= 0 ? t('shop.outOfStock') : t('shop.selectSize'))
+                      : ((product.stock || 0) <= 0 ? t('shop.outOfStock') : t('shop.addToCart'))}
                   </Button>
                 </div>
               </CardContent>
@@ -301,14 +303,14 @@ const Shop = () => {
         {hasMoreProducts && (
           <div className="flex justify-center mt-8">
             <Button onClick={loadMore} variant="outline" size="lg">
-              Show More Products ({filteredProducts.length - displayLimit} remaining)
+              {t('shop.showMore')} ({filteredProducts.length - displayLimit} {t('shop.remaining')})
             </Button>
           </div>
         )}
 
         {/* Results Info */}
         <div className="text-center mt-4 text-gray-500 text-sm">
-          Showing {displayedProducts.length} of {filteredProducts.length} products
+          {t('shop.showingProducts', { displayed: displayedProducts.length, total: filteredProducts.length })}
         </div>
       </div>
 
@@ -347,8 +349,8 @@ const Shop = () => {
       <AttractScreen
         visible={isIdle}
         onStart={resetIdle}
-        title="Faça seu pedido aqui"
-        subtitle="Toque para iniciar"
+        title={t('shop.orderHere')}
+        subtitle={t('shop.touchToStart')}
       />
     </div>
   );

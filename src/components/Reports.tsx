@@ -12,10 +12,16 @@ import { useSettings } from "@/hooks/useSettings";
 import { cn } from "@/lib/utils";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart as RechartsPieChart, Cell, Pie } from "recharts";
 import { DateRange } from "react-day-picker";
+import { useTranslation } from "@/i18n";
 
 const Reports = () => {
+  const { t } = useTranslation();
+  // Iniciar com os últimos 30 dias para mostrar dados de tendência relevantes
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
-    from: new Date(),
+    from: thirtyDaysAgo,
     to: new Date(),
   });
   const [salesData, setSalesData] = useState<SalesReport[]>([]);
@@ -78,13 +84,13 @@ const Reports = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold">Reports & Analytics</h2>
+        <h2 className="text-2xl font-bold">{t('reports.titleAndAnalytics')}</h2>
       </div>
 
       {/* Date Range Selection */}
       <div className="flex items-center gap-4">
         <div>
-          <label className="text-sm font-medium mb-2 block">Select Date Range</label>
+          <label className="text-sm font-medium mb-2 block">{t('reports.selectDateRange')}</label>
           <Popover>
             <PopoverTrigger asChild>
               <Button variant="outline" className="w-[300px] justify-start text-left font-normal">
@@ -99,7 +105,7 @@ const Reports = () => {
                     format(dateRange.from, "LLL dd, y")
                   )
                 ) : (
-                  <span>Pick a date range</span>
+                  <span>{t('reports.pickDateRange')}</span>
                 )}
               </Button>
             </PopoverTrigger>
@@ -120,22 +126,22 @@ const Reports = () => {
 
       <Tabs defaultValue="sales" className="space-y-6">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="sales">Sales Reports</TabsTrigger>
-          <TabsTrigger value="items">Item Reports</TabsTrigger>
+          <TabsTrigger value="sales">{t('reports.salesReports')}</TabsTrigger>
+          <TabsTrigger value="items">{t('reports.itemReports')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sales" className="space-y-6">
           {salesData.length > 0 && (
             <>
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-semibold">Sales Summary</h3>
+                <h3 className="text-lg font-semibold">{t('reports.salesSummary')}</h3>
                 <Button 
                   variant="outline" 
                   size="sm"
                   onClick={() => exportToCSV(salesData, 'sales_report')}
                 >
                   <Download className="w-4 h-4 mr-2" />
-                  Export CSV
+                  {t('reports.exportCsv')}
                 </Button>
               </div>
 
@@ -143,7 +149,7 @@ const Reports = () => {
                 {salesData.map((report, index) => (
                   <Card key={index}>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                      <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
+                      <CardTitle className="text-sm font-medium">{t('reports.totalSales')}</CardTitle>
                       <DollarSign className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
@@ -151,7 +157,7 @@ const Reports = () => {
                         {currentCurrency.symbol}{report.totalSales.toFixed(2)}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {report.totalOrders} orders • Avg: {currentCurrency.symbol}{report.averageOrderValue.toFixed(2)}
+                        {t('reports.ordersAvg', { orders: report.totalOrders, symbol: currentCurrency.symbol, avg: report.averageOrderValue.toFixed(2) })}
                       </p>
                       <p className="text-xs text-gray-500 mt-2">{report.period}</p>
                     </CardContent>
@@ -163,7 +169,7 @@ const Reports = () => {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp className="w-5 h-5" />
-                    Sales Trend
+                    {t('reports.salesTrend')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -187,14 +193,14 @@ const Reports = () => {
           {itemData.length > 0 && (
             <>
               <div className="flex justify-between items-center">
-                <h3 className="text-lg font-semibold">Item Performance</h3>
+                <h3 className="text-lg font-semibold">{t('reports.itemPerformance')}</h3>
                 <Button 
                   variant="outline" 
                   size="sm"
                   onClick={() => exportToCSV(itemData, 'item_report')}
                 >
                   <Download className="w-4 h-4 mr-2" />
-                  Export CSV
+                  {t('reports.exportCsv')}
                 </Button>
               </div>
 
@@ -203,7 +209,7 @@ const Reports = () => {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <BarChart3 className="w-5 h-5" />
-                      Revenue by Product
+                      {t('reports.revenueByProduct')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -223,7 +229,7 @@ const Reports = () => {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <PieChart className="w-5 h-5" />
-                      Sales Distribution
+                      {t('reports.salesDistribution')}
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -259,7 +265,7 @@ const Reports = () => {
                           <Package className="h-8 w-8 text-gray-400" />
                           <div>
                             <h4 className="font-semibold">{item.productTitle}</h4>
-                            <p className="text-sm text-gray-500">Product ID: {item.productId}</p>
+                            <p className="text-sm text-gray-500">{t('reports.productId', { id: item.productId })}</p>
                           </div>
                         </div>
                         <div className="text-right">
@@ -267,7 +273,7 @@ const Reports = () => {
                             {currentCurrency.symbol}{item.totalRevenue.toFixed(2)}
                           </div>
                           <p className="text-sm text-gray-500">
-                            {item.quantitySold} units sold
+                            {t('reports.unitsSold', { count: item.quantitySold })}
                           </p>
                         </div>
                       </div>
@@ -283,7 +289,7 @@ const Reports = () => {
       {loading && (
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-500">Loading reports...</p>
+          <p className="mt-4 text-gray-500">{t('reports.loadingReports')}</p>
         </div>
       )}
     </div>

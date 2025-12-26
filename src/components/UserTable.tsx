@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { MoreVertical, Edit, Trash2, Mail } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface User {
   id: number;
@@ -12,6 +13,7 @@ interface User {
 }
 
 const UserTable = () => {
+  const { t } = useTranslation();
   const [users] = useState<User[]>([
     { id: 1, name: 'Alice Johnson', email: 'alice@example.com', role: 'Admin', status: 'active', avatar: 'AJ' },
     { id: 2, name: 'Bob Smith', email: 'bob@example.com', role: 'User', status: 'active', avatar: 'BS' },
@@ -24,17 +26,17 @@ const UserTable = () => {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
       <div className="px-6 py-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-800">Recent Users</h3>
+        <h3 className="text-lg font-semibold text-gray-800">{t('users.recentUsers')}</h3>
       </div>
       
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('common.user')}</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('common.role')}</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('common.status')}</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('common.actions')}</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
@@ -64,7 +66,7 @@ const UserTable = () => {
                       ? 'bg-green-100 text-green-800' 
                       : 'bg-red-100 text-red-800'
                   }`}>
-                    {user.status}
+                    {t(`users.${user.status}`)}
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium relative">
@@ -80,15 +82,15 @@ const UserTable = () => {
                       <div className="py-1">
                         <button className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
                           <Edit className="h-4 w-4 mr-2" />
-                          Edit
+                          {t('common.edit')}
                         </button>
                         <button className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left">
                           <Mail className="h-4 w-4 mr-2" />
-                          Send Email
+                          {t('common.sendEmail')}
                         </button>
                         <button className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-gray-100 w-full text-left">
                           <Trash2 className="h-4 w-4 mr-2" />
-                          Delete
+                          {t('common.delete')}
                         </button>
                       </div>
                     </div>

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ShoppingCart, Package } from "lucide-react";
 import { Product } from "@/types/product";
+import { useTranslation } from "@/i18n";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 
 interface ProductGridProps {
@@ -12,6 +13,7 @@ interface ProductGridProps {
 }
 
 const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
+  const { t } = useTranslation();
   const currentCurrency = useCurrentCurrency();
 
   if (products.length === 0) {
@@ -19,8 +21,8 @@ const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
       <Card>
         <CardContent className="text-center py-12">
           <Package className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No products found</h3>
-          <p className="text-gray-500">Try adjusting your search terms or connect to Supabase to add products.</p>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">{t('shop.noProducts')}</h3>
+          <p className="text-gray-500">{t('shop.adjustSearch')}</p>
         </CardContent>
       </Card>
     );
@@ -66,13 +68,13 @@ const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
                     const hasStock = (drinkMl ?? 0) > 0;
                     return (
                       <Badge variant={hasStock ? "default" : "destructive"} className="text-xs">
-                        {drinkMl != null ? `${drinkMl}ml` : "No stock data"}
+                        {drinkMl != null ? `${drinkMl}ml` : t('shop.noStockData')}
                       </Badge>
                     );
                   }
                   return (
                     <Badge variant={product.inStock ? "default" : "destructive"} className="text-xs">
-                      {product.inStock ? "In Stock" : "Out of Stock"}
+                      {product.inStock ? t('shop.inStock') : t('shop.outOfStock')}
                     </Badge>
                   );
                 })()}
@@ -98,7 +100,7 @@ const ProductGrid = ({ products, onAddToCart }: ProductGridProps) => {
                 size="sm"
               >
                 <ShoppingCart className="w-3 h-3 sm:w-4 sm:h-4 mr-1 sm:mr-2" />
-                {product.isDrink ? 'Select Size' : 'Add to Cart'}
+                {product.isDrink ? t('shop.selectSize') : t('shop.addToCart')}
               </Button>
             </div>
           </CardContent>

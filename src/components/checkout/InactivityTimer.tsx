@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
 import { AlertCircle, Clock } from "lucide-react";
 import { InactivityTimerProps } from "@/types/checkoutFlow";
+import { useTranslation } from "@/i18n";
 
 export function InactivityTimer({ secondsLeft, maxSeconds, variant, onTimeout, onWarning }: InactivityTimerProps) {
+  const { t } = useTranslation();
   const percentage = maxSeconds > 0 ? Math.max(0, Math.min(100, (secondsLeft / maxSeconds) * 100)) : 0;
 
   const { bgColor, textColor, borderColor, icon } = useMemo(() => {
@@ -59,7 +61,7 @@ export function InactivityTimer({ secondsLeft, maxSeconds, variant, onTimeout, o
       <div className="flex items-center justify-between mb-2">
         <div className={`flex items-center gap-2 ${textColor} text-sm font-medium`}>
           {icon}
-          <span>{variant === "critical" ? "⚠️ URGENTE:" : "Inatividade:"} {secondsLeft}s</span>
+          <span>{variant === "critical" ? `⚠️ ${t('checkout.urgent')}` : `${t('checkout.inactivity')}:`} {secondsLeft}s</span>
         </div>
         <span className={`text-xs ${textColor} font-semibold`}>{Math.round(percentage)}%</span>
       </div>

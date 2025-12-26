@@ -1,7 +1,9 @@
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { ProcessingProgressProps } from "@/types/checkoutFlow";
+import { useTranslation } from "@/i18n";
 
 export function ProcessingProgress({ stage, steps, showPercentage = true }: ProcessingProgressProps) {
+  const { t } = useTranslation();
   const completedCount = steps.filter((s) => s.status === "completed").length;
   const inProgressCount = steps.filter((s) => s.status === "in-progress").length;
   const totalProgress = steps.length > 0 ? Math.round(((completedCount + inProgressCount * 0.5) / steps.length) * 100) : 0;
@@ -48,7 +50,7 @@ export function ProcessingProgress({ stage, steps, showPercentage = true }: Proc
         <div className="p-3 rounded-md bg-red-50 border border-red-200">
           <div className="flex items-center gap-2 text-red-700 text-sm font-semibold">
             <AlertCircle className="w-4 h-4" />
-            <span>Ocorreu um erro no processamento</span>
+            <span>{t('checkout.processingError')}</span>
           </div>
         </div>
       )}
@@ -56,7 +58,7 @@ export function ProcessingProgress({ stage, steps, showPercentage = true }: Proc
       {showPercentage && (
         <div className="pt-3 border-t border-gray-200">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-gray-600">Progresso</span>
+            <span className="text-xs font-semibold text-gray-600">{t('checkout.progress')}</span>
             <span className="text-xs font-bold text-gray-700">{totalProgress}%</span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">

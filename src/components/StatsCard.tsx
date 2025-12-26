@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { LucideIcon } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface StatsCardProps {
   title: string;
@@ -11,6 +12,8 @@ interface StatsCardProps {
 }
 
 const StatsCard = ({ title, value, change, changeType, icon: Icon }: StatsCardProps) => {
+    const { t } = useTranslation();
+
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200">
       <div className="flex items-center justify-between">
@@ -21,7 +24,7 @@ const StatsCard = ({ title, value, change, changeType, icon: Icon }: StatsCardPr
             changeType === 'positive' ? 'text-green-600' : 'text-red-600'
           }`}>
             {change}
-            <span className="text-gray-500 ml-1">from last month</span>
+            <span className="text-gray-500 ml-1">{t('admin.fromLastMonth')}</span>
           </p>
         </div>
         <div className={`p-3 rounded-full ${

@@ -1,6 +1,7 @@
 
 import { CheckCircle, XCircle, Clock, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTranslation } from '@/i18n';
 
 interface Test {
   id: string;
@@ -15,6 +16,8 @@ interface TestCardProps {
 }
 
 const TestCard = ({ test }: TestCardProps) => {
+  const { t } = useTranslation();
+
   const getStatusIcon = () => {
     switch (test.status) {
       case 'passed':
@@ -57,7 +60,7 @@ const TestCard = ({ test }: TestCardProps) => {
 
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-slate-600">Status:</span>
+          <span className="text-slate-600">{t('common.status')}:</span>
           <span className={cn(
             "px-2 py-1 rounded-full text-xs font-medium",
             {
@@ -67,13 +70,13 @@ const TestCard = ({ test }: TestCardProps) => {
               'bg-blue-100 text-blue-700': test.status === 'running',
             }
           )}>
-            {test.status.charAt(0).toUpperCase() + test.status.slice(1)}
+            {t(`common.${test.status}`)}
           </span>
         </div>
 
         {test.duration && (
           <div className="flex items-center justify-between text-sm">
-            <span className="text-slate-600">Duration:</span>
+            <span className="text-slate-600">{t('common.duration')}:</span>
             <span className="text-slate-800 font-medium">{test.duration}ms</span>
           </div>
         )}

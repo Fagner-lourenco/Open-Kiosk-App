@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { Home, Users, BarChart3, Settings, Bell, Search, Menu } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -8,12 +9,14 @@ interface SidebarProps {
 }
 
 const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
+  const { t } = useTranslation();
+
   const menuItems = [
-    { icon: Home, label: 'Dashboard', active: true },
-    { icon: Users, label: 'Users', active: false },
-    { icon: BarChart3, label: 'Analytics', active: false },
-    { icon: Bell, label: 'Notifications', active: false },
-    { icon: Settings, label: 'Settings', active: false },
+    { icon: Home, label: t('admin.sidebar.dashboard'), active: true },
+    { icon: Users, label: t('users.recentUsers'), active: false },
+    { icon: BarChart3, label: t('admin.sidebar.analytics'), active: false },
+    { icon: Bell, label: t('admin.sidebar.notifications'), active: false },
+    { icon: Settings, label: t('admin.sidebar.settings'), active: false },
   ];
 
   return (
@@ -31,7 +34,7 @@ const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
         isOpen ? 'translate-x-0' : '-translate-x-full'
       } lg:translate-x-0 lg:static lg:z-0`}>
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <h1 className="text-xl font-bold text-gray-800">TestApp</h1>
+          <h1 className="text-xl font-bold text-gray-800">{t('common.appName')}</h1>
           <button
             onClick={onToggle}
             className="lg:hidden p-2 rounded-md hover:bg-gray-100"

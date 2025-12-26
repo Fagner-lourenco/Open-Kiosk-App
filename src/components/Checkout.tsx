@@ -5,6 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Receipt, QrCode, Printer, Check, CreditCard, Wifi, AlertCircle, Loader, Clock } from "lucide-react";
 import { CartItem } from "@/types/product";
+import { useTranslation } from "@/i18n";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { esp32Printer } from "@/services/esp32PrinterService";
@@ -26,6 +27,7 @@ interface CheckoutProps {
 }
 
 const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onComplete }: CheckoutProps) => {
+  const { t } = useTranslation();
   const [isCompleted, setIsCompleted] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [paymentProcessed, setPaymentProcessed] = useState(false);
@@ -143,11 +145,11 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
     } catch (error: any) {
       console.error('[Checkout] Erro ao criar QR:', error);
-      const errorMsg = error.message || 'Erro ao gerar QR Code';
+      const errorMsg = error.message || t('checkout.paymentErrorGeneric');
       setMpError(errorMsg);
       setPaymentProcessed(false);
       toast({
-        title: "Erro no Pagamento",
+        title: t('checkout.paymentError'),
         description: errorMsg,
         variant: "destructive"
       });
@@ -203,12 +205,12 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       
     } catch (error: any) {
       console.error('[Checkout] Erro ao criar Point order:', error);
-      const errorMsg = error.message || 'Erro ao enviar para terminal';
+      const errorMsg = error.message || t('checkout.terminalSendError');
       setMpError(errorMsg);
       setPointStatus('error');
       setPaymentProcessed(false);
       toast({
-        title: "Erro no Terminal",
+        title: t('checkout.terminalError'),
         description: errorMsg,
         variant: "destructive"
       });
@@ -235,7 +237,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       if (currentAttempt > MAX_ATTEMPTS) {
         console.log('[Polling] Timeout - pagamento não confirmado em 5 minutos');
         setIsPolling(false);
-        setMpError('Timeout: Pagamento não confirmado. Tente novamente.');
+        setMpError(t('checkout.paymentNotConfirmedTimeout'));
         setPaymentProcessed(false);
         if (isPointPayment) setPointStatus('idle');
         return;
@@ -260,11 +262,11 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
           console.log(`[Polling] ❌ Pagamento ${order.status}`);
           setIsPolling(false);
           const errorMessages: Record<string, string> = {
-            failed: 'Pagamento recusado. Tente novamente.',
-            expired: 'Tempo expirado. Tente novamente.',
-            canceled: 'Pagamento cancelado.'
+            failed: t('checkout.paymentDeclined'),
+            expired: t('checkout.paymentExpired'),
+            canceled: t('checkout.paymentCanceled')
           };
-          setMpError(errorMessages[order.status] || 'Erro no pagamento');
+          setMpError(errorMessages[order.status] || t('checkout.paymentFailedGeneric'));
           setPaymentProcessed(false);
           if (isPointPayment) setPointStatus('error');
           return;
@@ -289,8 +291,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
           if (isPointPayment) setPointStatus('idle');
           
           toast({
-            title: "Pagamento aprovado",
-            description: "Pagamento confirmado com sucesso"
+            title: t('checkout.paymentApprovedToast'),
+            description: t('checkout.paymentConfirmedSuccess')
           });
           
           // Registrar venda e continuar
@@ -332,8 +334,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       console.error('Error processing order:', error);
       setPaymentProcessed(false);
       toast({
-        title: "Error",
-        description: (error as Error)?.message || "Failed to process order",
+        title: t('common.error'),
+        description: (error as Error)?.message || t('checkout.processOrderError'),
         variant: "destructive"
       });
       return;
@@ -358,8 +360,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   const handleESP32Print = async () => {
     if (!settings?.comPort) {
       toast({
-        title: "No COM Port Configured",
-        description: "COM port is not set in settings. Configure in Admin > Settings.",
+        title: t('checkout.noComPortConfigured'),
+        description: t('checkout.comPortNotSet'),
         variant: "destructive"
       });
       return;
@@ -369,19 +371,19 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       const result = await esp32Printer.printReceipt(cartItems, settings, orderNumber);
       if (result.success) {
         toast({
-          title: "Success",
-          description: "Receipt printed successfully!",
+          title: t('common.success'),
+          description: t('checkout.printSuccess'),
         });
       } else {
         toast({
-          title: "Print Error",
+          title: t('checkout.printError'),
           description: result.message,
           variant: "destructive"
         });
       }
     } catch (error) {
       console.error('Print error:', error);
-      toast({ title: "Print Error", description: "Failed to print receipt.", variant: "destructive" });
+      toast({ title: t('checkout.printError'), description: t('checkout.printFailed'), variant: "destructive" });
     } finally {
       setIsPrinting(false);
     }
@@ -392,14 +394,14 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     try {
       pdfReceiptService.generateReceiptPDF(cartItems, settings!, orderNumber);
       toast({
-        title: "Success",
-        description: "PDF receipt generated successfully!",
+        title: t('common.success'),
+        description: t('checkout.pdfSuccess'),
       });
     } catch (error) {
       console.error('PDF generation error:', error);
       toast({ 
-        title: "PDF Error", 
-        description: "Failed to generate PDF receipt.", 
+        title: t('checkout.pdfError'), 
+        description: t('checkout.pdfFailed'), 
         variant: "destructive" 
       });
     } finally {
@@ -456,7 +458,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <Check className="w-5 h-5 text-green-600" />
-              Order Completed
+              {t('checkout.orderCompleted')}
             </SheetTitle>
           </SheetHeader>
 
@@ -466,13 +468,13 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
             </div>
             
             <div>
-              <h3 className="text-lg font-semibold mb-2">Thank you for your purchase!</h3>
-              <p className="text-gray-600">Order #{orderNumber} has been completed successfully.</p>
+              <h3 className="text-lg font-semibold mb-2">{t('checkout.thankYou')}</h3>
+              <p className="text-gray-600">{t('checkout.orderNumber')}{orderNumber} {t('checkout.orderCompleted').toLowerCase()}</p>
             </div>
 
             <div className="space-y-3 w-full">
               <Button onClick={() => { onComplete(); resetCheckout(); }} className="w-full">
-                Start New Order
+                {t('checkout.startNewOrder')}
               </Button>
             </div>
           </div>
@@ -490,7 +492,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <Receipt className="w-5 h-5" />
-            {showPayment ? 'Payment' : 'Checkout'}
+            {showPayment ? t('checkout.paymentStep') : t('checkout.title')}
           </SheetTitle>
         </SheetHeader>
 
@@ -499,7 +501,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
           {/* Order Summary */}
           <Card>
             <CardContent className="p-4">
-              <h3 className="font-medium mb-4">Order Summary</h3>
+              <h3 className="font-medium mb-4">{t('checkout.orderSummary')}</h3>
               <div className="space-y-3">
                 {cartItems.map((item) => (
                   <div key={item.product.id} className="flex justify-between text-sm">
@@ -514,16 +516,16 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span>Subtotal ({getTotalItems()} items)</span>
+                    <span>{t('checkout.subtotal')} ({getTotalItems()} {t('common.items')})</span>
                     <span>{currentCurrency.symbol}{getTotalPrice().toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm">
-                    <span>Tax ({settings?.taxPercentage || 0}%)</span>
+                    <span>{t('checkout.taxAmount')} ({settings?.taxPercentage || 0}%)</span>
                     <span>{currentCurrency.symbol}{getTaxAmount().toFixed(2)}</span>
                   </div>
                   <Separator />
                   <div className="flex justify-between font-medium">
-                    <span>Total</span>
+                    <span>{t('checkout.totalAmount')}</span>
                     <span>{currentCurrency.symbol}{getFinalTotal().toFixed(2)}</span>
                   </div>
                 </div>
@@ -538,7 +540,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
               {!mpQrData && !mpOrderId && pointStatus === 'idle' && (
                 <Card>
                   <CardContent className="p-4">
-                    <h3 className="font-medium mb-4">Método de Pagamento</h3>
+                    <h3 className="font-medium mb-4">{t('checkout.paymentMethod')}</h3>
                     <div className="space-y-3">
                       <button
                         onClick={() => setPaymentMethod('pix_qr')}
@@ -552,8 +554,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                         <div className="flex items-center gap-3">
                           <QrCode className="w-5 h-5 text-green-600" />
                           <div>
-                            <p className="font-medium text-sm">PIX / QR Code</p>
-                            <p className="text-xs text-gray-600">Pagamento instantâneo</p>
+                            <p className="font-medium text-sm">{t('checkout.pixQrCode')}</p>
+                            <p className="text-xs text-gray-600">{t('checkout.instantPayment')}</p>
                           </div>
                         </div>
                       </button>
@@ -570,8 +572,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                         <div className="flex items-center gap-3">
                           <CreditCard className="w-5 h-5 text-blue-600" />
                           <div>
-                            <p className="font-medium text-sm">Cartão de Crédito</p>
-                            <p className="text-xs text-gray-600">Visa, Mastercard, Elo, Amex</p>
+                            <p className="font-medium text-sm">{t('checkout.creditCard')}</p>
+                            <p className="text-xs text-gray-600">{t('checkout.visaMasterElo')}</p>
                           </div>
                         </div>
                       </button>
@@ -588,8 +590,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                         <div className="flex items-center gap-3">
                           <CreditCard className="w-5 h-5 text-orange-600" />
                           <div>
-                            <p className="font-medium text-sm">Cartão de Débito</p>
-                            <p className="text-xs text-gray-600">Débito à vista</p>
+                            <p className="font-medium text-sm">{t('checkout.debitCard')}</p>
+                            <p className="text-xs text-gray-600">{t('checkout.debitInstant')}</p>
                           </div>
                         </div>
                       </button>
@@ -603,13 +605,13 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 <Card>
                   <CardContent className="p-4">
                     <div className="text-center space-y-4">
-                      <h3 className="font-medium">Pagar com QR Code</h3>
+                      <h3 className="font-medium">{t('checkout.payWithQrCode')}</h3>
 
                       {/* Exibir QR Code ou estado de carregamento */}
                       {!mpQrData ? (
                         <div className="flex flex-col items-center gap-3">
                           <Loader className="w-8 h-8 animate-spin text-blue-600" />
-                          <p className="text-sm text-gray-600">Gerando QR Code...</p>
+                          <p className="text-sm text-gray-600">{t('checkout.generatingQr')}</p>
                         </div>
                       ) : (
                         <div className="space-y-4">
@@ -624,18 +626,18 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                           </div>
 
                           <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-                            <p className="text-xs font-medium text-blue-900">Instruções:</p>
+                            <p className="text-xs font-medium text-blue-900">{t('checkout.instructions')}:</p>
                             <ol className="text-xs text-blue-800 mt-2 space-y-1 list-decimal list-inside">
-                              <li>Abra o app Mercado Pago</li>
-                              <li>Escaneie o código acima</li>
-                              <li>Confirme o pagamento</li>
+                              <li>{t('checkout.instruction1')}</li>
+                              <li>{t('checkout.instruction2')}</li>
+                              <li>{t('checkout.instruction3')}</li>
                             </ol>
                           </div>
 
                           {isPolling && (
                             <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
                               <p className="text-xs font-medium text-yellow-900">
-                                Aguardando confirmação... (Tentativa {pollingAttempt}/60)
+                                {t('checkout.awaitingPayment')} ({t('checkout.attempt')} {pollingAttempt}/60)
                               </p>
                               <div className="mt-2 w-full bg-yellow-200 rounded-full h-2">
                                 <div
@@ -656,7 +658,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                           )}
 
                           <p className="text-xs text-gray-600 mt-4">
-                            Total a pagar: <span className="font-bold">{currentCurrency.symbol}{getFinalTotal().toFixed(2)}</span>
+                            {t('checkout.totalToPay')}: <span className="font-bold">{currentCurrency.symbol}{getFinalTotal().toFixed(2)}</span>
                           </p>
                         </div>
                       )}
@@ -671,15 +673,15 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                   <CardContent className="p-4">
                     <div className="text-center space-y-4">
                       <h3 className="font-medium">
-                        {paymentMethod === 'credit_card' ? 'Pagamento com Crédito' : 'Pagamento com Débito'}
+                        {paymentMethod === 'credit_card' ? t('checkout.paymentWithCredit') : t('checkout.paymentWithDebit')}
                       </h3>
 
                       {/* Erro no terminal */}
                       {(pointStatus === 'error' || mpError) && (
                         <div className="bg-red-50 p-4 rounded-lg border border-red-200">
                           <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                          <p className="text-red-700 font-medium">Erro no terminal</p>
-                          <p className="text-red-600 text-sm mt-1">{mpError || 'Falha na comunicação com o terminal'}</p>
+                          <p className="text-red-700 font-medium">{t('checkout.terminalError')}</p>
+                          <p className="text-red-600 text-sm mt-1">{mpError || t('checkout.terminalCommError')}</p>
                         </div>
                       )}
 
@@ -687,9 +689,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                       {pointStatus === 'sending' && !mpError && (
                         <div className="py-6">
                           <Loader className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
-                          <p className="text-gray-600">Enviando para o terminal...</p>
+                          <p className="text-gray-600">{t('checkout.sendingToTerminal')}</p>
                           <p className="text-sm text-gray-500 mt-1">
-                            {paymentMethod === 'credit_card' ? 'Pagamento em crédito' : 'Pagamento em débito'}
+                            {paymentMethod === 'credit_card' ? t('checkout.creditPayment') : t('checkout.debitPayment')}
                           </p>
                         </div>
                       )}
@@ -702,11 +704,11 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                           }`} />
                           <p className="font-medium text-gray-700">
                             {paymentMethod === 'credit_card' 
-                              ? 'Insira ou aproxime seu cartão de CRÉDITO' 
-                              : 'Insira ou aproxime seu cartão de DÉBITO'
+                              ? t('checkout.insertCreditCard') 
+                              : t('checkout.insertDebitCard')
                             }
                           </p>
-                          <p className="text-sm text-gray-500 mt-1">Aguardando leitura no terminal...</p>
+                          <p className="text-sm text-gray-500 mt-1">{t('checkout.awaitingTerminal')}</p>
                           
                           {isPolling && (
                             <div className={`flex items-center justify-center gap-2 mt-4 ${
@@ -714,7 +716,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                             }`}>
                               <Clock className="w-4 h-4 animate-pulse" />
                               <span className="text-sm">
-                                Verificando pagamento... ({pollingAttempt}/60)
+                                {t('checkout.verifyingPayment')} ({pollingAttempt}/60)
                               </span>
                             </div>
                           )}
@@ -724,7 +726,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                           }`}></div>
 
                           <p className="text-xs text-gray-600 mt-4">
-                            Total: <span className="font-bold">{currentCurrency.symbol}{getFinalTotal().toFixed(2)}</span>
+                            {t('common.total')}: <span className="font-bold">{currentCurrency.symbol}{getFinalTotal().toFixed(2)}</span>
                           </p>
                         </div>
                       )}
@@ -735,16 +737,16 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
               <Card>
                 <CardContent className="p-4">
-                  <h3 className="font-medium mb-2">Order Details</h3>
+                  <h3 className="font-medium mb-2">{t('checkout.orderDetails')}</h3>
                   <div className="text-sm text-gray-600 space-y-1">
-                    <p>Order #: {orderNumber}</p>
-                    <p>Date: {new Date().toLocaleDateString()}</p>
-                    <p>Time: {new Date().toLocaleTimeString()}</p>
+                    <p>{t('checkout.orderNumberLabel')}: {orderNumber}</p>
+                    <p>{t('common.date')}: {new Date().toLocaleDateString()}</p>
+                    <p>{t('common.time')}: {new Date().toLocaleTimeString()}</p>
                     {settings?.useThermalPrinter && settings?.comPort && (
-                      <p>Thermal Printer: {settings.comPort}</p>
+                      <p>{t('checkout.thermalPrinter')}: {settings.comPort}</p>
                     )}
                     {!settings?.useThermalPrinter && (
-                      <p>Print Mode: PDF Receipt</p>
+                      <p>{t('checkout.printMode')}: {t('checkout.pdfReceipt')}</p>
                     )}
                   </div>
                   
@@ -757,7 +759,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                       disabled={isPrinting}
                     >
                       <Printer className="w-4 h-4 mr-2" />
-                      {isPrinting ? "Printing..." : `Print to ${settings.comPort}`}
+                      {isPrinting ? t('checkout.printing') : `${t('checkout.printTo')} ${settings.comPort}`}
                     </Button>
                   ) : (
                     <Button
@@ -767,7 +769,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                       disabled={isPrinting}
                     >
                       <Printer className="w-4 h-4 mr-2" />
-                      {isPrinting ? "Generating..." : "Generate PDF Receipt"}
+                      {isPrinting ? t('checkout.generating') : t('checkout.generatePdfReceipt')}
                     </Button>
                   )}
                 </CardContent>
@@ -781,7 +783,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
           {!showPayment ? (
             <Button onClick={handleProceedToPayment} className="w-full" size="lg">
               <CreditCard className="w-4 h-4 mr-2" />
-              Ir para Pagamento
+              {t('checkout.goToPayment')}
             </Button>
           ) : (
             <>
@@ -794,14 +796,14 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                   disabled={paymentProcessed}
                 >
                   <QrCode className="w-4 h-4 mr-2" />
-                  {paymentProcessed ? 'Gerando QR...' : 'Gerar QR Code PIX'}
+                  {paymentProcessed ? t('checkout.generatingQr') : t('checkout.generateQr')}
                 </Button>
               )}
 
               {paymentMethod === 'pix_qr' && (mpQrData || isPolling) && (
                 <div className="text-center py-3 text-sm text-gray-600">
-                  <p>Aguardando pagamento PIX...</p>
-                  <p className="text-xs mt-1">Você será redirecionado automaticamente</p>
+                  <p>{t('checkout.awaitingPix')}</p>
+                  <p className="text-xs mt-1">{t('checkout.willRedirect')}</p>
                 </div>
               )}
 
@@ -814,7 +816,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                   disabled={paymentProcessed}
                 >
                   <CreditCard className="w-4 h-4 mr-2" />
-                  {paymentProcessed ? 'Enviando...' : 'Pagar com Crédito'}
+                  {paymentProcessed ? t('checkout.sending') : t('checkout.payWithCredit')}
                 </Button>
               )}
 
@@ -827,15 +829,15 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                   disabled={paymentProcessed}
                 >
                   <CreditCard className="w-4 h-4 mr-2" />
-                  {paymentProcessed ? 'Enviando...' : 'Pagar com Débito'}
+                  {paymentProcessed ? t('checkout.sending') : t('checkout.payWithDebit')}
                 </Button>
               )}
 
               {/* Mensagem de aguardando para Point */}
               {(paymentMethod === 'credit_card' || paymentMethod === 'debit_card') && (pointStatus !== 'idle' || isPolling) && (
                 <div className="text-center py-3 text-sm text-gray-600">
-                  <p>Aguardando pagamento no terminal...</p>
-                  <p className="text-xs mt-1">Complete a transação na máquina de cartão</p>
+                  <p>{t('checkout.awaitingTerminalPayment')}</p>
+                  <p className="text-xs mt-1">{t('checkout.completeOnCardMachine')}</p>
                 </div>
               )}
 
@@ -863,7 +865,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 className="w-full"
               >
                 <ArrowLeft className="w-4 h-4 mr-2" />
-                Voltar
+                {t('checkout.backButton')}
               </Button>
             </>
           )}

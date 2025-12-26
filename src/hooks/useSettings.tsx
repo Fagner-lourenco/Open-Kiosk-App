@@ -11,6 +11,7 @@ export interface Currency {
 }
 
 export const currencies: Currency[] = [
+  { code: 'BRL', name: 'Brazilian Real', symbol: 'R$' },
   { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
   { code: 'USD', name: 'US Dollar', symbol: '$' },
   { code: 'EUR', name: 'Euro', symbol: '€' },

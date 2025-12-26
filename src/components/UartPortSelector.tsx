@@ -9,6 +9,7 @@ import { Wifi, WifiOff, Usb, RefreshCw } from "lucide-react";
 import { esp32Printer } from "@/services/esp32PrinterService";
 import { useToast } from "@/hooks/use-toast";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { useTranslation } from "@/i18n";
 
 interface UartPortSelectorProps {
   onPortSelected?: (comPort: string) => void;
@@ -22,6 +23,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const { settings } = useStoreSettings();
+  const { t } = useTranslation();
 
   useEffect(() => {
     checkConnectionStatus();
@@ -37,9 +39,8 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
 
   const handleConnect = async () => {
     if (!comPortInput.trim()) {
-      toast({
-        title: "Error",
-        description: "Please enter a COM port (e.g., COM3)",
+      toast({t('common.error'),
+        description: t('uart.enterComPort'),
         variant: "destructive"
       });
       return;
@@ -52,8 +53,8 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
         setIsConnected(true);
         onPortSelected?.(comPortInput.trim());
         toast({
-          title: "Success",
-          description: `Connected to ${comPortInput.trim()} successfully`
+          title: t('common.success'),
+          description: t('uart.connectedTo', { port: comPortInput.trim() })
         });
       } else {
         throw new Error('Failed to connect');
@@ -61,8 +62,8 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
     } catch (error) {
       console.error('Connection error:', error);
       toast({
-        title: "Error",
-        description: `Failed to connect to ${comPortInput.trim()}`,
+        title: t('common.error'),
+        description: t('uart.failedToConnect', { port: comPortInput.trim() }),
         variant: "destructive"
       });
     } finally {
@@ -75,8 +76,8 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
       await esp32Printer.disconnect();
       setIsConnected(false);
       toast({
-        title: "Disconnected",
-        description: "UART port disconnected"
+        title: t('uart.disconnected'),
+        description: t('uart.portDisconnected')
       });
     } catch (error) {
       console.error('Disconnect error:', error);
@@ -95,7 +96,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
         <CardTitle className="flex items-center justify-between">
           <span className="flex items-center">
             <Usb className="w-5 h-5 mr-2" />
-            UART Port Connection
+            {t('uart.portConnection')}
           </span>
           <Button
             variant="outline"
@@ -116,7 +117,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
               <WifiOff className="w-4 h-4 text-red-600 mr-2" />
             )}
             <span className="text-sm">
-              {isConnected ? 'Connected' : 'Disconnected'}
+              {isConnected ? t('uart.connected') : t('uart.disconnected')}
             </span>
           </div>
           {isConnected && comPortInput && (
@@ -128,7 +129,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
 
         {/* COM Port Input */}
         <div className="space-y-2">
-          <Label htmlFor="comPort">COM Port</Label>
+          <Label htmlFor="comPort">{t('uart.comPort')}</Label>
           <Input
             id="comPort"
             placeholder="e.g., COM3, COM4, COM5..."
@@ -136,9 +137,6 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
             onChange={(e) => setComPortInput(e.target.value)}
             disabled={loading}
           />
-          <p className="text-xs text-gray-500">
-            Enter the COM port number where your ESP32 printer is connected
-          </p>
         </div>
 
         {/* Action Buttons */}
@@ -149,7 +147,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
               disabled={loading || !comPortInput.trim()}
               className="flex-1"
             >
-              {loading ? 'Connecting...' : 'Connect'}
+              {loading ? t('common.loading') : t('uart.connect')}
             </Button>
           ) : (
             <Button
@@ -157,7 +155,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
               onClick={handleDisconnect}
               className="flex-1"
             >
-              Disconnect
+              {t('uart.disconnect')}
             </Button>
           )}
         </div>
@@ -168,7 +166,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
             onClick={handleTestPrint}
             className="w-full"
           >
-            Send Test Print to ESP32
+            {t('uart.testPrint')}
           </Button>
         )}
       </CardContent>

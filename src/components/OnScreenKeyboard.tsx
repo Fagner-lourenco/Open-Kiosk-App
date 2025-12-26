@@ -1,6 +1,7 @@
 
 import { Button } from "@/components/ui/button";
 import { useEffect, useRef } from "react";
+import { useTranslation } from "@/i18n";
 
 interface OnScreenKeyboardProps {
   onKeyPress: (key: string) => void;
@@ -9,6 +10,7 @@ interface OnScreenKeyboardProps {
 }
 
 const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardProps) => {
+  const { t } = useTranslation();
   const keyboardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,9 +59,9 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
       <div ref={keyboardRef} className="w-full bg-white p-4 rounded-t-lg shadow-2xl">
         <div className="flex justify-between items-center mb-4">
-          <h3 className="text-lg font-semibold">Keyboard</h3>
+          <h3 className="text-lg font-semibold">{t('keyboard.title')}</h3>
           <Button variant="outline" size="sm" onClick={onClose}>
-            Close
+            {t('keyboard.close')}
           </Button>
         </div>
         
@@ -87,7 +89,7 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
               className="px-6"
               onClick={() => handleSpecialKey('space')}
             >
-              Space
+              {t('keyboard.space')}
             </Button>
             <Button
               variant="outline"
@@ -103,7 +105,7 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
               className="px-4"
               onClick={() => handleSpecialKey('clear')}
             >
-              Clear
+              {t('keyboard.clear')}
             </Button>
           </div>
         </div>

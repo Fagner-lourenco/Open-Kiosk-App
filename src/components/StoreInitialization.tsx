@@ -7,12 +7,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Store, Database } from "lucide-react";
 import { StoreSettings } from "@/types/store";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/i18n";
 
 interface StoreInitializationProps {
   onComplete: (settings: StoreSettings) => void;
 }
 
 const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
+  const { t } = useTranslation();
   const [settings, setSettings] = useState<StoreSettings>({
     name: "",
     currency: "INR",
@@ -55,8 +57,8 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
       // Validate required fields
       if (!settings.name || !settings.taxId || !settings.firebaseConfig.projectId) {
         toast({
-          title: "Error",
-          description: "Please fill in all required fields",
+          title: t('common.error'),
+          description: t('setup.fillRequired'),
           variant: "destructive"
         });
         return;
@@ -67,16 +69,16 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
       localStorage.setItem('storeInitialized', 'true');
 
       toast({
-        title: "Success",
-        description: "Store setup completed successfully!"
+        title: t('common.success'),
+        description: t('setup.setupComplete')
       });
 
       onComplete(settings);
     } catch (error) {
       console.error('Setup error:', error);
       toast({
-        title: "Error",
-        description: "Failed to complete setup",
+        title: t('common.error'),
+        description: t('setup.setupFailed'),
         variant: "destructive"
       });
     } finally {
@@ -91,28 +93,28 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
           <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
             <Store className="w-8 h-8 text-blue-600" />
           </div>
-          <CardTitle className="text-2xl">Store Setup</CardTitle>
-          <p className="text-gray-600">Set up your store for the first time</p>
+          <CardTitle className="text-2xl">{t('setup.storeSetup')}</CardTitle>
+          <p className="text-gray-600">{t('setup.setupDescription')}</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="space-y-4">
-              <h3 className="text-lg font-medium">Store Information</h3>
+              <h3 className="text-lg font-medium">{t('setup.storeInformation')}</h3>
               
               <div>
-                <Label htmlFor="storeName">Store Name *</Label>
+                <Label htmlFor="storeName">{t('setup.storeName')} *</Label>
                 <Input
                   id="storeName"
                   value={settings.name}
                   onChange={(e) => handleInputChange('name', e.target.value)}
-                  placeholder="Enter your store name"
+                  placeholder={t('setup.storeNamePlaceholder')}
                   required
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="currency">Currency</Label>
+                  <Label htmlFor="currency">{t('setup.currency')}</Label>
                   <Input
                     id="currency"
                     value={settings.currency}
@@ -121,7 +123,7 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
                   />
                 </div>
                 <div>
-                  <Label htmlFor="taxPercentage">Tax Percentage (%)</Label>
+                  <Label htmlFor="taxPercentage">{t('setup.taxPercentage')}</Label>
                   <Input
                     id="taxPercentage"
                     type="number"
@@ -133,26 +135,26 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
               </div>
 
               <div>
-                <Label htmlFor="taxId">Tax ID / GST Number *</Label>
+                <Label htmlFor="taxId">{t('setup.taxIdGst')} *</Label>
                 <Input
                   id="taxId"
                   value={settings.taxId}
                   onChange={(e) => handleInputChange('taxId', e.target.value)}
-                  placeholder="Enter your tax ID or GST number"
+                  placeholder={t('setup.taxIdPlaceholder')}
                   required
                 />
               </div>
 
               <div>
-                <Label htmlFor="comPort">COM Port for Printer (Optional)</Label>
+                <Label htmlFor="comPort">{t('setup.comPortPrinter')}</Label>
                 <Input
                   id="comPort"
                   value={settings.comPort || ""}
                   onChange={(e) => handleInputChange('comPort', e.target.value)}
-                  placeholder="COM3"
+                  placeholder={t('setup.comPortPlaceholder')}
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Enter the COM port for your thermal printer (e.g., COM3, ttyACM0)
+                  {t('setup.comPortHelp')}
                 </p>
               </div>
             </div>
@@ -160,77 +162,77 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
             <div className="space-y-4">
               <h3 className="text-lg font-medium flex items-center">
                 <Database className="w-5 h-5 mr-2" />
-                Firebase Configuration *
+                {t('setup.firebaseConfig')} *
               </h3>
               
               <div className="grid grid-cols-1 gap-4">
                 <div>
-                  <Label htmlFor="apiKey">API Key</Label>
+                  <Label htmlFor="apiKey">{t('setup.apiKey')}</Label>
                   <Input
                     id="apiKey"
                     value={settings.firebaseConfig.apiKey}
                     onChange={(e) => handleFirebaseConfigChange('apiKey', e.target.value)}
-                    placeholder="Your Firebase API key"
+                    placeholder={t('setup.apiKeyPlaceholder')}
                     required
                   />
                 </div>
                 
                 <div>
-                  <Label htmlFor="projectId">Project ID</Label>
+                  <Label htmlFor="projectId">{t('setup.projectId')}</Label>
                   <Input
                     id="projectId"
                     value={settings.firebaseConfig.projectId}
                     onChange={(e) => handleFirebaseConfigChange('projectId', e.target.value)}
-                    placeholder="your-project-id"
+                    placeholder={t('setup.projectIdPlaceholder')}
                     required
                   />
                 </div>
 
                 <div>
-                  <Label htmlFor="authDomain">Auth Domain</Label>
+                  <Label htmlFor="authDomain">{t('setup.authDomain')}</Label>
                   <Input
                     id="authDomain"
                     value={settings.firebaseConfig.authDomain}
                     onChange={(e) => handleFirebaseConfigChange('authDomain', e.target.value)}
-                    placeholder="your-project-id.firebaseapp.com"
+                    placeholder={t('setup.authDomainPlaceholder')}
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="storageBucket">Storage Bucket</Label>
+                    <Label htmlFor="storageBucket">{t('setup.storageBucket')}</Label>
                     <Input
                       id="storageBucket"
                       value={settings.firebaseConfig.storageBucket}
                       onChange={(e) => handleFirebaseConfigChange('storageBucket', e.target.value)}
-                      placeholder="your-project-id.appspot.com"
+                      placeholder={t('setup.storageBucketPlaceholder')}
                     />
                   </div>
                   <div>
-                    <Label htmlFor="messagingSenderId">Messaging Sender ID</Label>
+                    <Label htmlFor="messagingSenderId">{t('setup.messagingSenderId')}</Label>
                     <Input
                       id="messagingSenderId"
                       value={settings.firebaseConfig.messagingSenderId}
                       onChange={(e) => handleFirebaseConfigChange('messagingSenderId', e.target.value)}
-                      placeholder="123456789"
+                      placeholder={t('setup.messagingSenderIdPlaceholder')}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <Label htmlFor="appId">App ID</Label>
+                  <Label htmlFor="appId">{t('setup.appId')}</Label>
                   <Input
                     id="appId"
                     value={settings.firebaseConfig.appId}
                     onChange={(e) => handleFirebaseConfigChange('appId', e.target.value)}
-                    placeholder="1:123456789:web:abcdef"
+                    placeholder={t('setup.appIdPlaceholder')}
                   />
                 </div>
               </div>
             </div>
 
             <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
-              {isLoading ? "Setting up..." : "Complete Setup"}
+              {isLoading ? t('setup.settingUp') : t('setup.completeSetup')}
             </Button>
           </form>
         </CardContent>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useTranslation } from "@/i18n";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -13,16 +14,18 @@ import { useSettings } from "@/hooks/useSettings";
 
 const mask = (value: string) => value ? "●".repeat(Math.max(value.length, 5)) : "";
 
-const firebaseFields = [
-  { key: "apiKey", label: "API Key *", placeholder: "Your Firebase API key" },
-  { key: "projectId", label: "Project ID *", placeholder: "your-project-id" },
-  { key: "authDomain", label: "Auth Domain", placeholder: "your-project-id.firebaseapp.com" },
-  { key: "storageBucket", label: "Storage Bucket", placeholder: "your-project-id.appspot.com" },
-  { key: "messagingSenderId", label: "Messaging Sender ID", placeholder: "123456789" },
-  { key: "appId", label: "App ID", placeholder: "1:123456789:web:abcdef" },
+// Firebase field config - labels and placeholders are translation keys
+const getFirebaseFields = (t: (key: string) => string) => [
+  { key: "apiKey", label: t('settings.apiKey') + " *", placeholder: t('settings.apiKeyPlaceholder') },
+  { key: "projectId", label: t('settings.projectId') + " *", placeholder: t('settings.projectIdPlaceholder') },
+  { key: "authDomain", label: t('settings.authDomainLabel'), placeholder: t('settings.authDomainPlaceholder') },
+  { key: "storageBucket", label: t('settings.storageBucketLabel'), placeholder: t('settings.storageBucketPlaceholder') },
+  { key: "messagingSenderId", label: t('settings.messagingSenderIdLabel'), placeholder: t('settings.messagingSenderIdPlaceholder') },
+  { key: "appId", label: t('settings.appIdLabel'), placeholder: t('settings.appIdPlaceholder') },
 ];
 
 const SettingsPanel = () => {
+  const { t } = useTranslation();
   const { settings, updateSettings, resetStore } = useStoreSettings();
   const [localSettings, setLocalSettings] = useState<StoreSettings>(
     settings || {
@@ -95,8 +98,8 @@ const SettingsPanel = () => {
     try {
       if (!localSettings.name || !localSettings.taxId || !localSettings.firebaseConfig.projectId) {
         toast({
-          title: "Error",
-          description: "Please fill in all required fields",
+          title: t('common.error'),
+          description: t('settings.fillRequired'),
           variant: "destructive"
         });
         return;
@@ -104,14 +107,14 @@ const SettingsPanel = () => {
 
       updateSettings(localSettings);
       toast({
-        title: "Success",
-        description: "Settings updated successfully!"
+        title: t('common.success'),
+        description: t('settings.settingsSaved')
       });
     } catch (error) {
       console.error('Error updating settings:', error);
       toast({
-        title: "Error",
-        description: "Failed to update settings",
+        title: t('common.error'),
+        description: t('settings.updateFailed'),
         variant: "destructive"
       });
     } finally {
@@ -120,11 +123,11 @@ const SettingsPanel = () => {
   };
 
   const handleReset = () => {
-    if (confirm("Are you sure you want to reset all store settings? This will require you to set up the store again.")) {
+    if (confirm(t('settings.resetStoreConfirm'))) {
       resetStore();
       toast({
-        title: "Store Reset",
-        description: "Store settings have been reset. Please refresh the page.",
+        title: t('settings.storeResetTitle'),
+        description: t('settings.storeResetDescription'),
       });
     }
   };
@@ -144,43 +147,43 @@ const SettingsPanel = () => {
         <CardHeader>
           <CardTitle className="flex items-center">
             <Settings className="w-5 h-5 mr-2" />
-            Store Information
+            {t('settings.storeInfo')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label htmlFor="storeName">Store Name *</Label>
+            <Label htmlFor="storeName">{t('settings.storeName')} *</Label>
             <Input
               id="storeName"
               value={localSettings.name}
               onChange={(e) => handleInputChange('name', e.target.value)}
-              placeholder="Enter your store name"
+              placeholder={t('settings.storeNamePlaceholder')}
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="taxId">Tax ID / GST Number *</Label>
+              <Label htmlFor="taxId">{t('settings.taxIdGst')}</Label>
               <Input
                 id="taxId"
                 value={localSettings.taxId}
                 onChange={(e) => handleInputChange('taxId', e.target.value)}
-                placeholder="Enter your tax ID or GST number"
+                placeholder={t('settings.taxIdPlaceholder')}
               />
             </div>
             <div>
-              <Label htmlFor="taxPercentage">Tax Percentage (%)</Label>
+              <Label htmlFor="taxPercentage">{t('settings.taxPercentage')} (%)</Label>
               <Input
                 id="taxPercentage"
                 type="number"
                 value={localSettings.taxPercentage}
                 onChange={(e) => handleInputChange('taxPercentage', parseFloat(e.target.value))}
-                placeholder="18"
+                placeholder={t('settings.taxPercentagePlaceholder')}
               />
             </div>
           </div>
           <div>
-            <Label className="text-m text-bold">Select your store's currency</Label>
+            <Label className="text-m text-bold">{t('settings.selectCurrencyLabel')}</Label>
             <Select
               value={currentCurrency.code}
               onValueChange={updateCurrency}
@@ -205,15 +208,15 @@ const SettingsPanel = () => {
         <CardHeader>
           <CardTitle className="flex items-center">
             <Printer className="w-5 h-5 mr-2" />
-            Printer Settings
+            {t('settings.printer')}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="space-y-0.5">
-              <Label htmlFor="thermalPrinter">Use Thermal Printer</Label>
+              <Label htmlFor="thermalPrinter">{t('settings.useThermalPrinter')}</Label>
               <p className="text-xs text-muted-foreground">
-                Enable to use thermal printer, disable for PDF receipts
+                {t('settings.thermalPrinterDescription')}
               </p>
             </div>
             <Switch
@@ -225,15 +228,15 @@ const SettingsPanel = () => {
 
           {localSettings.useThermalPrinter && (
             <div>
-              <Label htmlFor="comPort">COM Port for Thermal Printer</Label>
+              <Label htmlFor="comPort">{t('settings.comPortThermal')}</Label>
               <Input
                 id="comPort"
                 value={localSettings.comPort || ""}
                 onChange={(e) => handleInputChange('comPort', e.target.value)}
-                placeholder="COM3"
+                placeholder={t('settings.comPortPlaceholder')}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Enter the COM port number for your thermal printer (e.g., COM3, ttyACM0).
+                {t('settings.comPortHelp')}
               </p>
             </div>
           )}
@@ -241,7 +244,7 @@ const SettingsPanel = () => {
           {!localSettings.useThermalPrinter && (
             <div className="p-3 bg-blue-50 rounded-lg">
               <p className="text-blue-800 text-sm">
-                <strong>PDF Mode:</strong> Receipts will be generated as PDF files for printing on normal printers.
+                {t('settings.pdfModeDescription')}
               </p>
             </div>
           )}
@@ -250,10 +253,10 @@ const SettingsPanel = () => {
 
       <Card>
         <CardHeader>
-          <CardTitle>Firebase Configuration</CardTitle>
+          <CardTitle>{t('settings.firebase')}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {firebaseFields.map(field => (
+          {getFirebaseFields(t).map(field => (
             <div key={field.key} className={["storageBucket", "messagingSenderId"].includes(field.key) ? "grid grid-cols-2 gap-4" : ""}>
               {["storageBucket", "messagingSenderId"].includes(field.key) ? (
                 <>
@@ -347,12 +350,12 @@ const SettingsPanel = () => {
       <div className="flex gap-4">
         <Button onClick={handleSave} disabled={isLoading} className="flex-1">
           <Save className="w-4 h-4 mr-2" />
-          {isLoading ? "Saving..." : "Save Settings"}
+          {isLoading ? t('settings.saving') : t('settings.saveSettings')}
         </Button>
         
         <Button variant="destructive" onClick={handleReset} className="flex items-center">
           <RotateCcw className="w-4 h-4 mr-2" />
-          Reset Store
+          {t('settings.resetStore')}
         </Button>
       </div>
       
@@ -361,12 +364,12 @@ const SettingsPanel = () => {
           <div className="flex items-start space-x-2">
             <AlertTriangle className="w-5 h-5 text-orange-600 mt-0.5" />
             <div className="text-sm text-orange-800">
-              <p className="font-medium">Important Notes:</p>
+              <p className="font-medium">{t('settings.importantNotes')}</p>
               <ul className="mt-1 list-disc list-inside space-y-1 text-xs">
-                <li>Changes to Firebase configuration will require a page refresh</li>
-                <li>Resetting the store will clear all settings and require setup again</li>
-                <li>Make sure Firebase project settings are correct before saving</li>
-                <li>COM port will be used automatically for printing when configured</li>
+                <li>{t('settings.noteRefresh')}</li>
+                <li>{t('settings.noteReset')}</li>
+                <li>{t('settings.noteValidateFirebase')}</li>
+                <li>{t('settings.noteComPort')}</li>
               </ul>
             </div>
           </div>

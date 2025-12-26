@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { Clock, User, FileText, Settings, Bell } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface Activity {
   id: number;
@@ -12,6 +13,8 @@ interface Activity {
 }
 
 const ActivityFeed = () => {
+  const { t } = useTranslation();
+  
   const activities: Activity[] = [
     { id: 1, user: 'Alice Johnson', action: 'created', target: 'new project', time: '2 minutes ago', type: 'file' },
     { id: 2, user: 'Bob Smith', action: 'updated', target: 'user profile', time: '5 minutes ago', type: 'user' },
@@ -43,7 +46,7 @@ const ActivityFeed = () => {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200">
       <div className="px-6 py-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-800">Recent Activity</h3>
+        <h3 className="text-lg font-semibold text-gray-800">{t('activity.recentActivity')}</h3>
       </div>
       
       <div className="p-6">

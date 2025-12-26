@@ -1,5 +1,6 @@
 
 import { TrendingUp, TrendingDown, Clock, Play } from 'lucide-react';
+import { useTranslation } from '@/i18n';
 
 interface TestStatsProps {
   passed: number;
@@ -10,6 +11,7 @@ interface TestStatsProps {
 }
 
 const TestStats = ({ passed, failed, pending, running, total }: TestStatsProps) => {
+  const { t } = useTranslation();
   const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
   return (
@@ -22,7 +24,7 @@ const TestStats = ({ passed, failed, pending, running, total }: TestStatsProps) 
           </div>
           <span className="text-2xl font-bold text-emerald-700">{passed}</span>
         </div>
-        <p className="text-emerald-600 font-medium">Passed</p>
+        <p className="text-emerald-600 font-medium">{t('common.passed')}</p>
       </div>
 
       {/* Failed Tests */}
@@ -33,7 +35,7 @@ const TestStats = ({ passed, failed, pending, running, total }: TestStatsProps) 
           </div>
           <span className="text-2xl font-bold text-red-700">{failed}</span>
         </div>
-        <p className="text-red-600 font-medium">Failed</p>
+        <p className="text-red-600 font-medium">{t('common.failed')}</p>
       </div>
 
       {/* Pending Tests */}
@@ -44,7 +46,7 @@ const TestStats = ({ passed, failed, pending, running, total }: TestStatsProps) 
           </div>
           <span className="text-2xl font-bold text-orange-700">{pending}</span>
         </div>
-        <p className="text-orange-600 font-medium">Pending</p>
+        <p className="text-orange-600 font-medium">{t('common.pending')}</p>
       </div>
 
       {/* Running Tests */}
@@ -55,7 +57,7 @@ const TestStats = ({ passed, failed, pending, running, total }: TestStatsProps) 
           </div>
           <span className="text-2xl font-bold text-blue-700">{running}</span>
         </div>
-        <p className="text-blue-600 font-medium">Running</p>
+        <p className="text-blue-600 font-medium">{t('common.running')}</p>
       </div>
 
       {/* Pass Rate */}
@@ -66,7 +68,7 @@ const TestStats = ({ passed, failed, pending, running, total }: TestStatsProps) 
           </div>
           <span className="text-2xl font-bold text-purple-700">{passRate}%</span>
         </div>
-        <p className="text-purple-600 font-medium">Pass Rate</p>
+        <p className="text-purple-600 font-medium">{t('common.passRate')}</p>
       </div>
     </div>
   );

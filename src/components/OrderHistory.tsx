@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { esp32Printer } from "@/services/esp32PrinterService";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { useSettings } from "@/hooks/useSettings";
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseDb } from "@/services/firebase";
 import { collection, getDocs, orderBy, query } from "firebase/firestore";
@@ -15,6 +16,7 @@ import { format } from "date-fns";
 import { Calendar as CalendarIcon, Eye } from "lucide-react";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
+import { useTranslation } from "@/i18n";
 
 interface SaleRecord {
   id: string;
@@ -64,10 +66,15 @@ const OrderHistory = () => {
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [selectedOrder, setSelectedOrder] = useState<string | null>(null);
   const { settings } = useStoreSettings();
+  const { currentCurrency } = useSettings();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [printingOrderId, setPrintingOrderId] = useState<string | null>(null);
   const [calendarOpen, setCalendarOpen] = useState(false);
+
+  // Símbolo da moeda baseado nas configurações
+  const currencySymbol = currentCurrency?.symbol || 'R$';
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -86,7 +93,7 @@ const OrderHistory = () => {
         });
         setOrders(records);
       } catch (e) {
-        toast({ title: "Error", description: "Failed to fetch orders.", variant: "destructive" });
+        toast({ title: t('common.error'), description: t('orders.fetchError'), variant: "destructive" });
       }
       setLoading(false);
     };
@@ -107,8 +114,8 @@ const OrderHistory = () => {
   const handleReprint = async (order: SaleRecord) => {
     if (!settings) {
       toast({
-        title: "Error",
-        description: "Store settings not found",
+        title: t('common.error'),
+        description: t('orders.storeSettingsNotFound'),
         variant: "destructive"
       });
       return;
@@ -153,12 +160,12 @@ const OrderHistory = () => {
         
         if (result.success) {
           toast({ 
-            title: "Success", 
-            description: "Receipt reprinted successfully!" 
+            title: t('common.success'), 
+            description: t('orders.reprintSuccess')
           });
         } else {
           toast({ 
-            title: "Print Error", 
+            title: t('orders.printError'), 
             description: result.message, 
             variant: "destructive" 
           });
@@ -167,17 +174,17 @@ const OrderHistory = () => {
         // Use PDF printer
         pdfReceiptService.generateReceiptPDF(fullCartItems, settings, order.orderNumber);
         toast({ 
-          title: "Success", 
-          description: "PDF receipt generated successfully!" 
+          title: t('common.success'), 
+          description: t('orders.pdfSuccess')
         });
       }
     } catch (error) {
       console.error('Reprint error:', error);
       const errorMessage = settings?.useThermalPrinter 
-        ? "Could not reprint receipt. Check printer connection." 
-        : "Could not generate PDF receipt.";
+        ? t('orders.reprintError')
+        : t('orders.pdfError');
       toast({ 
-        title: "Print Error", 
+        title: t('orders.printError'), 
         description: errorMessage, 
         variant: "destructive" 
       });
@@ -194,11 +201,11 @@ const OrderHistory = () => {
     <div className="flex gap-6">
       {/* Left side - Order list */}
       <div className="w-80 flex-shrink-0">
-        <h2 className="text-lg font-semibold mb-4">Order History</h2>
+        <h2 className="text-lg font-semibold mb-4">{t('orders.title')}</h2>
         
         {/* Date filter */}
         <div className="mb-4 flex items-center gap-3 flex-wrap">
-          <span className="text-sm font-medium">Filter by Date:</span>
+          <span className="text-sm font-medium">{t('orders.filterByDate')}</span>
           <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -206,7 +213,7 @@ const OrderHistory = () => {
                 className="w-[160px] justify-start text-left font-normal"
               >
                 <CalendarIcon className="mr-2 h-4 w-4" />
-                {selectedDate ? format(selectedDate, "PPP") : <span>Pick a date</span>}
+                {selectedDate ? format(selectedDate, "PPP") : <span>{t('orders.pickDate')}</span>}
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-auto p-0" align="start">
@@ -225,11 +232,11 @@ const OrderHistory = () => {
           </Popover>
         </div>
 
-        {loading && <div>Loading...</div>}
+        {loading && <div>{t('orders.loading')}</div>}
 
         <div className="flex flex-col gap-2">
           {filteredOrders.length === 0 && (
-            <div className="text-muted-foreground text-sm p-6">No orders found.</div>
+            <div className="text-muted-foreground text-sm p-6">{t('orders.noOrders')}</div>
           )}
           {filteredOrders.map((o) => (
             <Card 
@@ -244,7 +251,7 @@ const OrderHistory = () => {
                   <div className="flex-1">
                     <div className="font-medium">#{o.orderNumber}</div>
                     <div className="text-xs text-muted-foreground">{parseTimestamp(o.timestamp)}</div>
-                    <div className="text-xs">₹{o.total.toFixed(2)}</div>
+                    <div className="text-xs">{currencySymbol}{o.total.toFixed(2)}</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Button
@@ -262,9 +269,9 @@ const OrderHistory = () => {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4l3-3-3-3v4a8 8 0 110 16 8 8 0 01-8-8z"/>
                           </svg>
-                          Printing...
+                          {t('orders.printing')}
                         </span>
-                      ) : "Reprint"}
+                      ) : t('orders.reprint')}
                     </Button>
                     <Eye className="w-4 h-4 text-gray-400" />
                   </div>
@@ -286,15 +293,15 @@ const OrderHistory = () => {
               <Card>
                 <CardContent className="p-6">
                   <div className="mb-4">
-                    <h3 className="text-xl font-semibold">Order #{order.orderNumber}</h3>
+                    <h3 className="text-xl font-semibold">{t('orders.orderNumber', { number: order.orderNumber })}</h3>
                     <p className="text-sm text-muted-foreground">{parseTimestamp(order.timestamp)}</p>
-                    <p className="text-xs text-muted-foreground">Database ID: {order.id}</p>
+                    <p className="text-xs text-muted-foreground">{t('orders.databaseId', { id: order.id })}</p>
                   </div>
                   
                   <Separator className="mb-4" />
                   
                   <div className="space-y-3">
-                    <h4 className="font-medium">Order Items</h4>
+                    <h4 className="font-medium">{t('orders.orderItems')}</h4>
                     {order.items.map((item, index) => (
                       <div key={index} className="flex gap-4 py-3 border-b">
                         <div className="flex-shrink-0 w-16 h-16">
@@ -308,7 +315,7 @@ const OrderHistory = () => {
                             </AspectRatio>
                           ) : (
                             <div className="w-full h-full bg-gray-100 rounded-lg flex items-center justify-center">
-                              <span className="text-gray-400 text-xs">No image</span>
+                              <span className="text-gray-400 text-xs">{t('orders.noImage')}</span>
                             </div>
                           )}
                         </div>
@@ -316,10 +323,10 @@ const OrderHistory = () => {
                           <div>
                             <div className="font-medium">{item.title}</div>
                             <div className="text-sm text-muted-foreground">
-                              ₹{item.price.toFixed(2)} × {item.quantity}
+                              {currencySymbol}{item.price.toFixed(2)} × {item.quantity}
                             </div>
                           </div>
-                          <div className="font-medium">₹{item.total.toFixed(2)}</div>
+                          <div className="font-medium">{currencySymbol}{item.total.toFixed(2)}</div>
                         </div>
                       </div>
                     ))}
@@ -329,22 +336,22 @@ const OrderHistory = () => {
                   
                   <div className="space-y-2">
                     <div className="flex justify-between">
-                      <span>Subtotal</span>
-                      <span>₹{order.subtotal.toFixed(2)}</span>
+                      <span>{t('orders.subtotal')}</span>
+                      <span>{currencySymbol}{order.subtotal.toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span>Tax</span>
-                      <span>₹{order.tax.toFixed(2)}</span>
+                      <span>{t('orders.tax')}</span>
+                      <span>{currencySymbol}{order.tax.toFixed(2)}</span>
                     </div>
                     <Separator />
                     <div className="flex justify-between font-bold text-lg">
-                      <span>Total</span>
-                      <span>₹{order.total.toFixed(2)}</span>
+                      <span>{t('orders.total')}</span>
+                      <span>{currencySymbol}{order.total.toFixed(2)}</span>
                     </div>
                   </div>
                   
                   <div className="mt-4 text-xs text-muted-foreground">
-                    Date: {order.date || parseDate(order.timestamp)}
+                    {t('orders.date', { date: order.date || parseDate(order.timestamp) })}
                   </div>
                 </CardContent>
               </Card>
@@ -354,7 +361,7 @@ const OrderHistory = () => {
           <div className="flex items-center justify-center h-64 text-muted-foreground">
             <div className="text-center">
               <Eye className="w-12 h-12 mx-auto mb-4 opacity-30" />
-              <p>Click on an order to view details</p>
+              <p>{t('orders.clickToViewDetails')}</p>
             </div>
           </div>
         )}

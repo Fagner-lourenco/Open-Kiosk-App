@@ -17,6 +17,7 @@ import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
 import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
 import QRCode from "react-qr-code";
+import { useTranslation } from "@/i18n";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -58,13 +59,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const { currentCurrency } = useSettings();
   const { toast } = useToast();
   const { settings: storeSettings } = useStoreSettings();
+  const { t } = useTranslation();
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
     paymentTimeoutSeconds: 300,
     warningThresholdSeconds: 10,
     onTimeout: () => {
-      toast({ title: "Sessão expirada", description: "Checkout cancelado por inatividade", variant: "destructive" });
+      toast({ title: t('checkout.sessionExpired'), description: t('checkout.checkoutCancelledInactivity'), variant: "destructive" });
       onCancel();
     },
   });
@@ -111,11 +113,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     };
 
     return [
-      { id: "payment", label: "Pagamento", status: statusFor("awaiting_payment") },
-      { id: "approved", label: "Aprovado", status: statusFor("payment_approved") },
-      { id: "sale", label: "Registrando venda", status: statusFor("recording_sale") },
-      { id: "dispense", label: "Dispensando", status: statusFor("dispensing") },
-      { id: "ready", label: "Pronto para retirada", status: statusFor("ready_pickup") },
+      { id: "payment", label: t('checkout.paymentStep'), status: statusFor("awaiting_payment") },
+      { id: "approved", label: t('checkout.approved'), status: statusFor("payment_approved") },
+      { id: "sale", label: t('checkout.recordingSaleStep'), status: statusFor("recording_sale") },
+      { id: "dispense", label: t('checkout.dispensingStep'), status: statusFor("dispensing") },
+      { id: "ready", label: t('checkout.readyForPickup'), status: statusFor("ready_pickup") },
     ];
   }, [flowState.processingStage]);
 
@@ -196,7 +198,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     resetInactivityTimer();
     if (fromStep === 1) {
       if (!product || !selectedSize || !selectedSizeKey || quantity <= 0 || maxQty <= 0) {
-        toast({ title: "Erro", description: "Selecione um tamanho e quantidade válidos", variant: "destructive" });
+        toast({ title: t('common.error'), description: t('checkout.selectValidSizeQuantity'), variant: "destructive" });
         return;
       }
       moveToStep(2);
@@ -208,15 +210,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const handleStartPayment = async () => {
     resetInactivityTimer();
     if (!selectedPayment) {
-      toast({ title: "Erro", description: "Selecione um método de pagamento", variant: "destructive" });
+      toast({ title: t('common.error'), description: t('checkout.selectPaymentMethodError'), variant: "destructive" });
       return;
     }
     if (!selectedSize || selectedSize.ml <= 0) {
-      toast({ title: "Erro", description: "Tamanho inválido", variant: "destructive" });
+      toast({ title: t('common.error'), description: t('checkout.invalidSize'), variant: "destructive" });
       return;
     }
     if (quantity <= 0 || maxQty <= 0) {
-      toast({ title: "Erro", description: "Quantidade indisponível", variant: "destructive" });
+      toast({ title: t('common.error'), description: t('checkout.quantityUnavailable'), variant: "destructive" });
       return;
     }
     await handlePaymentComplete();
@@ -254,7 +256,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     if (currentTransactionId) {
       try {
         await paymentService.cancelPayment(currentTransactionId);
-        toast({ title: "Pagamento cancelado", description: "Operação cancelada pelo usuário" });
+        toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
       } catch (error) {
         console.error("Error cancelling payment:", error);
       }
@@ -353,8 +355,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     } catch (error) {
       console.error("Error in finishPaymentFlow:", error);
       toast({
-        title: "Error",
-        description: (error as Error)?.message || "Failed to complete order",
+        title: t('common.error'),
+        description: (error as Error)?.message || t('checkout.processOrderError'),
         variant: "destructive",
       });
       updateProcessingStage("idle");
@@ -385,7 +387,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       if (currentAttempt > MAX_ATTEMPTS) {
         console.log('[DrinkMP Polling] Timeout - pagamento não confirmado em 5 minutos');
         setIsPolling(false);
-        setMpError('Timeout: Pagamento não confirmado. Tente novamente.');
+        setMpError(t('checkout.paymentNotConfirmedTimeout'));
         setIsProcessing(false);
         setPointStatus('idle');
         updateProcessingStage("idle");
@@ -443,8 +445,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           setPointStatus('idle');
           
           toast({
-            title: "Pagamento aprovado",
-            description: "Pagamento confirmado com sucesso"
+            title: t('checkout.paymentApprovedToast'),
+            description: t('checkout.paymentConfirmedSuccess')
           });
 
           updateProcessingStage("payment_approved");
@@ -490,8 +492,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       if (processingStageRef.current === "awaiting_payment") {
         handleCancelPayment();
         toast({
-          title: "Timeout",
-          description: "Pagamento não confirmado a tempo",
+          title: t('checkout.timeout'),
+          description: t('checkout.paymentNotConfirmedTime'),
           variant: "destructive",
         });
       }
@@ -556,13 +558,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
         } catch (error: any) {
           console.error('[DrinkQR] Erro ao criar QR:', error);
-          const errorMsg = error.message || 'Erro ao gerar QR Code';
+          const errorMsg = error.message || t('checkout.errorGeneratingQr');
           setMpError(errorMsg);
           setIsProcessing(false);
           updateProcessingStage("idle");
           moveToStep(2);
           toast({
-            title: "Erro no Pagamento",
+            title: t('checkout.paymentError'),
             description: errorMsg,
             variant: "destructive"
           });
@@ -623,7 +625,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           updateProcessingStage("idle");
           moveToStep(2);
           toast({
-            title: "Erro no Terminal",
+            title: t('checkout.terminalErrorMsg'),
             description: errorMsg,
             variant: "destructive"
           });
@@ -636,8 +638,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
       console.error("Payment error:", error);
       toast({
-        title: "Error",
-        description: (error as Error)?.message || "Payment failed",
+        title: t('common.error'),
+        description: (error as Error)?.message || t('checkout.paymentFailedGeneric'),
         variant: "destructive",
       });
       updateProcessingStage("idle");
@@ -664,22 +666,22 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {flowState.currentStep === 1 && "Escolha o Tamanho"}
-            {flowState.currentStep === 2 && "Finalizar Pedido"}
-            {flowState.currentStep === 3 && "Processando..."}
+            {flowState.currentStep === 1 && t('checkout.chooseSize')}
+            {flowState.currentStep === 2 && t('checkout.finishOrder')}
+            {flowState.currentStep === 3 && t('checkout.processingOrder')}
           </DialogTitle>
           <DialogDescription>
-            {flowState.currentStep === 1 && "Selecione o tamanho e quantidade da sua bebida"}
-            {flowState.currentStep === 2 && "Revise seu pedido e escolha a forma de pagamento"}
-            {flowState.currentStep === 3 && "Aguarde enquanto processamos seu pedido"}
+            {flowState.currentStep === 1 && t('checkout.selectSizeQuantity')}
+            {flowState.currentStep === 2 && t('checkout.reviewOrderPayment')}
+            {flowState.currentStep === 3 && t('checkout.waitProcessing')}
           </DialogDescription>
           <StepperIndicator
             currentStep={flowState.currentStep > 2 ? 3 : flowState.currentStep}
             completedSteps={flowState.completedSteps}
             steps={[
-              { label: "Tamanho", description: "Seleção" },
-              { label: "Pagamento", description: "Finalizar" },
-              { label: "Pronto", description: "Aguarde" },
+              { label: t('checkout.sizeLabel'), description: t('checkout.selectionLabel') },
+              { label: t('checkout.paymentLabel'), description: t('checkout.finishLabel') },
+              { label: t('checkout.readyLabel'), description: t('checkout.waitLabel') },
             ]}
           />
         </DialogHeader>
@@ -694,7 +696,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           <TimeoutWarning
             isOpen={flowState.isInactivityWarning}
             secondsLeft={flowState.inactivityTimeLeft}
-            action="o checkout será cancelado"
+            action={t('checkout.checkoutCancelled')}
             onExtend={() => flowActions.extendInactivityTimeout(60)}
             onProceed={() => flowActions.extendInactivityTimeout(1)}
           />
@@ -703,11 +705,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             <>
               <div>
                 <Label htmlFor="size-select" className="block text-sm font-medium mb-2">
-                  Tamanho
+                  {t('common.size')}
                 </Label>
                 <Select value={selectedSizeKey} onValueChange={(val) => { flowActions.resetInactivityTimer(); setSelectedSizeKey(val); }}>
                   <SelectTrigger id="size-select" className="h-12">
-                    <SelectValue placeholder="Selecione o tamanho" />
+                    <SelectValue placeholder={t('shop.selectSize')} />
                   </SelectTrigger>
                   <SelectContent>
                     {product.sizes?.map((size) => (
@@ -721,7 +723,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
               <div>
                 <Label htmlFor="qty-input" className="block text-sm font-medium mb-2">
-                  Quantidade
+                  {t('common.quantity')}
                 </Label>
                 <div className="flex items-center justify-center gap-4">
                   <Button
@@ -746,7 +748,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 </div>
                 {maxQty > 0 && (
                   <p className="text-xs text-gray-500 mt-2 text-center">
-                    Máximo disponível: {maxQty}
+                    {t('checkout.maxAvailable', { max: maxQty })}
                   </p>
                 )}
               </div>
@@ -754,7 +756,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               {selectedSize && (
                 <Card className="bg-green-50 border-green-200 p-4">
                   <div className="flex justify-between items-center">
-                    <span className="text-gray-700">Subtotal:</span>
+                    <span className="text-gray-700">{t('checkout.subtotal')}:</span>
                     <span className="text-2xl font-bold text-green-600">
                       {currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}
                     </span>
@@ -764,14 +766,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
               <div className="flex gap-2 pt-2">
                 <Button variant="outline" onClick={() => handleBack(1)} className="flex-1">
-                  Cancelar
+                  {t('common.cancel')}
                 </Button>
                 <Button 
                   onClick={() => handleNext(1)} 
                   className="flex-1" 
                   disabled={maxQty <= 0 || !selectedSizeKey}
                 >
-                  Continuar
+                  {t('checkout.continue')}
                 </Button>
               </div>
             </>
@@ -783,28 +785,28 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               <Card className="bg-blue-50 border-blue-200 p-4">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-gray-700">Produto:</span>
+                    <span className="text-gray-700">{t('checkout.product')}:</span>
                     <span className="font-medium">{product.title}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-700">Tamanho:</span>
+                    <span className="text-gray-700">{t('common.size')}:</span>
                     <span className="font-medium">{selectedSize.label}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-700">Quantidade:</span>
+                    <span className="text-gray-700">{t('common.quantity')}:</span>
                     <span className="font-medium">{quantity}</span>
                   </div>
                   <Separator />
                   <div className="flex justify-between text-gray-600">
-                    <span>Subtotal:</span>
+                    <span>{t('checkout.subtotal')}:</span>
                     <span>{currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>Taxa ({storeSettings?.taxPercentage || 0}%):</span>
+                    <span>{t('checkout.tax')} ({storeSettings?.taxPercentage || 0}%):</span>
                     <span>{currentCurrency.symbol}{((selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-lg pt-1">
-                    <span>Total:</span>
+                    <span>{t('checkout.total')}:</span>
                     <span className="text-green-600">
                       {currentCurrency.symbol}{calculateTotal().toFixed(2)}
                     </span>
@@ -814,7 +816,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
               {/* Seleção de Método de Pagamento */}
               <div className="space-y-2">
-                <Label className="block font-medium text-sm">Forma de Pagamento</Label>
+                <Label className="block font-medium text-sm">{t('checkout.selectPaymentMethod')}</Label>
                 
                 <div
                   className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
@@ -826,8 +828,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 >
                   <QrCode className={`w-6 h-6 ${selectedPayment === "pix_qr" ? "text-green-600" : "text-gray-400"}`} />
                   <div className="flex-1">
-                    <p className="font-medium">PIX / QR Code</p>
-                    <p className="text-xs text-gray-500">Pagamento instantâneo</p>
+                    <p className="font-medium">{t('checkout.pixQrCode')}</p>
+                    <p className="text-xs text-gray-500">{t('checkout.qrCodeInstant')}</p>
                   </div>
                   <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     selectedPayment === "pix_qr" ? "border-green-500 bg-green-500" : "border-gray-300"
@@ -846,8 +848,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 >
                   <CreditCard className={`w-6 h-6 ${selectedPayment === "credit_card" ? "text-blue-600" : "text-gray-400"}`} />
                   <div className="flex-1">
-                    <p className="font-medium">Cartão de Crédito</p>
-                    <p className="text-xs text-gray-500">Visa, Mastercard, Elo, Amex</p>
+                    <p className="font-medium">{t('checkout.creditCardLabel')}</p>
+                    <p className="text-xs text-gray-500">{t('checkout.visaMasterElo')}</p>
                   </div>
                   <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     selectedPayment === "credit_card" ? "border-blue-500 bg-blue-500" : "border-gray-300"
@@ -866,8 +868,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 >
                   <CreditCard className={`w-6 h-6 ${selectedPayment === "debit_card" ? "text-orange-600" : "text-gray-400"}`} />
                   <div className="flex-1">
-                    <p className="font-medium">Cartão de Débito</p>
-                    <p className="text-xs text-gray-500">Débito à vista</p>
+                    <p className="font-medium">{t('checkout.debitCardLabel')}</p>
+                    <p className="text-xs text-gray-500">{t('checkout.debitCardInstant')}</p>
                   </div>
                   <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     selectedPayment === "debit_card" ? "border-orange-500 bg-orange-500" : "border-gray-300"
@@ -904,7 +906,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {mpError && (
                         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
                           <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                          <p className="text-red-700 font-medium">Erro no pagamento</p>
+                          <p className="text-red-700 font-medium">{t('checkout.paymentErrorGeneric')}</p>
                           <p className="text-red-600 text-sm mt-1">{mpError}</p>
                           <Button 
                             variant="outline" 
@@ -922,8 +924,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                           <div className="bg-white p-6 rounded-lg border-2 border-blue-300 inline-block">
                             <QRCode value={mpQrData} size={192} level="M" />
                           </div>
-                          <p className="font-medium text-gray-700">Escaneie o QR code com seu app bancário</p>
-                          <p className="text-sm text-gray-500">Use o app do banco para pagar via PIX</p>
+                          <p className="font-medium text-gray-700">{t('checkout.scanQrCode')}</p>
+                          <p className="text-sm text-gray-500">{t('checkout.payWithQrCode')}</p>
                           
                           {isPolling && (
                             <div className="flex items-center justify-center gap-2 text-blue-600">
@@ -939,7 +941,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             onClick={handleCancelPayment}
                             className="mt-4"
                           >
-                            Cancelar pagamento
+                            {t('checkout.cancelPayment')}
                           </Button>
                         </>
                       )}
@@ -948,7 +950,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {!mpQrData && !mpError && (
                         <>
                           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                          <p className="text-gray-600">Gerando QR Code...</p>
+                          <p className="text-gray-600">{t('checkout.generatingQr')}</p>
                         </>
                       )}
                     </div>
@@ -960,14 +962,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {(pointStatus === 'error' || mpError) && (
                         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
                           <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                          <p className="text-red-700 font-medium">Erro no terminal</p>
-                          <p className="text-red-600 text-sm mt-1">{mpError || 'Falha na comunicação com o terminal'}</p>
+                          <p className="text-red-700 font-medium">{t('checkout.terminalErrorMsg')}</p>
+                          <p className="text-red-600 text-sm mt-1">{mpError || t('checkout.terminalCommError')}</p>
                           <Button 
                             variant="outline" 
                             onClick={handleCancelPayment}
                             className="mt-4"
                           >
-                            Tentar novamente
+                            {t('checkout.tryAgain')}
                           </Button>
                         </div>
                       )}
@@ -976,9 +978,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {pointStatus === 'sending' && !mpError && (
                         <>
                           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                          <p className="text-gray-600">Enviando para o terminal...</p>
+                          <p className="text-gray-600">{t('checkout.sendingToTerminal')}</p>
                           <p className="text-sm text-gray-500">
-                            {selectedPayment === "credit_card" ? "Pagamento em crédito" : "Pagamento em débito"}
+                            {selectedPayment === "credit_card" ? t('checkout.creditPayment') : t('checkout.debitPayment')}
                           </p>
                         </>
                       )}
@@ -991,11 +993,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                           }`} />
                           <p className="font-medium text-gray-700">
                             {selectedPayment === "credit_card" 
-                              ? "Insira ou aproxime seu cartão de CRÉDITO" 
-                              : "Insira ou aproxime seu cartão de DÉBITO"
+                              ? t('checkout.insertCreditCard') 
+                              : t('checkout.insertDebitCard')
                             }
                           </p>
-                          <p className="text-sm text-gray-500">Aguardando leitura no terminal...</p>
+                          <p className="text-sm text-gray-500">{t('checkout.awaitingTerminal')}</p>
                           
                           {isPolling && (
                             <div className={`flex items-center justify-center gap-2 ${
@@ -1017,7 +1019,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             onClick={handleCancelPayment}
                             className="mt-4"
                           >
-                            Cancelar
+                            {t('common.cancel')}
                           </Button>
                         </>
                       )}
@@ -1026,8 +1028,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {pointStatus === 'processing' && !mpError && (
                         <>
                           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-                          <p className="text-gray-600 font-medium">Processando pagamento...</p>
-                          <p className="text-sm text-gray-500">Aguarde a confirmação</p>
+                          <p className="text-gray-600 font-medium">{t('checkout.processing')}</p>
+                          <p className="text-sm text-gray-500">{t('checkout.verifyingPayment')}</p>
                         </>
                       )}
 
@@ -1035,7 +1037,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {pointStatus === 'idle' && !mpError && (
                         <>
                           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                          <p className="text-gray-600">Iniciando pagamento...</p>
+                          <p className="text-gray-600">{t('checkout.processing')}</p>
                         </>
                       )}
                     </div>
@@ -1050,16 +1052,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
                     </svg>
                   </div>
-                  <p className="text-gray-600 font-medium text-lg">Pagamento aprovado!</p>
-                  <p className="text-sm text-gray-500">Processando pedido...</p>
+                  <p className="text-gray-600 font-medium text-lg">{t('checkout.paymentApproved')}</p>
+                  <p className="text-sm text-gray-500">{t('checkout.processing')}</p>
                 </>
               )}
 
               {flowState.processingStage === "recording_sale" && (
                 <>
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                  <p className="text-gray-600 font-medium">Registrando venda...</p>
-                  <p className="text-sm text-gray-500">Atualizando estoque</p>
+                  <p className="text-gray-600 font-medium">{t('checkout.recordingSale')}</p>
+                  <p className="text-sm text-gray-500">{t('checkout.updatingStock')}</p>
                   <div className="w-full max-w-xs bg-gray-200 rounded-full h-2 mt-2">
                     <div className="bg-blue-600 h-2 rounded-full w-1/3 animate-pulse"></div>
                   </div>
@@ -1069,8 +1071,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               {flowState.processingStage === "dispensing" && (
                 <>
                   <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-600"></div>
-                  <p className="text-gray-600 font-medium">Dispensando sua bebida...</p>
-                  <p className="text-sm text-gray-500">Aguarde a saída do copo</p>
+                  <p className="text-gray-600 font-medium">{t('checkout.dispensing')}</p>
+                  <p className="text-sm text-gray-500">{t('checkout.awaitCup')}</p>
                   <div className="w-full max-w-xs bg-gray-200 rounded-full h-2 mt-2">
                     <div className="bg-amber-600 h-2 rounded-full w-2/3 animate-pulse"></div>
                   </div>
@@ -1084,8 +1086,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
                     </svg>
                   </div>
-                  <p className="text-gray-600 font-medium text-lg">Bebida pronta!</p>
-                  <p className="text-sm text-gray-500">Posicione seu copo para retirar</p>
+                  <p className="text-gray-600 font-medium text-lg">{t('checkout.drinkReady')}</p>
+                  <p className="text-sm text-gray-500">{t('checkout.positionCup')}</p>
                 </>
               )}
 
@@ -1096,8 +1098,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" />
                     </svg>
                   </div>
-                  <p className="text-gray-600 font-medium">Pagamento confirmado!</p>
-                  <p className="text-sm text-gray-500">Retire sua bebida</p>
+                  <p className="text-gray-600 font-medium">{t('checkout.paymentConfirmed')}</p>
+                  <p className="text-sm text-gray-500">{t('checkout.pickUpDrink')}</p>
                 </>
               )}
             </div>

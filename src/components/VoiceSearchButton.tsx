@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Mic, MicOff } from "lucide-react";
 import { useVoiceSearch } from "@/hooks/useVoiceSearch";
 import { useEffect } from "react";
+import { useTranslation } from "@/i18n";
 
 interface VoiceSearchButtonProps {
   onTranscript: (text: string) => void;
@@ -11,6 +12,7 @@ interface VoiceSearchButtonProps {
 
 const VoiceSearchButton = ({ onTranscript, className }: VoiceSearchButtonProps) => {
   const { isListening, transcript, startListening, stopListening, resetTranscript, isSupported, confidence } = useVoiceSearch();
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (transcript && !isListening) {
@@ -34,9 +36,9 @@ const VoiceSearchButton = ({ onTranscript, className }: VoiceSearchButtonProps) 
 
   const getButtonText = () => {
     if (isListening) {
-      return transcript ? `"${transcript}"` : "Listening...";
+      return transcript ? `"${transcript}"` : t('voice.listening');
     }
-    return "Voice";
+    return t('voice.voice');
   };
 
   const getButtonColor = () => {
@@ -64,13 +66,13 @@ const VoiceSearchButton = ({ onTranscript, className }: VoiceSearchButtonProps) 
         ) : (
           <>
             <Mic className="w-4 h-4" />
-            <span className="ml-2 hidden sm:inline">Voice</span>
+            <span className="ml-2 hidden sm:inline">{t('voice.voice')}</span>
           </>
         )}
       </Button>
       {isListening && (
         <div className="absolute -bottom-8 left-0 right-0 text-xs text-center text-gray-500">
-          {confidence > 0 && `${Math.round(confidence * 100)}% confident`}
+          {confidence > 0 && t('voice.confident', { percent: Math.round(confidence * 100) })}
         </div>
       )}
     </div>

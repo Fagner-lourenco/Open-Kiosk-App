@@ -3,17 +3,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { Settings, ShoppingCart, Heart } from "lucide-react";
+import { useTranslation } from "@/i18n";
 
 const Index = () => {
   const navigate = useNavigate();
+  const { t } = useTranslation();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4 relative">
       <div className="max-w-4xl mx-auto text-center">
         <div className="mb-8">
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">Open Kiosk</h1>
-          <p className="text-xl text-gray-600 mb-2">Open Source Point of Sale System</p>
-          <p className="text-gray-500">Perfect for groceries, medical stores, food stalls, bakeries and more</p>
+          <h1 className="text-5xl font-bold text-gray-900 mb-4">{t('home.title')}</h1>
+          <p className="text-xl text-gray-600 mb-2">{t('home.subtitle')}</p>
+          <p className="text-gray-500">{t('home.description')}</p>
         </div>
         
         <div className="grid md:grid-cols-2 gap-6 max-w-2xl mx-auto">
@@ -22,14 +24,14 @@ const Index = () => {
               <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
                 <Settings className="w-8 h-8 text-blue-600" />
               </div>
-              <CardTitle className="text-2xl">Admin Panel</CardTitle>
+              <CardTitle className="text-2xl">{t('home.adminPanel')}</CardTitle>
               <CardDescription>
-                Manage inventory, add products, update prices and oversee store operations
+                {t('home.adminDescription')}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button className="w-full" size="lg">
-                Access Admin Panel
+                {t('home.accessAdminPanel')}
               </Button>
             </CardContent>
           </Card>
@@ -39,21 +41,21 @@ const Index = () => {
               <div className="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
                 <ShoppingCart className="w-8 h-8 text-green-600" />
               </div>
-              <CardTitle className="text-2xl">Customer Shop</CardTitle>
+              <CardTitle className="text-2xl">{t('home.customerShop')}</CardTitle>
               <CardDescription>
-                Browse products, search items, add to cart and complete purchases
+                {t('home.shopDescription')}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button className="w-full" variant="outline" size="lg">
-                Start Shopping
+                {t('home.startShopping')}
               </Button>
             </CardContent>
           </Card>
         </div>
         
         <div className="mt-12 text-sm text-gray-500">
-          <p>Open source • Free to use • Customizable for any business</p>
+          <p>{t('home.footer')}</p>
         </div>
       </div>
       

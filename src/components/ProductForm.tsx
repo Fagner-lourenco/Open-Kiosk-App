@@ -12,6 +12,7 @@ import { X } from "lucide-react";
 import { Product, ProductSize } from "@/types/product";
 import { useSettings } from "@/hooks/useSettings";
 import { useToast } from "@/hooks/use-toast";
+import { useTranslation } from "@/i18n";
 
 interface ProductFormProps {
   onSubmit: (product: Omit<Product, "id">) => void;
@@ -21,6 +22,7 @@ interface ProductFormProps {
 const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
   const { currentCurrency } = useSettings();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [title, setTitle] = useState(initialProduct?.title || "");
   const [price, setPrice] = useState(initialProduct?.price || 0);
   const [description, setDescription] = useState(initialProduct?.description || "");
@@ -52,8 +54,8 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
     e.preventDefault();
     if (image && !isValidUrl(image)) {
       toast({
-        title: "Invalid image URL",
-        description: "Please enter a valid URL for the image.",
+        title: t('products.invalidImageUrl'),
+        description: t('products.invalidImageUrlDescription'),
         variant: "destructive"
       });
       return;
@@ -63,8 +65,8 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
       // Validação mínima para bebidas
       if (!sizes || sizes.length === 0) {
         toast({
-          title: "Missing sizes",
-          description: "Add at least one size for drinks.",
+          title: t('products.missingSizes'),
+          description: t('products.missingSizesDescription'),
           variant: "destructive"
         });
         return;
@@ -72,8 +74,8 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
 
         if (sizes[0]?.ml === 0 || sizes[0]?.ml === undefined) {
           toast({
-            title: "Invalid size",
-            description: "Size must include volume (ml) greater than 0.",
+            title: t('products.invalidSize'),
+            description: t('products.invalidSizeDescription'),
             variant: "destructive"
           });
           return;
@@ -152,18 +154,18 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="title">Product Title</Label>
+              <Label htmlFor="title">{t('products.productTitle')}</Label>
               <Input
                 id="title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 required
-                placeholder="Enter product title"
+                placeholder={t('products.enterTitle')}
               />
             </div>
             { !isDrink && (
               <div className="space-y-2">
-                <Label htmlFor="price">Price ({currentCurrency.symbol})</Label>
+                <Label htmlFor="price">{t('products.price')} ({currentCurrency.symbol})</Label>
                 <Input
                   id="price"
                   type="number"
@@ -178,34 +180,34 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
+            <Label htmlFor="description">{t('products.description')}</Label>
             <Textarea
               id="description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Enter product description"
+              placeholder={t('products.enterDescription')}
               rows={3}
             />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
-              <Label htmlFor="image">Image URL</Label>
+              <Label htmlFor="image">{t('products.imageUrl')}</Label>
               <Input
                 id="image"
                 value={image}
                 onChange={(e) => setImage(e.target.value)}
-                placeholder="https://example.com/image.jpg"
+                placeholder={t('products.imageUrlPlaceholder')}
               />
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="category">Category</Label>
+              <Label htmlFor="category">{t('products.category')}</Label>
               <Input
                 id="category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                placeholder="e.g., Fruits, Vegetables, Dairy"
+                placeholder={t('products.categoryPlaceholder')}
               />
             </div>
           </div>
@@ -218,14 +220,14 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
                 onCheckedChange={setIsDrink}
                 id="isDrink"
               />
-              <Label htmlFor="isDrink">É uma bebida?</Label>
+              <Label htmlFor="isDrink">{t('products.isDrink')}</Label>
             </div>
           </div>
 
           { isDrink ? (
             <>
               <div className="space-y-2">
-                <Label htmlFor="totalMl">Total ML Disponível</Label>
+                <Label htmlFor="totalMl">{t('products.totalMl')}</Label>
                 <Input
                   id="totalMl"
                   type="number"
@@ -236,19 +238,19 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
               </div>
 
               <div className="col-span-2 space-y-2">
-                <Label>Tamanhos</Label>
+                <Label>{t('products.sizes')}</Label>
                 <div className="border rounded p-4 space-y-3">
                   <div className="hidden md:grid grid-cols-[1fr_1fr_110px_90px_50px] gap-2 text-xs font-medium text-muted-foreground pb-2 border-b">
-                    <div>Key (ID único)</div>
-                    <div>Label (exibição)</div>
-                    <div>Preço ({currentCurrency.code})</div>
-                    <div>ML</div>
+                    <div>{t('products.sizeKeyHeader')}</div>
+                    <div>{t('products.sizeLabelHeader')}</div>
+                    <div>{t('products.sizePriceHeader')} ({currentCurrency.code})</div>
+                    <div>{t('products.sizeMlHeader')}</div>
                     <div></div>
                   </div>
                   {sizes.map((size, index) => (
                     <div key={index} className="flex flex-col md:grid md:grid-cols-[1fr_1fr_110px_90px_50px] gap-2">
                       <Input
-                        placeholder="Key (ex: s300)"
+                        placeholder={t('products.sizeKeyPlaceholder')}
                         value={size.key}
                         onChange={(e) => {
                           const newSizes = [...sizes];
@@ -257,7 +259,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
                         }}
                       />
                       <Input
-                        placeholder="Label (ex: 300ml)"
+                        placeholder={t('products.sizeLabelPlaceholder')}
                         value={size.label}
                         onChange={(e) => {
                           const newSizes = [...sizes];
@@ -304,22 +306,22 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
                     size="sm"
                     onClick={() => setSizes([...sizes, { key: "", label: "", price: 0, ml: 0 }])}
                   >
-                    + Adicionar Tamanho
+                    {t('products.addSize')}
                   </Button>
                 </div>
               </div>
 
               {sizes.length > 0 && (
                 <div className="space-y-2">
-                  <Label>Tamanho Padrão</Label>
+                  <Label>{t('products.defaultSize')}</Label>
                   <Select value={defaultSizeKey} onValueChange={setDefaultSizeKey}>
                     <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Selecione o tamanho padrão" />
+                      <SelectValue placeholder={t('products.selectDefaultSize')} />
                     </SelectTrigger>
                     <SelectContent>
                       {sizes.map((s) => (
                         <SelectItem key={s.key} value={s.key || `size-${s.label}`}>
-                          {s.label || '(sem nome)'}
+                          {s.label || t('products.noName')}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -328,7 +330,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
               )}
 
               <div className="space-y-2">
-                <Label htmlFor="minStock">Minimum Stock Alert (ML)</Label>
+                <Label htmlFor="minStock">{t('products.minStockAlertMl')}</Label>
                 <Input
                   id="minStock"
                   type="number"
@@ -338,14 +340,14 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
                   placeholder="1000"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Alerta quando o estoque estiver abaixo deste valor em ML
+                  {t('products.minStockAlertDescription')}
                 </p>
               </div>
             </>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-2">
-                <Label htmlFor="stock">Stock Quantity</Label>
+                <Label htmlFor="stock">{t('products.stockQuantity')}</Label>
                 <Input
                   id="stock"
                   type="number"
@@ -357,7 +359,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
               </div>
               
               <div className="space-y-2">
-                <Label htmlFor="minStock">Minimum Stock Alert</Label>
+                <Label htmlFor="minStock">{t('products.minStockAlert')}</Label>
                 <Input
                   id="minStock"
                   type="number"
@@ -371,16 +373,16 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
           )}
 
           <div className="space-y-4">
-            <Label>Tags</Label>
+            <Label>{t('products.tags')}</Label>
             <div className="flex gap-2">
               <Input
                 value={tagInput}
                 onChange={(e) => setTagInput(e.target.value)}
                 onKeyPress={handleTagInputKeyPress}
-                placeholder="Add a tag and press Enter"
+                placeholder={t('products.addTagPlaceholder')}
                 className="flex-1"
               />
-              <Button type="button" onClick={addTag}>Add Tag</Button>
+              <Button type="button" onClick={addTag}>{t('products.addTag')}</Button>
             </div>
             <div className="flex flex-wrap gap-2">
               {tags.map((tag) => (
@@ -396,7 +398,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
           </div>
 
           <Button type="submit" className="w-full">
-            {initialProduct ? "Update Product" : "Add Product"}
+            {initialProduct ? t('products.updateProduct') : t('products.addProduct')}
           </Button>
         </form>
       </CardContent>

@@ -1,6 +1,7 @@
 
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useTranslation } from "@/i18n";
 import AdminOverview from "@/components/AdminOverview";
 import AdminProducts from "@/components/AdminProducts";
 import AdminAddProduct from "@/components/AdminAddProduct";
@@ -13,6 +14,7 @@ import { Product } from "@/types/product";
 import { ProductWithInventory, InventoryLog } from "@/types/store";
 
 export default function Admin() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState("overview");
   const { products, addProduct, updateProduct, deleteProduct } = useFirebaseProducts();
 
@@ -67,20 +69,20 @@ export default function Admin() {
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h1 className="text-2xl font-bold py-4">Admin Dashboard</h1>
+          <h1 className="text-2xl font-bold py-4">{t('admin.dashboard')}</h1>
         </div>
       </div>
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid w-full grid-cols-7 mb-6 h-12">
-            <TabsTrigger value="overview" className="text-sm">Overview</TabsTrigger>
-            <TabsTrigger value="products" className="text-sm">Products</TabsTrigger>
-            <TabsTrigger value="add-product" className="text-sm">Add Product</TabsTrigger>
-            <TabsTrigger value="inventory" className="text-sm">Inventory</TabsTrigger>
-            <TabsTrigger value="orders" className="text-sm">Orders</TabsTrigger>
-            <TabsTrigger value="reports" className="text-sm">Reports</TabsTrigger>
-            <TabsTrigger value="settings" className="text-sm">Settings</TabsTrigger>
+            <TabsTrigger value="overview" className="text-sm">{t('admin.overview')}</TabsTrigger>
+            <TabsTrigger value="products" className="text-sm">{t('nav.products')}</TabsTrigger>
+            <TabsTrigger value="add-product" className="text-sm">{t('common.add')} {t('nav.products')}</TabsTrigger>
+            <TabsTrigger value="inventory" className="text-sm">{t('nav.inventory')}</TabsTrigger>
+            <TabsTrigger value="orders" className="text-sm">{t('nav.orders')}</TabsTrigger>
+            <TabsTrigger value="reports" className="text-sm">{t('nav.reports')}</TabsTrigger>
+            <TabsTrigger value="settings" className="text-sm">{t('nav.settings')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">
