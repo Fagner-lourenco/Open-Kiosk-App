@@ -9,6 +9,7 @@ import AdminReports from "@/components/AdminReports";
 import AdminSettings from "@/components/AdminSettings";
 import AdminOrders from "@/components/AdminOrders";
 import InventoryManager from "@/components/InventoryManager";
+import { ESP32TestPanel } from "@/components/ESP32TestPanel";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { Product } from "@/types/product";
 import { ProductWithInventory, InventoryLog } from "@/types/store";
@@ -47,11 +48,12 @@ export default function Admin() {
     try {
       const product = products.find(p => p.id === productId);
       if (product) {
-        await updateProduct(productId, { 
-          ...product, 
-          stock: newStock,
-          inStock: newStock > 0
-        });
+        // Para bebidas, atualiza totalMlAvailable; para produtos regulares, atualiza stock
+        const updates = product.isDrink
+          ? { ...product, totalMlAvailable: newStock }
+          : { ...product, stock: newStock, inStock: newStock > 0 };
+        
+        await updateProduct(productId, updates);
       }
     } catch (error) {
       console.error("Error updating inventory:", error);
@@ -75,13 +77,14 @@ export default function Admin() {
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-7 mb-6 h-12">
+          <TabsList className="grid w-full grid-cols-8 mb-6 h-12">
             <TabsTrigger value="overview" className="text-sm">{t('admin.overview')}</TabsTrigger>
             <TabsTrigger value="products" className="text-sm">{t('nav.products')}</TabsTrigger>
             <TabsTrigger value="add-product" className="text-sm">{t('common.add')} {t('nav.products')}</TabsTrigger>
             <TabsTrigger value="inventory" className="text-sm">{t('nav.inventory')}</TabsTrigger>
             <TabsTrigger value="orders" className="text-sm">{t('nav.orders')}</TabsTrigger>
             <TabsTrigger value="reports" className="text-sm">{t('nav.reports')}</TabsTrigger>
+            <TabsTrigger value="esp32" className="text-sm">ESP32</TabsTrigger>
             <TabsTrigger value="settings" className="text-sm">{t('nav.settings')}</TabsTrigger>
           </TabsList>
 
@@ -110,6 +113,10 @@ export default function Admin() {
           
           <TabsContent value="reports">
             <AdminReports />
+          </TabsContent>
+          
+          <TabsContent value="esp32">
+            <ESP32TestPanel />
           </TabsContent>
           
           <TabsContent value="settings">

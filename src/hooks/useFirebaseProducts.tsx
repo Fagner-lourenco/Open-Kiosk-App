@@ -47,7 +47,7 @@ export const useFirebaseProducts = () => {
           productsGlobal = productsData;
           loadingGlobal = false;
           errorGlobal = null;
-          console.log('Fetched products from Firebase:', productsData);
+          console.log('[useFirebaseProducts] 🔄 Listener disparado, produtos atualizados:', productsData.map(p => ({ id: p.id, title: p.title, stock: p.stock, totalMl: p.totalMlAvailable })));
           productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
         }, (error) => {
           console.error('Error fetching products:', error);

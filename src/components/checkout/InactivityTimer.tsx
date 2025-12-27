@@ -7,26 +7,15 @@ export function InactivityTimer({ secondsLeft, maxSeconds, variant, onTimeout, o
   const { t } = useTranslation();
   const percentage = maxSeconds > 0 ? Math.max(0, Math.min(100, (secondsLeft / maxSeconds) * 100)) : 0;
 
-  const { bgColor, textColor, borderColor, icon } = useMemo(() => {
+  const { textColor, progressColor, showUrgent } = useMemo(() => {
     switch (variant) {
       case "critical":
-        return { bgColor: "bg-red-50", textColor: "text-red-700", borderColor: "border-red-200", icon: <AlertCircle className="w-4 h-4" /> };
+        return { textColor: "text-red-600", progressColor: "bg-red-500", showUrgent: true };
       case "warning":
-        return { bgColor: "bg-yellow-50", textColor: "text-yellow-700", borderColor: "border-yellow-200", icon: <Clock className="w-4 h-4" /> };
+        return { textColor: "text-amber-600", progressColor: "bg-amber-500", showUrgent: false };
       case "running":
       default:
-        return { bgColor: "bg-blue-50", textColor: "text-blue-700", borderColor: "border-blue-200", icon: <Clock className="w-4 h-4" /> };
-    }
-  }, [variant]);
-
-  const progressBarColor = useMemo(() => {
-    switch (variant) {
-      case "critical":
-        return "bg-red-600";
-      case "warning":
-        return "bg-yellow-500";
-      default:
-        return "bg-blue-600";
+        return { textColor: "text-gray-500", progressColor: "bg-blue-500", showUrgent: false };
     }
   }, [variant]);
 
@@ -56,23 +45,34 @@ export function InactivityTimer({ secondsLeft, maxSeconds, variant, onTimeout, o
     }
   }, [secondsLeft, onTimeout, onWarning]);
 
-  return (
-    <div className={`${bgColor} border ${borderColor} rounded-lg p-3`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className={`flex items-center gap-2 ${textColor} text-sm font-medium`}>
-          {icon}
-          <span>{variant === "critical" ? `⚠️ ${t('checkout.urgent')}` : `${t('checkout.inactivity')}:`} {secondsLeft}s</span>
+  // Versão compacta para estados normais
+  if (variant === "running" && percentage > 50) {
+    return (
+      <div className="flex items-center justify-between text-xs text-gray-400 px-1">
+        <div className="flex items-center gap-1.5">
+          <Clock className="w-3 h-3" />
+          <span>{secondsLeft}s</span>
         </div>
-        <span className={`text-xs ${textColor} font-semibold`}>{Math.round(percentage)}%</span>
+        <div className="flex-1 mx-3 h-1 bg-gray-100 rounded-full overflow-hidden">
+          <div className={`${progressColor} h-full transition-all duration-300`} style={{ width: `${percentage}%` }} />
+        </div>
       </div>
+    );
+  }
 
-      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-        <div className={`${progressBarColor} h-full transition-all duration-300`} style={{ width: `${percentage}%` }} />
+  // Versão expandida para warning/critical ou baixo tempo
+  return (
+    <div className={`rounded-lg p-2.5 ${variant === "critical" ? "bg-red-50 border border-red-200" : variant === "warning" ? "bg-amber-50 border border-amber-200" : "bg-gray-50 border border-gray-200"}`}>
+      <div className="flex items-center justify-between">
+        <div className={`flex items-center gap-2 ${textColor} text-sm font-medium`}>
+          {showUrgent ? <AlertCircle className="w-4 h-4 animate-pulse" /> : <Clock className="w-4 h-4" />}
+          <span>{showUrgent && "⚠️ "}{secondsLeft}s</span>
+        </div>
+        <span className={`text-xs ${textColor} font-medium`}>{Math.round(percentage)}%</span>
       </div>
-
-      {variant === "critical" && (
-        <p className="text-xs text-red-600 mt-2 font-semibold">A sessão fechará em breve se não houver interação</p>
-      )}
+      <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden mt-2">
+        <div className={`${progressColor} h-full transition-all duration-300`} style={{ width: `${percentage}%` }} />
+      </div>
     </div>
   );
 }

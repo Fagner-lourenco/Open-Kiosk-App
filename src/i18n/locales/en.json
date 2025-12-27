@@ -2,6 +2,7 @@
   "common": {
     "appName": "Open Kiosk",
     "currentUser": "John Doe",
+    "size": "Size",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
@@ -196,6 +197,7 @@
     "processing": "Processing...",
     "cancelPayment": "Cancel Payment",
     "tryAgain": "Try Again",
+    "completed": "Completed!",
     "orderCompleted": "Order Completed",
     "thankYou": "Thank you for your purchase!",
     "orderNumber": "Order #",
@@ -228,6 +230,8 @@
     "paymentConfirmedSuccess": "Payment confirmed successfully",
     "paymentErrorGeneric": "Payment error",
     "terminalSendError": "Failed to send to terminal",
+    "dispenserWarning": "Warning",
+    "dispenserNotAvailable": "Drink dispenser may not be available. Please manually remove your drink.",
     "noComPortConfigured": "No COM Port Configured",
     "comPortNotSet": "COM port is not set in settings. Configure in Admin > Settings.",
     "printSuccess": "Receipt printed successfully!",
@@ -253,6 +257,8 @@
     "sessionExpired": "Session expired",
     "checkoutCancelledInactivity": "Checkout cancelled due to inactivity",
     "chooseSize": "Choose Size",
+    "selectCupSize": "Select cup size",
+    "inStock": "{{count}} available",
     "selectSizeQuantity": "Select the size and quantity of your drink",
     "finishOrder": "Finish Order",
     "reviewOrderPayment": "Review your order and choose payment method",
@@ -580,7 +586,8 @@
     "subtitle": "Touch to start",
     "start": "Start",
     "keyboardHint": "Also works with keyboard (Enter/Space)",
-    "kioskStartScreen": "Kiosk start screen"
+    "kioskStartScreen": "Kiosk start screen",
+    "touchAnywhere": "Touch anywhere to start"
   },
   "home": {
     "title": "Open Kiosk",

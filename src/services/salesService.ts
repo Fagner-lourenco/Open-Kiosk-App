@@ -24,6 +24,7 @@ class SalesService {
     const db = getFirebaseDb();
 
     return await runTransaction(db, async (transaction) => {
+      // 1. Calcular requisitos por produto
       const requiredByProductId: Record<string, { ml: number; qty: number }> = {};
 
       cartItems.forEach((item) => {
@@ -38,19 +39,52 @@ class SalesService {
         }
       });
 
-      for (const [productId, required] of Object.entries(requiredByProductId)) {
-        const prodRef = doc(db, 'products', productId);
-        const prodSnapshot = await transaction.get(prodRef);
-        if (!prodSnapshot.exists()) {
+      // 2. FASE DE LEITURA: Ler todos os documentos ANTES de qualquer write
+      const productRefs = Object.keys(requiredByProductId).map(productId => 
+        doc(db, 'products', productId)
+      );
+      
+      const productSnapshots = await Promise.all(
+        productRefs.map(ref => transaction.get(ref))
+      );
+
+      // 3. Mapear snapshots para validação
+      const productDataMap: Record<string, { ref: typeof productRefs[0], data: Product }> = {};
+      
+      productSnapshots.forEach((snapshot, index) => {
+        const productId = Object.keys(requiredByProductId)[index];
+        if (!snapshot.exists()) {
           throw new Error(`Product ${productId} not found`);
         }
-        const prod = prodSnapshot.data() as Product;
+        productDataMap[productId] = {
+          ref: productRefs[index],
+          data: snapshot.data() as Product
+        };
+      });
+
+      // 4. Validar estoque de todos os produtos
+      for (const [productId, required] of Object.entries(requiredByProductId)) {
+        const { data: prod } = productDataMap[productId];
 
         if (prod.isDrink) {
           const currentMl = prod.totalMlAvailable || 0;
           if (currentMl < required.ml) {
             throw new Error(`Estoque insuficiente de ${prod.title}`);
           }
+        } else {
+          const currentQty = prod.stock || 0;
+          if (currentQty < required.qty) {
+            throw new Error(`Estoque insuficiente de ${prod.title}`);
+          }
+        }
+      }
+
+      // 5. FASE DE ESCRITA: Atualizar estoque de todos os produtos
+      for (const [productId, required] of Object.entries(requiredByProductId)) {
+        const { ref: prodRef, data: prod } = productDataMap[productId];
+
+        if (prod.isDrink) {
+          const currentMl = prod.totalMlAvailable || 0;
           const newMl = currentMl - required.ml;
           transaction.update(prodRef, {
             totalMlAvailable: newMl,
@@ -58,9 +92,6 @@ class SalesService {
           });
         } else {
           const currentQty = prod.stock || 0;
-          if (currentQty < required.qty) {
-            throw new Error(`Estoque insuficiente de ${prod.title}`);
-          }
           const newQty = Math.max(0, currentQty - required.qty);
           transaction.update(prodRef, {
             stock: newQty,
@@ -69,6 +100,7 @@ class SalesService {
         }
       }
 
+      // 6. Criar registro de venda
       const saleData = {
         orderNumber,
         items: cartItems.map((item) => {

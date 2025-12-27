@@ -52,14 +52,16 @@ const Shop = () => {
   const [selectedDrink, setSelectedDrink] = useState<Product | null>(null);
   const [isDrinkCheckoutOpen, setIsDrinkCheckoutOpen] = useState(false);
   const [drinkPickupData, setDrinkPickupData] = useState<DrinkCheckoutResult | null>(null);
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
   // Kiosk idle overlay (suppressed when any modal/overlay is active)
-  const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible;
+  const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible || isCheckoutOpen;
   const attractTimeout = settings?.attractTimeoutSeconds ?? 15;
   const { isIdle, resetIdle } = useKioskIdle({ timeoutSeconds: attractTimeout, suppressed: isSuppressed });
 
   useEffect(() => {
     if (products) {
+      console.log('[Shop] 📦 Produtos recebidos do hook, atualizando lista:', products.map(p => ({ id: p.id, title: p.title, stock: p.stock, totalMl: p.totalMlAvailable })));
       // Sort products by most sold (assuming we track sales in a field like 'salesCount')
       // For now, we'll sort by stock level as a proxy (lower stock = more sold)
       const sortedByMostSold = [...products].sort((a, b) => {
@@ -321,6 +323,7 @@ const Shop = () => {
         cartItems={cartItems}
         onUpdateQuantity={updateCartQuantity}
         onClearCart={clearCart}
+        onCheckoutStateChange={setIsCheckoutOpen}
       />
       <DrinkQuickCheckoutModal
         isOpen={isDrinkCheckoutOpen}

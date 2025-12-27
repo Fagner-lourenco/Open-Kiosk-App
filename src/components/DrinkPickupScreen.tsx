@@ -96,8 +96,7 @@ const DrinkPickupScreen = ({
             <Progress value={progressValue} className="mt-4 h-3" />
             {isUrgent && (
               <p className="text-xs text-red-600 font-medium mt-2 animate-pulse">
-                {t('drinkPickup.pickupNowWarning')}m mt-2 animate-pulse">
-                ⚠️ Retire agora ou a máquina será liberada!
+                {t('drinkPickup.pickupNowWarning')}
               </p>
             )}
           </div>

@@ -2,6 +2,7 @@
   "common": {
     "appName": "Open Kiosk",
     "currentUser": "João Silva",
+    "size": "Tamanho",
     "save": "Salvar",
     "cancel": "Cancelar",
     "delete": "Excluir",
@@ -196,6 +197,7 @@
     "processing": "Processando...",
     "cancelPayment": "Cancelar Pagamento",
     "tryAgain": "Tentar Novamente",
+    "completed": "Concluído!",
     "orderCompleted": "Pedido Concluído",
     "thankYou": "Obrigado pela sua compra!",
     "orderNumber": "Pedido #",
@@ -228,6 +230,8 @@
     "paymentConfirmedSuccess": "Pagamento confirmado com sucesso",
     "paymentErrorGeneric": "Erro no pagamento",
     "terminalSendError": "Falha ao enviar para o terminal",
+    "dispenserWarning": "Atenção",
+    "dispenserNotAvailable": "O dispensador de bebidas pode não estar disponível. Por favor, retire sua bebida manualmente.",
     "noComPortConfigured": "Porta COM Não Configurada",
     "comPortNotSet": "Porta COM não está configurada. Configure em Admin > Configurações.",
     "printSuccess": "Recibo impresso com sucesso!",
@@ -253,6 +257,8 @@
     "sessionExpired": "Sessão expirada",
     "checkoutCancelledInactivity": "Checkout cancelado por inatividade",
     "chooseSize": "Escolha o Tamanho",
+    "selectCupSize": "Selecione o tamanho do copo",
+    "inStock": "{{count}} disponível",
     "selectSizeQuantity": "Selecione o tamanho e quantidade da sua bebida",
     "finishOrder": "Finalizar Pedido",
     "reviewOrderPayment": "Revise seu pedido e escolha a forma de pagamento",
@@ -578,7 +584,8 @@
     "subtitle": "Toque para iniciar",
     "start": "Iniciar",
     "keyboardHint": "Também funciona com teclado (Enter/Espaço)",
-    "kioskStartScreen": "Tela de início do quiosque"
+    "kioskStartScreen": "Tela de início do quiosque",
+    "touchAnywhere": "Toque em qualquer lugar para iniciar"
   },
   "home": {
     "title": "Open Kiosk",

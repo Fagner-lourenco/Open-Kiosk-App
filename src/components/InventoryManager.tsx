@@ -70,7 +70,9 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
       return;
     }
 
-    let newStock = selectedProduct.stock;
+    let newStock = selectedProduct.isDrink 
+      ? (selectedProduct.totalMlAvailable || 0) 
+      : (selectedProduct.stock || 0);
     
     switch (adjustmentType) {
       case 'ADD':
@@ -142,7 +144,7 @@ const InventoryManager = ({ products, onUpdateInventory }: InventoryManagerProps
                   className="w-full justify-between"
                 >
                   {selectedProduct
-                    ? `${selectedProduct.title} (${t('inventory.currentSelection', { stock: selectedProduct.stock })})`
+                    ? `${selectedProduct.title} (${t('inventory.currentSelection', { stock: selectedProduct.isDrink ? (selectedProduct.totalMlAvailable || 0) : (selectedProduct.stock || 0) })})`
                     : t('inventory.chooseProduct')}
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>

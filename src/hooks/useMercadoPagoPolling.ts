@@ -1,0 +1,364 @@
+/**
+ * Hook customizado para polling de status de pagamento Mercado Pago
+ * 
+ * Features:
+ * - Exponential backoff com feedback rápido (5s inicial, cresce gradualmente)
+ * - Persistência no localStorage para sobreviver refresh/crash
+ * - Retry automático em falhas de rede (max 3 tentativas)
+ * - Cleanup automático ao desmontar componente
+ * - Logs estruturados para observabilidade
+ */
+
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { paymentService } from '@/services/paymentService';
+import type { Order, OrderStatus, PaymentStatus } from '@/types/mercadopago';
+
+// Constantes de configuração
+const STORAGE_KEY = 'mp_polling_state';
+const INITIAL_INTERVAL_MS = 5000; // 5 segundos (feedback rápido)
+const MAX_INTERVAL_MS = 15000; // Máximo 15 segundos
+const MAX_ATTEMPTS = 60; // 5 minutos no total
+const MAX_NETWORK_RETRIES = 3;
+const NETWORK_RETRY_DELAY_MS = 2000;
+
+// Tipos
+export interface PollingState {
+  orderId: string;
+  isPointPayment: boolean;
+  attempts: number;
+  startedAt: number;
+  lastAttemptAt: number | null;
+}
+
+export interface UseMercadoPagoPollingOptions {
+  onSuccess: (order: Order) => void;
+  onError: (error: string) => void;
+  onStatusChange?: (status: OrderStatus, paymentStatus?: PaymentStatus) => void;
+  onAttempt?: (attempt: number, maxAttempts: number) => void;
+}
+
+export interface UseMercadoPagoPollingReturn {
+  isPolling: boolean;
+  attempts: number;
+  error: string | null;
+  currentOrderId: string | null;
+  startPolling: (orderId: string, isPointPayment?: boolean) => void;
+  stopPolling: () => void;
+  clearPersistedState: () => void;
+}
+
+// Helpers para logs estruturados
+const logPolling = (level: 'info' | 'warn' | 'error' | 'success', message: string, data?: object) => {
+  const timestamp = new Date().toISOString();
+  const prefix = `[MercadoPago Polling][${timestamp}]`;
+  const emoji = { info: 'ℹ️', warn: '⚠️', error: '❌', success: '✅' }[level];
+  
+  const logFn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+  logFn(`${prefix} ${emoji} ${message}`, data ? JSON.stringify(data, null, 2) : '');
+};
+
+// Calcula intervalo com exponential backoff (mas mantendo feedback rápido)
+const getPollingInterval = (attempt: number): number => {
+  // Primeiras 6 tentativas: 5s fixo (30s de feedback rápido)
+  if (attempt <= 6) return INITIAL_INTERVAL_MS;
+  
+  // Depois: cresce gradualmente até MAX_INTERVAL_MS
+  // 5s * 1.2^(attempt-6), capped at 15s
+  const interval = INITIAL_INTERVAL_MS * Math.pow(1.2, attempt - 6);
+  return Math.min(interval, MAX_INTERVAL_MS);
+};
+
+// Verifica se é erro de rede
+const isNetworkError = (error: any): boolean => {
+  if (!error) return false;
+  const message = error.message?.toLowerCase() || '';
+  return (
+    error.name === 'TypeError' ||
+    message.includes('network') ||
+    message.includes('fetch') ||
+    message.includes('connection') ||
+    message.includes('timeout') ||
+    message.includes('offline')
+  );
+};
+
+// Persistência no localStorage
+const savePollingState = (state: PollingState | null) => {
+  try {
+    if (state) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch (e) {
+    logPolling('warn', 'Falha ao salvar estado no localStorage', { error: (e as Error).message });
+  }
+};
+
+const loadPollingState = (): PollingState | null => {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    
+    const state = JSON.parse(stored) as PollingState;
+    
+    // Verificar se não expirou (máximo 10 minutos desde início)
+    const maxAge = 10 * 60 * 1000;
+    if (Date.now() - state.startedAt > maxAge) {
+      logPolling('info', 'Estado persistido expirou, removendo');
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    
+    return state;
+  } catch (e) {
+    logPolling('warn', 'Falha ao carregar estado do localStorage', { error: (e as Error).message });
+    return null;
+  }
+};
+
+export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): UseMercadoPagoPollingReturn {
+  const { onSuccess, onError, onStatusChange, onAttempt } = options;
+
+  // Estados
+  const [isPolling, setIsPolling] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [currentOrderId, setCurrentOrderId] = useState<string | null>(null);
+
+  // Refs para controle interno
+  const pollTimeoutRef = useRef<number | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const networkRetriesRef = useRef(0);
+  const isPointPaymentRef = useRef(false);
+  const currentAttemptRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  // Limpar timeout e abort controller
+  const cleanup = useCallback(() => {
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  }, []);
+
+  // Parar polling
+  const stopPolling = useCallback(() => {
+    logPolling('info', 'Parando polling', { orderId: currentOrderId, attempts: currentAttemptRef.current });
+    cleanup();
+    setIsPolling(false);
+    savePollingState(null);
+  }, [cleanup, currentOrderId]);
+
+  // Limpar estado persistido manualmente
+  const clearPersistedState = useCallback(() => {
+    savePollingState(null);
+    logPolling('info', 'Estado persistido limpo manualmente');
+  }, []);
+
+  // Função principal de polling
+  const poll = useCallback(async (orderId: string) => {
+    if (!isMountedRef.current) return;
+
+    currentAttemptRef.current++;
+    const attempt = currentAttemptRef.current;
+
+    // Verificar limite de tentativas
+    if (attempt > MAX_ATTEMPTS) {
+      logPolling('warn', 'Timeout - pagamento não confirmado', { orderId, attempts: attempt });
+      setError('Tempo limite excedido. Verifique o status do pagamento.');
+      setIsPolling(false);
+      savePollingState(null);
+      onError('Tempo limite excedido. Verifique o status do pagamento.');
+      return;
+    }
+
+    // Atualizar estado
+    setAttempts(attempt);
+    onAttempt?.(attempt, MAX_ATTEMPTS);
+
+    // Persistir estado
+    savePollingState({
+      orderId,
+      isPointPayment: isPointPaymentRef.current,
+      attempts: attempt,
+      startedAt: loadPollingState()?.startedAt || Date.now(),
+      lastAttemptAt: Date.now(),
+    });
+
+    const startTime = Date.now();
+
+    try {
+      logPolling('info', `Verificando status (${attempt}/${MAX_ATTEMPTS})`, { orderId });
+
+      // Criar novo AbortController para esta tentativa
+      abortControllerRef.current = new AbortController();
+      
+      const order = await paymentService.checkMercadoPagoOrderStatus(
+        orderId, 
+        abortControllerRef.current.signal
+      );
+
+      const latency = Date.now() - startTime;
+      const paymentStatus = order.transactions?.payments?.[0]?.status;
+
+      logPolling('info', 'Status recebido', {
+        orderId,
+        orderStatus: order.status,
+        paymentStatus,
+        latencyMs: latency,
+      });
+
+      // Reset network retries em sucesso
+      networkRetriesRef.current = 0;
+
+      // Notificar mudança de status
+      onStatusChange?.(order.status, paymentStatus);
+
+      // Verificar status de falha
+      if (order.status === 'failed' || order.status === 'expired' || order.status === 'canceled') {
+        const errorMessages: Record<string, string> = {
+          failed: 'Pagamento recusado',
+          expired: 'Pagamento expirado',
+          canceled: 'Pagamento cancelado',
+        };
+        const errorMsg = errorMessages[order.status] || 'Pagamento não aprovado';
+        
+        logPolling('error', `Pagamento ${order.status}`, { orderId });
+        setError(errorMsg);
+        setIsPolling(false);
+        savePollingState(null);
+        onError(errorMsg);
+        return;
+      }
+
+      // Verificar se pagamento foi aprovado
+      const isOrderProcessed = order.status === 'processed' || order.status === 'closed';
+      const isPaymentApproved = paymentStatus === 'approved' || paymentStatus === 'processed';
+
+      if (isOrderProcessed && isPaymentApproved) {
+        logPolling('success', 'Pagamento aprovado!', { orderId, paymentStatus });
+        setIsPolling(false);
+        savePollingState(null);
+        onSuccess(order);
+        return;
+      }
+
+      // Continuar polling com backoff
+      if (isMountedRef.current) {
+        const nextInterval = getPollingInterval(attempt);
+        logPolling('info', `Próxima verificação em ${nextInterval}ms`, { orderId, attempt });
+        pollTimeoutRef.current = window.setTimeout(() => poll(orderId), nextInterval);
+      }
+
+    } catch (err: any) {
+      // Ignorar aborts (cleanup, HMR)
+      if (err?.name === 'AbortError') {
+        logPolling('info', 'Requisição abortada (cleanup)', { orderId });
+        return;
+      }
+
+      logPolling('error', 'Erro ao verificar status', { 
+        orderId, 
+        error: err.message,
+        attempt,
+      });
+
+      // Retry em erros de rede
+      if (isNetworkError(err) && networkRetriesRef.current < MAX_NETWORK_RETRIES) {
+        networkRetriesRef.current++;
+        logPolling('warn', `Erro de rede, retry ${networkRetriesRef.current}/${MAX_NETWORK_RETRIES}`, { orderId });
+        
+        pollTimeoutRef.current = window.setTimeout(() => poll(orderId), NETWORK_RETRY_DELAY_MS);
+        return;
+      }
+
+      // Erro definitivo
+      const errorMsg = err.message || 'Erro ao verificar pagamento';
+      setError(errorMsg);
+      setIsPolling(false);
+      savePollingState(null);
+      onError(errorMsg);
+    }
+  }, [onSuccess, onError, onStatusChange, onAttempt]);
+
+  // Iniciar polling
+  const startPolling = useCallback((orderId: string, isPointPayment: boolean = false) => {
+    logPolling('info', 'Iniciando polling', { orderId, isPointPayment });
+    
+    // Limpar qualquer polling anterior
+    cleanup();
+
+    // Configurar estado inicial
+    setCurrentOrderId(orderId);
+    setIsPolling(true);
+    setError(null);
+    setAttempts(0);
+    currentAttemptRef.current = 0;
+    networkRetriesRef.current = 0;
+    isPointPaymentRef.current = isPointPayment;
+
+    // Salvar estado inicial
+    savePollingState({
+      orderId,
+      isPointPayment,
+      attempts: 0,
+      startedAt: Date.now(),
+      lastAttemptAt: null,
+    });
+
+    // Iniciar primeira verificação
+    poll(orderId);
+  }, [cleanup, poll]);
+
+  // Restaurar polling ao montar (se houver estado persistido)
+  useEffect(() => {
+    isMountedRef.current = true;
+    
+    const persistedState = loadPollingState();
+    if (persistedState) {
+      logPolling('info', 'Restaurando polling do localStorage', {
+        orderId: persistedState.orderId,
+        attempts: persistedState.attempts,
+        elapsedMinutes: ((Date.now() - persistedState.startedAt) / 60000).toFixed(1),
+      });
+
+      setCurrentOrderId(persistedState.orderId);
+      setAttempts(persistedState.attempts);
+      currentAttemptRef.current = persistedState.attempts;
+      isPointPaymentRef.current = persistedState.isPointPayment;
+      setIsPolling(true);
+
+      // Retomar polling
+      poll(persistedState.orderId);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      cleanup();
+    };
+  }, []);
+
+  // Cleanup ao desmontar
+  useEffect(() => {
+    return () => {
+      cleanup();
+    };
+  }, [cleanup]);
+
+  return {
+    isPolling,
+    attempts,
+    error,
+    currentOrderId,
+    startPolling,
+    stopPolling,
+    clearPersistedState,
+  };
+}
+
+export default useMercadoPagoPolling;

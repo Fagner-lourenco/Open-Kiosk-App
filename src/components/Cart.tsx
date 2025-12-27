@@ -15,12 +15,19 @@ interface CartProps {
   cartItems: CartItem[];
   onUpdateQuantity: (cartItemKey: string, quantity: number) => void;
   onClearCart: () => void;
+  onCheckoutStateChange?: (isCheckoutOpen: boolean) => void;
 }
 
-const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: CartProps) => {
+const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onCheckoutStateChange }: CartProps) => {
   const { t } = useTranslation();
   const currentCurrency = useCurrentCurrency();
   const [showCheckout, setShowCheckout] = useState(false);
+
+  // Notify parent when checkout state changes
+  const updateCheckoutState = (open: boolean) => {
+    setShowCheckout(open);
+    onCheckoutStateChange?.(open);
+  };
 
   const getTotalPrice = () => {
     return cartItems.reduce((total, item) => total + item.unitPrice * item.quantity, 0);
@@ -30,12 +37,12 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
   const handleCheckout = () => {
     onClose();
     // Open checkout on the next frame to avoid relying on animation timing
-    requestAnimationFrame(() => setShowCheckout(true));
+    requestAnimationFrame(() => updateCheckoutState(true));
   };
 
   const handleCheckoutComplete = () => {
     onClearCart();
-    setShowCheckout(false);
+    updateCheckoutState(false);
     // Don't call onClose here, since the cart sheet is already closed
   };
 
@@ -169,7 +176,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart }: Car
       {/* Only show the Checkout when showCheckout is true */}
       <Checkout
         isOpen={showCheckout}
-        onClose={() => setShowCheckout(false)}
+        onClose={() => updateCheckoutState(false)}
         cartItems={cartItems}
         onComplete={handleCheckoutComplete}
         onUpdateQuantity={() => {}}

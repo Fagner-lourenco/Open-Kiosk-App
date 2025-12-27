@@ -15,6 +15,8 @@ import UartPortSelector from "./UartPortSelector";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { paymentService } from "@/services/paymentService";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig } from "@/config/mercadopago";
+import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
+import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
 
 interface CheckoutProps {
@@ -43,11 +45,45 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   const [qrFlowStarted, setQrFlowStarted] = useState(false); // Controla quando o fluxo QR foi iniciado
   const [mpOrderId, setMpOrderId] = useState<string | null>(null);
   const [mpQrData, setMpQrData] = useState<string | null>(null);
-  const [isPolling, setIsPolling] = useState(false);
-  const [pollingAttempt, setPollingAttempt] = useState(0);
   const [mpError, setMpError] = useState<string | null>(null);
-  const pollTimeoutRef = useRef<number | null>(null);
-  const pollAbortRef = useRef<AbortController | null>(null);
+  
+  // Guard contra duplicação de vendas
+  const [saleRecorded, setSaleRecorded] = useState(false);
+  const saleRecordedRef = useRef(false);
+
+  // Hook de polling otimizado com persistência e retry
+  const {
+    isPolling,
+    attempts: pollingAttempt,
+    startPolling,
+    stopPolling,
+    clearPersistedState,
+  } = useMercadoPagoPolling({
+    onSuccess: async (order) => {
+      console.log('[Checkout] Pagamento aprovado via polling hook', { orderId: order.id });
+      toast({
+        title: t('checkout.paymentApprovedToast'),
+        description: t('checkout.paymentConfirmedSuccess')
+      });
+      await handlePaymentComplete();
+    },
+    onError: (errorMsg) => {
+      console.error('[Checkout] Erro no polling:', errorMsg);
+      setMpError(errorMsg);
+      setPaymentProcessed(false);
+      if (paymentMethod !== 'pix_qr') setPointStatus('error');
+    },
+    onStatusChange: (status: OrderStatus, paymentStatus?: PaymentStatus) => {
+      console.log('[Checkout] Status changed:', { status, paymentStatus });
+      // Para Point: atualizar status visual quando a order chega no terminal
+      if (paymentMethod !== 'pix_qr' && status === 'at_terminal') {
+        setPointStatus('at_terminal');
+      }
+    },
+    onAttempt: (attempt, maxAttempts) => {
+      console.log(`[Checkout] Polling tentativa ${attempt}/${maxAttempts}`);
+    },
+  });
 
   // Generate order number when component mounts and keep it consistent
   useEffect(() => {
@@ -137,11 +173,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
       setMpOrderId(result.orderId || null);
       setMpQrData(result.qrData || null);
-      setIsPolling(true);
-      setPollingAttempt(0);
       
-      // Iniciar polling
-      startMercadoPagoPolling(result.orderId!);
+      // Iniciar polling via hook
+      startPolling(result.orderId!);
 
     } catch (error: any) {
       console.error('[Checkout] Erro ao criar QR:', error);
@@ -199,9 +233,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
       setMpOrderId(result.orderId || null);
       setPointStatus('at_terminal');
-      setIsPolling(true);
-      setPollingAttempt(0);
-      startMercadoPagoPolling(result.orderId!, true);
+      startPolling(result.orderId!, true);
       
     } catch (error: any) {
       console.error('[Checkout] Erro ao criar Point order:', error);
@@ -217,109 +249,15 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     }
   };
 
-  // Polling para verificar status de pagamento
-  const startMercadoPagoPolling = (orderId: string, isPointPayment: boolean = false) => {
-    const MAX_ATTEMPTS = 60; // 5 minutos
-    const POLL_INTERVAL = 5000; // 5 segundos
-
-    // criar AbortController por ciclo de polling
-    if (pollAbortRef.current) {
-      pollAbortRef.current.abort();
-    }
-    pollAbortRef.current = new AbortController();
-
-    // Usar variável local para evitar problemas de closure com state
-    let currentAttempt = 0;
-
-    const poll = async () => {
-      currentAttempt++;
-      
-      if (currentAttempt > MAX_ATTEMPTS) {
-        console.log('[Polling] Timeout - pagamento não confirmado em 5 minutos');
-        setIsPolling(false);
-        setMpError(t('checkout.paymentNotConfirmedTimeout'));
-        setPaymentProcessed(false);
-        if (isPointPayment) setPointStatus('idle');
-        return;
-      }
-
-      try {
-        console.log(`[Polling] Tentativa ${currentAttempt}/${MAX_ATTEMPTS} - verificando order ${orderId}`);
-        setPollingAttempt(currentAttempt);
-
-        const order = await paymentService.checkMercadoPagoOrderStatus(orderId, pollAbortRef.current?.signal);
-        const paymentStatus = order.transactions?.payments?.[0]?.status;
-
-        console.log(`[Polling] Status: order=${order.status}, payment=${paymentStatus}, type=${order.type}`);
-
-        // Para Point: atualizar status visual quando a order chega no terminal
-        if (isPointPayment && order.status === 'at_terminal') {
-          setPointStatus('at_terminal');
-        }
-
-        // Tratar status de falha
-        if (order.status === 'failed' || order.status === 'expired' || order.status === 'canceled') {
-          console.log(`[Polling] ❌ Pagamento ${order.status}`);
-          setIsPolling(false);
-          const errorMessages: Record<string, string> = {
-            failed: t('checkout.paymentDeclined'),
-            expired: t('checkout.paymentExpired'),
-            canceled: t('checkout.paymentCanceled')
-          };
-          setMpError(errorMessages[order.status] || t('checkout.paymentFailedGeneric'));
-          setPaymentProcessed(false);
-          if (isPointPayment) setPointStatus('error');
-          return;
-        }
-
-        // Tratar action_required (precisa de ação no terminal)
-        if (order.status === 'action_required') {
-          console.log('[Polling] ⚠️ Ação requerida no terminal');
-          if (isPointPayment) setPointStatus('at_terminal');
-          pollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL);
-          return;
-        }
-
-        // Verificar se pagamento foi processado
-        const isOrderProcessed = order.status === 'processed' || order.status === 'closed';
-        const isPaymentApproved = paymentStatus === 'approved' || paymentStatus === 'processed';
-
-        if (isOrderProcessed && isPaymentApproved) {
-          console.log('[Polling] ✅ Pagamento aprovado!');
-          setIsPolling(false);
-          setPaymentProcessed(true);
-          if (isPointPayment) setPointStatus('idle');
-          
-          toast({
-            title: t('checkout.paymentApprovedToast'),
-            description: t('checkout.paymentConfirmedSuccess')
-          });
-          
-          // Registrar venda e continuar
-          await handlePaymentComplete();
-          return;
-        }
-
-        // Continuar polling
-        pollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL);
-      } catch (error: any) {
-        // Silenciar aborts (ex.: troca de tela/HMR)
-        if (error?.name === 'AbortError') {
-          console.log('[Polling] Aborted');
-          return;
-        }
-        console.error('[Polling] Erro ao verificar status:', error);
-        setMpError(error.message || 'Erro ao verificar pagamento');
-        setIsPolling(false);
-        setPaymentProcessed(false);
-        if (isPointPayment) setPointStatus('error');
-      }
-    };
-
-    poll();
-  };
-
   const handlePaymentComplete = async () => {
+    // Guard contra duplicação de vendas
+    if (saleRecordedRef.current) {
+      console.log('[Checkout] Venda já registrada, ignorando duplicação');
+      return;
+    }
+    saleRecordedRef.current = true;
+    setSaleRecorded(true);
+    
     setPaymentProcessed(true);
     
     try {
@@ -419,35 +357,24 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     setMpOrderId(null);
     setMpQrData(null);
     setMpError(null);
-    setIsPolling(false);
-    setPollingAttempt(0);
+    // Reset sale guard
+    setSaleRecorded(false);
+    saleRecordedRef.current = false;
   };
 
   const handleClose = () => {
     onClose();
     resetCheckout();
-    // cleanup polling
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
-    if (pollAbortRef.current) {
-      pollAbortRef.current.abort();
-      pollAbortRef.current = null;
-    }
+    // cleanup polling via hook
+    stopPolling();
+    clearPersistedState();
   };
 
   useEffect(() => {
     if (!isOpen) {
       resetCheckout();
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-        pollTimeoutRef.current = null;
-      }
-      if (pollAbortRef.current) {
-        pollAbortRef.current.abort();
-        pollAbortRef.current = null;
-      }
+      stopPolling();
+      clearPersistedState();
     }
   }, [isOpen]);
 

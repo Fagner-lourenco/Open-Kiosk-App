@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone } from "lucide-react";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { esp32Printer } from "@/services/esp32PrinterService";
@@ -16,6 +15,8 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
 import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
+import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
+import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
 
@@ -47,11 +48,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   // Estados para Mercado Pago QR
   const [mpOrderId, setMpOrderId] = useState<string | null>(null);
   const [mpQrData, setMpQrData] = useState<string | null>(null);
-  const [isPolling, setIsPolling] = useState(false);
-  const [pollingAttempt, setPollingAttempt] = useState(0);
   const [mpError, setMpError] = useState<string | null>(null);
-  const pollTimeoutRef = useRef<number | null>(null);
-  const pollAbortRef = useRef<AbortController | null>(null);
+  
+  // Guardar orderNumber para uso no callback do polling
+  const orderNumberRef = useRef<string>("");
+  
+  // Guard contra duplicação de processamento
+  const saleRecordedRef = useRef(false);
 
   // Estados específicos para Mercado Pago Point (Terminal)
   const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'processing' | 'error'>('idle');
@@ -83,6 +86,54 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   } = flowActions;
 
   const processingStageRef = useRef(flowState.processingStage);
+
+  // Hook de polling otimizado com persistência e retry
+  const {
+    isPolling,
+    attempts: pollingAttempt,
+    startPolling,
+    stopPolling,
+    clearPersistedState,
+  } = useMercadoPagoPolling({
+    onSuccess: async (order) => {
+      console.log('[DrinkMP] Pagamento aprovado via polling hook', { orderId: order.id });
+      
+      // Guard contra duplicação
+      if (saleRecordedRef.current) {
+        console.log('[DrinkMP] Já processado, ignorando duplicação');
+        return;
+      }
+      saleRecordedRef.current = true;
+      
+      setPointStatus('idle');
+      toast({
+        title: t('checkout.paymentApprovedToast'),
+        description: t('checkout.paymentConfirmedSuccess')
+      });
+      updateProcessingStage("payment_approved");
+      
+      // Continuar com o fluxo pós-pagamento usando o orderNumber salvo
+      await finishPaymentFlow(orderNumberRef.current);
+    },
+    onError: (errorMsg) => {
+      console.error('[DrinkMP] Erro no polling:', errorMsg);
+      setMpError(errorMsg);
+      setPointStatus('error');
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      moveToStep(2);
+    },
+    onStatusChange: (status: OrderStatus, paymentStatus?: PaymentStatus) => {
+      console.log('[DrinkMP] Status changed:', { status, paymentStatus });
+      // Para Point: atualizar status visual quando a order chega no terminal
+      if (selectedPayment !== 'pix_qr' && status === 'at_terminal') {
+        setPointStatus('at_terminal');
+      }
+    },
+    onAttempt: (attempt, maxAttempts) => {
+      console.log(`[DrinkMP] Polling tentativa ${attempt}/${maxAttempts}`);
+    },
+  });
   const emergencyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -173,26 +224,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       updateProcessingStage("idle");
       // Reset Point status
       setPointStatus('idle');
-      // Cleanup: Mercado Pago polling
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-        pollTimeoutRef.current = null;
-      }
-      if (pollAbortRef.current) {
-        pollAbortRef.current.abort();
-        pollAbortRef.current = null;
-      }
+      // Cleanup: Mercado Pago polling via hook
+      stopPolling();
+      clearPersistedState();
       setMpOrderId(null);
       setMpQrData(null);
-      setIsPolling(false);
-      setPollingAttempt(0);
       setMpError(null);
+      // Reset sale guard
+      saleRecordedRef.current = false;
       // Cleanup: cancelar pagamentos pendentes
       if (currentTransactionId) {
         paymentService.cancelPayment(currentTransactionId).catch(console.error);
       }
     }
-  }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage]);
+  }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage, stopPolling, clearPersistedState]);
 
   const handleNext = (fromStep: number) => {
     resetInactivityTimer();
@@ -237,21 +282,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       clearTimeout(emergencyTimeoutRef.current);
       emergencyTimeoutRef.current = null;
     }
-    // Cancelar polling do Mercado Pago
-    if (pollTimeoutRef.current) {
-      clearTimeout(pollTimeoutRef.current);
-      pollTimeoutRef.current = null;
-    }
-    if (pollAbortRef.current) {
-      pollAbortRef.current.abort();
-      pollAbortRef.current = null;
-    }
-    setIsPolling(false);
+    // Cancelar polling do Mercado Pago via hook
+    stopPolling();
+    clearPersistedState();
     setMpOrderId(null);
     setMpQrData(null);
     setMpError(null);
-    setPollingAttempt(0);
     setPointStatus('idle'); // Reset Point status on cancel
+    // Reset sale guard
+    saleRecordedRef.current = false;
     
     if (currentTransactionId) {
       try {
@@ -297,6 +336,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         currentCurrency.code,
         orderNumber
       );
+      
+      console.log('[DrinkMP] ✅ Venda registrada com sucesso, estoque atualizado no Firebase');
 
       // STEP 3: Dispensar bebida (ESP32)
       updateProcessingStage("dispensing");
@@ -313,13 +354,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         );
 
         if (!releaseResult.success) {
-          toast({ title: "Warning", description: releaseResult.message, variant: "destructive" });
+          toast({ title: t('checkout.dispenserWarning'), description: releaseResult.message, variant: "destructive" });
         }
       } catch (esp32Error) {
         console.warn("ESP32 release failed (non-blocking):", esp32Error);
         toast({
-          title: "Warning",
-          description: "Drink dispenser may not be available. Please manually remove your drink.",
+          title: t('checkout.dispenserWarning'),
+          description: t('checkout.dispenserNotAvailable'),
         });
       }
 
@@ -365,115 +406,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       moveToStep(2);
       setIsProcessing(false);
     }
-  };
-
-  // Polling para verificar status do pagamento Mercado Pago (QR e Point)
-  const startMercadoPagoPolling = (orderId: string, orderNumber: string, isPointPayment: boolean = false) => {
-    const MAX_ATTEMPTS = 60; // 5 minutos
-    const POLL_INTERVAL = 5000; // 5 segundos
-
-    // Criar AbortController por ciclo de polling
-    if (pollAbortRef.current) {
-      pollAbortRef.current.abort();
-    }
-    pollAbortRef.current = new AbortController();
-
-    // Usar variável local para evitar problemas de closure com state
-    let currentAttempt = 0;
-
-    const poll = async () => {
-      currentAttempt++;
-
-      if (currentAttempt > MAX_ATTEMPTS) {
-        console.log('[DrinkMP Polling] Timeout - pagamento não confirmado em 5 minutos');
-        setIsPolling(false);
-        setMpError(t('checkout.paymentNotConfirmedTimeout'));
-        setIsProcessing(false);
-        setPointStatus('idle');
-        updateProcessingStage("idle");
-        moveToStep(2);
-        return;
-      }
-
-      try {
-        console.log(`[DrinkMP Polling] Tentativa ${currentAttempt}/${MAX_ATTEMPTS} - verificando order ${orderId}`);
-        setPollingAttempt(currentAttempt);
-
-        const order = await paymentService.checkMercadoPagoOrderStatus(orderId, pollAbortRef.current?.signal);
-        const paymentStatus = order.transactions?.payments?.[0]?.status;
-
-        console.log(`[DrinkMP Polling] Status: order=${order.status}, payment=${paymentStatus}, type=${order.type}`);
-
-        // Para Point: atualizar status visual quando a order chega no terminal
-        if (isPointPayment && order.status === 'at_terminal') {
-          setPointStatus('at_terminal');
-        }
-
-        // Tratar status de falha
-        if (order.status === 'failed' || order.status === 'expired' || order.status === 'canceled') {
-          console.log(`[DrinkMP Polling] ❌ Pagamento ${order.status}`);
-          setIsPolling(false);
-          setPointStatus('error');
-          const errorMessages: Record<string, string> = {
-            failed: 'Pagamento falhou. Tente novamente.',
-            expired: 'Tempo expirado. Tente novamente.',
-            canceled: 'Pagamento cancelado.'
-          };
-          setMpError(errorMessages[order.status] || 'Erro no pagamento');
-          setIsProcessing(false);
-          updateProcessingStage("idle");
-          moveToStep(2);
-          return;
-        }
-
-        // Tratar action_required (precisa de ação no terminal)
-        if (order.status === 'action_required') {
-          console.log('[DrinkMP Polling] ⚠️ Ação requerida no terminal');
-          setPointStatus('at_terminal'); // Manter visual de aguardando
-          // Continuar polling - usuário precisa agir no terminal
-          pollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL);
-          return;
-        }
-
-        // Verificar se pagamento foi processado
-        const isOrderProcessed = order.status === 'processed' || order.status === 'closed';
-        const isPaymentApproved = paymentStatus === 'approved' || paymentStatus === 'processed';
-
-        if (isOrderProcessed && isPaymentApproved) {
-          console.log('[DrinkMP Polling] ✅ Pagamento aprovado!');
-          setIsPolling(false);
-          setPointStatus('idle');
-          
-          toast({
-            title: t('checkout.paymentApprovedToast'),
-            description: t('checkout.paymentConfirmedSuccess')
-          });
-
-          updateProcessingStage("payment_approved");
-
-          // Continuar com o fluxo pós-pagamento
-          await finishPaymentFlow(orderNumber);
-          return;
-        }
-
-        // Continuar polling
-        pollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL);
-      } catch (error: any) {
-        if (error?.name === 'AbortError') {
-          console.log('[DrinkMP Polling] Aborted');
-          return;
-        }
-        console.error('[DrinkMP Polling] Erro ao verificar status:', error);
-        setMpError(error.message || 'Erro ao verificar pagamento');
-        setIsPolling(false);
-        setPointStatus('error');
-        setIsProcessing(false);
-        updateProcessingStage("idle");
-        moveToStep(2);
-      }
-    };
-
-    poll();
   };
 
   const handlePaymentComplete = async () => {
@@ -550,11 +482,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           setMpOrderId(result.orderId || null);
           setMpQrData(result.qrData || null);
           setCurrentTransactionId(result.orderId || null);
-          setIsPolling(true);
-          setPollingAttempt(0);
-
-          // Iniciar polling com orderNumber para usar após aprovação (QR não é Point)
-          startMercadoPagoPolling(result.orderId!, newOrderNumber, false);
+          
+          // Salvar orderNumber para uso no callback do polling
+          orderNumberRef.current = newOrderNumber;
+          
+          // Iniciar polling via hook (QR não é Point)
+          startPolling(result.orderId!, false);
 
         } catch (error: any) {
           console.error('[DrinkQR] Erro ao criar QR:', error);
@@ -610,11 +543,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           setMpOrderId(result.orderId || null);
           setCurrentTransactionId(result.orderId || null);
           setPointStatus('at_terminal');
-          setIsPolling(true);
-          setPollingAttempt(0);
-
-          // Iniciar polling com flag isPointPayment = true
-          startMercadoPagoPolling(result.orderId!, newOrderNumber, true);
+          
+          // Salvar orderNumber para uso no callback do polling
+          orderNumberRef.current = newOrderNumber;
+          
+          // Iniciar polling via hook (Point = true)
+          startPolling(result.orderId!, true);
 
         } catch (error: any) {
           console.error('[DrinkPoint] Erro ao criar order Point:', error);
@@ -703,56 +637,77 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
           {flowState.currentStep === 1 && (
             <>
+              {/* Seleção de Tamanho com Cards */}
               <div>
-                <Label htmlFor="size-select" className="block text-sm font-medium mb-2">
-                  {t('common.size')}
+                <Label className="block text-sm font-medium mb-3">
+                  {t('checkout.selectCupSize')}
                 </Label>
-                <Select value={selectedSizeKey} onValueChange={(val) => { flowActions.resetInactivityTimer(); setSelectedSizeKey(val); }}>
-                  <SelectTrigger id="size-select" className="h-12">
-                    <SelectValue placeholder={t('shop.selectSize')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {product.sizes?.map((size) => (
-                      <SelectItem key={size.key} value={size.key}>
-                        {size.label} - {currentCurrency.symbol}{size.price.toFixed(2)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <Label htmlFor="qty-input" className="block text-sm font-medium mb-2">
-                  {t('common.quantity')}
-                </Label>
-                <div className="flex items-center justify-center gap-4">
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    onClick={() => { flowActions.resetInactivityTimer(); setQuantity(Math.max(1, quantity - 1)); }}
-                    disabled={quantity <= 1}
-                    className="w-12 h-12"
-                  >
-                    <Minus className="w-5 h-5" />
-                  </Button>
-                  <span className="text-3xl font-bold w-16 text-center">{quantity}</span>
-                  <Button
-                    variant="outline"
-                    size="lg"
-                    onClick={() => { flowActions.resetInactivityTimer(); setQuantity(Math.min(Math.max(1, quantity + 1), Math.max(0, maxQty))); }}
-                    disabled={quantity >= maxQty}
-                    className="w-12 h-12"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </Button>
+                <div className="grid grid-cols-2 gap-3">
+                  {product.sizes?.map((size) => {
+                    const isSelected = selectedSizeKey === size.key;
+                    return (
+                      <button
+                        key={size.key}
+                        type="button"
+                        onClick={() => { flowActions.resetInactivityTimer(); setSelectedSizeKey(size.key); }}
+                        className={`relative p-4 rounded-xl border-2 transition-all touch-manipulation active:scale-95 ${
+                          isSelected 
+                            ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' 
+                            : 'border-gray-200 hover:border-gray-300 bg-white'
+                        }`}
+                      >
+                        <div className="text-center">
+                          <p className={`text-xl font-bold ${isSelected ? 'text-blue-600' : 'text-gray-800'}`}>
+                            {size.ml}ml
+                          </p>
+                          <p className="text-sm text-gray-500 mt-1">{size.label}</p>
+                          <p className={`text-lg font-semibold mt-2 ${isSelected ? 'text-blue-600' : 'text-green-600'}`}>
+                            {currentCurrency.symbol}{size.price.toFixed(2)}
+                          </p>
+                        </div>
+                        {isSelected && (
+                          <div className="absolute top-2 right-2 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+                            <Check className="w-3 h-3 text-white" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
-                {maxQty > 0 && (
-                  <p className="text-xs text-gray-500 mt-2 text-center">
-                    {t('checkout.maxAvailable', { max: maxQty })}
-                  </p>
-                )}
               </div>
 
+              {/* Quantidade - Layout Compacto */}
+              {selectedSize && (
+                <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                  <span className="text-sm font-medium text-gray-700">{t('common.quantity')}:</span>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { flowActions.resetInactivityTimer(); setQuantity(Math.max(1, quantity - 1)); }}
+                      disabled={quantity <= 1}
+                      className="w-10 h-10 rounded-full p-0 touch-manipulation"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </Button>
+                    <span className="text-2xl font-bold w-12 text-center">{quantity}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { flowActions.resetInactivityTimer(); setQuantity(Math.min(Math.max(1, quantity + 1), Math.max(0, maxQty))); }}
+                      disabled={quantity >= maxQty}
+                      className="w-10 h-10 rounded-full p-0 touch-manipulation"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </Button>
+                  </div>
+                  <span className="text-xs text-gray-400">
+                    {t('checkout.inStock', { count: maxQty })}
+                  </span>
+                </div>
+              )}
+
+              {/* Subtotal */}
               {selectedSize && (
                 <Card className="bg-green-50 border-green-200 p-4">
                   <div className="flex justify-between items-center">
@@ -802,11 +757,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                     <span>{currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
-                    <span>{t('checkout.tax')} ({storeSettings?.taxPercentage || 0}%):</span>
+                    <span>{t('checkout.taxAmount')} ({storeSettings?.taxPercentage || 0}%):</span>
                     <span>{currentCurrency.symbol}{((selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-lg pt-1">
-                    <span>{t('checkout.total')}:</span>
+                    <span>{t('checkout.totalAmount')}:</span>
                     <span className="text-green-600">
                       {currentCurrency.symbol}{calculateTotal().toFixed(2)}
                     </span>
@@ -880,15 +835,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               </div>
 
               {/* Botões de Ação */}
-              <div className="flex gap-2 pt-2">
-                <Button variant="outline" onClick={() => handleBack(2)} className="flex-1">
-                  Voltar
+              <div className="flex gap-3 pt-4">
+                <Button 
+                  variant="outline" 
+                  onClick={() => handleBack(2)} 
+                  className="flex-1 h-14 text-base touch-manipulation"
+                >
+                  {t('checkout.backButton')}
                 </Button>
                 <Button 
                   onClick={handleStartPayment} 
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold"
+                  className="flex-1 h-14 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white font-semibold text-lg touch-manipulation transition-colors"
                 >
-                  Pagar {currentCurrency.symbol}{calculateTotal().toFixed(2)}
+                  {t('checkout.pay')} {currentCurrency.symbol}{calculateTotal().toFixed(2)}
                 </Button>
               </div>
             </>
@@ -913,7 +872,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             onClick={handleCancelPayment}
                             className="mt-4"
                           >
-                            Tentar novamente
+                            {t('checkout.tryAgain')}
                           </Button>
                         </div>
                       )}
@@ -921,17 +880,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {/* QR Code real do Mercado Pago */}
                       {mpQrData && !mpError && (
                         <>
-                          <div className="bg-white p-6 rounded-lg border-2 border-blue-300 inline-block">
-                            <QRCode value={mpQrData} size={192} level="M" />
+                          <div className="bg-white p-8 rounded-xl border-2 border-green-400 shadow-lg inline-block">
+                            <QRCode value={mpQrData} size={280} level="M" />
                           </div>
-                          <p className="font-medium text-gray-700">{t('checkout.scanQrCode')}</p>
+                          <p className="font-semibold text-lg text-gray-800">{t('checkout.scanQrCode')}</p>
                           <p className="text-sm text-gray-500">{t('checkout.payWithQrCode')}</p>
                           
                           {isPolling && (
-                            <div className="flex items-center justify-center gap-2 text-blue-600">
+                            <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-4 py-2">
                               <Loader className="w-4 h-4 animate-spin" />
-                              <span className="text-sm">
-                                Verificando pagamento... ({pollingAttempt}/60)
+                              <span className="text-sm font-medium">
+                                {t('checkout.verifyingPayment')} ({pollingAttempt}/60)
                               </span>
                             </div>
                           )}
@@ -939,7 +898,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                           <Button 
                             variant="ghost" 
                             onClick={handleCancelPayment}
-                            className="mt-4"
+                            className="mt-4 text-gray-500 hover:text-gray-700"
                           >
                             {t('checkout.cancelPayment')}
                           </Button>

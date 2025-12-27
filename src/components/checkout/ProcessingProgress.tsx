@@ -5,65 +5,46 @@ import { useTranslation } from "@/i18n";
 export function ProcessingProgress({ stage, steps, showPercentage = true }: ProcessingProgressProps) {
   const { t } = useTranslation();
   const completedCount = steps.filter((s) => s.status === "completed").length;
-  const inProgressCount = steps.filter((s) => s.status === "in-progress").length;
-  const totalProgress = steps.length > 0 ? Math.round(((completedCount + inProgressCount * 0.5) / steps.length) * 100) : 0;
+  const inProgressStep = steps.find((s) => s.status === "in-progress");
+  const totalProgress = steps.length > 0 ? Math.round((completedCount / steps.length) * 100) : 0;
 
+  // Versão simplificada - mostra apenas o passo atual
   return (
-    <div className="space-y-4 w-full">
-      <div className="space-y-2">
-        {steps.map((step) => (
-          <div key={step.id} className="flex items-center gap-3">
-            <div className="flex-shrink-0">
-              {step.status === "completed" && (
-                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-green-100">
-                  <Check className="w-4 h-4 text-green-600" />
-                </div>
-              )}
-              {step.status === "in-progress" && <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />}
-              {step.status === "pending" && <div className="w-6 h-6 rounded-full border-2 border-gray-300" />}
-              {step.status === "error" && (
-                <div className="flex items-center justify-center w-6 h-6 rounded-full bg-red-100">
-                  <AlertCircle className="w-4 h-4 text-red-600" />
-                </div>
-              )}
-            </div>
-            <span
-              className={`text-sm font-medium ${
-                step.status === "completed"
-                  ? "text-gray-600"
-                  : step.status === "in-progress"
-                  ? "text-blue-700"
-                  : step.status === "error"
-                  ? "text-red-700"
-                  : "text-gray-500"
-              }`}
-            >
-              {step.status === "completed" && "✓ "}
-              {step.status === "in-progress" && "⟳ "}
-              {step.label}
-            </span>
+    <div className="w-full text-center space-y-4">
+      {/* Indicador principal */}
+      <div className="flex flex-col items-center justify-center gap-3">
+        {stage === "error" ? (
+          <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
+            <AlertCircle className="w-8 h-8 text-red-600" />
           </div>
-        ))}
+        ) : inProgressStep ? (
+          <div className="w-16 h-16 rounded-full bg-blue-100 flex items-center justify-center">
+            <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+          </div>
+        ) : (
+          <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
+            <Check className="w-8 h-8 text-green-600" />
+          </div>
+        )}
+
+        {/* Texto do passo atual */}
+        <p className={`font-medium ${
+          stage === "error" ? "text-red-700" : inProgressStep ? "text-blue-700" : "text-green-700"
+        }`}>
+          {stage === "error" 
+            ? t('checkout.processingError')
+            : inProgressStep?.label || t('checkout.completed')
+          }
+        </p>
       </div>
 
-      {stage === "error" && (
-        <div className="p-3 rounded-md bg-red-50 border border-red-200">
-          <div className="flex items-center gap-2 text-red-700 text-sm font-semibold">
-            <AlertCircle className="w-4 h-4" />
-            <span>{t('checkout.processingError')}</span>
+      {/* Barra de progresso simples */}
+      {showPercentage && stage !== "error" && (
+        <div className="w-full max-w-xs mx-auto">
+          <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+            <div className="bg-blue-600 h-full transition-all duration-500 ease-out" style={{ width: `${totalProgress}%` }} />
           </div>
-        </div>
-      )}
-
-      {showPercentage && (
-        <div className="pt-3 border-t border-gray-200">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-gray-600">{t('checkout.progress')}</span>
-            <span className="text-xs font-bold text-gray-700">{totalProgress}%</span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-            <div className="bg-blue-600 h-full transition-all duration-300" style={{ width: `${totalProgress}%` }} />
-          </div>
+          <p className="text-xs text-gray-500 mt-1">{completedCount}/{steps.length}</p>
         </div>
       )}
     </div>
