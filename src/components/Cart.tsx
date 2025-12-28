@@ -41,9 +41,9 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
   };
 
   const handleCheckoutComplete = () => {
-    onClearCart();
     updateCheckoutState(false);
     // Don't call onClose here, since the cart sheet is already closed
+    // onClearCart is called by Checkout component after successful payment
   };
 
   if (cartItems.length === 0) {
@@ -179,8 +179,8 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
         onClose={() => updateCheckoutState(false)}
         cartItems={cartItems}
         onComplete={handleCheckoutComplete}
-        onUpdateQuantity={() => {}}
-        onClearCart={() => {}}
+        onUpdateQuantity={onUpdateQuantity}
+        onClearCart={onClearCart}
       />
     </>
   );

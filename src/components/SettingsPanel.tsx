@@ -177,7 +177,7 @@ const SettingsPanel = () => {
                 id="taxPercentage"
                 type="number"
                 value={localSettings.taxPercentage}
-                onChange={(e) => handleInputChange('taxPercentage', parseFloat(e.target.value))}
+                onChange={(e) => handleInputChange('taxPercentage', parseFloat(e.target.value) || 0)}
                 placeholder={t('settings.taxPercentagePlaceholder')}
               />
             </div>

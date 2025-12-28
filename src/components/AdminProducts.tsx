@@ -2,8 +2,14 @@
 import ProductList from "@/components/ProductList";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { useTranslation } from "@/i18n";
+import { Product } from "@/types/product";
 
-export default function AdminProducts({ onUpdate, onDelete }: { onUpdate: any; onDelete: any }) {
+interface AdminProductsProps {
+  onUpdate: (id: string, updates: Partial<Product>) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}
+
+export default function AdminProducts({ onUpdate, onDelete }: AdminProductsProps) {
     const { t } = useTranslation();
   const { products, loading } = useFirebaseProducts();
   if (loading)

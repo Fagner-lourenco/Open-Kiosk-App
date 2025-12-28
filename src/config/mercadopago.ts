@@ -51,11 +51,6 @@ export function validateMercadoPagoConfig(): boolean {
     return false;
   }
   
-  console.log('[Config] Mercado Pago configurado corretamente:', {
-    pos: EXTERNAL_POS_ID,
-    store: MERCADO_PAGO_CONFIG.EXTERNAL_STORE_ID,
-  });
-  
   return true;
 }
 
@@ -72,6 +67,5 @@ export function validatePointConfig(): { valid: boolean; terminalId?: string; er
     };
   }
   
-  console.log('[Config] Terminal Point configurado:', TERMINAL_ID);
   return { valid: true, terminalId: TERMINAL_ID };
 }

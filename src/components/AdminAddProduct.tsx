@@ -2,8 +2,13 @@
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Plus } from "lucide-react";
 import ProductForm from "@/components/ProductForm";
+import { Product } from "@/types/product";
 
-export default function AdminAddProduct({ onSubmit }: { onSubmit: any }) {
+interface AdminAddProductProps {
+  onSubmit: (product: Omit<Product, 'id'>) => Promise<string>;
+}
+
+export default function AdminAddProduct({ onSubmit }: AdminAddProductProps) {
   return (
     <Card>
       <CardHeader>

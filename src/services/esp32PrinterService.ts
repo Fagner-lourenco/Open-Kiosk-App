@@ -147,6 +147,13 @@ export class ESP32PrinterService {
     };
   }
 
+  // Timeout configurável para impressão (padrão 15s para impressões longas)
+  private printTimeoutMs = 15000;
+
+  setPrintTimeout(timeoutMs: number): void {
+    this.printTimeoutMs = Math.max(5000, timeoutMs); // Mínimo 5 segundos
+  }
+
   async sendPrintData(printData: any): Promise<PrinterResponse> {
     try {
       if (!this.writer) {
@@ -157,7 +164,7 @@ export class ESP32PrinterService {
       const writePromise = this.writer.write(data);
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<void>((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error('Print write timed out')), 5000);
+        timeoutId = setTimeout(() => reject(new Error('Print write timed out')), this.printTimeoutMs);
       });
 
       await Promise.race([writePromise, timeoutPromise]);

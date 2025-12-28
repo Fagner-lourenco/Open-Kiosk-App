@@ -171,7 +171,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
                   type="number"
                   step="0.01"
                   value={price}
-                  onChange={(e) => setPrice(parseFloat(e.target.value))}
+                  onChange={(e) => setPrice(parseFloat(e.target.value) || 0)}
                   required
                   placeholder="0.00"
                 />

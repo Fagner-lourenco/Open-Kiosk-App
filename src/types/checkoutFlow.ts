@@ -9,6 +9,8 @@ export type ProcessingStage =
   | "error";
 
 export type TimerVariant = "idle" | "running" | "warning" | "critical";
+import { ProductSize } from './product';
+
 export type CheckoutStep = 1 | 2 | 3 | 4;
 
 export interface ProgressStep {
@@ -35,7 +37,7 @@ export interface CheckoutFlowState {
   processingProgress: number;
   processingSteps: ProgressStep[];
 
-  selectedSize: any | null;
+  selectedSize: ProductSize | null;
   quantity: number;
   selectedPayment: "pix_qr" | "card" | "debit" | "mercadopago_qr" | "mercadopago_point" | null;
 
@@ -63,7 +65,7 @@ export interface CheckoutFlowActions {
   setProcessingSteps(steps: ProgressStep[]): void;
   setIsProcessing(value: boolean): void;
 
-  updateSelectedSize(size: any): void;
+  updateSelectedSize(size: ProductSize | null): void;
   updateQuantity(qty: number): void;
   updateSelectedPayment(method: "pix_qr" | "card" | "debit" | "mercadopago_qr" | "mercadopago_point" | null): void;
 

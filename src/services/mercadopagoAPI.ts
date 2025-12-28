@@ -15,6 +15,7 @@ import type {
 
 export class MercadoPagoAPI {
   private config: MercadoPagoConfig;
+  private defaultTimeoutMs = 30000; // 30 segundos timeout padrão
 
   constructor(config: MercadoPagoConfig) {
     this.config = config;
@@ -22,7 +23,8 @@ export class MercadoPagoAPI {
 
   private async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    timeoutMs?: number
   ): Promise<T> {
     const url = `${this.config.baseUrl}${endpoint}`;
     
@@ -32,11 +34,25 @@ export class MercadoPagoAPI {
       ...options.headers,
     };
 
+    // Criar AbortController para timeout
+    const controller = new AbortController();
+    const timeout = timeoutMs ?? this.defaultTimeoutMs;
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+    // Combinar signals se já existir um externo
+    const existingSignal = options.signal;
+    if (existingSignal) {
+      existingSignal.addEventListener('abort', () => controller.abort());
+    }
+
     try {
       const response = await fetch(url, {
         ...options,
         headers,
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         const error: MercadoPagoError = await response.json();
@@ -53,9 +69,15 @@ export class MercadoPagoAPI {
 
       return await response.json();
     } catch (error) {
-      // Silenciar aborts para evitar ruído durante HMR/cleanup
+      clearTimeout(timeoutId);
+      
+      // Tratar timeout como erro específico
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw error;
+        // Verificar se foi timeout interno ou abort externo
+        if (existingSignal?.aborted) {
+          throw error; // Abort externo, propagar
+        }
+        throw new Error('Tempo limite da requisição excedido. Tente novamente.');
       }
       console.error('[MercadoPagoAPI] Request failed:', error);
       throw error;

@@ -30,25 +30,34 @@ export const LanguageProvider = ({ children, initialLanguage = 'en' }: LanguageP
   // Sincronizar com initialLanguage quando ele mudar (ex: vindo do Firebase)
   useEffect(() => {
     if (initialLanguage && translationsMap[initialLanguage]) {
-      console.log('[i18n] Atualizando idioma para:', initialLanguage);
       setLanguageState(initialLanguage);
-      localStorage.setItem('kiosk_language', initialLanguage);
+      try {
+        localStorage.setItem('kiosk_language', initialLanguage);
+      } catch {
+        // localStorage indisponível (modo privado, quota excedida)
+      }
     }
   }, [initialLanguage]);
 
   // Carregar idioma do localStorage como fallback inicial
   useEffect(() => {
-    const savedLang = localStorage.getItem('kiosk_language') as Language;
-    if (savedLang && translationsMap[savedLang]) {
-      console.log('[i18n] Restaurando idioma do localStorage:', savedLang);
-      setLanguageState(savedLang);
+    try {
+      const savedLang = localStorage.getItem('kiosk_language') as Language;
+      if (savedLang && translationsMap[savedLang]) {
+        setLanguageState(savedLang);
+      }
+    } catch {
+      // localStorage indisponível
     }
   }, []);
 
   const setLanguage = (lang: Language) => {
-    console.log('[i18n] Mudando idioma para:', lang);
     setLanguageState(lang);
-    localStorage.setItem('kiosk_language', lang);
+    try {
+      localStorage.setItem('kiosk_language', lang);
+    } catch {
+      // localStorage indisponível
+    }
   };
 
   // Função de tradução com suporte a nested keys: t('checkout.title')

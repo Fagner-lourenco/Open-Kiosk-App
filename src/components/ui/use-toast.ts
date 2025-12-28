@@ -10,11 +10,17 @@ type ToasterToast = {
 }
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+const TOAST_REMOVE_DELAY = 3000
 
 type ToastState = {
   toasts: ToasterToast[]
 }
+
+type ToastAction =
+  | { type: "ADD_TOAST"; toast: ToasterToast }
+  | { type: "UPDATE_TOAST"; toast: ToasterToast }
+  | { type: "DISMISS_TOAST"; toastId?: string }
+  | { type: "REMOVE_TOAST"; toastId?: string }
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
@@ -34,7 +40,7 @@ const addToRemoveQueue = (toastId: string) => {
   toastTimeouts.set(toastId, timeout)
 }
 
-export const reducer = (state: ToastState, action: any): ToastState => {
+export const reducer = (state: ToastState, action: ToastAction): ToastState => {
   switch (action.type) {
     case "ADD_TOAST":
       return {
@@ -91,7 +97,7 @@ const listeners: Array<(state: ToastState) => void> = []
 
 let memoryState: ToastState = { toasts: [] }
 
-function dispatch(action: any) {
+function dispatch(action: ToastAction) {
   memoryState = reducer(memoryState, action)
   listeners.forEach((listener) => {
     listener(memoryState)

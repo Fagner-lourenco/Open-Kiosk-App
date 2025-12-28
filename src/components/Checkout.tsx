@@ -4,6 +4,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Receipt, QrCode, Printer, Check, CreditCard, Wifi, AlertCircle, Loader, Clock } from "lucide-react";
+import { getCartItemKey } from "@/utils/productUtils";
 import { CartItem } from "@/types/product";
 import { useTranslation } from "@/i18n";
 import { useCurrentCurrency } from "@/hooks/useSettings";
@@ -47,9 +48,10 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   const [mpQrData, setMpQrData] = useState<string | null>(null);
   const [mpError, setMpError] = useState<string | null>(null);
   
-  // Guard contra duplicação de vendas
+  // Guard contra duplicação de vendas - usando mutex pattern
   const [saleRecorded, setSaleRecorded] = useState(false);
   const saleRecordedRef = useRef(false);
+  const paymentInProgressRef = useRef<Promise<void> | null>(null);
 
   // Hook de polling otimizado com persistência e retry
   const {
@@ -134,6 +136,12 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
   // Handler para iniciar pagamento com QR Mercado Pago
   const handleStartMercadoPagoQR = async () => {
+    // Proteção imediata contra múltiplos cliques
+    if (paymentProcessed || qrFlowStarted) {
+      console.log('[Checkout] Pagamento QR já em andamento, ignorando clique duplicado');
+      return;
+    }
+    
     console.log('[Checkout] Iniciando pagamento QR Mercado Pago...');
     setQrFlowStarted(true);
     setMpError(null);
@@ -192,6 +200,12 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
   // Handler para iniciar pagamento com Mercado Pago Point (Terminal físico)
   const handleStartMercadoPagoPoint = async () => {
+    // Proteção imediata contra múltiplos cliques
+    if (paymentProcessed || pointStatus !== 'idle') {
+      console.log('[Checkout] Pagamento Point já em andamento, ignorando clique duplicado');
+      return;
+    }
+    
     const paymentType = paymentMethod === 'credit_card' ? 'credit_card' : 'debit_card';
     console.log('[Checkout] Iniciando pagamento Point:', paymentType);
     
@@ -250,15 +264,30 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   };
 
   const handlePaymentComplete = async () => {
-    // Guard contra duplicação de vendas
+    // Guard contra duplicação de vendas - mutex pattern
+    // Verificar se já está em progresso ou já foi concluído
     if (saleRecordedRef.current) {
       console.log('[Checkout] Venda já registrada, ignorando duplicação');
       return;
     }
+    
+    // Verificar se há uma operação em andamento (mutex)
+    if (paymentInProgressRef.current) {
+      console.log('[Checkout] Pagamento em andamento, aguardando...');
+      await paymentInProgressRef.current;
+      return; // Outra chamada já processou
+    }
+    
+    // Marcar imediatamente ANTES de qualquer operação async
     saleRecordedRef.current = true;
     setSaleRecorded(true);
-    
     setPaymentProcessed(true);
+    
+    // Criar Promise para mutex
+    let resolvePayment: () => void;
+    paymentInProgressRef.current = new Promise<void>((resolve) => {
+      resolvePayment = resolve;
+    });
     
     try {
       await salesService.recordSaleAndUpdateStock(
@@ -270,13 +299,21 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       console.log('Sale recorded and stock updated atomically:', orderNumber);
     } catch (error) {
       console.error('Error processing order:', error);
+      // Reverter guards em caso de erro
+      saleRecordedRef.current = false;
+      setSaleRecorded(false);
       setPaymentProcessed(false);
+      paymentInProgressRef.current = null;
       toast({
         title: t('common.error'),
         description: (error as Error)?.message || t('checkout.processOrderError'),
         variant: "destructive"
       });
       return;
+    } finally {
+      // Liberar mutex
+      resolvePayment!();
+      paymentInProgressRef.current = null;
     }
 
     // Print receipt before clearing the cart so data remains available
@@ -360,6 +397,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     // Reset sale guard
     setSaleRecorded(false);
     saleRecordedRef.current = false;
+    paymentInProgressRef.current = null;
   };
 
   const handleClose = () => {
@@ -369,6 +407,15 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     stopPolling();
     clearPersistedState();
   };
+
+  // Bug #13: Cleanup ao desmontar componente (independente de isOpen)
+  useEffect(() => {
+    return () => {
+      // Cleanup garantido ao desmontar
+      stopPolling();
+      clearPersistedState();
+    };
+  }, [stopPolling, clearPersistedState]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -431,7 +478,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
               <h3 className="font-medium mb-4">{t('checkout.orderSummary')}</h3>
               <div className="space-y-3">
                 {cartItems.map((item) => (
-                  <div key={item.product.id} className="flex justify-between text-sm">
+                  <div key={getCartItemKey(item.product.id, item.sizeKey)} className="flex justify-between text-sm">
                     <span>
                       {item.product.title}{item.sizeLabel ? ` (${item.sizeLabel})` : ''} x{item.quantity}
                     </span>
@@ -775,18 +822,12 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                   setQrFlowStarted(false);
                   setMpOrderId(null);
                   setMpQrData(null);
-                  setIsPolling(false);
+                  // Reset polling state via hook controls
+                  stopPolling();
+                  clearPersistedState();
                   setPaymentProcessed(false);
                   setMpError(null);
                   setPointStatus('idle');
-                  if (pollTimeoutRef.current) {
-                    clearTimeout(pollTimeoutRef.current);
-                    pollTimeoutRef.current = null;
-                  }
-                  if (pollAbortRef.current) {
-                    pollAbortRef.current.abort();
-                    pollAbortRef.current = null;
-                  }
                 }}
                 variant="outline"
                 className="w-full"

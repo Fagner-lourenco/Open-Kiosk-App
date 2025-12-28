@@ -128,7 +128,7 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
                     id="taxPercentage"
                     type="number"
                     value={settings.taxPercentage}
-                    onChange={(e) => handleInputChange('taxPercentage', parseFloat(e.target.value))}
+                    onChange={(e) => handleInputChange('taxPercentage', parseFloat(e.target.value) || 0)}
                     placeholder="18"
                   />
                 </div>

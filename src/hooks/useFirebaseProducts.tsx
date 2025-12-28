@@ -14,6 +14,7 @@ const productListeners: Array<(products: Product[], loading: boolean, error: str
 let subscriptionActive = false;
 let hasToastedError = false;
 let subscriptionInitializing = false;
+let subscriberCount = 0; // Reference counting to prevent race conditions on cleanup
 
 export const useFirebaseProducts = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -29,6 +30,7 @@ export const useFirebaseProducts = () => {
       setError(e);
     };
     productListeners.push(localListener);
+    subscriberCount++;
 
     // Push current state to this hook immediately
     localListener(productsGlobal, loadingGlobal, errorGlobal);
@@ -47,7 +49,6 @@ export const useFirebaseProducts = () => {
           productsGlobal = productsData;
           loadingGlobal = false;
           errorGlobal = null;
-          console.log('[useFirebaseProducts] 🔄 Listener disparado, produtos atualizados:', productsData.map(p => ({ id: p.id, title: p.title, stock: p.stock, totalMl: p.totalMlAvailable })));
           productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
         }, (error) => {
           console.error('Error fetching products:', error);
@@ -78,14 +79,17 @@ export const useFirebaseProducts = () => {
     return () => {
       const idx = productListeners.indexOf(localListener);
       if (idx > -1) productListeners.splice(idx, 1);
+      subscriberCount--;
 
       // If no listeners remain, tear down global subscription
-      if (productListeners.length === 0 && unsubscribeGlobal) {
+      // Use subscriberCount to prevent race conditions during HMR/fast remounts
+      if (subscriberCount === 0 && unsubscribeGlobal) {
         unsubscribeGlobal();
         unsubscribeGlobal = null;
         subscriptionActive = false;
         hasToastedError = false;
         loadingGlobal = true;
+        errorGlobal = null;
       }
     };
   }, [toast]);
@@ -133,6 +137,26 @@ export const useFirebaseProducts = () => {
 
   const updateProduct = async (id: string, updates: Partial<Product>) => {
     try {
+      // Validar bebidas: se está atualizando para isDrink=true ou já é bebida
+      const existingProduct = products.find(p => p.id === id);
+      const willBeDrink = updates.isDrink ?? existingProduct?.isDrink;
+      
+      if (willBeDrink) {
+        const finalSizes = updates.sizes ?? existingProduct?.sizes;
+        const finalTotalMl = updates.totalMlAvailable ?? existingProduct?.totalMlAvailable;
+        const finalDefaultSizeKey = updates.defaultSizeKey ?? existingProduct?.defaultSizeKey;
+        
+        if (!finalSizes || finalSizes.length === 0) {
+          throw new Error('Bebidas precisam ter pelo menos um tamanho');
+        }
+        if (!finalTotalMl || finalTotalMl <= 0) {
+          throw new Error('Total ML disponível deve ser maior que 0');
+        }
+        if (!finalDefaultSizeKey) {
+          throw new Error('Selecione um tamanho padrão');
+        }
+      }
+
       const db = getFirebaseDb();
       const productDoc = doc(db, 'products', id);
       await updateDoc(productDoc, {
@@ -149,7 +173,7 @@ export const useFirebaseProducts = () => {
       console.error('Error updating product:', error);
       toast({
         title: "Error",
-        description: "Failed to update product",
+        description: (error as Error)?.message || "Failed to update product",
         variant: "destructive"
       });
       throw error;

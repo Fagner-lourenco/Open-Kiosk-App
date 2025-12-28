@@ -1,5 +1,5 @@
 
-import { initializeApp, FirebaseApp } from 'firebase/app';
+import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { StoreSettings } from '@/types/store';
 
@@ -8,6 +8,14 @@ let db: Firestore | null = null;
 
 export const initializeFirebase = (settings: StoreSettings) => {
   try {
+    const existingApps = getApps();
+    if (existingApps.length > 0) {
+      app = existingApps[0];
+      db = getFirestore(app);
+      console.log('Firebase already initialized, reusing existing instance');
+      return { app, db };
+    }
+    
     app = initializeApp(settings.firebaseConfig);
     db = getFirestore(app);
     console.log('Firebase initialized successfully');

@@ -11,8 +11,17 @@ class SalesService {
     const hour = now.getHours().toString().padStart(2, '0');
     const minute = now.getMinutes().toString().padStart(2, '0');
     const second = now.getSeconds().toString().padStart(2, '0');
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-    return `${year}${month}${day}${hour}${minute}${second}${random}`;
+    
+    // Usar UUID para garantir unicidade mesmo em alta concorrência
+    let uniqueId: string;
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      uniqueId = crypto.randomUUID().split('-')[0]; // Primeiros 8 caracteres do UUID
+    } else {
+      // Fallback com mais entropia: timestamp em ms + random maior
+      uniqueId = `${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
+    }
+    
+    return `${year}${month}${day}${hour}${minute}${second}-${uniqueId}`;
   }
 
   async recordSaleAndUpdateStock(

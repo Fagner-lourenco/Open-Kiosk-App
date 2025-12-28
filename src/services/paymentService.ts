@@ -20,9 +20,21 @@ export interface PaymentResult {
   order?: Order; // Order completa do Mercado Pago
 }
 
-export interface PaymentError {
+/**
+ * Custom Error class for payment errors with proper stack trace
+ */
+export class PaymentError extends Error {
   code: string;
-  message: string;
+
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'PaymentError';
+    this.code = code;
+    // Mantém o stack trace correto em V8 (Chrome, Node)
+    if (Error.captureStackTrace) {
+      Error.captureStackTrace(this, PaymentError);
+    }
+  }
 }
 
 class PaymentService {
@@ -72,10 +84,10 @@ class PaymentService {
       this.activeTransactions.delete(transactionId);
       
       if ((error as Error).name === 'AbortError') {
-        throw { code: 'PAYMENT_CANCELLED', message: 'Pagamento cancelado pelo usuário' };
+        throw new PaymentError('PAYMENT_CANCELLED', 'Pagamento cancelado pelo usuário');
       }
       
-      throw { code: 'PIX_ERROR', message: 'Erro ao processar PIX' };
+      throw new PaymentError('PIX_ERROR', 'Erro ao processar PIX');
     }
   }
 
@@ -113,10 +125,10 @@ class PaymentService {
       this.activeTransactions.delete(transactionId);
       
       if ((error as Error).name === 'AbortError') {
-        throw { code: 'PAYMENT_CANCELLED', message: 'Pagamento cancelado pelo usuário' };
+        throw new PaymentError('PAYMENT_CANCELLED', 'Pagamento cancelado pelo usuário');
       }
       
-      throw { code: 'CARD_ERROR', message: 'Erro ao processar cartão' };
+      throw new PaymentError('CARD_ERROR', 'Erro ao processar cartão');
     }
   }
 
@@ -182,10 +194,10 @@ class PaymentService {
     const mpAPI = createMercadoPagoAPI();
     
     if (!mpAPI) {
-      throw { 
-        code: 'MP_NOT_CONFIGURED', 
-        message: 'Mercado Pago não configurado. Verifique as variáveis de ambiente.' 
-      };
+      throw new PaymentError(
+        'MP_NOT_CONFIGURED', 
+        'Mercado Pago não configurado. Verifique as variáveis de ambiente.'
+      );
     }
 
     try {
@@ -213,8 +225,6 @@ class PaymentService {
         // Itens opcionais: omitir para evitar validações de soma em sandbox
       };
 
-      console.log('[PaymentService] Criando order com payload:', JSON.stringify(orderPayload, null, 2));
-
       const order = await mpAPI.createOrder(orderPayload);
 
       // Extrair qr_data da resposta corretamente
@@ -223,12 +233,6 @@ class PaymentService {
       if (!qrData) {
         throw new Error('QR data não retornado pela API Mercado Pago');
       }
-
-      console.log('[PaymentService] Order criada com sucesso:', {
-        orderId: order.id,
-        status: order.status,
-        amount: order.total_amount
-      });
 
       // Order criada com sucesso, aguardar pagamento via polling
       return {
@@ -241,10 +245,10 @@ class PaymentService {
       };
     } catch (error) {
       console.error('[PaymentService] Erro ao criar QR Code Mercado Pago:', error);
-      throw {
-        code: 'MP_QR_ERROR',
-        message: error instanceof Error ? error.message : 'Erro ao gerar QR Code'
-      };
+      throw new PaymentError(
+        'MP_QR_ERROR',
+        error instanceof Error ? error.message : 'Erro ao gerar QR Code'
+      );
     }
   }
 
@@ -273,10 +277,10 @@ class PaymentService {
     const mpAPI = createMercadoPagoAPI();
     
     if (!mpAPI) {
-      throw { 
-        code: 'MP_NOT_CONFIGURED', 
-        message: 'Mercado Pago não configurado. Verifique as variáveis de ambiente.' 
-      };
+      throw new PaymentError(
+        'MP_NOT_CONFIGURED', 
+        'Mercado Pago não configurado. Verifique as variáveis de ambiente.'
+      );
     }
 
     try {
@@ -284,7 +288,6 @@ class PaymentService {
       let finalTerminalId = terminalId;
       
       if (!finalTerminalId) {
-        console.log('[PaymentService Point] Buscando terminal em modo PDV...');
         const terminalsResponse = await mpAPI.listTerminals({ limit: 10 });
         const pdvTerminal = terminalsResponse.data.terminals.find(
           t => t.operating_mode === 'PDV'
@@ -295,7 +298,20 @@ class PaymentService {
         }
         
         finalTerminalId = pdvTerminal.id;
-        console.log('[PaymentService Point] Terminal encontrado:', finalTerminalId);
+      } else {
+        // Validar que o terminal fornecido está em modo PDV
+        const terminalsResponse = await mpAPI.listTerminals({ limit: 50 });
+        const providedTerminal = terminalsResponse.data.terminals.find(
+          t => t.id === finalTerminalId
+        );
+        
+        if (!providedTerminal) {
+          throw new Error(`Terminal ${finalTerminalId} não encontrado. Verifique o ID do terminal.`);
+        }
+        
+        if (providedTerminal.operating_mode !== 'PDV') {
+          throw new Error(`Terminal ${finalTerminalId} não está em modo PDV (modo atual: ${providedTerminal.operating_mode}). Configure o terminal no painel do Mercado Pago.`);
+        }
       }
 
       // Payload conforme documentação oficial Mercado Pago Point
@@ -325,15 +341,7 @@ class PaymentService {
         }
       };
 
-      console.log('[PaymentService Point] Criando order:', JSON.stringify(orderPayload, null, 2));
-
       const order = await mpAPI.createOrder(orderPayload);
-
-      console.log('[PaymentService Point] Order criada com sucesso:', {
-        orderId: order.id,
-        status: order.status,
-        terminalId: finalTerminalId
-      });
 
       // Order criada e enviada automaticamente ao terminal
       return {
@@ -345,10 +353,10 @@ class PaymentService {
       };
     } catch (error) {
       console.error('[PaymentService Point] Erro ao processar pagamento:', error);
-      throw {
-        code: 'MP_POINT_ERROR',
-        message: error instanceof Error ? error.message : 'Erro ao processar no terminal'
-      };
+      throw new PaymentError(
+        'MP_POINT_ERROR',
+        error instanceof Error ? error.message : 'Erro ao processar no terminal'
+      );
     }
   }
 
@@ -359,10 +367,10 @@ class PaymentService {
     const mpAPI = createMercadoPagoAPI();
     
     if (!mpAPI) {
-      throw { 
-        code: 'MP_NOT_CONFIGURED', 
-        message: 'Mercado Pago não configurado.' 
-      };
+      throw new PaymentError(
+        'MP_NOT_CONFIGURED', 
+        'Mercado Pago não configurado.'
+      );
     }
 
     return mpAPI.getOrder(orderId, signal);
@@ -375,10 +383,10 @@ class PaymentService {
     const mpAPI = createMercadoPagoAPI();
     
     if (!mpAPI) {
-      throw { 
-        code: 'MP_NOT_CONFIGURED', 
-        message: 'Mercado Pago não configurado.' 
-      };
+      throw new PaymentError(
+        'MP_NOT_CONFIGURED', 
+        'Mercado Pago não configurado.'
+      );
     }
 
     await mpAPI.cancelOrder(orderId);

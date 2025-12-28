@@ -55,13 +55,11 @@ export const useSettings = () => {
     setLoading(true);
     currencyInitPromise = (async () => {
       try {
-        console.log('Fetching currency from Firebase...');
         const db = getFirebaseDb();
         const docRef = doc(db, 'settings', 'default_currency');
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
-          console.log('Currency data received:', docSnap.data());
           const currency = currencies.find(c => c.code === docSnap.data().value) || currencies[0];
           currentCurrencyGlobal = currency;
           setCurrentCurrency(currency);
@@ -95,7 +93,6 @@ export const useSettings = () => {
   const updateCurrency = async (currencyCode: string) => {
     setLoading(true);
     try {
-      console.log('Updating currency to:', currencyCode);
       const currency = currencies.find(c => c.code === currencyCode);
       if (!currency) throw new Error('Invalid currency code');
 
@@ -104,7 +101,6 @@ export const useSettings = () => {
         value: currencyCode
       });
 
-      console.log('Currency updated successfully');
       currentCurrencyGlobal = currency;
       setCurrentCurrency(currency);
       // Notify all listeners

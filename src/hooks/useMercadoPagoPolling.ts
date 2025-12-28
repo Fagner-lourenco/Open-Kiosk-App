@@ -15,9 +15,9 @@ import type { Order, OrderStatus, PaymentStatus } from '@/types/mercadopago';
 
 // Constantes de configuração
 const STORAGE_KEY = 'mp_polling_state';
-const INITIAL_INTERVAL_MS = 5000; // 5 segundos (feedback rápido)
-const MAX_INTERVAL_MS = 15000; // Máximo 15 segundos
-const MAX_ATTEMPTS = 60; // 5 minutos no total
+const INITIAL_INTERVAL_MS = 3000; // 3 segundos iniciais (feedback rápido)
+const MAX_INTERVAL_MS = 20000; // Máximo 20 segundos
+const MAX_ATTEMPTS = 40; // ~5 minutos com backoff crescente
 const MAX_NETWORK_RETRIES = 3;
 const NETWORK_RETRY_DELAY_MS = 2000;
 
@@ -57,15 +57,15 @@ const logPolling = (level: 'info' | 'warn' | 'error' | 'success', message: strin
   logFn(`${prefix} ${emoji} ${message}`, data ? JSON.stringify(data, null, 2) : '');
 };
 
-// Calcula intervalo com exponential backoff (mas mantendo feedback rápido)
+// Calcula intervalo com exponential backoff (feedback rápido inicial, depois cresce)
 const getPollingInterval = (attempt: number): number => {
-  // Primeiras 6 tentativas: 5s fixo (30s de feedback rápido)
-  if (attempt <= 6) return INITIAL_INTERVAL_MS;
+  // Primeiras 3 tentativas: intervalo inicial fixo (9s de feedback rápido)
+  if (attempt <= 3) return INITIAL_INTERVAL_MS;
   
-  // Depois: cresce gradualmente até MAX_INTERVAL_MS
-  // 5s * 1.2^(attempt-6), capped at 15s
-  const interval = INITIAL_INTERVAL_MS * Math.pow(1.2, attempt - 6);
-  return Math.min(interval, MAX_INTERVAL_MS);
+  // Depois: cresce com fator 1.4 até MAX_INTERVAL_MS
+  // Isso atinge ~20s em ~8 tentativas adicionais
+  const interval = INITIAL_INTERVAL_MS * Math.pow(1.4, attempt - 3);
+  return Math.min(Math.round(interval), MAX_INTERVAL_MS);
 };
 
 // Verifica se é erro de rede
@@ -133,6 +133,7 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
   const isPointPaymentRef = useRef(false);
   const currentAttemptRef = useRef(0);
   const isMountedRef = useRef(true);
+  const processedOrdersRef = useRef<Set<string>>(new Set()); // Idempotency: track already processed orders
 
   // Limpar timeout e abort controller
   const cleanup = useCallback(() => {
@@ -241,6 +242,15 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
       const isPaymentApproved = paymentStatus === 'approved' || paymentStatus === 'processed';
 
       if (isOrderProcessed && isPaymentApproved) {
+        // Idempotency check: prevent duplicate processing of the same order
+        if (processedOrdersRef.current.has(orderId)) {
+          logPolling('warn', 'Order já processado, ignorando callback duplicado', { orderId });
+          setIsPolling(false);
+          savePollingState(null);
+          return;
+        }
+        processedOrdersRef.current.add(orderId);
+        
         logPolling('success', 'Pagamento aprovado!', { orderId, paymentStatus });
         setIsPolling(false);
         savePollingState(null);

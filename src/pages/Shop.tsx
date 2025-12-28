@@ -61,7 +61,6 @@ const Shop = () => {
 
   useEffect(() => {
     if (products) {
-      console.log('[Shop] 📦 Produtos recebidos do hook, atualizando lista:', products.map(p => ({ id: p.id, title: p.title, stock: p.stock, totalMl: p.totalMlAvailable })));
       // Sort products by most sold (assuming we track sales in a field like 'salesCount')
       // For now, we'll sort by stock level as a proxy (lower stock = more sold)
       const sortedByMostSold = [...products].sort((a, b) => {
