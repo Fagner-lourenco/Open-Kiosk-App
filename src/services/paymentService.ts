@@ -8,7 +8,11 @@
  */
 
 import { createMercadoPagoAPI } from './mercadopagoAPI';
+import { MERCADO_PAGO_CONFIG } from '@/config/mercadopago';
 import type { Order } from '@/types/mercadopago';
+
+// Chave para armazenar último orderId do terminal (para limpar antes de nova ordem)
+const LAST_TERMINAL_ORDER_KEY = 'mp_last_terminal_order';
 
 export interface PaymentResult {
   success: boolean;
@@ -49,6 +53,104 @@ class PaymentService {
       // fallback below
     }
     return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 12)}`;
+  }
+
+  /**
+   * Salvar último orderId do terminal para poder cancelar antes de nova ordem
+   */
+  private saveLastTerminalOrder(orderId: string, terminalId: string): void {
+    try {
+      localStorage.setItem(LAST_TERMINAL_ORDER_KEY, JSON.stringify({
+        orderId,
+        terminalId,
+        createdAt: Date.now()
+      }));
+    } catch (e) {
+      console.warn('[PaymentService] Erro ao salvar último orderId:', e);
+    }
+  }
+
+  /**
+   * Obter último orderId do terminal
+   */
+  private getLastTerminalOrder(): { orderId: string; terminalId: string; createdAt: number } | null {
+    try {
+      const data = localStorage.getItem(LAST_TERMINAL_ORDER_KEY);
+      if (data) {
+        return JSON.parse(data);
+      }
+    } catch (e) {
+      console.warn('[PaymentService] Erro ao ler último orderId:', e);
+    }
+    return null;
+  }
+
+  /**
+   * Limpar último orderId do terminal
+   */
+  private clearLastTerminalOrder(): void {
+    try {
+      localStorage.removeItem(LAST_TERMINAL_ORDER_KEY);
+    } catch (e) {
+      console.warn('[PaymentService] Erro ao limpar último orderId:', e);
+    }
+  }
+
+  /**
+   * Cancelar ordem anterior do terminal (se existir) para liberar para nova ordem
+   * Isso é importante para self-service onde o cliente pode desistir e voltar
+   */
+  async clearTerminalForNewOrder(terminalId: string): Promise<void> {
+    const lastOrder = this.getLastTerminalOrder();
+    
+    if (!lastOrder || lastOrder.terminalId !== terminalId) {
+      return; // Nenhuma ordem anterior para este terminal
+    }
+
+    // Se a ordem foi criada há mais de 5 minutos, provavelmente já expirou
+    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
+    if (lastOrder.createdAt < fiveMinutesAgo) {
+      console.log('[PaymentService] Ordem anterior expirada, limpando cache');
+      this.clearLastTerminalOrder();
+      return;
+    }
+
+    const mpAPI = createMercadoPagoAPI();
+    if (!mpAPI) {
+      this.clearLastTerminalOrder();
+      return;
+    }
+
+    try {
+      console.log('[PaymentService] Verificando ordem anterior:', lastOrder.orderId);
+      
+      // Verificar status da ordem
+      const order = await mpAPI.getOrder(lastOrder.orderId);
+      
+      // Se já está processada, finalizada ou cancelada, apenas limpar cache
+      const finalStatuses = ['processed', 'closed', 'canceled', 'expired', 'rejected'];
+      if (finalStatuses.includes(order.status)) {
+        console.log('[PaymentService] Ordem anterior já finalizada:', order.status);
+        this.clearLastTerminalOrder();
+        return;
+      }
+
+      // Tentar cancelar ordem pendente
+      console.log('[PaymentService] Cancelando ordem anterior pendente:', lastOrder.orderId);
+      try {
+        await mpAPI.cancelOrder(lastOrder.orderId);
+        console.log('[PaymentService] Ordem anterior cancelada com sucesso');
+      } catch (cancelError: any) {
+        // Se erro ao cancelar, pode ser que já está no terminal
+        // Nesse caso o cliente precisa cancelar manualmente no terminal
+        console.warn('[PaymentService] Erro ao cancelar ordem anterior (pode estar no terminal):', cancelError.message);
+      }
+      
+      this.clearLastTerminalOrder();
+    } catch (error: any) {
+      console.warn('[PaymentService] Erro ao verificar ordem anterior:', error.message);
+      this.clearLastTerminalOrder();
+    }
   }
 
   /**
@@ -135,13 +237,27 @@ class PaymentService {
   /**
    * Cancel active payment transaction
    */
-  async cancelPayment(transactionId: string): Promise<void> {
+  async cancelPayment(transactionId: string, orderId?: string): Promise<{ canceled: boolean; reason?: string }> {
+    // Abortar qualquer requisição ativa localmente
     const controller = this.activeTransactions.get(transactionId);
-    
     if (controller) {
       controller.abort();
       this.activeTransactions.delete(transactionId);
     }
+
+    // Cancelar a ordem remotamente no Mercado Pago (se disponível)
+    if (orderId) {
+      try {
+        const result = await this.cancelMercadoPagoOrder(orderId);
+        console.log('[PaymentService] Resultado do cancelamento:', { orderId, ...result });
+        return result;
+      } catch (err) {
+        console.warn('[PaymentService] Falha ao cancelar ordem remotamente. Prosseguindo com cleanup local.', err);
+        return { canceled: false, reason: 'error' };
+      }
+    }
+    
+    return { canceled: true, reason: 'local_only' };
   }
 
   /**
@@ -189,7 +305,7 @@ class PaymentService {
     amount: number,
     items: Array<{ title: string; unit_price: string; quantity: number; unit_measure: string; total_amount: string }>,
     externalReference: string,
-    externalPosId: string = 'LOJ001POS001' // POS padrão
+    externalPosId: string = MERCADO_PAGO_CONFIG.EXTERNAL_POS_ID
   ): Promise<PaymentResult> {
     const mpAPI = createMercadoPagoAPI();
     
@@ -201,6 +317,11 @@ class PaymentService {
     }
 
     try {
+      // Validar POS externo configurado
+      if (!externalPosId || externalPosId.length === 0) {
+        throw new PaymentError('MP_QR_ERROR', 'EXTERNAL_POS_ID não configurado. Defina VITE_MP_EXTERNAL_POS_ID nas variáveis de ambiente.');
+      }
+
       // Payload 100% aderente à documentação Mercado Pago QR dinâmico
       // CRÍTICO: Todos os valores monetários como STRING com 2 decimais
       // Payload mínimo para reduzir chances de 400 em sandbox
@@ -284,43 +405,61 @@ class PaymentService {
     }
 
     try {
-      // Se não tiver terminal_id, buscar primeiro disponível em modo PDV
-      let finalTerminalId = terminalId;
+      // Se não tiver terminal_id, usar do config ou buscar primeiro disponível em modo PDV
+      let finalTerminalId = terminalId || MERCADO_PAGO_CONFIG.TERMINAL_ID;
       
       if (!finalTerminalId) {
+        console.log('[PaymentService Point] Terminal não configurado, buscando automaticamente...');
         const terminalsResponse = await mpAPI.listTerminals({ limit: 10 });
         const pdvTerminal = terminalsResponse.data.terminals.find(
           t => t.operating_mode === 'PDV'
         );
         
         if (!pdvTerminal) {
-          throw new Error('Nenhum terminal Point em modo PDV disponível. Configure um terminal no painel do Mercado Pago.');
+          throw new Error('Nenhum terminal Point em modo PDV disponível. Configure um terminal no painel do Mercado Pago ou defina VITE_MP_TERMINAL_ID.');
         }
         
         finalTerminalId = pdvTerminal.id;
+        console.log('[PaymentService Point] Terminal auto-detectado:', finalTerminalId);
       } else {
-        // Validar que o terminal fornecido está em modo PDV
+        // Validar que o terminal fornecido existe e está em modo PDV
+        console.log('[PaymentService Point] Verificando terminal configurado:', finalTerminalId);
         const terminalsResponse = await mpAPI.listTerminals({ limit: 50 });
         const providedTerminal = terminalsResponse.data.terminals.find(
           t => t.id === finalTerminalId
         );
         
         if (!providedTerminal) {
-          throw new Error(`Terminal ${finalTerminalId} não encontrado. Verifique o ID do terminal.`);
+          throw new Error(`Terminal ${finalTerminalId} não encontrado. Verifique o ID do terminal no painel do Mercado Pago.`);
         }
         
         if (providedTerminal.operating_mode !== 'PDV') {
-          throw new Error(`Terminal ${finalTerminalId} não está em modo PDV (modo atual: ${providedTerminal.operating_mode}). Configure o terminal no painel do Mercado Pago.`);
+          throw new Error(`Terminal ${finalTerminalId} não está em modo PDV (modo atual: ${providedTerminal.operating_mode}). Configure o terminal para modo PDV no painel do Mercado Pago.`);
         }
+        
+        console.log('[PaymentService Point] Terminal validado em modo PDV');
       }
+
+      // SELF-SERVICE: Limpar terminal de ordens anteriores pendentes ANTES de criar nova
+      console.log('[PaymentService Point] Limpando terminal de ordens anteriores...');
+      await this.clearTerminalForNewOrder(finalTerminalId);
 
       // Payload conforme documentação oficial Mercado Pago Point
       // CRÍTICO: amount como STRING com 2 decimais, expiration_time no formato ISO 8601 duration
+      // Montar config.payment_method conforme tipo de pagamento
+      let paymentMethodConfig: any = {
+        default_type: options?.defaultPaymentType
+      };
+      if (options?.defaultPaymentType === 'credit_card') {
+        paymentMethodConfig.default_installments = options?.defaultInstallments || 1;
+        paymentMethodConfig.installments_cost = options?.installmentsCost || 'seller';
+      }
+
       const orderPayload = {
         type: 'point' as const,
         external_reference: externalReference,
         description: `Pedido Kiosk #${externalReference}`,
-        expiration_time: 'PT5M', // 5 minutos para o cliente pagar
+        expiration_time: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME, // Usar config (PT3M para self-service)
         transactions: {
           payments: [
             {
@@ -333,15 +472,56 @@ class PaymentService {
             terminal_id: finalTerminalId,
             print_on_terminal: options?.printOnTerminal || 'no_ticket' as const
           },
-          payment_method: {
-            default_type: options?.defaultPaymentType,
-            default_installments: options?.defaultInstallments || 1,
-            installments_cost: options?.installmentsCost || 'seller'
-          }
+          payment_method: paymentMethodConfig
         }
       };
 
-      const order = await mpAPI.createOrder(orderPayload);
+      console.log('[PaymentService Point] Criando order:', {
+        terminalId: finalTerminalId,
+        amount: amount.toFixed(2),
+        externalReference,
+        paymentType: options?.defaultPaymentType || 'any',
+        expirationTime: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME,
+      });
+
+      // Tentar criar order com retry automático para erro 409
+      let order;
+      let lastError;
+      const maxRetries = 3;
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          order = await mpAPI.createOrder(orderPayload);
+          break; // Sucesso, sair do loop
+        } catch (createError: any) {
+          lastError = createError;
+          
+          // Se for erro 409, esperar e tentar novamente
+          if (createError.message?.includes('409') && attempt < maxRetries) {
+            console.log(`[PaymentService Point] Terminal ocupado, aguardando... (tentativa ${attempt}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Esperar 2 segundos
+            
+            // Tentar limpar novamente antes do retry
+            await this.clearTerminalForNewOrder(finalTerminalId);
+            continue;
+          }
+          
+          throw createError;
+        }
+      }
+      
+      if (!order) {
+        throw lastError || new Error('Falha ao criar order após múltiplas tentativas');
+      }
+
+      console.log('[PaymentService Point] Order criada com sucesso:', {
+        orderId: order.id,
+        status: order.status,
+        terminalId: finalTerminalId,
+      });
+
+      // Salvar orderId para poder limpar o terminal em caso de nova ordem
+      this.saveLastTerminalOrder(order.id, finalTerminalId);
 
       // Order criada e enviada automaticamente ao terminal
       return {
@@ -353,6 +533,15 @@ class PaymentService {
       };
     } catch (error) {
       console.error('[PaymentService Point] Erro ao processar pagamento:', error);
+      
+      // Tratar erro 409 (terminal ocupado com outra transação)
+      if (error instanceof Error && error.message.includes('409')) {
+        throw new PaymentError(
+          'MP_TERMINAL_BUSY',
+          'Terminal ocupado. Cancele a operação atual no terminal físico e tente novamente.'
+        );
+      }
+      
       throw new PaymentError(
         'MP_POINT_ERROR',
         error instanceof Error ? error.message : 'Erro ao processar no terminal'
@@ -378,8 +567,12 @@ class PaymentService {
 
   /**
    * Cancelar order do Mercado Pago
+   * 
+   * IMPORTANTE: Só é possível cancelar ordens com status 'created'.
+   * Se a ordem já está 'at_terminal', 'processed', etc., a API retorna erro.
+   * Nesses casos, apenas logamos warning e não lançamos exceção.
    */
-  async cancelMercadoPagoOrder(orderId: string): Promise<void> {
+  async cancelMercadoPagoOrder(orderId: string): Promise<{ canceled: boolean; reason?: string }> {
     const mpAPI = createMercadoPagoAPI();
     
     if (!mpAPI) {
@@ -389,7 +582,64 @@ class PaymentService {
       );
     }
 
-    await mpAPI.cancelOrder(orderId);
+    try {
+      // Primeiro verificar status atual da ordem
+      const order = await mpAPI.getOrder(orderId);
+      
+      // Ordens já finalizadas não precisam ser canceladas
+      if (order.status === 'canceled') {
+        console.log('[PaymentService] Ordem já está cancelada:', orderId);
+        return { canceled: true, reason: 'already_canceled' };
+      }
+      
+      if (order.status === 'processed' || order.status === 'closed') {
+        console.log('[PaymentService] Ordem já foi processada, não pode cancelar:', orderId);
+        return { canceled: false, reason: 'already_processed' };
+      }
+      
+      if (order.status === 'at_terminal') {
+        // Ordem está no terminal físico - cliente pode cancelar no próprio terminal
+        console.log('[PaymentService] Ordem está no terminal, cancelamento via API não permitido:', orderId);
+        return { canceled: false, reason: 'at_terminal' };
+      }
+      
+      // Só tenta cancelar se status for 'created'
+      if (order.status === 'created') {
+        await mpAPI.cancelOrder(orderId);
+        console.log('[PaymentService] Ordem cancelada com sucesso:', orderId);
+        return { canceled: true };
+      }
+      
+      // Status desconhecido - tenta cancelar mesmo assim
+      console.warn('[PaymentService] Status inesperado, tentando cancelar:', order.status);
+      await mpAPI.cancelOrder(orderId);
+      return { canceled: true };
+      
+    } catch (error: any) {
+      // Erros esperados da API
+      const errorCode = error?.code || error?.message || '';
+      
+      if (errorCode.includes('already_canceled') || errorCode.includes('order_already_canceled')) {
+        return { canceled: true, reason: 'already_canceled' };
+      }
+      
+      if (errorCode.includes('cannot_cancel') || errorCode.includes('at_terminal')) {
+        return { canceled: false, reason: 'at_terminal' };
+      }
+      
+      // Erro inesperado - propagar
+      console.error('[PaymentService] Erro ao cancelar ordem:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Marcar ordem do terminal como concluída (limpa cache para próxima ordem)
+   * Chamar após pagamento aprovado ou cancelamento bem-sucedido
+   */
+  markTerminalOrderComplete(): void {
+    this.clearLastTerminalOrder();
+    console.log('[PaymentService] Terminal liberado para nova ordem');
   }
 }
 

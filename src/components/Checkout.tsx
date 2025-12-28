@@ -63,6 +63,10 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   } = useMercadoPagoPolling({
     onSuccess: async (order) => {
       console.log('[Checkout] Pagamento aprovado via polling hook', { orderId: order.id });
+      
+      // Liberar terminal para próxima ordem (self-service)
+      paymentService.markTerminalOrderComplete();
+      
       toast({
         title: t('checkout.paymentApprovedToast'),
         description: t('checkout.paymentConfirmedSuccess')
@@ -71,7 +75,37 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     },
     onError: (errorMsg) => {
       console.error('[Checkout] Erro no polling:', errorMsg);
-      setMpError(errorMsg);
+      
+      // Mapear mensagens de erro para português amigável
+      const errorMessages: Record<string, { title: string; description: string }> = {
+        'Pagamento recusado': {
+          title: t('checkout.paymentDeclined') || 'Pagamento Recusado',
+          description: t('checkout.paymentDeclinedDescription') || 'O pagamento foi recusado. Verifique o limite do cartão ou tente outro método de pagamento.'
+        },
+        'Pagamento expirado': {
+          title: t('checkout.paymentExpired') || 'Tempo Expirado',
+          description: t('checkout.paymentExpiredDescription') || 'O tempo para pagamento expirou. Por favor, tente novamente.'
+        },
+        'Pagamento cancelado': {
+          title: t('checkout.paymentCanceled') || 'Pagamento Cancelado',
+          description: t('checkout.paymentCanceledDescription') || 'O pagamento foi cancelado.'
+        },
+      };
+      
+      const errorInfo = errorMessages[errorMsg] || {
+        title: t('checkout.paymentError') || 'Erro no Pagamento',
+        description: errorMsg || t('checkout.paymentErrorDescription') || 'Ocorreu um erro ao processar o pagamento. Tente novamente.'
+      };
+      
+      // Mostrar toast de erro com mensagem clara
+      toast({
+        title: errorInfo.title,
+        description: errorInfo.description,
+        variant: 'destructive',
+        duration: 6000,
+      });
+      
+      setMpError(errorInfo.description);
       setPaymentProcessed(false);
       if (paymentMethod !== 'pix_qr') setPointStatus('error');
     },
@@ -424,6 +458,49 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       clearPersistedState();
     }
   }, [isOpen]);
+
+  const handleCancelPayment = async () => {
+    // Capturar orderId ANTES de qualquer operação (evita race condition)
+    const orderIdToCancel = mpOrderId;
+    
+    // Parar polling e limpar persistência
+    stopPolling();
+    clearPersistedState();
+    
+    // Cancelar ordem remotamente no Mercado Pago, se houver
+    if (orderIdToCancel) {
+      try {
+        const result = await paymentService.cancelMercadoPagoOrder(orderIdToCancel);
+        
+        if (result.canceled) {
+          toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
+        } else if (result.reason === 'at_terminal') {
+          toast({ 
+            title: t('checkout.paymentCanceled'), 
+            description: 'Cancele diretamente no terminal de pagamento.',
+            variant: 'default'
+          });
+        } else if (result.reason === 'already_processed') {
+          toast({ 
+            title: 'Pagamento já processado', 
+            description: 'Este pagamento já foi concluído.',
+            variant: 'default'
+          });
+        }
+      } catch (error) {
+        console.warn('[Checkout] Falha ao cancelar ordem no Mercado Pago', error);
+        toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
+      }
+    }
+
+    // Limpar estados locais
+    setPaymentProcessed(false);
+    setPointStatus('idle');
+    setQrFlowStarted(false);
+    setMpOrderId(null);
+    setMpQrData(null);
+    setMpError(null);
+  };
 
   if (isCompleted) {
     return (
@@ -812,6 +889,20 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 <div className="text-center py-3 text-sm text-gray-600">
                   <p>{t('checkout.awaitingTerminalPayment')}</p>
                   <p className="text-xs mt-1">{t('checkout.completeOnCardMachine')}</p>
+                  <div className="mt-3">
+                    <Button variant="destructive" onClick={handleCancelPayment} className="w-full">
+                      {t('checkout.cancelPayment')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Cancelar pagamento via QR */}
+              {paymentMethod === 'pix_qr' && (mpOrderId || mpQrData || isPolling) && (
+                <div className="mt-3">
+                  <Button variant="destructive" onClick={handleCancelPayment} className="w-full">
+                    {t('checkout.cancelPayment')}
+                  </Button>
                 </div>
               )}
 

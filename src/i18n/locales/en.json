@@ -284,6 +284,8 @@
     "operationCancelledByUser": "Operation cancelled by user",
     "paymentNotConfirmedTime": "Payment not confirmed in time",
     "terminalErrorMsg": "Terminal Error",
+    "terminalBusy": "Terminal is busy. Cancel the current operation on the physical terminal and try again.",
+    "terminalBusyHint": "Press the X button on the terminal to cancel",
     "orderNotCreated": "Order not created at terminal",
     "paymentFailedGeneric": "Payment failed",
     "qrCode": "QR Code",
@@ -645,5 +647,13 @@
     "title": "404",
     "message": "Oops! Page not found",
     "returnHome": "Return to Home"
+  },
+  "ageVerification": {
+    "title": "Age Verification",
+    "question": "Are you over 18 years old?",
+    "description": "This product contains alcoholic beverage. Sale is prohibited to persons under 18.",
+    "confirmYes": "Yes, I am over 18",
+    "confirmNo": "No, choose another drink",
+    "legalNotice": "Sale of alcoholic beverages to persons under 18 is prohibited by law."
   }
 }

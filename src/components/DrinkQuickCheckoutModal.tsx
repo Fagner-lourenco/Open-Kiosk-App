@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check } from "lucide-react";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { esp32Printer } from "@/services/esp32PrinterService";
@@ -44,6 +44,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const [maxQty, setMaxQty] = useState<number>(0);
   const [selectedPayment, setSelectedPayment] = useState<"pix_qr" | "credit_card" | "debit_card">("pix_qr");
   const [currentTransactionId, setCurrentTransactionId] = useState<string | null>(null);
+  
+  // Estado de verificação de idade (antes do fluxo de checkout)
+  const [ageVerified, setAgeVerified] = useState<boolean>(false);
 
   // Estados para Mercado Pago QR
   const [mpOrderId, setMpOrderId] = useState<string | null>(null);
@@ -66,7 +69,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
-    paymentTimeoutSeconds: 300,
+    paymentTimeoutSeconds: 45, // Alinhado com PT40S do terminal + margem
     warningThresholdSeconds: 10,
     onTimeout: () => {
       toast({ title: t('checkout.sessionExpired'), description: t('checkout.checkoutCancelledInactivity'), variant: "destructive" });
@@ -105,6 +108,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
       saleRecordedRef.current = true;
       
+      // Liberar terminal para próxima ordem (self-service)
+      paymentService.markTerminalOrderComplete();
+      
       setPointStatus('idle');
       toast({
         title: t('checkout.paymentApprovedToast'),
@@ -117,7 +123,36 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     },
     onError: (errorMsg) => {
       console.error('[DrinkMP] Erro no polling:', errorMsg);
-      setMpError(errorMsg);
+      
+      // Mapear mensagens de erro para português amigável
+      const errorMessages: Record<string, { title: string; description: string }> = {
+        'Pagamento recusado': {
+          title: 'Pagamento Recusado',
+          description: 'O pagamento foi recusado. Verifique o limite do cartão ou tente outro método de pagamento.'
+        },
+        'Pagamento expirado': {
+          title: 'Tempo Expirado',
+          description: 'O tempo para pagamento expirou. Por favor, tente novamente.'
+        },
+        'Pagamento cancelado': {
+          title: 'Pagamento Cancelado',
+          description: 'O pagamento foi cancelado.'
+        },
+      };
+      
+      const errorInfo = errorMessages[errorMsg] || {
+        title: 'Erro no Pagamento',
+        description: errorMsg || 'Ocorreu um erro ao processar o pagamento. Tente novamente.'
+      };
+      
+      // Mostrar toast de erro com mensagem clara
+      toast({
+        title: errorInfo.title,
+        description: errorInfo.description,
+        variant: 'destructive',
+      });
+      
+      setMpError(errorInfo.description);
       setPointStatus('error');
       setIsProcessing(false);
       updateProcessingStage("idle");
@@ -232,6 +267,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setMpError(null);
       // Reset sale guard
       saleRecordedRef.current = false;
+      // Reset verificação de idade
+      setAgeVerified(false);
       // Cleanup: cancelar pagamentos pendentes
       if (currentTransactionId) {
         paymentService.cancelPayment(currentTransactionId).catch(console.error);
@@ -282,24 +319,49 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       clearTimeout(emergencyTimeoutRef.current);
       emergencyTimeoutRef.current = null;
     }
+    
+    // Capturar orderId ANTES de limpar estado (evita race condition)
+    const orderIdToCancel = mpOrderId;
+    const transactionIdToCancel = currentTransactionId;
+    
     // Cancelar polling do Mercado Pago via hook
     stopPolling();
     clearPersistedState();
+    
+    // Reset estados locais
     setMpOrderId(null);
     setMpQrData(null);
     setMpError(null);
-    setPointStatus('idle'); // Reset Point status on cancel
-    // Reset sale guard
+    setPointStatus('idle');
     saleRecordedRef.current = false;
     
-    if (currentTransactionId) {
+    // Cancelar ordem remotamente no Mercado Pago (usando valor capturado)
+    if (transactionIdToCancel || orderIdToCancel) {
       try {
-        await paymentService.cancelPayment(currentTransactionId);
-        toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
+        const result = await paymentService.cancelPayment(transactionIdToCancel || '', orderIdToCancel ?? undefined);
+        
+        if (result.canceled) {
+          toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
+        } else if (result.reason === 'at_terminal') {
+          // Ordem está no terminal - usuário deve cancelar lá
+          toast({ 
+            title: t('checkout.paymentCanceled'), 
+            description: 'Cancele diretamente no terminal de pagamento.',
+            variant: 'default'
+          });
+        } else if (result.reason === 'already_processed') {
+          toast({ 
+            title: 'Pagamento já processado', 
+            description: 'Este pagamento já foi concluído.',
+            variant: 'default'
+          });
+        }
       } catch (error) {
-        console.error("Error cancelling payment:", error);
+        console.warn("[DrinkQR] Falha ao cancelar ordem remotamente:", error);
+        toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
       }
     }
+    
     setIsProcessing(false);
     updateProcessingStage("idle");
     setCurrentTransactionId(null);
@@ -416,7 +478,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     updateProcessingStage("awaiting_payment");
     setMpError(null);
 
-    // Timeout de emergência: cancela pagamento após 5 minutos
+    // Timeout de emergência: cancela pagamento após 45 segundos (alinhado com PT40S + margem)
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
@@ -429,7 +491,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           variant: "destructive",
         });
       }
-    }, (flowState.paymentTimeoutSeconds ?? 300) * 1000);
+    }, (flowState.paymentTimeoutSeconds ?? 45) * 1000);
 
     try {
       if (!product || !selectedSize) {
@@ -594,6 +656,66 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   // Garantir que este modal só opere para produtos de bebida
   if (!product || !product.isDrink) return null;
+
+  // Tela de verificação de idade (antes do fluxo de checkout)
+  if (!ageVerified) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onCancel}>
+        <DialogContent className="w-full sm:max-w-md" aria-describedby="age-verification-description">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{t('ageVerification.title')}</DialogTitle>
+            <DialogDescription id="age-verification-description">
+              {t('ageVerification.description')}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center text-center space-y-6 py-4">
+            {/* Ícone de alerta */}
+            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-amber-100 to-orange-100 flex items-center justify-center">
+              <ShieldAlert className="w-10 h-10 text-amber-600" />
+            </div>
+            
+            {/* Título e pergunta */}
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold text-gray-900">
+                {t('ageVerification.title')}
+              </h2>
+              <p className="text-xl font-semibold text-amber-600">
+                {t('ageVerification.question')}
+              </p>
+            </div>
+            
+            {/* Descrição */}
+            <p className="text-gray-600 text-sm px-4">
+              {t('ageVerification.description')}
+            </p>
+            
+            {/* Botões */}
+            <div className="flex flex-col w-full gap-3 pt-2">
+              <Button
+                onClick={() => setAgeVerified(true)}
+                className="w-full h-14 text-lg font-semibold bg-green-600 hover:bg-green-700"
+              >
+                <Check className="w-5 h-5 mr-2" />
+                {t('ageVerification.confirmYes')}
+              </Button>
+              <Button
+                onClick={onCancel}
+                variant="outline"
+                className="w-full h-12 text-base font-medium border-gray-300 hover:bg-gray-50"
+              >
+                {t('ageVerification.confirmNo')}
+              </Button>
+            </div>
+            
+            {/* Aviso legal */}
+            <p className="text-xs text-gray-400 px-4 pt-2">
+              {t('ageVerification.legalNotice')}
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={onCancel}>

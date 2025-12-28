@@ -1,29 +1,50 @@
 /**
  * Configuração de constantes do Mercado Pago QR e Point
- * Obtidas do painel de integração e testes
+ * Obtidas do painel de integração e das variáveis de ambiente
  */
 
+/**
+ * Obtém o token de acesso correto baseado no modo (sandbox/production)
+ */
+function getAccessToken(): string {
+  const mode = import.meta.env.VITE_MP_MODE || 'sandbox';
+  
+  if (mode === 'production') {
+    return import.meta.env.VITE_MP_ACCESS_TOKEN_PRODUCTION || import.meta.env.VITE_MP_ACCESS_TOKEN || '';
+  }
+  
+  return import.meta.env.VITE_MP_ACCESS_TOKEN_SANDBOX || import.meta.env.VITE_MP_ACCESS_TOKEN || '';
+}
+
 export const MERCADO_PAGO_CONFIG = {
-  // Loja criada
-  STORE_ID: '72549157',
+  // Token de acesso (selecionado automaticamente baseado no modo)
+  ACCESS_TOKEN: getAccessToken(),
+  
+  // Modo de operação
+  MODE: (import.meta.env.VITE_MP_MODE || 'sandbox') as 'sandbox' | 'production',
+  
+  // User ID (necessário para endpoint QR Instore)
+  USER_ID: import.meta.env.VITE_MP_USER_ID || '1180135961',
+  
+  // Loja e POS/Caixa para QR Instore (PIX)
+  // Deve ser criado via API /users/{user_id}/stores e /pos
+  STORE_ID: import.meta.env.VITE_MP_STORE_ID || '',
   EXTERNAL_STORE_ID: 'LOJ001',
+  POS_ID: import.meta.env.VITE_MP_POS_ID || '',
+  EXTERNAL_POS_ID: import.meta.env.VITE_MP_EXTERNAL_POS_ID || '',
   
-  // POS/Caixa criado
-  POS_ID: '123344143',
-  EXTERNAL_POS_ID: 'LOJ001POS001', // CRÍTICO: Deve ser enviado em config.qr.external_pos_id
-  
-  // Terminal Point (para pagamentos com cartão)
-  // Formato: TIPO__SERIAL (ex: NEWLAND_N950__N950NCB801293324)
-  // Obter via API listTerminals ou variável de ambiente
+  // Terminal Point (para pagamentos com cartão físico no terminal)
+  // Formato: TIPO__SERIAL (ex: NEWLAND_N950__N950NCB300544833)
+  // IMPORTANTE: Terminal Point é diferente de POS. Terminal = cartão físico, POS = QR/PIX
   TERMINAL_ID: import.meta.env.VITE_MP_TERMINAL_ID || '',
   
-  // Timeouts
-  QR_EXPIRATION_MINUTES: 15, // Padrão Mercado Pago
-  POINT_EXPIRATION_TIME: 'PT5M', // 5 minutos para pagamento no terminal
-  POLLING_INTERVAL_MS: 5000, // 5 segundos
-  POLLING_MAX_ATTEMPTS: 60, // 5 minutos total
+  // Timeouts otimizados para self-service
+  QR_EXPIRATION_MINUTES: 10, // 10 minutos para QR (padrão razoável)
+  POINT_EXPIRATION_TIME: import.meta.env.VITE_MP_POINT_EXPIRATION || 'PT3M', // 3 minutos para terminal (recomendado self-service)
+  POLLING_INTERVAL_MS: 3000, // 3 segundos (feedback rápido)
+  POLLING_MAX_ATTEMPTS: 60, // ~3 minutos com intervalo de 3s
   
-  // Categoria MCC (Gastronomia)
+  // Categoria MCC (Gastronomia/Restaurantes)
   MCC_CATEGORY: 621102,
 } as const;
 

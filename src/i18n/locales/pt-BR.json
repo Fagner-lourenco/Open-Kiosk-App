@@ -284,6 +284,8 @@
     "operationCancelledByUser": "Operação cancelada pelo usuário",
     "paymentNotConfirmedTime": "Pagamento não confirmado a tempo",
     "terminalErrorMsg": "Erro no Terminal",
+    "terminalBusy": "Terminal ocupado. Cancele a operação atual no terminal físico e tente novamente.",
+    "terminalBusyHint": "Pressione o botão X no terminal para cancelar",
     "orderNotCreated": "Pedido não criado no terminal",
     "paymentFailedGeneric": "Falha no pagamento",
     "qrCode": "QR Code",
@@ -643,5 +645,13 @@
     "title": "404",
     "message": "Ops! Página não encontrada",
     "returnHome": "Voltar para Início"
+  },
+  "ageVerification": {
+    "title": "Verificação de Idade",
+    "question": "Você tem mais de 18 anos?",
+    "description": "Este produto contém bebida alcoólica. A venda é proibida para menores de 18 anos.",
+    "confirmYes": "Sim, tenho mais de 18 anos",
+    "confirmNo": "Não, escolher outra bebida",
+    "legalNotice": "De acordo com a Lei nº 9.294/96, é proibida a venda de bebidas alcoólicas para menores de 18 anos."
   }
 }

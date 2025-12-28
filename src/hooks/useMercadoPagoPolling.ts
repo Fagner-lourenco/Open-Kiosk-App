@@ -16,10 +16,11 @@ import type { Order, OrderStatus, PaymentStatus } from '@/types/mercadopago';
 // Constantes de configuração
 const STORAGE_KEY = 'mp_polling_state';
 const INITIAL_INTERVAL_MS = 3000; // 3 segundos iniciais (feedback rápido)
-const MAX_INTERVAL_MS = 20000; // Máximo 20 segundos
-const MAX_ATTEMPTS = 40; // ~5 minutos com backoff crescente
+const MAX_INTERVAL_MS = 10000; // Máximo 10 segundos (ajustado para 40s timeout)
+const MAX_ATTEMPTS = 15; // ~45 segundos com backoff (alinhado com PT40S)
 const MAX_NETWORK_RETRIES = 3;
 const NETWORK_RETRY_DELAY_MS = 2000;
+const MAX_PROCESSED_ORDERS = 50; // Limite do Set para evitar memory leak
 
 // Tipos
 export interface PollingState {
@@ -248,6 +249,13 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
           setIsPolling(false);
           savePollingState(null);
           return;
+        }
+        
+        // Limitar tamanho do Set para evitar memory leak
+        if (processedOrdersRef.current.size >= MAX_PROCESSED_ORDERS) {
+          const firstEntry = processedOrdersRef.current.values().next().value;
+          if (firstEntry) processedOrdersRef.current.delete(firstEntry);
+          logPolling('info', 'Set de ordens processadas limpo (limite atingido)');
         }
         processedOrdersRef.current.add(orderId);
         

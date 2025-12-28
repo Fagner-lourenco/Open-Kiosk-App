@@ -39,10 +39,12 @@ export class MercadoPagoAPI {
     const timeout = timeoutMs ?? this.defaultTimeoutMs;
     const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    // Combinar signals se já existir um externo
+    // Combinar signals se já existir um externo (com cleanup para evitar memory leak)
     const existingSignal = options.signal;
+    let abortHandler: (() => void) | null = null;
     if (existingSignal) {
-      existingSignal.addEventListener('abort', () => controller.abort());
+      abortHandler = () => controller.abort();
+      existingSignal.addEventListener('abort', abortHandler);
     }
 
     try {
@@ -53,6 +55,10 @@ export class MercadoPagoAPI {
       });
 
       clearTimeout(timeoutId);
+      // Cleanup: remover event listener para evitar memory leak
+      if (existingSignal && abortHandler) {
+        existingSignal.removeEventListener('abort', abortHandler);
+      }
 
       if (!response.ok) {
         const error: MercadoPagoError = await response.json();
@@ -70,6 +76,10 @@ export class MercadoPagoAPI {
       return await response.json();
     } catch (error) {
       clearTimeout(timeoutId);
+      // Cleanup: remover event listener para evitar memory leak (também no catch)
+      if (existingSignal && abortHandler) {
+        existingSignal.removeEventListener('abort', abortHandler);
+      }
       
       // Tratar timeout como erro específico
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -195,20 +205,42 @@ export class MercadoPagoAPI {
 
 // Factory com configuração do ambiente
 export function createMercadoPagoAPI(): MercadoPagoAPI | null {
-  const accessToken = import.meta.env.VITE_MP_ACCESS_TOKEN;
   const mode = import.meta.env.VITE_MP_MODE as 'sandbox' | 'production' || 'sandbox';
+  
+  // Selecionar token baseado no modo
+  let accessToken: string;
+  if (mode === 'production') {
+    accessToken = import.meta.env.VITE_MP_ACCESS_TOKEN_PRODUCTION || import.meta.env.VITE_MP_ACCESS_TOKEN || '';
+  } else {
+    accessToken = import.meta.env.VITE_MP_ACCESS_TOKEN_SANDBOX || import.meta.env.VITE_MP_ACCESS_TOKEN || '';
+  }
 
   if (!accessToken) {
     console.warn('[MercadoPagoAPI] Access token não configurado');
     return null;
   }
 
+  // IMPORTANTE: A API do Mercado Pago não suporta CORS para chamadas diretas do navegador.
+  // Em desenvolvimento (Vite dev server): SEMPRE usar proxy /api/mp
+  // Em produção (build): Requer backend próprio para fazer o proxy das requisições
+  const isDev = import.meta.env.DEV;
+  
+  // Em desenvolvimento, sempre usar proxy do Vite (mesmo em modo production)
+  // Em build de produção, usar URL direta (assumindo que há um backend/proxy configurado)
+  const baseUrl = isDev
+    ? '/api/mp'  // Proxy do Vite - evita CORS em desenvolvimento
+    : 'https://api.mercadopago.com';  // Produção - requer backend próprio
+
+  console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()}`, {
+    isDev,
+    baseUrl,
+    tokenPrefix: accessToken.substring(0, 20) + '...',
+  });
+
   const config: MercadoPagoConfig = {
     accessToken,
     mode,
-    baseUrl: mode === 'production'
-      ? 'https://api.mercadopago.com'
-      : '/api/mp', // Proxy no Vite em desenvolvimento
+    baseUrl,
     webhookUrl: import.meta.env.VITE_MP_WEBHOOK_URL || 'http://localhost:3000/api/webhooks/mercadopago',
     webhookSecret: import.meta.env.VITE_MP_WEBHOOK_SECRET,
   };
