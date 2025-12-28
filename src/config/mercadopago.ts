@@ -24,7 +24,8 @@ export const MERCADO_PAGO_CONFIG = {
   MODE: (import.meta.env.VITE_MP_MODE || 'sandbox') as 'sandbox' | 'production',
   
   // User ID (necessário para endpoint QR Instore)
-  USER_ID: import.meta.env.VITE_MP_USER_ID || '1180135961',
+  // IMPORTANTE: USER_ID deve ser configurado via variável de ambiente
+  USER_ID: import.meta.env.VITE_MP_USER_ID || '',
   
   // Loja e POS/Caixa para QR Instore (PIX)
   // Deve ser criado via API /users/{user_id}/stores e /pos
@@ -38,11 +39,12 @@ export const MERCADO_PAGO_CONFIG = {
   // IMPORTANTE: Terminal Point é diferente de POS. Terminal = cartão físico, POS = QR/PIX
   TERMINAL_ID: import.meta.env.VITE_MP_TERMINAL_ID || '',
   
-  // Timeouts otimizados para self-service
-  QR_EXPIRATION_MINUTES: 10, // 10 minutos para QR (padrão razoável)
-  POINT_EXPIRATION_TIME: import.meta.env.VITE_MP_POINT_EXPIRATION || 'PT3M', // 3 minutos para terminal (recomendado self-service)
+  // Timeouts otimizados para self-service (2 minutos = 120 segundos)
+  QR_EXPIRATION_MINUTES: 2, // 2 minutos para QR (alinhado com Point)
+  POINT_EXPIRATION_TIME: import.meta.env.VITE_MP_POINT_EXPIRATION || 'PT2M', // 2 minutos para terminal
+  POINT_EXPIRATION_SECONDS: 120, // 2 minutos em segundos (para uso no frontend)
   POLLING_INTERVAL_MS: 3000, // 3 segundos (feedback rápido)
-  POLLING_MAX_ATTEMPTS: 60, // ~3 minutos com intervalo de 3s
+  POLLING_MAX_ATTEMPTS: 45, // 3s * 45 = 135s (cobre 2min + margem de 15s)
   
   // Categoria MCC (Gastronomia/Restaurantes)
   MCC_CATEGORY: 621102,
@@ -63,13 +65,22 @@ export const POINT_ORDER_STATUS = {
 
 /**
  * Verificar se o POS ID está correto
+ * @throws Error se configuração inválida
+ * @returns true se configuração válida
  */
 export function validateMercadoPagoConfig(): boolean {
-  const { EXTERNAL_POS_ID } = MERCADO_PAGO_CONFIG;
+  const { EXTERNAL_POS_ID, USER_ID } = MERCADO_PAGO_CONFIG;
   
   if (!EXTERNAL_POS_ID || EXTERNAL_POS_ID.length === 0) {
-    console.error('[Config] EXTERNAL_POS_ID não configurado');
-    return false;
+    const error = 'EXTERNAL_POS_ID não configurado. Defina VITE_MP_EXTERNAL_POS_ID nas variáveis de ambiente.';
+    console.error('[Config]', error);
+    throw new Error(error);
+  }
+  
+  if (!USER_ID || USER_ID.length === 0) {
+    const error = 'USER_ID não configurado. Defina VITE_MP_USER_ID nas variáveis de ambiente.';
+    console.error('[Config]', error);
+    throw new Error(error);
   }
   
   return true;

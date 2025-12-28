@@ -11,8 +11,6 @@ export type OperatingMode = 'PDV' | 'STANDALONE' | 'UNDEFINED';
 export interface MercadoPagoConfig {
   accessToken: string;
   userId?: string;
-  webhookSecret?: string;
-  webhookUrl?: string;
   baseUrl: string;
   mode: 'sandbox' | 'production';
   externalReference?: string;
@@ -154,15 +152,6 @@ export interface CreateOrderRequest {
   integration_data?: Order['integration_data'];
   taxes?: Order['taxes'];
   items?: Order['items'];
-}
-
-export interface WebhookPayload {
-  id: string;
-  type: 'order' | 'payment';
-  data: {
-    id: string;
-  };
-  timestamp: string;
 }
 
 export interface MercadoPagoError {

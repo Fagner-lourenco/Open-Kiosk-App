@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Card, CardContent } from "@/components/ui/card";
@@ -57,6 +57,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   const {
     isPolling,
     attempts: pollingAttempt,
+    maxAttempts: pollingMaxAttempts,
     startPolling,
     stopPolling,
     clearPersistedState,
@@ -102,7 +103,6 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
         title: errorInfo.title,
         description: errorInfo.description,
         variant: 'destructive',
-        duration: 6000,
       });
       
       setMpError(errorInfo.description);
@@ -418,7 +418,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     }
   };
 
-  const resetCheckout = () => {
+  const resetCheckout = useCallback(() => {
     setIsCompleted(false);
     setShowPayment(false);
     setPaymentProcessed(false);
@@ -432,7 +432,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     setSaleRecorded(false);
     saleRecordedRef.current = false;
     paymentInProgressRef.current = null;
-  };
+  }, []);
 
   const handleClose = () => {
     onClose();
@@ -457,7 +457,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       stopPolling();
       clearPersistedState();
     }
-  }, [isOpen]);
+  }, [isOpen, stopPolling, clearPersistedState]);
 
   const handleCancelPayment = async () => {
     // Capturar orderId ANTES de qualquer operação (evita race condition)
@@ -688,12 +688,12 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                           {isPolling && (
                             <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
                               <p className="text-xs font-medium text-yellow-900">
-                                {t('checkout.awaitingPayment')} ({t('checkout.attempt')} {pollingAttempt}/60)
+                                {t('checkout.awaitingPayment')} ({t('checkout.attempt')} {pollingAttempt}/{pollingMaxAttempts})
                               </p>
                               <div className="mt-2 w-full bg-yellow-200 rounded-full h-2">
                                 <div
                                   className="bg-yellow-600 h-2 rounded-full transition-all"
-                                  style={{ width: `${(pollingAttempt / 60) * 100}%` }}
+                                  style={{ width: `${(pollingAttempt / pollingMaxAttempts) * 100}%` }}
                                 />
                               </div>
                             </div>
@@ -767,7 +767,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                             }`}>
                               <Clock className="w-4 h-4 animate-pulse" />
                               <span className="text-sm">
-                                {t('checkout.verifyingPayment')} ({pollingAttempt}/60)
+                                {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
                               </span>
                             </div>
                           )}

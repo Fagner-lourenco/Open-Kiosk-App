@@ -20,7 +20,6 @@ An open-source, complete hardware + software kiosk solution designed for retail 
 - **Cartão de Crédito**: Terminal Point com parcelamento
 - **Cartão de Débito**: Terminal Point à vista
 - **Polling automático**: Confirmação em tempo real
-- **Webhooks**: Notificações de pagamento do Mercado Pago
 
 ### Business Management
 - **Sales Tracking**: Complete order history with date filtering
@@ -40,8 +39,7 @@ An open-source, complete hardware + software kiosk solution designed for retail 
 
 - **Frontend**: React + Vite + TypeScript + Tailwind CSS
 - **Database**: Google Firebase (Firestore)
-- **Payments**: Mercado Pago (QR Code + Point Terminal)
-- **Backend**: Node.js + Express (webhooks)
+- **Payments**: Mercado Pago (QR Code + Point Terminal) - polling-based
 - **Hardware Communication**: UART (ESP32 ↔ Thermal Printer)
 
 ---
@@ -85,66 +83,6 @@ O app estará disponível em `http://localhost:8080`
 
 ---
 
-## 🔧 Subindo os Serviços (Desenvolvimento Completo)
-
-Para testar pagamentos com Mercado Pago, você precisa de **3 terminais** rodando simultaneamente:
-
-### Terminal 1: Frontend (Vite)
-
-```bash
-# Na raiz do projeto
-npm run dev
-```
-> App disponível em: `http://localhost:8080`
-
-### Terminal 2: Servidor de Webhooks
-
-```bash
-# Entre na pasta server
-cd server
-npm install
-
-# Inicie o servidor
-node index.js
-```
-> Servidor de webhooks em: `http://localhost:3001`
-
-### Terminal 3: Ngrok (Túnel para Webhooks)
-
-O Mercado Pago precisa acessar seu servidor local para enviar notificações. O ngrok cria um túnel público.
-
-```bash
-# Instale o ngrok: https://ngrok.com/download
-# Depois execute:
-ngrok http 3001
-```
-
-**Copie a URL gerada** (ex: `https://abc123.ngrok-free.app`) e configure no painel do Mercado Pago.
-
-### Diagrama dos Serviços
-
-```
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│   Frontend       │     │   Webhook Server │     │     Ngrok        │
-│   (Vite)         │     │   (Express)      │     │   (Túnel)        │
-│   :8080          │────▶│   :3001          │◀────│   :443           │
-│                  │     │                  │     │                  │
-│  React App       │     │  /api/webhooks/  │     │  URL pública     │
-│  Mercado Pago    │     │  mercadopago     │     │  para MP         │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-                                │
-                                ▼
-                         ┌──────────────────┐
-                         │    Firebase      │
-                         │   (Firestore)    │
-                         │                  │
-                         │  webhook_events  │
-                         │  sales           │
-                         └──────────────────┘
-```
-
----
-
 ## ⚙️ Configuração do Mercado Pago
 
 ### 1. Criar Aplicação no Mercado Pago
@@ -185,15 +123,7 @@ curl -X POST https://api.mercadopago.com/pos \
 
 > **Importante**: O `external_id` do POS deve corresponder ao `EXTERNAL_POS_ID` em `src/config/mercadopago.ts`
 
-### 3. Configurar Webhook
-
-1. No painel de desenvolvedor, vá em **Webhooks**
-2. Clique em **Adicionar webhook**
-3. URL: `https://sua-url-ngrok.ngrok-free.app/api/webhooks/mercadopago`
-4. Eventos: Marque **Payments** e **Orders**
-5. Salve
-
-### 4. Terminal Point (Cartão de Crédito/Débito)
+### 3. Terminal Point (Cartão de Crédito/Débito)
 
 1. Conecte seu terminal Point ao computador/rede
 2. Configure para modo **PDV** (não STANDALONE) no app Mercado Pago
@@ -211,7 +141,7 @@ curl https://api.mercadopago.com/terminals/v1/list \
 
 ---
 
-## 🏭 Ajustes para Produção
+## 🏭 Build de Produção
 
 ### 1. Variáveis de Ambiente de Produção
 
@@ -219,7 +149,8 @@ Crie um arquivo `.env.production`:
 
 ```env
 # PRODUÇÃO - Use credenciais de produção!
-VITE_MERCADOPAGO_ACCESS_TOKEN=APP_USR-xxxxx-PRODUCAO
+VITE_MP_MODE=production
+VITE_MP_ACCESS_TOKEN_PRODUCTION=APP_USR-xxxxx-PRODUCAO
 VITE_MERCADOPAGO_PUBLIC_KEY=APP_USR-xxxxx-PRODUCAO
 
 # Firebase produção
@@ -230,16 +161,7 @@ VITE_FIREBASE_PROJECT_ID=seu_projeto_producao
 VITE_MP_TERMINAL_ID=TIPO__SERIAL
 ```
 
-No servidor de webhooks (`server/.env`):
-```env
-MERCADOPAGO_ACCESS_TOKEN=APP_USR-xxxxx-PRODUCAO
-MERCADOPAGO_WEBHOOK_SECRET=seu_secret
-VALIDATE_SIGNATURE=true
-FIREBASE_PROJECT_ID=seu_projeto_producao
-FIREBASE_API_KEY=sua_api_key
-```
-
-### 2. Build de Produção
+### 2. Build
 
 ```bash
 npm run build
@@ -247,73 +169,38 @@ npm run build
 
 Os arquivos otimizados estarão em `dist/`
 
-### 3. Deploy do Servidor de Webhooks
-
-Opções recomendadas:
-
-#### Railway (Mais fácil)
-```bash
-cd server
-railway login
-railway init
-railway up
-```
-
-#### PM2 (VPS/Servidor próprio)
-```bash
-cd server
-npm install -g pm2
-pm2 start index.js --name "kiosk-webhooks"
-pm2 startup
-pm2 save
-```
-
-#### Docker
-```dockerfile
-FROM node:20-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --production
-COPY . .
-EXPOSE 3001
-CMD ["node", "index.js"]
-```
-
-### 4. Checklist de Produção
+### 3. Checklist de Produção
 
 - [ ] Usar credenciais de **PRODUÇÃO** do Mercado Pago (não sandbox)
-- [ ] Configurar `VALIDATE_SIGNATURE=true` no servidor
-- [ ] Usar HTTPS para o webhook (obrigatório em produção)
-- [ ] Configurar domínio próprio ou IP fixo para webhook
-- [ ] Atualizar URL do webhook no painel do Mercado Pago
+- [ ] Usar HTTPS para o totem
 - [ ] Testar fluxo completo de pagamento com valor real
 - [ ] Configurar backup automático do Firebase
 - [ ] Remover `console.log` de dados sensíveis
-- [ ] Configurar monitoramento (ex: UptimeRobot)
 
-### 5. Arquitetura de Produção
+### 4. Arquitetura (Totem/Kiosk)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        PRODUÇÃO                                  │
+│                     TOTEM / KIOSK                                │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
-│  │   Frontend   │    │   Webhook    │    │   Firebase   │       │
-│  │   (CDN)      │    │   Server     │    │   (Google)   │       │
-│  │              │    │              │    │              │       │
-│  │  Vercel/     │    │  Railway/    │    │  Firestore   │       │
-│  │  Netlify     │    │  Render      │    │  Auth        │       │
-│  └──────────────┘    └──────────────┘    └──────────────┘       │
-│         │                   ▲                    ▲               │
-│         │                   │                    │               │
-│         ▼                   │                    │               │
-│  ┌──────────────┐           │                    │               │
-│  │  Mercado     │───────────┘                    │               │
-│  │  Pago API    │                                │               │
-│  │              │────────────────────────────────┘               │
-│  │  QR + Point  │                                                │
-│  └──────────────┘                                                │
+│  ┌──────────────┐                        ┌──────────────┐       │
+│  │   Frontend   │                        │   Firebase   │       │
+│  │   (Local)    │───────────────────────▶│   (Google)   │       │
+│  │              │                        │              │       │
+│  │  React App   │                        │  Firestore   │       │
+│  │  Electron/   │                        │  Auth        │       │
+│  │  Kiosk Mode  │                        └──────────────┘       │
+│  └──────────────┘                                               │
+│         │                                                        │
+│         │  Polling (5s)                                          │
+│         ▼                                                        │
+│  ┌──────────────┐                                               │
+│  │  Mercado     │                                               │
+│  │  Pago API    │                                               │
+│  │              │                                               │
+│  │  QR + Point  │                                               │
+│  └──────────────┘                                               │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -342,8 +229,6 @@ Open-Kiosk-App/
 │   │   └── mercadopago.ts            # Tipos TypeScript para MP
 │   └── hooks/
 │       └── useCheckoutFlow.ts        # Hook de fluxo de checkout
-├── server/
-│   └── index.js                      # Servidor Express de webhooks
 ├── .env.example                      # Exemplo de variáveis de ambiente
 ├── package.json
 └── README.md
@@ -391,25 +276,13 @@ Open-Kiosk-App/
 
 ### QR Code não é gerado
 
-1. Verifique se `VITE_MERCADOPAGO_ACCESS_TOKEN` está correto no `.env`
+1. Verifique se `VITE_MP_ACCESS_TOKEN_SANDBOX` ou `VITE_MP_ACCESS_TOKEN_PRODUCTION` está correto no `.env`
 2. Confirme que `EXTERNAL_POS_ID` existe no Mercado Pago
 3. Verifique o console do navegador para erros de API
 4. Teste a API diretamente:
    ```bash
    curl https://api.mercadopago.com/users/me \
      -H "Authorization: Bearer {access_token}"
-   ```
-
-### Webhook não recebe notificações
-
-1. Verifique se ngrok está rodando: `ngrok http 3001`
-2. Confirme a URL no painel do Mercado Pago
-3. Verifique logs do servidor: `node index.js`
-4. Teste manualmente:
-   ```bash
-   curl -X POST https://sua-url.ngrok-free.app/api/webhooks/mercadopago \
-     -H "Content-Type: application/json" \
-     -d '{"type":"payment","data":{"id":"123"}}'
    ```
 
 ### Terminal Point não detectado
@@ -425,15 +298,14 @@ Open-Kiosk-App/
 ### Pagamento não é confirmado
 
 1. Verifique o polling no console do navegador (F12)
-2. Confirme que o webhook está salvando no Firestore
-3. Verifique a collection `webhook_events` no Firebase Console
-4. Verifique se o polling está ativo: deve aparecer "Tentativa X/60"
+2. Verifique a collection `sales` no Firebase Console
+3. Verifique se o polling está ativo: deve aparecer "Tentativa X/60"
 
-### Erro de CORS
+### Erro de CORS em Desenvolvimento
 
-1. Verifique se o servidor de webhooks está rodando
-2. Confirme a porta correta (3001 por padrão)
-3. O frontend usa proxy do Vite para `/api/*`
+1. O Vite usa um proxy configurado em `vite.config.ts` para `/api/mp`
+2. Certifique-se de que está acessando via `http://localhost:8080`
+3. Em produção (totem/kiosk), CORS não é problema pois não há servidor web intermediário
 
 ---
 

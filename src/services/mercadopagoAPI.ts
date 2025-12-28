@@ -220,29 +220,26 @@ export function createMercadoPagoAPI(): MercadoPagoAPI | null {
     return null;
   }
 
-  // IMPORTANTE: A API do Mercado Pago não suporta CORS para chamadas diretas do navegador.
-  // Em desenvolvimento (Vite dev server): SEMPRE usar proxy /api/mp
-  // Em produção (build): Requer backend próprio para fazer o proxy das requisições
+  // Em desenvolvimento, usar proxy do Vite para evitar CORS
+  // Em produção (totem/kiosk), usar URL direta - CORS não é problema em modo kiosk
   const isDev = import.meta.env.DEV;
-  
-  // Em desenvolvimento, sempre usar proxy do Vite (mesmo em modo production)
-  // Em build de produção, usar URL direta (assumindo que há um backend/proxy configurado)
   const baseUrl = isDev
     ? '/api/mp'  // Proxy do Vite - evita CORS em desenvolvimento
-    : 'https://api.mercadopago.com';  // Produção - requer backend próprio
+    : 'https://api.mercadopago.com';  // Totem/Kiosk - chamadas diretas
 
-  console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()}`, {
-    isDev,
-    baseUrl,
-    tokenPrefix: accessToken.substring(0, 20) + '...',
-  });
+  // Log de inicialização sem expor credenciais
+  if (import.meta.env.DEV) {
+    console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()}`, {
+      isDev,
+      baseUrl,
+      hasToken: !!accessToken,
+    });
+  }
 
   const config: MercadoPagoConfig = {
     accessToken,
     mode,
     baseUrl,
-    webhookUrl: import.meta.env.VITE_MP_WEBHOOK_URL || 'http://localhost:3000/api/webhooks/mercadopago',
-    webhookSecret: import.meta.env.VITE_MP_WEBHOOK_SECRET,
   };
 
   return new MercadoPagoAPI(config);

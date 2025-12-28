@@ -11,16 +11,20 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { paymentService } from '@/services/paymentService';
+import { MERCADO_PAGO_CONFIG } from '@/config/mercadopago';
 import type { Order, OrderStatus, PaymentStatus } from '@/types/mercadopago';
 
-// Constantes de configuração
+// Constantes de configuração - usar valores do config centralizado
 const STORAGE_KEY = 'mp_polling_state';
-const INITIAL_INTERVAL_MS = 3000; // 3 segundos iniciais (feedback rápido)
-const MAX_INTERVAL_MS = 10000; // Máximo 10 segundos (ajustado para 40s timeout)
-const MAX_ATTEMPTS = 15; // ~45 segundos com backoff (alinhado com PT40S)
+const INITIAL_INTERVAL_MS = MERCADO_PAGO_CONFIG.POLLING_INTERVAL_MS; // 3 segundos (do config)
+const MAX_INTERVAL_MS = 10000; // Máximo 10 segundos entre tentativas
+const MAX_ATTEMPTS = MERCADO_PAGO_CONFIG.POLLING_MAX_ATTEMPTS; // 45 tentativas = ~135s (cobre 2min + margem)
 const MAX_NETWORK_RETRIES = 3;
 const NETWORK_RETRY_DELAY_MS = 2000;
 const MAX_PROCESSED_ORDERS = 50; // Limite do Set para evitar memory leak
+
+// Exportar MAX_ATTEMPTS para uso na UI
+export const POLLING_MAX_ATTEMPTS = MAX_ATTEMPTS;
 
 // Tipos
 export interface PollingState {
@@ -41,6 +45,7 @@ export interface UseMercadoPagoPollingOptions {
 export interface UseMercadoPagoPollingReturn {
   isPolling: boolean;
   attempts: number;
+  maxAttempts: number;
   error: string | null;
   currentOrderId: string | null;
   startPolling: (orderId: string, isPointPayment?: boolean) => void;
@@ -48,8 +53,14 @@ export interface UseMercadoPagoPollingReturn {
   clearPersistedState: () => void;
 }
 
+// Flag para habilitar logs detalhados (apenas em desenvolvimento ou debug)
+const isDebugEnabled = import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true';
+
 // Helpers para logs estruturados
 const logPolling = (level: 'info' | 'warn' | 'error' | 'success', message: string, data?: object) => {
+  // Em produção, logar apenas erros e warnings críticos
+  if (!isDebugEnabled && level === 'info') return;
+  
   const timestamp = new Date().toISOString();
   const prefix = `[MercadoPago Polling][${timestamp}]`;
   const emoji = { info: 'ℹ️', warn: '⚠️', error: '❌', success: '✅' }[level];
@@ -150,7 +161,10 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
 
   // Parar polling
   const stopPolling = useCallback(() => {
-    logPolling('info', 'Parando polling', { orderId: currentOrderId, attempts: currentAttemptRef.current });
+    // Só logar se houver polling ativo para evitar logs desnecessários
+    if (currentOrderId || currentAttemptRef.current > 0) {
+      logPolling('info', 'Parando polling', { orderId: currentOrderId, attempts: currentAttemptRef.current });
+    }
     cleanup();
     setIsPolling(false);
     savePollingState(null);
@@ -158,8 +172,12 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
 
   // Limpar estado persistido manualmente
   const clearPersistedState = useCallback(() => {
+    // Só logar se houver estado persistido para evitar logs desnecessários
+    const hasState = loadPollingState() !== null;
     savePollingState(null);
-    logPolling('info', 'Estado persistido limpo manualmente');
+    if (hasState) {
+      logPolling('info', 'Estado persistido limpo manualmente');
+    }
   }, []);
 
   // Função principal de polling
@@ -371,6 +389,7 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
   return {
     isPolling,
     attempts,
+    maxAttempts: MAX_ATTEMPTS,
     error,
     currentOrderId,
     startPolling,

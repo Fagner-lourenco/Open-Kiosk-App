@@ -69,7 +69,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
-    paymentTimeoutSeconds: 45, // Alinhado com PT40S do terminal + margem
+    paymentTimeoutSeconds: 130, // Alinhado com PT2M (2 minutos) + 10s margem
     warningThresholdSeconds: 10,
     onTimeout: () => {
       toast({ title: t('checkout.sessionExpired'), description: t('checkout.checkoutCancelledInactivity'), variant: "destructive" });
@@ -94,6 +94,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const {
     isPolling,
     attempts: pollingAttempt,
+    maxAttempts: pollingMaxAttempts,
     startPolling,
     stopPolling,
     clearPersistedState,
@@ -478,7 +479,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     updateProcessingStage("awaiting_payment");
     setMpError(null);
 
-    // Timeout de emergência: cancela pagamento após 45 segundos (alinhado com PT40S + margem)
+    // Timeout de emergência: cancela pagamento após ~2 minutos (alinhado com PT2M + margem)
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
@@ -491,7 +492,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           variant: "destructive",
         });
       }
-    }, (flowState.paymentTimeoutSeconds ?? 45) * 1000);
+    }, (flowState.paymentTimeoutSeconds ?? 130) * 1000);
 
     try {
       if (!product || !selectedSize) {
@@ -1012,7 +1013,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-4 py-2">
                               <Loader className="w-4 h-4 animate-spin" />
                               <span className="text-sm font-medium">
-                                {t('checkout.verifyingPayment')} ({pollingAttempt}/60)
+                                {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
                               </span>
                             </div>
                           )}
@@ -1086,7 +1087,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             }`}>
                               <Clock className="w-4 h-4 animate-pulse" />
                               <span className="text-sm">
-                                Verificando pagamento... ({pollingAttempt}/60)
+                                {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
                               </span>
                             </div>
                           )}

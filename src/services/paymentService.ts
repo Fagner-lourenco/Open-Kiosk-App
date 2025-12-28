@@ -1,10 +1,9 @@
 /**
- * Payment Service - Mock implementation ready for production
+ * Payment Service - Integração com Mercado Pago
  * 
- * Para produção:
- * - PIX: Substituir mock por webhook listener real
- * - Cartão: Integrar SDK da máquina (Stone, Cielo, PagSeguro, etc)
- * - Mercado Pago: Integração via Point API (QR Code e PDV integrado)
+ * Métodos de pagamento suportados:
+ * - PIX / QR Code: Via Mercado Pago Orders API com polling
+ * - Cartão: Terminal Point integrado com polling
  */
 
 import { createMercadoPagoAPI } from './mercadopagoAPI';
@@ -156,10 +155,8 @@ class PaymentService {
   /**
    * PIX Payment - Mock implementation
    * 
-   * Produção: 
-   * 1. Gerar QR code via API do banco
-   * 2. Registrar webhook listener
-   * 3. Aguardar confirmação via webhook (timeout 5min)
+   * Nota: Este é um mock para testes.
+   * Para PIX real, use processMercadoPagoQR().
    */
   async processPixPayment(amount: number, orderId: string): Promise<PaymentResult> {
     const controller = new AbortController();
@@ -171,7 +168,7 @@ class PaymentService {
       // Mock: Gerar QR code (em produção: chamar API do banco)
       const pixCode = this.generateMockPixQRCode(amount, orderId);
 
-      // Mock: Simular tempo de confirmação (em produção: webhook listener)
+      // Mock: Simular tempo de confirmação (em produção: use polling)
       await this.simulatePaymentConfirmation(3000, controller.signal);
 
       this.activeTransactions.delete(transactionId);
@@ -376,12 +373,12 @@ class PaymentService {
   /**
    * Point Payment (Terminal Integrado Mercado Pago)
    * 
-   * Fluxo conforme documentação oficial:
+   * Fluxo:
    * 1. Verificar terminal disponível (modo PDV)
    * 2. Criar order tipo 'point' com terminal_id e config.point
    * 3. Order enviada automaticamente para o terminal
    * 4. Cliente paga no terminal físico
-   * 5. Aguardar via polling (preferencial) ou webhook
+   * 5. Aguardar confirmação via polling
    */
   async processMercadoPagoPoint(
     amount: number,
