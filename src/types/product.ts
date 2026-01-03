@@ -22,6 +22,9 @@ export interface Product {
   sizes?: ProductSize[];
   defaultSizeKey?: string;
   totalMlAvailable?: number;
+  
+  // Multi-store support
+  storeId?: string;
 }
 
 export interface CartItem {

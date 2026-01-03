@@ -1,7 +1,8 @@
 
 import React from 'react';
-import { Search, Bell, User, Menu } from 'lucide-react';
+import { Search, Bell, User, Menu, Store } from 'lucide-react';
 import { useTranslation } from '@/i18n';
+import { useStoreContext } from '@/context/StoreContext';
 
 interface HeaderProps {
   onMenuToggle: () => void;
@@ -9,6 +10,8 @@ interface HeaderProps {
 
 const Header = ({ onMenuToggle }: HeaderProps) => {
   const { t } = useTranslation();
+  const { currentStore, currentStoreId } = useStoreContext();
+  
   return (
     <header className="bg-white border-b border-gray-200 px-6 py-4">
       <div className="flex items-center justify-between">
@@ -19,6 +22,16 @@ const Header = ({ onMenuToggle }: HeaderProps) => {
           >
             <Menu className="h-5 w-5" />
           </button>
+          
+          {/* Store indicator */}
+          {currentStoreId && (
+            <div className="flex items-center mr-4 px-3 py-1 bg-blue-50 rounded-lg border border-blue-200">
+              <Store className="h-4 w-4 text-blue-600 mr-2" />
+              <span className="text-sm font-medium text-blue-700">
+                {currentStore?.name || currentStoreId}
+              </span>
+            </div>
+          )}
           
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />

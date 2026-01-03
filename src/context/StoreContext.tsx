@@ -1,0 +1,180 @@
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { Store } from '@/types/store';
+import { storeService } from '@/services/storeService';
+
+// ============================================
+// Store Context Types
+// ============================================
+
+interface StoreContextType {
+  currentStoreId: string | null;
+  currentStore: Store | null;
+  loading: boolean;
+  error: string | null;
+  setCurrentStoreId: (storeId: string) => void;
+  refreshStore: () => Promise<void>;
+}
+
+// Evento customizado para notificar mudança de loja
+export const STORE_CHANGED_EVENT = 'storeChanged';
+
+// ============================================
+// Context Creation
+// ============================================
+
+const StoreContext = createContext<StoreContextType | null>(null);
+
+// ============================================
+// Store Provider Component
+// ============================================
+
+interface StoreProviderProps {
+  children: ReactNode;
+  initialStoreId?: string;
+}
+
+export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialStoreId }) => {
+  const [currentStoreId, setCurrentStoreIdState] = useState<string | null>(initialStoreId || null);
+  const [currentStore, setCurrentStore] = useState<Store | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Carregar storeId do localStorage na inicialização (se não tiver initialStoreId)
+  useEffect(() => {
+    const loadStoreId = () => {
+      try {
+        // Se já temos initialStoreId, usá-lo
+        if (initialStoreId) {
+          setCurrentStoreIdState(initialStoreId);
+          console.log('[StoreContext] Using initialStoreId:', initialStoreId);
+          setLoading(false);
+          return;
+        }
+        
+        // Fallback: tentar carregar do localStorage
+        const settings = localStorage.getItem('storeSettings');
+        if (settings) {
+          const parsed = JSON.parse(settings);
+          if (parsed.storeId) {
+            setCurrentStoreIdState(parsed.storeId);
+            console.log('[StoreContext] Loaded storeId from localStorage:', parsed.storeId);
+          }
+        }
+      } catch (err) {
+        console.error('[StoreContext] Error loading storeId:', err);
+        setError(err instanceof Error ? err.message : 'Failed to load store');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadStoreId();
+  }, [initialStoreId]);
+
+  // Função para atualizar storeId e disparar evento
+  const setCurrentStoreId = useCallback((storeId: string) => {
+    console.log('[StoreContext] Setting storeId:', storeId);
+    setCurrentStoreIdState(storeId);
+    
+    // Atualizar localStorage
+    try {
+      const settings = localStorage.getItem('storeSettings');
+      if (settings) {
+        const parsed = JSON.parse(settings);
+        parsed.storeId = storeId;
+        localStorage.setItem('storeSettings', JSON.stringify(parsed));
+      }
+    } catch (err) {
+      console.error('[StoreContext] Error updating localStorage:', err);
+    }
+    
+    // Disparar evento para notificar outros hooks
+    window.dispatchEvent(new CustomEvent(STORE_CHANGED_EVENT, { 
+      detail: { storeId } 
+    }));
+  }, []);
+
+  // Função para recarregar dados da loja do Firestore
+  const refreshStore = useCallback(async () => {
+    if (!currentStoreId) return;
+    
+    setLoading(true);
+    try {
+      console.log('[StoreContext] Refreshing store:', currentStoreId);
+      const storeData = await storeService.getStore(currentStoreId);
+      if (storeData) {
+        setCurrentStore(storeData);
+        console.log('[StoreContext] Store loaded:', storeData.name);
+      }
+      setError(null);
+    } catch (err) {
+      console.error('[StoreContext] Error refreshing store:', err);
+      setError(err instanceof Error ? err.message : 'Failed to refresh store');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentStoreId]);
+
+  // Carregar dados da loja quando storeId muda
+  useEffect(() => {
+    if (currentStoreId) {
+      refreshStore();
+    }
+  }, [currentStoreId, refreshStore]);
+
+  return (
+    <StoreContext.Provider 
+      value={{ 
+        currentStoreId, 
+        currentStore, 
+        loading, 
+        error, 
+        setCurrentStoreId,
+        refreshStore 
+      }}
+    >
+      {children}
+    </StoreContext.Provider>
+  );
+};
+
+// ============================================
+// Custom Hooks
+// ============================================
+
+/**
+ * Hook principal para acessar o contexto da loja
+ */
+export const useStoreContext = (): StoreContextType => {
+  const context = useContext(StoreContext);
+  if (!context) {
+    throw new Error('useStoreContext must be used inside StoreProvider');
+  }
+  return context;
+};
+
+/**
+ * Hook para obter apenas o storeId atual (convenience)
+ */
+export const useCurrentStoreId = (): string | null => {
+  const { currentStoreId } = useStoreContext();
+  return currentStoreId;
+};
+
+/**
+ * Hook para escutar mudanças de loja
+ * Útil para invalidar caches e refetch de dados
+ */
+export const useStoreChangeListener = (callback: (storeId: string) => void): void => {
+  useEffect(() => {
+    const handleStoreChange = (event: Event) => {
+      const customEvent = event as CustomEvent<{ storeId: string }>;
+      callback(customEvent.detail.storeId);
+    };
+
+    window.addEventListener(STORE_CHANGED_EVENT, handleStoreChange);
+    return () => window.removeEventListener(STORE_CHANGED_EVENT, handleStoreChange);
+  }, [callback]);
+};
+
+export default StoreContext;

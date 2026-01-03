@@ -1,8 +1,32 @@
-import { getFirebaseDb } from './firebase';
+import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId } from './firebase';
 import { runTransaction, collection, doc } from 'firebase/firestore';
 import { CartItem, Product } from '@/types/product';
+import { PaymentMethod, SaleTimingData } from '@/types/sales';
 
 class SalesService {
+  private calculateSaleTimingData(now: Date): SaleTimingData {
+    const hour = now.getHours();
+    let timeSlot: SaleTimingData['timeSlot'];
+
+    if (hour >= 6 && hour < 12) timeSlot = 'morning';
+    else if (hour >= 12 && hour < 18) timeSlot = 'afternoon';
+    else if (hour >= 18 && hour < 24) timeSlot = 'evening';
+    else timeSlot = 'night';
+
+    const dayOfWeek = now.getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+    return {
+      timestamp: now,
+      date: now.toISOString().split('T')[0],
+      hourOfDay: hour,
+      dayOfWeek,
+      timeSlot,
+      isWeekend,
+      isHoliday: false,
+    };
+  }
+
   async generateOrderNumber(): Promise<string> {
     const now = new Date();
     const year = now.getFullYear().toString().slice(-2);
@@ -24,13 +48,29 @@ class SalesService {
     return `${year}${month}${day}${hour}${minute}${second}-${uniqueId}`;
   }
 
+  /**
+   * Registrar venda e atualizar estoque
+   * Suporta multi-loja: usa storeId passado ou fallback para getCurrentStoreId()
+   */
   async recordSaleAndUpdateStock(
     cartItems: CartItem[],
     totalAmount: number,
     currency: string,
-    orderNumber: string
+    orderNumber: string,
+    paymentMethod: PaymentMethod,
+    storeId?: string  // Parâmetro opcional para multi-loja
   ): Promise<string> {
     const db = getFirebaseDb();
+    
+    // Usar storeId passado ou obter do localStorage
+    const effectiveStoreId = storeId || getCurrentStoreId();
+    
+    // Validação: em produção, storeId é obrigatório para garantir isolamento de dados
+    if (!effectiveStoreId) {
+      console.warn('[SalesService] No storeId provided - using root collection (legacy mode)');
+    }
+    
+    console.log('[SalesService] Recording sale for store:', effectiveStoreId || 'root');
 
     return await runTransaction(db, async (transaction) => {
       // 1. Calcular requisitos por produto
@@ -49,8 +89,11 @@ class SalesService {
       });
 
       // 2. FASE DE LEITURA: Ler todos os documentos ANTES de qualquer write
+      // Usar subcollection se storeId disponível, senão usar raiz
       const productRefs = Object.keys(requiredByProductId).map(productId => 
-        doc(db, 'products', productId)
+        effectiveStoreId 
+          ? getStoreDoc(effectiveStoreId, 'products', productId)
+          : doc(db, 'products', productId)
       );
       
       const productSnapshots = await Promise.all(
@@ -110,8 +153,14 @@ class SalesService {
       }
 
       // 6. Criar registro de venda
+      const now = new Date();
+      const timingData = this.calculateSaleTimingData(now);
+
       const saleData = {
         orderNumber,
+        storeId: effectiveStoreId || undefined, // Incluir storeId se disponível
+        paymentMethod,
+        ...timingData,
         items: cartItems.map((item) => {
           const baseItem = {
             productId: item.product.id,
@@ -140,13 +189,16 @@ class SalesService {
         tax: totalAmount - cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
         total: totalAmount,
         currency,
-        timestamp: new Date(),
-        date: new Date().toISOString().split('T')[0],
       };
 
-      const salesRef = collection(db, 'sales');
+      // Usar subcollection se storeId disponível, senão usar raiz
+      const salesRef = effectiveStoreId 
+        ? getStoreCollection(effectiveStoreId, 'sales')
+        : collection(db, 'sales');
       const newDocRef = doc(salesRef);
       transaction.set(newDocRef, saleData);
+      
+      console.log('[SalesService] Sale recorded:', newDocRef.id);
       return newDocRef.id;
     });
   }

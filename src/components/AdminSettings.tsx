@@ -1,5 +1,6 @@
 
 import SettingsPanel from "@/components/SettingsPanel";
+import ESP32ConnectionPanel from "@/components/ESP32ConnectionPanel";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Settings, Globe } from "lucide-react";
@@ -74,6 +75,9 @@ export default function AdminSettings() {
           </div>
         </CardContent>
       </Card>
+      
+      {/* ESP32 Connection Panel */}
+      <ESP32ConnectionPanel />
       
       <SettingsPanel />
     </div>

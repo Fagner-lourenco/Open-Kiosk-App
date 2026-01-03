@@ -12,6 +12,7 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { esp32Printer } from "@/services/esp32PrinterService";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
+import { getCurrentStoreId } from "@/services/firebase";
 import UartPortSelector from "./UartPortSelector";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { paymentService } from "@/services/paymentService";
@@ -328,7 +329,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
         cartItems,
         getFinalTotal(),
         currentCurrency.code,
-        orderNumber
+        orderNumber,
+        paymentMethod,
+        getCurrentStoreId()
       );
       console.log('Sale recorded and stock updated atomically:', orderNumber);
     } catch (error) {

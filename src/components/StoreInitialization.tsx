@@ -8,6 +8,7 @@ import { Store, Database } from "lucide-react";
 import { StoreSettings } from "@/types/store";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
+import { storeService } from "@/services/storeService";
 
 interface StoreInitializationProps {
   onComplete: (settings: StoreSettings) => void;
@@ -16,6 +17,7 @@ interface StoreInitializationProps {
 const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
   const { t } = useTranslation();
   const [settings, setSettings] = useState<StoreSettings>({
+    storeId: "",
     name: "",
     currency: "INR",
     taxId: "",
@@ -55,18 +57,58 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
 
     try {
       // Validate required fields
-      if (!settings.name || !settings.taxId || !settings.firebaseConfig.projectId) {
+      if (!settings.storeId || !settings.name || !settings.taxId || !settings.firebaseConfig.projectId || !settings.firebaseConfig.apiKey) {
         toast({
           title: t('common.error'),
           description: t('setup.fillRequired'),
           variant: "destructive"
         });
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate storeId length
+      if (settings.storeId.length < 3 || settings.storeId.length > 50) {
+        toast({
+          title: t('common.error'),
+          description: "Store ID deve ter entre 3 e 50 caracteres",
+          variant: "destructive"
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate storeId format (alphanumeric, dashes, underscores only)
+      const storeIdRegex = /^[a-zA-Z0-9_-]+$/;
+      if (!storeIdRegex.test(settings.storeId)) {
+        toast({
+          title: t('common.error'),
+          description: "Store ID deve conter apenas letras, números, - e _",
+          variant: "destructive"
+        });
+        setIsLoading(false);
         return;
       }
 
       // Save to localStorage for persistence
       localStorage.setItem('storeSettings', JSON.stringify(settings));
       localStorage.setItem('storeInitialized', 'true');
+      localStorage.setItem('currentStoreId', settings.storeId);
+
+      // Create store document in Firestore (after Firebase is initialized by App)
+      // This will be done on first use via ensureStoreExists
+      try {
+        await storeService.ensureStoreExists(
+          settings.storeId,
+          settings.name,
+          settings.currency,
+          settings.taxId,
+          settings.taxPercentage || 0
+        );
+      } catch (storeError) {
+        console.warn('Could not create store document (Firebase may not be initialized yet):', storeError);
+        // Continue anyway - store will be created on first access
+      }
 
       toast({
         title: t('common.success'),
@@ -101,6 +143,20 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
             <div className="space-y-4">
               <h3 className="text-lg font-medium">{t('setup.storeInformation')}</h3>
               
+              <div>
+                <Label htmlFor="storeId">{t('setup.storeId')} *</Label>
+                <Input
+                  id="storeId"
+                  value={settings.storeId || ""}
+                  onChange={(e) => handleInputChange('storeId', e.target.value.toLowerCase().replace(/\s/g, '-'))}
+                  placeholder="minha-loja-01"
+                  required
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {t('setup.storeIdHelp')}
+                </p>
+              </div>
+
               <div>
                 <Label htmlFor="storeName">{t('setup.storeName')} *</Label>
                 <Input

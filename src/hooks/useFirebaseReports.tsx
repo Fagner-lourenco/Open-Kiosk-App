@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { getFirebaseDb } from '@/services/firebase';
-import { collection, addDoc, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { getStoreCollection, getCurrentStoreId } from '@/services/firebase';
+import { addDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
 import { CartItem } from '@/types/product';
 import { useToast } from '@/hooks/use-toast';
+import { PaymentMethod, SaleTimingData } from '@/types/sales';
 
 interface SaleRecord {
   id: string;
@@ -20,13 +21,46 @@ interface SaleRecord {
   currency: string;
   timestamp: Date;
   date: string;
+   paymentMethod?: PaymentMethod;
+   hourOfDay?: number;
+   dayOfWeek?: number;
+   timeSlot?: 'morning' | 'afternoon' | 'evening' | 'night';
+   isWeekend?: boolean;
+   isHoliday?: boolean;
+  storeId?: string;
 }
 
-export const useFirebaseReports = () => {
+export const useFirebaseReports = (storeId?: string) => {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
-  // Generate order number in YYMMDDHHMMSS format
+  // Usa o storeId passado ou busca o atual do sistema
+  const getEffectiveStoreId = () => storeId || getCurrentStoreId();
+
+  const calculateSaleTimingData = (now: Date): SaleTimingData => {
+    const hour = now.getHours();
+    let timeSlot: SaleTimingData['timeSlot'];
+
+    if (hour >= 6 && hour < 12) timeSlot = 'morning';
+    else if (hour >= 12 && hour < 18) timeSlot = 'afternoon';
+    else if (hour >= 18 && hour < 24) timeSlot = 'evening';
+    else timeSlot = 'night';
+
+    const dayOfWeek = now.getDay();
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+
+    return {
+      timestamp: now,
+      date: now.toISOString().split('T')[0],
+      hourOfDay: hour,
+      dayOfWeek,
+      timeSlot,
+      isWeekend,
+      isHoliday: false,
+    };
+  };
+
+  // Generate order number in YYMMDDHHMMSS-xxxxxx format with entropy to avoid collisions
   const generateOrderNumber = async () => {
     const now = new Date();
     const year = now.getFullYear().toString().slice(-2);
@@ -35,14 +69,27 @@ export const useFirebaseReports = () => {
     const hour = now.getHours().toString().padStart(2, '0');
     const minute = now.getMinutes().toString().padStart(2, '0');
     const second = now.getSeconds().toString().padStart(2, '0');
+
+    // Usa UUID se disponível para evitar duplicações em alta concorrência
+    const entropy = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID().split('-')[0]
+      : Math.random().toString(36).slice(2, 8);
     
-    return `${year}${month}${day}${hour}${minute}${second}`;
+    return `${year}${month}${day}${hour}${minute}${second}-${entropy}`;
   };
 
-  const recordSale = async (cartItems: CartItem[], totalAmount: number, currency: string, orderNumber?: string) => {
+  const recordSale = async (
+    cartItems: CartItem[],
+    totalAmount: number,
+    currency: string,
+    orderNumber?: string,
+    paymentMethod: PaymentMethod = 'unknown'
+  ) => {
     try {
-      const db = getFirebaseDb();
+      const effectiveStoreId = getEffectiveStoreId();
       const finalOrderNumber = orderNumber || await generateOrderNumber();
+      const now = new Date();
+      const timingData = calculateSaleTimingData(now);
       
       const saleData = {
         orderNumber: finalOrderNumber,
@@ -57,11 +104,13 @@ export const useFirebaseReports = () => {
         tax: totalAmount - cartItems.reduce((sum, item) => sum + (item.product.price * item.quantity), 0),
         total: totalAmount,
         currency,
-        timestamp: new Date(),
-        date: new Date().toISOString().split('T')[0]
+        paymentMethod,
+        ...timingData,
+        storeId: effectiveStoreId
       };
 
-      await addDoc(collection(db, 'sales'), saleData);
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      await addDoc(salesCollection, saleData);
       console.log('Sale recorded successfully with order number:', finalOrderNumber);
       
       return finalOrderNumber;
@@ -79,12 +128,14 @@ export const useFirebaseReports = () => {
   const getSalesReports = async (startDate?: string, endDate?: string): Promise<SaleRecord[]> => {
     setLoading(true);
     try {
-      const db = getFirebaseDb();
-      let q = query(collection(db, 'sales'), orderBy('timestamp', 'desc'));
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      
+      let q = query(salesCollection, orderBy('timestamp', 'desc'));
       
       if (startDate && endDate) {
         q = query(
-          collection(db, 'sales'),
+          salesCollection,
           where('date', '>=', startDate),
           where('date', '<=', endDate),
           orderBy('date', 'desc')
@@ -96,10 +147,20 @@ export const useFirebaseReports = () => {
       
       querySnapshot.forEach((doc) => {
         const data = doc.data();
+        // Validação segura de timestamp
+        let timestamp: Date;
+        if (data.timestamp && typeof data.timestamp.toDate === 'function') {
+          timestamp = data.timestamp.toDate();
+        } else if (data.timestamp) {
+          timestamp = new Date(data.timestamp);
+        } else {
+          timestamp = new Date();
+        }
+        
         sales.push({
           id: doc.id,
           ...data,
-          timestamp: data.timestamp.toDate()
+          timestamp
         } as SaleRecord);
       });
 

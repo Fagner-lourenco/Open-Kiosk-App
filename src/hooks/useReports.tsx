@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { getFirebaseDb } from '@/services/firebase';
+import { getFirebaseDb, getStoreCollection, getCurrentStoreId } from '@/services/firebase';
 import { collection, query, where, getDocs, addDoc, Timestamp, orderBy } from 'firebase/firestore';
 
 export interface SalesReport {
@@ -25,9 +25,12 @@ export interface TodayStats {
   currency: string;
 }
 
-export const useReports = () => {
+export const useReports = (storeId?: string) => {
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  // Usa o storeId passado ou busca o atual do sistema
+  const getEffectiveStoreId = () => storeId || getCurrentStoreId();
 
   const getTodayStats = async (): Promise<TodayStats> => {
     try {
@@ -35,8 +38,8 @@ export const useReports = () => {
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
 
-      const db = getFirebaseDb();
-      const salesCollection = collection(db, 'sales');
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(startOfDay)),
@@ -73,8 +76,8 @@ export const useReports = () => {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
 
-      const db = getFirebaseDb();
-      const salesCollection = collection(db, 'sales');
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(start)),
@@ -89,6 +92,12 @@ export const useReports = () => {
       const dailySales = new Map<string, { sales: number; orders: number; currency: string }>();
       
       salesData.forEach(sale => {
+        // Validação segura do timestamp
+        if (!sale.timestamp || typeof sale.timestamp.toDate !== 'function') {
+          console.warn('[useReports] Sale missing valid timestamp:', sale);
+          return;
+        }
+        
         const saleDate = sale.timestamp.toDate();
         const dateKey = saleDate.toISOString().split('T')[0]; // YYYY-MM-DD format
         const saleAmount = Number(sale.total || sale.total_amount || 0);
@@ -142,8 +151,8 @@ export const useReports = () => {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
 
-      const db = getFirebaseDb();
-      const salesCollection = collection(db, 'sales');
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(start)),
@@ -157,22 +166,21 @@ export const useReports = () => {
 
       salesData.forEach(sale => {
         const items = sale.items as any[];
-        if (items) {
-          items.forEach(item => {
-            const existing = itemMap.get(item.productId);
-            if (existing) {
-              existing.quantity += item.quantity;
-              existing.revenue += item.total;
-            } else {
-              itemMap.set(item.productId, {
-                title: item.title,
-                quantity: item.quantity,
-                revenue: item.total,
-                currency: sale.currency
-              });
-            }
-          });
-        }
+        if (!items || !Array.isArray(items)) return; // Null check para evitar erro
+        items.forEach(item => {
+          const existing = itemMap.get(item.productId);
+          if (existing) {
+            existing.quantity += item.quantity;
+            existing.revenue += item.total;
+          } else {
+            itemMap.set(item.productId, {
+              title: item.title,
+              quantity: item.quantity,
+              revenue: item.total,
+              currency: sale.currency
+            });
+          }
+        });
       });
 
       return Array.from(itemMap.entries()).map(([productId, data]) => ({
@@ -221,8 +229,8 @@ export const useReports = () => {
           break;
       }
 
-      const db = getFirebaseDb();
-      const salesCollection = collection(db, 'sales');
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(startDate)),
@@ -283,8 +291,8 @@ export const useReports = () => {
           break;
       }
 
-      const db = getFirebaseDb();
-      const salesCollection = collection(db, 'sales');
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(startDate)),
@@ -298,6 +306,7 @@ export const useReports = () => {
 
       salesData.forEach(sale => {
         const items = sale.items as any[];
+        if (!items || !Array.isArray(items)) return; // Null check para evitar erro
         items.forEach(item => {
           const existing = itemMap.get(item.productId);
           if (existing) {
@@ -336,14 +345,15 @@ export const useReports = () => {
 
   const recordSale = async (items: any[], totalAmount: number, currency: string) => {
     try {
-      const db = getFirebaseDb();
-      const salesCollection = collection(db, 'sales');
+      const effectiveStoreId = getEffectiveStoreId();
+      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
       
       await addDoc(salesCollection, {
         total_amount: totalAmount,
         currency,
         items,
-        timestamp: Timestamp.now()
+        timestamp: Timestamp.now(),
+        storeId: effectiveStoreId
       });
 
       toast({

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useTranslation } from "@/i18n";
@@ -7,10 +8,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
-import { StoreSettings } from "@/types/store";
-import { Settings, Save, RotateCcw, AlertTriangle, Eye, EyeOff, Printer } from "lucide-react";
+import { StoreSettings, AttractVideoSettings } from "@/types/store";
+import { Settings, Save, RotateCcw, AlertTriangle, Eye, EyeOff, Printer, Video } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useSettings } from "@/hooks/useSettings";
+import { getFirebaseDb } from "@/services/firebase";
 
 const mask = (value: string) => value ? "●".repeat(Math.max(value.length, 5)) : "";
 
@@ -47,6 +49,13 @@ const SettingsPanel = () => {
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
 
+  // Estado para configurações de vídeo de fundo
+  const [attractVideoSettings, setAttractVideoSettings] = useState<AttractVideoSettings>({
+    isEnabled: false,
+    videoOpacity: 0.4,
+    videoCoverMode: 'cover'
+  });
+
   // Visibility state for each firebase config field
   const [firebaseVisibility, setFirebaseVisibility] = useState<Record<string, boolean>>({
     apiKey: false,
@@ -63,6 +72,27 @@ const SettingsPanel = () => {
       setLocalSettings(settings);
     }
   }, [settings]);
+
+  // Carregar configurações de vídeo do Firestore
+  useEffect(() => {
+    const loadAttractVideoSettings = async () => {
+      try {
+        if (!settings?.storeId) return;
+
+        const db = getFirebaseDb();
+        const videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+        const videoSnap = await getDoc(videoDocRef);
+
+        if (videoSnap.exists()) {
+          setAttractVideoSettings(videoSnap.data() as AttractVideoSettings);
+        }
+      } catch (error) {
+        console.error('Error loading attract video settings:', error);
+      }
+    };
+
+    loadAttractVideoSettings();
+  }, [settings?.storeId]);
 
   // Reset all firebase fields to hidden if settings change (optional but clean)
   useEffect(() => {
@@ -93,6 +123,13 @@ const SettingsPanel = () => {
     }));
   };
 
+  const handleAttractVideoChange = (field: keyof AttractVideoSettings, value: string | number | boolean) => {
+    setAttractVideoSettings(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
   const handleSave = async () => {
     setIsLoading(true);
     try {
@@ -106,6 +143,14 @@ const SettingsPanel = () => {
       }
 
       updateSettings(localSettings);
+
+      // Salvar configurações de vídeo de fundo no Firestore
+      if (localSettings.storeId) {
+        const db = getFirebaseDb();
+        const videoDocRef = doc(db, 'stores', localSettings.storeId, 'settings', 'attract_video');
+        await setDoc(videoDocRef, attractVideoSettings, { merge: true });
+      }
+
       toast({
         title: t('common.success'),
         description: t('settings.settingsSaved')
@@ -246,6 +291,124 @@ const SettingsPanel = () => {
               <p className="text-blue-800 text-sm">
                 {t('settings.pdfModeDescription')}
               </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Card de Vídeo de Fundo */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Video className="w-5 h-5 mr-2" />
+            {t('settings.attractVideoTitle')}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Toggle para habilitar/desabilitar */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="videoEnabled">{t('settings.enableAttractVideo')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.enableAttractVideoDescription')}
+              </p>
+            </div>
+            <Switch
+              id="videoEnabled"
+              checked={attractVideoSettings.isEnabled || false}
+              onCheckedChange={(checked) => handleAttractVideoChange('isEnabled', checked)}
+            />
+          </div>
+
+          {/* Campos de vídeo apenas se habilitado */}
+          {attractVideoSettings.isEnabled && (
+            <div className="space-y-4 border-t pt-4">
+              {/* URL do vídeo */}
+              <div>
+                <Label htmlFor="videoUrl">{t('settings.videoUrl')} *</Label>
+                <Input
+                  id="videoUrl"
+                  type="url"
+                  value={attractVideoSettings.videoUrl || ""}
+                  onChange={(e) => handleAttractVideoChange('videoUrl', e.target.value)}
+                  placeholder={t('settings.videoUrlPlaceholder')}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.videoUrlHelp')}
+                </p>
+              </div>
+
+              {/* Título customizado */}
+              <div>
+                <Label htmlFor="displayTitle">{t('settings.displayTitle')}</Label>
+                <Input
+                  id="displayTitle"
+                  value={attractVideoSettings.displayTitle || ""}
+                  onChange={(e) => handleAttractVideoChange('displayTitle', e.target.value)}
+                  placeholder={t('settings.displayTitlePlaceholder')}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.displayTitleHelp')}
+                </p>
+              </div>
+
+              {/* Subtítulo customizado */}
+              <div>
+                <Label htmlFor="displaySubtitle">{t('settings.displaySubtitle')}</Label>
+                <Input
+                  id="displaySubtitle"
+                  value={attractVideoSettings.displaySubtitle || ""}
+                  onChange={(e) => handleAttractVideoChange('displaySubtitle', e.target.value)}
+                  placeholder={t('settings.displaySubtitlePlaceholder')}
+                />
+              </div>
+
+              {/* Opacidade do vídeo */}
+              <div>
+                <Label htmlFor="videoOpacity">
+                  {t('settings.videoOpacity')} ({Math.round((attractVideoSettings.videoOpacity || 0.4) * 100)}%)
+                </Label>
+                <input
+                  id="videoOpacity"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={attractVideoSettings.videoOpacity || 0.4}
+                  onChange={(e) => handleAttractVideoChange('videoOpacity', parseFloat(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.videoOpacityHelp')}
+                </p>
+              </div>
+
+              {/* Modo de preenchimento */}
+              <div>
+                <Label htmlFor="coverMode">{t('settings.videoCoverMode')}</Label>
+                <Select
+                  value={attractVideoSettings.videoCoverMode || 'cover'}
+                  onValueChange={(value) => handleAttractVideoChange('videoCoverMode', value)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cover">{t('settings.videoCoverModeFullScreen')}</SelectItem>
+                    <SelectItem value="contain">{t('settings.videoCoverModeContain')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.videoCoverModeHelp')}
+                </p>
+              </div>
+
+              {/* Informação sobre CORS */}
+              <div className="p-3 bg-amber-50 rounded-lg">
+                <p className="text-amber-800 text-sm">
+                  {t('settings.videoSecurityNote')}
+                </p>
+              </div>
             </div>
           )}
         </CardContent>

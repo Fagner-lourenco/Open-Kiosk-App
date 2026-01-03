@@ -19,6 +19,7 @@ import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
+import { getCurrentStoreId } from "@/services/firebase";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -397,7 +398,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         [drinkCartItem],
         totalAmount,
         currentCurrency.code,
-        orderNumber
+        orderNumber,
+        selectedPayment,
+        getCurrentStoreId()
       );
       
       console.log('[DrinkMP] ✅ Venda registrada com sucesso, estoque atualizado no Firebase');

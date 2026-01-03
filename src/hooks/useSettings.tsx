@@ -1,8 +1,9 @@
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { getFirebaseDb } from '@/services/firebase';
+import { getFirebaseDb, getStoreDoc, getCurrentStoreId } from '@/services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
 
 export interface Currency {
   code: string;
@@ -24,22 +25,28 @@ export const currencies: Currency[] = [
   { code: 'SEK', name: 'Swedish Krona', symbol: 'kr' },
 ];
 
-// Global currency state
+// Global currency state per store
 let currentCurrencyGlobal: Currency = currencies[0];
 const currencyListeners: Array<(currency: Currency) => void> = [];
 
-// Ensure we only fetch the currency once across the app
-let currencyInitialized = false;
+// Track initialized store to avoid duplicate network calls
+let currencyInitializedForStore: string | null = null;
 let currencyInitPromise: Promise<void> | null = null;
 
-export const useSettings = () => {
+export const useSettings = (storeId?: string) => {
   const [currentCurrency, setCurrentCurrency] = useState<Currency>(currentCurrencyGlobal);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const isMountedRef = useRef(true);
+
+  // Usa o storeId passado ou busca o atual do sistema
+  const getEffectiveStoreId = () => storeId || getCurrentStoreId();
 
   const fetchCurrency = async () => {
-    // If already initialized, avoid duplicate network calls
-    if (currencyInitialized) return;
+    const effectiveStoreId = getEffectiveStoreId();
+    
+    // If already initialized for this store, avoid duplicate network calls
+    if (currencyInitializedForStore === effectiveStoreId) return;
     if (currencyInitPromise) {
       setLoading(true);
       try {
@@ -52,11 +59,10 @@ export const useSettings = () => {
       return;
     }
 
-    setLoading(true);
+    if (isMountedRef.current) setLoading(true);
     currencyInitPromise = (async () => {
       try {
-        const db = getFirebaseDb();
-        const docRef = doc(db, 'settings', 'default_currency');
+        const docRef = getStoreDoc(effectiveStoreId, 'settings', 'default_currency');
         const docSnap = await getDoc(docRef);
 
         if (docSnap.exists()) {
@@ -65,8 +71,20 @@ export const useSettings = () => {
           setCurrentCurrency(currency);
           // Notify all listeners
           currencyListeners.forEach(listener => listener(currency));
+        } else {
+          // Fallback: try root collection for backward compatibility
+          const db = getFirebaseDb();
+          const rootDocRef = doc(db, 'settings', 'default_currency');
+          const rootDocSnap = await getDoc(rootDocRef);
+          
+          if (rootDocSnap.exists()) {
+            const currency = currencies.find(c => c.code === rootDocSnap.data().value) || currencies[0];
+            currentCurrencyGlobal = currency;
+            setCurrentCurrency(currency);
+            currencyListeners.forEach(listener => listener(currency));
+          }
         }
-        currencyInitialized = true;
+        currencyInitializedForStore = effectiveStoreId;
       } catch (error) {
         console.error('Error fetching currency:', error);
         toast({
@@ -75,7 +93,7 @@ export const useSettings = () => {
           variant: "destructive",
         });
         // allow retry on next call
-        currencyInitialized = false;
+        currencyInitializedForStore = null;
         throw error;
       } finally {
         setLoading(false);
@@ -96,9 +114,11 @@ export const useSettings = () => {
       const currency = currencies.find(c => c.code === currencyCode);
       if (!currency) throw new Error('Invalid currency code');
 
-      const db = getFirebaseDb();
-      await setDoc(doc(db, 'settings', 'default_currency'), {
-        value: currencyCode
+      const effectiveStoreId = getEffectiveStoreId();
+      const docRef = getStoreDoc(effectiveStoreId, 'settings', 'default_currency');
+      await setDoc(docRef, {
+        value: currencyCode,
+        storeId: effectiveStoreId
       });
 
       currentCurrencyGlobal = currency;
@@ -123,22 +143,33 @@ export const useSettings = () => {
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     fetchCurrency();
     
     // Add this component to the listeners
     const listener = (currency: Currency) => {
-      setCurrentCurrency(currency);
+      if (isMountedRef.current) setCurrentCurrency(currency);
     };
     currencyListeners.push(listener);
+
+    // Listen for store changes to refetch currency
+    const handleStoreChange = () => {
+      currencyInitializedForStore = null; // Reset to allow new fetch
+      fetchCurrency(); // Refetch currency for new store
+    };
+    window.addEventListener(STORE_CHANGED_EVENT, handleStoreChange);
     
     // Cleanup
     return () => {
+      isMountedRef.current = false;
       const index = currencyListeners.indexOf(listener);
       if (index > -1) {
         currencyListeners.splice(index, 1);
       }
+      window.removeEventListener(STORE_CHANGED_EVENT, handleStoreChange);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeId]); // Refetch quando storeId muda
 
   return {
     currentCurrency,

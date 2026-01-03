@@ -8,6 +8,7 @@ import { HashRouter, Routes, Route } from "react-router-dom";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { LanguageProvider } from "@/i18n";
 import type { Language } from "@/i18n";
+import { StoreProvider } from "@/context/StoreContext";
 import StoreInitialization from "@/components/StoreInitialization";
 import Index from "./pages/Index";
 import Admin from "./pages/Admin";
@@ -21,6 +22,8 @@ const AppContent = () => {
   const { isInitialized, loading, updateSettings, settings } = useStoreSettings();
   // Usar idioma salvo nas configurações da loja (Firebase) ou fallback para 'en'
   const initialLanguage: Language = (settings?.language as Language) || 'en';
+  // Obter storeId das configurações salvas
+  const storeId = settings?.storeId || localStorage.getItem('currentStoreId') || undefined;
 
   return (
     <LanguageProvider initialLanguage={initialLanguage}>
@@ -32,14 +35,16 @@ const AppContent = () => {
       ) : !isInitialized ? (
         <StoreInitialization onComplete={updateSettings} />
       ) : (
-        <HashRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/admin" element={<Admin />} />
-            <Route path="/shop" element={<Shop />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </HashRouter>
+        <StoreProvider initialStoreId={storeId}>
+          <HashRouter>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="/shop" element={<Shop />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </HashRouter>
+        </StoreProvider>
       )}
     </LanguageProvider>
   );

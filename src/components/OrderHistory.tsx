@@ -1,5 +1,5 @@
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -7,8 +7,8 @@ import { esp32Printer } from "@/services/esp32PrinterService";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useSettings } from "@/hooks/useSettings";
 import { useToast } from "@/hooks/use-toast";
-import { getFirebaseDb } from "@/services/firebase";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { getStoreCollection, getCurrentStoreId } from "@/services/firebase";
+import { getDocs, orderBy, query } from "firebase/firestore";
 import { Product } from "@/types/product";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -17,6 +17,7 @@ import { Calendar as CalendarIcon, Eye } from "lucide-react";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { AspectRatio } from "@/components/ui/aspect-ratio";
 import { useTranslation } from "@/i18n";
+import { STORE_CHANGED_EVENT } from "@/context/StoreContext";
 
 interface SaleRecord {
   id: string;
@@ -76,28 +77,52 @@ const OrderHistory = () => {
   // Símbolo da moeda baseado nas configurações
   const currencySymbol = currentCurrency?.symbol || 'R$';
 
-  useEffect(() => {
-    const fetchOrders = async () => {
-      setLoading(true);
-      try {
-        const db = getFirebaseDb();
-        const q = query(collection(db, 'sales'), orderBy('timestamp', 'desc'));
-        const snap = await getDocs(q);
-        const records: SaleRecord[] = [];
-        snap.forEach(doc => {
-          const data = doc.data();
-          records.push({
-            ...data,
-            id: doc.id
-          } as SaleRecord);
-        });
+  // Ref para evitar updates em componente desmontado
+  const isMountedRef = useRef(true);
+
+  const fetchOrders = async () => {
+    if (!isMountedRef.current) return;
+    setLoading(true);
+    try {
+      const storeId = getCurrentStoreId();
+      const salesCollection = getStoreCollection(storeId, 'sales');
+      const q = query(salesCollection, orderBy('timestamp', 'desc'));
+      const snap = await getDocs(q);
+      const records: SaleRecord[] = [];
+      snap.forEach(doc => {
+        const data = doc.data();
+        records.push({
+          ...data,
+          id: doc.id
+        } as SaleRecord);
+      });
+      if (isMountedRef.current) {
         setOrders(records);
-      } catch (e) {
+      }
+    } catch (e) {
+      if (isMountedRef.current) {
         toast({ title: t('common.error'), description: t('orders.fetchError'), variant: "destructive" });
       }
+    }
+    if (isMountedRef.current) {
       setLoading(false);
-    };
+    }
+  };
+
+  useEffect(() => {
+    isMountedRef.current = true;
     fetchOrders();
+
+    // Listen for store changes to refetch orders
+    const handleStoreChange = () => {
+      fetchOrders();
+    };
+    window.addEventListener(STORE_CHANGED_EVENT, handleStoreChange);
+    
+    return () => {
+      isMountedRef.current = false;
+      window.removeEventListener(STORE_CHANGED_EVENT, handleStoreChange);
+    };
   }, []);
 
   useEffect(() => {
