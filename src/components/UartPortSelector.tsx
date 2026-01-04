@@ -39,7 +39,8 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
 
   const handleConnect = async () => {
     if (!comPortInput.trim()) {
-      toast({t('common.error'),
+      toast({
+        title: t('common.error'),
         description: t('uart.enterComPort'),
         variant: "destructive"
       });

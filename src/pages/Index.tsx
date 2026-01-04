@@ -2,12 +2,20 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { Settings, ShoppingCart, Heart } from "lucide-react";
+import { Settings, ShoppingCart } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import { useAuth } from "@/context/AuthContext";
 
 const Index = () => {
   const navigate = useNavigate();
   const { t } = useTranslation();
+  const { setIsAuthenticated } = useAuth();
+
+  const handleAdminAccess = () => {
+    // Ativar sessão autenticada com timeout de 30 minutos
+    setIsAuthenticated(true);
+    navigate('/admin');
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4 relative">
@@ -19,7 +27,7 @@ const Index = () => {
         </div>
         
         <div className="grid md:grid-cols-2 gap-6 max-w-2xl mx-auto">
-          <Card className="hover:shadow-lg transition-shadow duration-300 cursor-pointer" onClick={() => navigate('/admin')}>
+          <Card className="hover:shadow-lg transition-shadow duration-300 cursor-pointer" onClick={handleAdminAccess}>
             <CardHeader className="text-center">
               <div className="mx-auto w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mb-4">
                 <Settings className="w-8 h-8 text-blue-600" />

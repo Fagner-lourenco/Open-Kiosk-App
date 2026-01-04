@@ -121,20 +121,20 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
                           size="sm"
                           onClick={() => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), item.quantity - 1)}
                           disabled={item.quantity <= 1}
-                          className="h-8 w-8 p-0"
+                          className="h-11 w-11 p-0 touch-manipulation"
                         >
-                          <Minus className="w-3 h-3" />
+                          <Minus className="w-4 h-4" />
                         </Button>
-                        <span className="text-sm font-medium min-w-[2rem] text-center">
+                        <span className="text-base font-medium min-w-[2.5rem] text-center">
                           {item.quantity}
                         </span>
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), item.quantity + 1)}
-                          className="h-8 w-8 p-0"
+                          className="h-11 w-11 p-0 touch-manipulation"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-4 h-4" />
                         </Button>
                       </div>
                       <div className="flex items-center gap-2">
@@ -145,9 +145,9 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
                           variant="ghost"
                           size="sm"
                           onClick={() => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), 0)}
-                          className="h-8 w-8 p-0 text-red-500 hover:text-red-700"
+                          className="h-11 w-11 p-0 text-red-500 hover:text-red-700 touch-manipulation"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
                     </div>

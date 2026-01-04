@@ -1,6 +1,8 @@
 
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import AdminOverview from "@/components/AdminOverview";
 import AdminProducts from "@/components/AdminProducts";
@@ -13,11 +15,28 @@ import { ESP32TestPanel } from "@/components/ESP32TestPanel";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { Product } from "@/types/product";
 import { ProductWithInventory, InventoryLog } from "@/types/store";
+import { exitKioskMode } from "@/services/kioskModeService";
+import { Store, LogOut } from "lucide-react";
 
 export default function Admin() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("overview");
   const { products, addProduct, updateProduct, deleteProduct } = useFirebaseProducts();
+
+  // Navegar para a loja
+  const handleGoToShop = () => {
+    navigate('/shop');
+  };
+
+  // Sair do modo kiosk (Lock Task) do Android
+  const handleExitKiosk = async () => {
+    const success = await exitKioskMode();
+    if (success) {
+      // Após sair do kiosk, ir para a loja
+      navigate('/shop');
+    }
+  };
 
   const handleAddProduct = async (newProduct: Omit<Product, "id">) => {
     try {
@@ -69,23 +88,41 @@ export default function Admin() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h1 className="text-2xl font-bold py-4">{t('admin.dashboard')}</h1>
+      <div className="bg-white border-b shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between py-3">
+          <h1 className="text-2xl font-bold text-gray-800">{t('admin.dashboard')}</h1>
+          <div className="flex items-center gap-3">
+            <Button 
+              variant="outline" 
+              onClick={handleGoToShop}
+              className="flex items-center gap-2 px-4 py-2 border-blue-300 text-blue-700 hover:bg-blue-50 hover:border-blue-400"
+            >
+              <Store className="w-4 h-4" />
+              <span>{t('admin.goToShop')}</span>
+            </Button>
+            <Button 
+              variant="outline"
+              onClick={handleExitKiosk}
+              className="flex items-center gap-2 px-4 py-2 border-red-300 text-red-700 hover:bg-red-50 hover:border-red-400"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>{t('admin.exitKiosk')}</span>
+            </Button>
+          </div>
         </div>
       </div>
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-8 mb-6 h-12">
-            <TabsTrigger value="overview" className="text-sm">{t('admin.overview')}</TabsTrigger>
-            <TabsTrigger value="products" className="text-sm">{t('nav.products')}</TabsTrigger>
-            <TabsTrigger value="add-product" className="text-sm">{t('common.add')} {t('nav.products')}</TabsTrigger>
-            <TabsTrigger value="inventory" className="text-sm">{t('nav.inventory')}</TabsTrigger>
-            <TabsTrigger value="orders" className="text-sm">{t('nav.orders')}</TabsTrigger>
-            <TabsTrigger value="reports" className="text-sm">{t('nav.reports')}</TabsTrigger>
-            <TabsTrigger value="esp32" className="text-sm">ESP32</TabsTrigger>
-            <TabsTrigger value="settings" className="text-sm">{t('nav.settings')}</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-6 h-auto min-h-[48px] gap-1 p-1">
+            <TabsTrigger value="overview" className="text-xs sm:text-sm min-h-[40px] px-2">{t('admin.overview')}</TabsTrigger>
+            <TabsTrigger value="products" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.products')}</TabsTrigger>
+            <TabsTrigger value="add-product" className="text-xs sm:text-sm min-h-[40px] px-2">{t('common.add')}</TabsTrigger>
+            <TabsTrigger value="inventory" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.inventory')}</TabsTrigger>
+            <TabsTrigger value="orders" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.orders')}</TabsTrigger>
+            <TabsTrigger value="reports" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.reports')}</TabsTrigger>
+            <TabsTrigger value="esp32" className="text-xs sm:text-sm min-h-[40px] px-2">ESP32</TabsTrigger>
+            <TabsTrigger value="settings" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.settings')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview">

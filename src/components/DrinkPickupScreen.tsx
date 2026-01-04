@@ -64,7 +64,7 @@ const DrinkPickupScreen = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onComplete}>
-      <DialogContent className="w-full sm:max-w-md">
+      <DialogContent className="w-full sm:max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-green-700">
             {t('drinkPickup.drinkReady')}

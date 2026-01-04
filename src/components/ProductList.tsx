@@ -203,7 +203,7 @@ const ProductList = ({ products, onUpdate, onDelete }: ProductListProps) => {
                         {t('products.edit')}
                       </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-2xl">
+                    <DialogContent className="max-w-2xl max-h-[calc(100dvh-2rem)] overflow-y-auto">
                       <DialogHeader>
                         <DialogTitle>{t('products.editProduct')}</DialogTitle>
                       </DialogHeader>

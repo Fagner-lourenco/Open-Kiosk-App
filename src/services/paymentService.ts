@@ -139,15 +139,17 @@ class PaymentService {
       try {
         await mpAPI.cancelOrder(lastOrder.orderId);
         console.log('[PaymentService] Ordem anterior cancelada com sucesso');
-      } catch (cancelError: any) {
+      } catch (cancelError: unknown) {
         // Se erro ao cancelar, pode ser que já está no terminal
         // Nesse caso o cliente precisa cancelar manualmente no terminal
-        console.warn('[PaymentService] Erro ao cancelar ordem anterior (pode estar no terminal):', cancelError.message);
+        const message = cancelError instanceof Error ? cancelError.message : String(cancelError);
+        console.warn('[PaymentService] Erro ao cancelar ordem anterior (pode estar no terminal):', message);
       }
       
       this.clearLastTerminalOrder();
-    } catch (error: any) {
-      console.warn('[PaymentService] Erro ao verificar ordem anterior:', error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn('[PaymentService] Erro ao verificar ordem anterior:', message);
       this.clearLastTerminalOrder();
     }
   }
@@ -276,14 +278,22 @@ class PaymentService {
 
   private async simulatePaymentConfirmation(delayMs: number, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        signal.removeEventListener('abort', abortHandler);
+      };
+
+      const abortHandler = () => {
+        clearTimeout(timeout);
+        cleanup();
+        reject(new DOMException('Payment cancelled', 'AbortError'));
+      };
+
       const timeout = setTimeout(() => {
+        cleanup();
         resolve();
       }, delayMs);
 
-      signal.addEventListener('abort', () => {
-        clearTimeout(timeout);
-        reject(new DOMException('Payment cancelled', 'AbortError'));
-      });
+      signal.addEventListener('abort', abortHandler);
     });
   }
 
@@ -444,19 +454,38 @@ class PaymentService {
       // Payload conforme documentação oficial Mercado Pago Point
       // CRÍTICO: amount como STRING com 2 decimais, expiration_time no formato ISO 8601 duration
       // Montar config.payment_method conforme tipo de pagamento
-      let paymentMethodConfig: any = {
-        default_type: options?.defaultPaymentType
-      };
-      if (options?.defaultPaymentType === 'credit_card') {
-        paymentMethodConfig.default_installments = options?.defaultInstallments || 1;
-        paymentMethodConfig.installments_cost = options?.installmentsCost || 'seller';
+      // Só incluir payment_method se um tipo for especificado
+      let paymentMethodConfig: Record<string, any> | undefined = undefined;
+      if (options?.defaultPaymentType) {
+        paymentMethodConfig = {
+          default_type: options.defaultPaymentType
+        };
+        if (options.defaultPaymentType === 'credit_card') {
+          paymentMethodConfig.default_installments = options?.defaultInstallments || 1;
+          paymentMethodConfig.installments_cost = options?.installmentsCost || 'seller';
+        }
       }
 
+      // Montar config base
+      const configPayload: Record<string, any> = {
+        point: {
+          terminal_id: finalTerminalId,
+          print_on_terminal: options?.printOnTerminal || 'no_ticket' as const
+        }
+      };
+      
+      // Só incluir payment_method se configurado
+      if (paymentMethodConfig) {
+        configPayload.payment_method = paymentMethodConfig;
+      }
+
+      // Payload conforme documentação oficial Mercado Pago Point
+      // IMPORTANTE: Point NÃO aceita total_amount na raiz - apenas transactions.payments[].amount
       const orderPayload = {
         type: 'point' as const,
         external_reference: externalReference,
         description: `Pedido Kiosk #${externalReference}`,
-        expiration_time: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME, // Usar config (PT3M para self-service)
+        expiration_time: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME,
         transactions: {
           payments: [
             {
@@ -464,13 +493,7 @@ class PaymentService {
             }
           ]
         },
-        config: {
-          point: {
-            terminal_id: finalTerminalId,
-            print_on_terminal: options?.printOnTerminal || 'no_ticket' as const
-          },
-          payment_method: paymentMethodConfig
-        }
+        config: configPayload
       };
 
       console.log('[PaymentService Point] Criando order:', {
@@ -480,6 +503,11 @@ class PaymentService {
         paymentType: options?.defaultPaymentType || 'any',
         expirationTime: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME,
       });
+      
+      // Log do payload completo para debug (apenas em desenvolvimento)
+      if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
+        console.log('[PaymentService Point] Full payload:', JSON.stringify(orderPayload, null, 2));
+      }
 
       // Tentar criar order com retry automático para erro 409
       let order;
@@ -490,11 +518,12 @@ class PaymentService {
         try {
           order = await mpAPI.createOrder(orderPayload);
           break; // Sucesso, sair do loop
-        } catch (createError: any) {
+        } catch (createError: unknown) {
           lastError = createError;
           
           // Se for erro 409, esperar e tentar novamente
-          if (createError.message?.includes('409') && attempt < maxRetries) {
+          const errorMessage = createError instanceof Error ? createError.message : String(createError);
+          if (errorMessage.includes('409') && attempt < maxRetries) {
             console.log(`[PaymentService Point] Terminal ocupado, aguardando... (tentativa ${attempt}/${maxRetries})`);
             await new Promise(resolve => setTimeout(resolve, 2000)); // Esperar 2 segundos
             
@@ -612,9 +641,9 @@ class PaymentService {
       await mpAPI.cancelOrder(orderId);
       return { canceled: true };
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       // Erros esperados da API
-      const errorCode = error?.code || error?.message || '';
+      const errorCode = error instanceof Error ? error.message : String(error);
       
       if (errorCode.includes('already_canceled') || errorCode.includes('order_already_canceled')) {
         return { canceled: true, reason: 'already_canceled' };

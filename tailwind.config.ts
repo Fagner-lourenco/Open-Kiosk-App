@@ -68,6 +68,18 @@ export default {
 				md: 'calc(var(--radius) - 2px)',
 				sm: 'calc(var(--radius) - 4px)'
 			},
+			height: {
+				'dvh': '100dvh',
+				'svh': '100svh',
+			},
+			maxHeight: {
+				'dvh': '100dvh',
+				'svh': '100svh',
+			},
+			minHeight: {
+				'dvh': '100dvh',
+				'svh': '100svh',
+			},
 			keyframes: {
 				'accordion-down': {
 					from: {

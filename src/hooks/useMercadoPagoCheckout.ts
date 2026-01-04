@@ -200,9 +200,9 @@ export function useMercadoPagoCheckout(options: UseMercadoPagoCheckoutOptions): 
       }
       
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[MercadoPagoCheckout] Erro ao criar QR:', error);
-      const errorMsg = error.message || t('checkout.paymentErrorGeneric');
+      const errorMsg = error instanceof Error ? error.message : t('checkout.paymentErrorGeneric');
       setMpError(errorMsg);
       paymentInProgressRef.current = false;
       onPaymentError(errorMsg);
@@ -262,9 +262,9 @@ export function useMercadoPagoCheckout(options: UseMercadoPagoCheckoutOptions): 
       }
       
       return true;
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[MercadoPagoCheckout] Erro ao criar Point order:', error);
-      const errorMsg = error.message || t('checkout.terminalSendError');
+      const errorMsg = error instanceof Error ? error.message : t('checkout.terminalSendError');
       setMpError(errorMsg);
       setPointStatus('error');
       paymentInProgressRef.current = false;

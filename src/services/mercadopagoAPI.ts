@@ -4,13 +4,14 @@
  * Referência: https://www.mercadopago.com.br/developers/pt/reference
  */
 
+import { Capacitor } from '@capacitor/core';
+import { CapacitorHttp, HttpResponse } from '@capacitor/core';
 import type {
   MercadoPagoConfig,
   Terminal,
   TerminalsListResponse,
   Order,
-  CreateOrderRequest,
-  MercadoPagoError
+  CreateOrderRequest
 } from '@/types/mercadopago';
 
 export class MercadoPagoAPI {
@@ -21,7 +22,72 @@ export class MercadoPagoAPI {
     this.config = config;
   }
 
-  private async request<T>(
+  /**
+   * Detecta se está rodando em plataforma nativa (Android/iOS)
+   * onde precisamos usar CapacitorHttp para bypass de CORS
+   */
+  private isNativePlatform(): boolean {
+    return Capacitor.isNativePlatform();
+  }
+
+  /**
+   * Requisição usando CapacitorHttp (nativo - sem CORS)
+   */
+  private async nativeRequest<T>(
+    endpoint: string,
+    options: { method?: string; body?: string; headers?: Record<string, string> } = {}
+  ): Promise<T> {
+    const url = `${this.config.baseUrl}${endpoint}`;
+    
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${this.config.accessToken}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    };
+
+    try {
+      console.log('[MercadoPagoAPI] Native request:', { url, method: options.method || 'GET' });
+      
+      const response: HttpResponse = await CapacitorHttp.request({
+        url,
+        method: options.method || 'GET',
+        headers,
+        data: options.body ? JSON.parse(options.body) : undefined,
+        connectTimeout: this.defaultTimeoutMs,
+        readTimeout: this.defaultTimeoutMs,
+      });
+
+      console.log('[MercadoPagoAPI] Native response:', { status: response.status });
+
+      if (response.status >= 400) {
+        const error = response.data;
+        console.error('[MercadoPagoAPI] Native Error:', JSON.stringify(error, null, 2));
+        // Suportar múltiplos formatos de erro da API Mercado Pago
+        const errorMessage = 
+          error?.message || 
+          (Array.isArray(error?.errors) && error.errors[0]?.message) ||
+          (Array.isArray(error?.errors) && error.errors[0]?.description) ||
+          (Array.isArray(error?.cause) && error.cause[0]?.description) ||
+          `HTTP ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      // 204 No Content
+      if (response.status === 204) {
+        return {} as T;
+      }
+
+      return response.data as T;
+    } catch (error) {
+      console.error('[MercadoPagoAPI] Native request failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Requisição usando fetch (web - com proxy dev ou produção web)
+   */
+  private async webRequest<T>(
     endpoint: string,
     options: RequestInit = {},
     timeoutMs?: number
@@ -61,11 +127,16 @@ export class MercadoPagoAPI {
       }
 
       if (!response.ok) {
-        const error: MercadoPagoError = await response.json();
-        console.error('[MercadoPagoAPI] Error:', error);
-        const causeMsg = Array.isArray(error.cause) && error.cause.length > 0 ? error.cause[0].description : '';
-        const msg = error.message || causeMsg || `HTTP ${response.status}`;
-        throw new Error(msg);
+        const error = await response.json();
+        console.error('[MercadoPagoAPI] Error:', JSON.stringify(error, null, 2));
+        // Suportar múltiplos formatos de erro da API Mercado Pago
+        const errorMessage = 
+          error.message || 
+          (Array.isArray(error.errors) && error.errors[0]?.message) ||
+          (Array.isArray(error.errors) && error.errors[0]?.description) ||
+          (Array.isArray(error.cause) && error.cause[0]?.description) ||
+          `HTTP ${response.status}`;
+        throw new Error(errorMessage);
       }
 
       // 204 No Content
@@ -92,6 +163,27 @@ export class MercadoPagoAPI {
       console.error('[MercadoPagoAPI] Request failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * Método request unificado - escolhe automaticamente entre nativo e web
+   */
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    timeoutMs?: number
+  ): Promise<T> {
+    // Em plataforma nativa (Android/iOS), usar CapacitorHttp para bypass de CORS
+    if (this.isNativePlatform()) {
+      return this.nativeRequest<T>(endpoint, {
+        method: options.method,
+        body: options.body as string | undefined,
+        headers: options.headers as Record<string, string> | undefined,
+      });
+    }
+    
+    // Em web (dev ou produção web), usar fetch normal
+    return this.webRequest<T>(endpoint, options, timeoutMs);
   }
 
   private generateIdempotencyKey(): string {
@@ -220,21 +312,24 @@ export function createMercadoPagoAPI(): MercadoPagoAPI | null {
     return null;
   }
 
-  // Em desenvolvimento, usar proxy do Vite para evitar CORS
-  // Em produção (totem/kiosk), usar URL direta - CORS não é problema em modo kiosk
+  // Detectar plataforma
+  const isNative = Capacitor.isNativePlatform();
   const isDev = import.meta.env.DEV;
-  const baseUrl = isDev
-    ? '/api/mp'  // Proxy do Vite - evita CORS em desenvolvimento
-    : 'https://api.mercadopago.com';  // Totem/Kiosk - chamadas diretas
+  
+  // Em desenvolvimento web, usar proxy do Vite para evitar CORS
+  // Em nativo (Android/iOS) ou produção web, usar URL direta
+  // O CapacitorHttp no nativo bypassa CORS automaticamente
+  const baseUrl = (isDev && !isNative)
+    ? '/api/mp'  // Proxy do Vite - evita CORS em desenvolvimento web
+    : 'https://api.mercadopago.com';  // Nativo ou produção - chamadas diretas
 
   // Log de inicialização sem expor credenciais
-  if (import.meta.env.DEV) {
-    console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()}`, {
-      isDev,
-      baseUrl,
-      hasToken: !!accessToken,
-    });
-  }
+  console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()}`, {
+    isDev,
+    isNative,
+    baseUrl,
+    hasToken: !!accessToken,
+  });
 
   const config: MercadoPagoConfig = {
     accessToken,

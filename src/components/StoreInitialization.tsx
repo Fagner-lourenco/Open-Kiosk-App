@@ -1,14 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Store, Database } from "lucide-react";
+import { Store, Database, Copy, Upload, Clipboard, Check, Loader2 } from "lucide-react";
 import { StoreSettings } from "@/types/store";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
 import { storeService } from "@/services/storeService";
+import { loadEnvironmentConfig, mergeWithDefaults } from "@/services/environmentConfigLoader";
+import { setupKioskController } from "@/services/setupKioskController";
+import { useConfigImport } from "@/hooks/useConfigImport";
 
 interface StoreInitializationProps {
   onComplete: (settings: StoreSettings) => void;
@@ -16,12 +19,15 @@ interface StoreInitializationProps {
 
 const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
   const { t } = useTranslation();
-  const [settings, setSettings] = useState<StoreSettings>({
+  
+  // Estado padrão inicial
+  const defaultSettings: StoreSettings = {
     storeId: "",
     name: "",
     currency: "INR",
     taxId: "",
     taxPercentage: 18,
+    comPort: "",
     firebaseConfig: {
       apiKey: "",
       authDomain: "",
@@ -30,9 +36,83 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
       messagingSenderId: "",
       appId: ""
     }
-  });
+  };
+  
+  const [settings, setSettings] = useState<StoreSettings>(defaultSettings);
   const [isLoading, setIsLoading] = useState(false);
+  const [isPreloading, setIsPreloading] = useState(true);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Hook para import/export de configurações
+  const { handleFileImport, handleClipboardImport, handleCopyToClipboard } = useConfigImport();
+
+  // Pré-carregar configurações ao montar o componente
+  useEffect(() => {
+    const loadPrefilledConfig = async () => {
+      try {
+        console.log('[StoreInitialization] Tentando pré-carregar configurações...');
+        const envConfig = await loadEnvironmentConfig();
+        
+        if (envConfig) {
+          const mergedSettings = mergeWithDefaults(envConfig, defaultSettings);
+          setSettings(mergedSettings);
+          
+          toast({
+            title: "Configurações Carregadas",
+            description: "Dados pré-preenchidos do arquivo de configuração"
+          });
+          
+          console.log('[StoreInitialization] ✅ Config pré-carregada com sucesso');
+        } else {
+          console.log('[StoreInitialization] Nenhuma config encontrada, usando valores padrão');
+        }
+      } catch (error) {
+        console.warn('[StoreInitialization] Erro ao carregar config:', error);
+        // Não mostrar erro ao usuário, simplesmente usar valores padrão
+      } finally {
+        setIsPreloading(false);
+      }
+    };
+    
+    loadPrefilledConfig();
+  }, []);
+
+  // Handler para importar arquivo JSON
+  const onFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const config = await handleFileImport(file);
+    if (config) {
+      const mergedSettings = mergeWithDefaults(config, settings);
+      setSettings(mergedSettings);
+    }
+    
+    // Limpar input para permitir re-seleção do mesmo arquivo
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  // Handler para colar JSON do clipboard
+  const onPasteConfig = async () => {
+    const config = await handleClipboardImport();
+    if (config) {
+      const mergedSettings = mergeWithDefaults(config, settings);
+      setSettings(mergedSettings);
+    }
+  };
+
+  // Handler para copiar campo individual
+  const onCopyField = async (value: string, fieldName: string) => {
+    const success = await handleCopyToClipboard(value, fieldName);
+    if (success) {
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 2000);
+    }
+  };
 
   const handleInputChange = (field: string, value: string | number) => {
     setSettings(prev => ({
@@ -114,6 +194,11 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
         title: t('common.success'),
         description: t('setup.setupComplete')
       });
+
+      // ✅ ATIVAR MODO KIOSK após setup completo
+      // Isso trava a tela no app, impedindo que o usuário saia
+      console.log('[StoreInitialization] Setup completo, ativando modo kiosk...');
+      await setupKioskController.completeSetupAndEnterKiosk();
 
       onComplete(settings);
     } catch (error) {
@@ -221,27 +306,89 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
                 {t('setup.firebaseConfig')} *
               </h3>
               
+              {/* Botões de Import/Paste para facilitar entrada de credenciais */}
+              <div className="flex flex-wrap gap-2 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".json"
+                  onChange={onFileImport}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-2"
+                >
+                  <Upload className="w-4 h-4" />
+                  Importar Arquivo JSON
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={onPasteConfig}
+                  className="flex items-center gap-2"
+                >
+                  <Clipboard className="w-4 h-4" />
+                  Colar JSON do Clipboard
+                </Button>
+                <p className="w-full text-xs text-blue-600 mt-1">
+                  💡 Dica: Importe um arquivo JSON com suas credenciais ou cole do clipboard para preencher automaticamente.
+                </p>
+              </div>
+              
               <div className="grid grid-cols-1 gap-4">
                 <div>
                   <Label htmlFor="apiKey">{t('setup.apiKey')}</Label>
-                  <Input
-                    id="apiKey"
-                    value={settings.firebaseConfig.apiKey}
-                    onChange={(e) => handleFirebaseConfigChange('apiKey', e.target.value)}
-                    placeholder={t('setup.apiKeyPlaceholder')}
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="apiKey"
+                      value={settings.firebaseConfig.apiKey}
+                      onChange={(e) => handleFirebaseConfigChange('apiKey', e.target.value)}
+                      placeholder={t('setup.apiKeyPlaceholder')}
+                      required
+                      className="flex-1"
+                    />
+                    {settings.firebaseConfig.apiKey && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => onCopyField(settings.firebaseConfig.apiKey, 'API Key')}
+                        title="Copiar API Key"
+                      >
+                        {copiedField === 'API Key' ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 
                 <div>
                   <Label htmlFor="projectId">{t('setup.projectId')}</Label>
-                  <Input
-                    id="projectId"
-                    value={settings.firebaseConfig.projectId}
-                    onChange={(e) => handleFirebaseConfigChange('projectId', e.target.value)}
-                    placeholder={t('setup.projectIdPlaceholder')}
-                    required
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="projectId"
+                      value={settings.firebaseConfig.projectId}
+                      onChange={(e) => handleFirebaseConfigChange('projectId', e.target.value)}
+                      placeholder={t('setup.projectIdPlaceholder')}
+                      required
+                      className="flex-1"
+                    />
+                    {settings.firebaseConfig.projectId && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => onCopyField(settings.firebaseConfig.projectId, 'Project ID')}
+                        title="Copiar Project ID"
+                      >
+                        {copiedField === 'Project ID' ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <div>
@@ -277,18 +424,44 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
 
                 <div>
                   <Label htmlFor="appId">{t('setup.appId')}</Label>
-                  <Input
-                    id="appId"
-                    value={settings.firebaseConfig.appId}
-                    onChange={(e) => handleFirebaseConfigChange('appId', e.target.value)}
-                    placeholder={t('setup.appIdPlaceholder')}
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="appId"
+                      value={settings.firebaseConfig.appId}
+                      onChange={(e) => handleFirebaseConfigChange('appId', e.target.value)}
+                      placeholder={t('setup.appIdPlaceholder')}
+                      className="flex-1"
+                    />
+                    {settings.firebaseConfig.appId && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => onCopyField(settings.firebaseConfig.appId, 'App ID')}
+                        title="Copiar App ID"
+                      >
+                        {copiedField === 'App ID' ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
-              {isLoading ? t('setup.settingUp') : t('setup.completeSetup')}
+            <Button type="submit" className="w-full" size="lg" disabled={isLoading || isPreloading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {t('setup.settingUp')}
+                </>
+              ) : isPreloading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Carregando...
+                </>
+              ) : (
+                t('setup.completeSetup')
+              )}
             </Button>
           </form>
         </CardContent>

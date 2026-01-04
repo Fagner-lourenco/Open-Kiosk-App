@@ -99,3 +99,98 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Utilitários para responsividade em tablets */
+@layer utilities {
+  /* Touch target mínimo de 44px (WCAG) */
+  .touch-target {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  
+  /* Touch manipulation para evitar delay de 300ms */
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+  
+  /* Orientação - Landscape */
+  @media (orientation: landscape) {
+    .landscape\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .landscape\:grid-cols-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .landscape\:grid-cols-5 {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+    .landscape\:flex-row {
+      flex-direction: row;
+    }
+  }
+  
+  /* Orientação - Portrait */
+  @media (orientation: portrait) {
+    .portrait\:grid-cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .portrait\:grid-cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .portrait\:flex-col {
+      flex-direction: column;
+    }
+  }
+}
+
+/* Attract Screen - animações sutis (premium) */
+@layer utilities {
+  .attract-fade {
+    transition: opacity 180ms ease, transform 180ms ease;
+  }
+
+  .attract-mug {
+    transform-origin: 50% 65%;
+    animation: attract-float-tilt 5.5s ease-in-out infinite;
+  }
+
+  .attract-bubble {
+    position: absolute;
+    bottom: 14px;
+    left: var(--x, 50%);
+    width: var(--s, 6px);
+    height: var(--s, 6px);
+    border-radius: 9999px;
+    background: rgba(255, 255, 255, 0.28);
+    opacity: 0;
+    filter: blur(0.2px);
+    animation: attract-bubble-up var(--t, 6s) infinite;
+    animation-delay: var(--d, 0s);
+  }
+}
+
+@keyframes attract-float-tilt {
+  0% {
+    transform: translateY(0px) rotate(-0.6deg);
+  }
+  45% {
+    transform: translateY(-6px) rotate(0.9deg);
+  }
+  100% {
+    transform: translateY(0px) rotate(-0.6deg);
+  }
+}
+
+@keyframes attract-bubble-up {
+  0% {
+    transform: translateY(0px) scale(0.92);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.42;
+  }
+  100% {
+    transform: translateY(-140px) scale(1.06);
+    opacity: 0;
+  }
+}

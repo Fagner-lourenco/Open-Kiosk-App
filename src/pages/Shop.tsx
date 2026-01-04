@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { ShoppingCart, ArrowLeft } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,6 @@ import ProductGrid from "@/components/ProductGrid";
 import Cart from "@/components/Cart";
 import VoiceSearchButton from "@/components/VoiceSearchButton";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
-import AdminAccess from "@/components/AdminAccess";
 import { CartItem, Product } from "@/types/product";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { useSettings } from "@/hooks/useSettings";
@@ -19,6 +18,8 @@ import AttractScreen from "@/components/AttractScreen";
 import { useKioskIdle } from "@/hooks/useKioskIdle";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useTranslation } from "@/i18n";
+import { useDebounce } from "@/hooks/useDebounce";
+import { enterKioskMode } from "@/services/kioskModeService";
 
 type DrinkCheckoutResult = {
   orderNumber: string;
@@ -46,7 +47,6 @@ const Shop = () => {
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
   const [displayedProducts, setDisplayedProducts] = useState<Product[]>([]);
   const [displayLimit, setDisplayLimit] = useState(INITIAL_LOAD_LIMIT);
-  const [isAdmin, setIsAdmin] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
   const { currentCurrency } = useSettings();
   const [selectedDrink, setSelectedDrink] = useState<Product | null>(null);
@@ -58,6 +58,32 @@ const Shop = () => {
   const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible || isCheckoutOpen;
   const attractTimeout = settings?.attractTimeoutSeconds ?? 15;
   const { isIdle, resetIdle } = useKioskIdle({ timeoutSeconds: attractTimeout, suppressed: isSuppressed });
+
+  // Debounce searchQuery para evitar re-renders excessivos durante digitação/voz
+  const debouncedSearchQuery = useDebounce(searchQuery, 200);
+
+  /**
+   * Ativar kiosk mode ao entrar na tela de Shop
+   * Bloqueia o dispositivo no app, impedindo saída do usuário
+   * Executa apenas uma vez na montagem do componente
+   */
+  useEffect(() => {
+    const activateKiosk = async () => {
+      try {
+        console.log('[Shop] Ativando kiosk mode...');
+        const success = await enterKioskMode();
+        if (success) {
+          console.log('[Shop] ✅ Kiosk mode ativado com sucesso');
+        } else {
+          console.warn('[Shop] ⚠️ Falha ao ativar kiosk mode (pode estar em dev/web)');
+        }
+      } catch (error) {
+        console.error('[Shop] Erro ao ativar kiosk mode:', error);
+      }
+    };
+
+    activateKiosk();
+  }, []); // Executar apenas uma vez na montagem
 
   useEffect(() => {
     if (products) {
@@ -81,13 +107,13 @@ const Shop = () => {
       });
 
       const filtered = sortedByMostSold.filter(product =>
-        product.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        product.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        product.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
+        product.title.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        product.description?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
+        product.tags?.some(tag => tag.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
       );
       setFilteredProducts(filtered);
     }
-  }, [products, searchQuery]);
+  }, [products, debouncedSearchQuery]);
 
   useEffect(() => {
     setDisplayedProducts(filteredProducts.slice(0, displayLimit));
@@ -175,11 +201,6 @@ const Shop = () => {
 
   const getTotalItems = () => {
     return cartItems.reduce((total, item) => total + item.quantity, 0);
-  };
-
-  const handleAdminAuth = () => {
-    setIsAdmin(true);
-    navigate('/admin');
   };
 
   const handleVoiceTranscript = (transcript: string) => {

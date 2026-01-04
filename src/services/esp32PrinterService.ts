@@ -154,7 +154,7 @@ export class ESP32PrinterService {
     this.printTimeoutMs = Math.max(5000, timeoutMs); // Mínimo 5 segundos
   }
 
-  async sendPrintData(printData: any): Promise<PrinterResponse> {
+  async sendPrintData(printData: Record<string, unknown>): Promise<PrinterResponse> {
     try {
       if (!this.writer) {
         throw new Error('ESP32 printer not connected');

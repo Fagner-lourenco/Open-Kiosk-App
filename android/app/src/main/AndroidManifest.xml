@@ -16,6 +16,8 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:exported="true">
 
             <intent-filter>
@@ -58,6 +60,7 @@
     
     <!-- USB Host (para OTG) -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-permission android:name="android.permission.USB_PERMISSION" />
     
     <!-- Keep Screen On (para kiosk mode) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

@@ -70,7 +70,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
-    paymentTimeoutSeconds: 130, // Alinhado com PT2M (2 minutos) + 10s margem
+    paymentTimeoutSeconds: 120, // Sincronizado com MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME (PT2M = 2min)
     warningThresholdSeconds: 10,
     onTimeout: () => {
       toast({ title: t('checkout.sessionExpired'), description: t('checkout.checkoutCancelledInactivity'), variant: "destructive" });
@@ -207,7 +207,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       { id: "dispense", label: t('checkout.dispensingStep'), status: statusFor("dispensing") },
       { id: "ready", label: t('checkout.readyForPickup'), status: statusFor("ready_pickup") },
     ];
-  }, [flowState.processingStage]);
+  }, [flowState.processingStage, t]);
 
   useEffect(() => {
     if (isOpen && product?.sizes?.length) {
@@ -244,9 +244,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const max = Math.max(0, Math.floor(mlAvailable / size.ml));
 
     setMaxQty(max);
-    if (quantity > max) {
-      setQuantity(Math.max(1, max));
-    }
+    // quantity é usado apenas para leitura aqui, não precisa estar nas deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCartItems, product, selectedSizeKey]);
 
   useEffect(() => {
@@ -555,9 +554,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           // Iniciar polling via hook (QR não é Point)
           startPolling(result.orderId!, false);
 
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error('[DrinkQR] Erro ao criar QR:', error);
-          const errorMsg = error.message || t('checkout.errorGeneratingQr');
+          const errorMsg = error instanceof Error ? error.message : t('checkout.errorGeneratingQr');
           setMpError(errorMsg);
           setIsProcessing(false);
           updateProcessingStage("idle");
@@ -616,9 +615,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           // Iniciar polling via hook (Point = true)
           startPolling(result.orderId!, true);
 
-        } catch (error: any) {
+        } catch (error: unknown) {
           console.error('[DrinkPoint] Erro ao criar order Point:', error);
-          const errorMsg = error.message || 'Erro ao enviar para terminal';
+          const errorMsg = error instanceof Error ? error.message : 'Erro ao enviar para terminal';
           setMpError(errorMsg);
           setPointStatus('error');
           setIsProcessing(false);
@@ -723,7 +722,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   return (
     <Dialog open={isOpen} onOpenChange={onCancel}>
-      <DialogContent className="w-full sm:max-w-md">
+      <DialogContent className="w-[95vw] sm:max-w-md md:max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>
             {flowState.currentStep === 1 && t('checkout.chooseSize')}
@@ -746,7 +745,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           />
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-4">
           <InactivityTimer
             secondsLeft={flowState.inactivityTimeLeft}
             maxSeconds={flowState.maxInactivityTime}
@@ -1006,16 +1005,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       {/* QR Code real do Mercado Pago */}
                       {mpQrData && !mpError && (
                         <>
-                          <div className="bg-white p-8 rounded-xl border-2 border-green-400 shadow-lg inline-block">
-                            <QRCode value={mpQrData} size={280} level="M" />
+                          <div className="bg-white p-4 rounded-xl border-2 border-green-400 shadow-lg inline-block">
+                            <QRCode value={mpQrData} size={180} level="M" />
                           </div>
-                          <p className="font-semibold text-lg text-gray-800">{t('checkout.scanQrCode')}</p>
-                          <p className="text-sm text-gray-500">{t('checkout.payWithQrCode')}</p>
+                          <p className="font-semibold text-base text-gray-800">{t('checkout.scanQrCode')}</p>
+                          <p className="text-xs text-gray-500">{t('checkout.payWithQrCode')}</p>
                           
                           {isPolling && (
-                            <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-4 py-2">
-                              <Loader className="w-4 h-4 animate-spin" />
-                              <span className="text-sm font-medium">
+                            <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-3 py-1.5">
+                              <Loader className="w-3 h-3 animate-spin" />
+                              <span className="text-xs font-medium">
                                 {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
                               </span>
                             </div>
@@ -1024,7 +1023,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                           <Button 
                             variant="ghost" 
                             onClick={handleCancelPayment}
-                            className="mt-4 text-gray-500 hover:text-gray-700"
+                            className="mt-2 text-gray-500 hover:text-gray-700 text-sm"
                           >
                             {t('checkout.cancelPayment')}
                           </Button>

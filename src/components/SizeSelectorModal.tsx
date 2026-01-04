@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Button } from '@/components/ui/button';
 import { CartItem, Product } from '@/types/product';
 import { useTranslation } from '@/i18n';
+import { useCurrentCurrency } from '@/hooks/useSettings';
 
 interface SizeSelectorModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ export default function SizeSelectorModal({
   onClose,
 }: SizeSelectorModalProps) {
   const { t } = useTranslation();
+  const currentCurrency = useCurrentCurrency();
   const [selectedSizeKey, setSelectedSizeKey] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [maxQty, setMaxQty] = useState(0);
@@ -66,7 +68,7 @@ export default function SizeSelectorModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t('sizeSelector.selectSizeFor', { product: product.title })}</DialogTitle>
         </DialogHeader>
@@ -80,7 +82,7 @@ export default function SizeSelectorModal({
               <SelectContent>
                 {product.sizes?.map((size) => (
                   <SelectItem key={size.key} value={size.key}>
-                    {size.label} - R$ {size.price.toFixed(2)}
+                    {size.label} - {currentCurrency.symbol} {size.price.toFixed(2)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -95,15 +97,17 @@ export default function SizeSelectorModal({
                 size="sm"
                 onClick={() => setQuantity((q) => Math.max(1, q - 1))}
                 disabled={quantity <= 1}
+                aria-label={t('sizeSelector.decreaseQuantity') || 'Diminuir quantidade'}
               >
                 -
               </Button>
-              <span className="text-lg font-medium w-12 text-center">{quantity}</span>
+              <span className="text-lg font-medium w-12 text-center" aria-live="polite">{quantity}</span>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setQuantity((q) => Math.min(maxQty, q + 1))}
                 disabled={quantity >= maxQty}
+                aria-label={t('sizeSelector.increaseQuantity') || 'Aumentar quantidade'}
               >
                 +
               </Button>
@@ -113,7 +117,7 @@ export default function SizeSelectorModal({
 
           {selectedSize && (
             <div className="bg-gray-50 p-3 rounded">
-              <p className="text-sm">{t('sizeSelector.total')}: R$ {(selectedSize.price * quantity).toFixed(2)}</p>
+              <p className="text-sm">{t('sizeSelector.total')}: {currentCurrency.symbol} {(selectedSize.price * quantity).toFixed(2)}</p>
             </div>
           )}
 

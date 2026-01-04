@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
-import { Hand, Sparkles } from 'lucide-react';
+import { Hand } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getFirebaseDb, getCurrentStoreId } from '@/services/firebase';
 import { AttractVideoSettings } from '@/types/store';
-import BeerMug from '@/components/icons/BeerMug';
 
 type AttractScreenProps = {
   visible: boolean;
@@ -23,6 +22,10 @@ const AttractScreen = ({
   const { t } = useTranslation();
   const startBtnRef = useRef<HTMLButtonElement | null>(null);
   const [videoSettings, setVideoSettings] = useState<AttractVideoSettings | null>(null);
+  const [shouldRender, setShouldRender] = useState(visible);
+  const [isEntering, setIsEntering] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
+  const startTriggeredRef = useRef(false);
 
   // Título e subtítulo: prioridade props > Firebase > i18n
   const displayTitle = title || videoSettings?.displayTitle || t('attract.title');
@@ -30,6 +33,8 @@ const AttractScreen = ({
 
   // Carrega configurações de vídeo do Firestore
   useEffect(() => {
+    let isMounted = true;
+
     const loadVideoSettings = async () => {
       try {
         const storeId = getCurrentStoreId();
@@ -39,6 +44,9 @@ const AttractScreen = ({
         const videoDocRef = doc(db, 'stores', storeId, 'settings', 'attract_video');
         const videoSnap = await getDoc(videoDocRef);
 
+        // Verificar se ainda está montado antes de atualizar estado
+        if (!isMounted) return;
+
         if (videoSnap.exists()) {
           const data = videoSnap.data() as AttractVideoSettings;
           if (data.isEnabled) {
@@ -46,13 +54,19 @@ const AttractScreen = ({
           }
         }
       } catch (error) {
-        console.error('Error loading attract video settings:', error);
+        if (isMounted) {
+          console.error('Error loading attract video settings:', error);
+        }
       }
     };
 
     if (visible) {
       loadVideoSettings();
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [visible]);
 
   useEffect(() => {
@@ -62,12 +76,47 @@ const AttractScreen = ({
     }
   }, [visible]);
 
-  if (!visible) return null;
+  useEffect(() => {
+    if (visible) {
+      setShouldRender(true);
+      setIsExiting(false);
+      setIsEntering(true);
+      startTriggeredRef.current = false;
+
+      const rafId = window.requestAnimationFrame(() => {
+        setIsEntering(false);
+      });
+
+      return () => window.cancelAnimationFrame(rafId);
+    }
+
+    setIsEntering(false);
+
+    // Fade-out suave quando a tela é escondida externamente
+    const tId = window.setTimeout(() => {
+      setShouldRender(false);
+      setIsExiting(false);
+      startTriggeredRef.current = false;
+    }, 200);
+
+    return () => window.clearTimeout(tId);
+  }, [visible]);
+
+  if (!shouldRender) return null;
+
+  const handleStart = () => {
+    if (startTriggeredRef.current) return;
+    startTriggeredRef.current = true;
+    setIsExiting(true);
+    window.setTimeout(() => {
+      onStart();
+    }, 180);
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      onStart();
+      handleStart();
     }
   };
 
@@ -76,21 +125,28 @@ const AttractScreen = ({
       role="dialog"
       aria-modal="true"
       aria-label={t('attract.kioskStartScreen')}
-      className="fixed inset-0 z-[9999] bg-gradient-to-br from-slate-50 via-white to-blue-50 flex items-center justify-center"
+      className={
+        "fixed inset-0 z-[9999] flex items-center justify-center attract-fade " +
+        (visible && !isExiting && !isEntering
+          ? "opacity-100"
+          : "opacity-0")
+      }
       onKeyDown={onKeyDown}
     >
-      {/* Video background layer - lowest z-index */}
+      {/* Base gradient background - z-index 0 */}
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-blue-50 z-0" />
+
+      {/* Video background layer - z-index 1, acima do gradiente */}
       {videoSettings?.videoUrl && videoSettings.isEnabled && (
         <video
           autoPlay
           muted
           loop
           playsInline
-          className="absolute inset-0 w-full h-full pointer-events-none"
+          className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
           style={{
             objectFit: videoSettings.videoCoverMode === 'contain' ? 'contain' : 'cover',
             opacity: videoSettings.videoOpacity ?? 0.4,
-            zIndex: 0
           }}
           onError={(e) => {
             console.error('Error loading attract video:', e);
@@ -108,46 +164,73 @@ const AttractScreen = ({
       </div>
 
       {/* Main content */}
-      <div className="relative text-center px-8 max-w-lg z-20">
+      <div className="relative text-center px-8 max-w-2xl z-20">
         {/* Icon with animation */}
-        <div className="flex items-center justify-center mb-8">
+        <div className="flex items-center justify-center mb-2">
           <div className="relative">
-            <div className="absolute inset-0 bg-amber-400/20 rounded-full blur-xl animate-pulse scale-150" />
-            <div className="relative inline-flex items-center justify-center rounded-full bg-gradient-to-br from-amber-500 to-amber-600 p-8 shadow-2xl shadow-amber-500/30">
-              <BeerMug className="w-14 h-14 text-white" />
+            {/* Glow quente discreto atrás da caneca */}
+            <div className="absolute inset-0 blur-3xl opacity-40" style={{ background: 'radial-gradient(circle, rgba(251,191,36,0.6) 0%, rgba(245,158,11,0.3) 50%, transparent 70%)' }} />
+            
+            {/* Caneca sem círculo, apenas imagem com sombra */}
+            <img
+              src="/attract/beer-mug.png"
+              alt={t('attract.title')}
+              className="relative object-contain attract-mug"
+              style={{ 
+                height: '31vh',
+                maxHeight: '33vh',
+                width: 'auto',
+                filter: 'drop-shadow(0 18px 34px rgba(0,0,0,0.30)) drop-shadow(0 0 18px rgba(255, 176, 64, 0.24))'
+              }}
+              loading="eager"
+              decoding="async"
+              draggable={false}
+            />
+
+            {/* Bolhas discretas (substitui o sparkle) */}
+            <div className="pointer-events-none absolute inset-0 overflow-visible">
+              <div className="attract-bubble" style={{ ['--x' as any]: '28%', ['--d' as any]: '0s', ['--t' as any]: '6.2s', ['--s' as any]: '5px' }} />
+              <div className="attract-bubble" style={{ ['--x' as any]: '42%', ['--d' as any]: '1.2s', ['--t' as any]: '5.6s', ['--s' as any]: '6px' }} />
+              <div className="attract-bubble" style={{ ['--x' as any]: '56%', ['--d' as any]: '0.6s', ['--t' as any]: '6.8s', ['--s' as any]: '4px' }} />
+              <div className="attract-bubble" style={{ ['--x' as any]: '68%', ['--d' as any]: '1.8s', ['--t' as any]: '5.9s', ['--s' as any]: '5px' }} />
+              <div className="attract-bubble" style={{ ['--x' as any]: '76%', ['--d' as any]: '2.4s', ['--t' as any]: '6.4s', ['--s' as any]: '3px' }} />
             </div>
-            <Sparkles className="absolute -top-2 -right-2 w-6 h-6 text-yellow-400 animate-bounce" />
           </div>
         </div>
 
         {/* Title */}
-        <h1 className="text-4xl sm:text-5xl font-bold text-gray-900 mb-4 tracking-tight">
+        <h1 className="text-5xl sm:text-6xl font-bold text-gray-900 mt-2 mb-3 tracking-tight leading-tight">
           {displayTitle}
         </h1>
         
         {/* Subtitle */}
-        <p className="text-lg sm:text-xl text-gray-500 mb-10">
+        <p className="text-xl sm:text-2xl text-gray-600/75 mb-7 font-medium">
           {displaySubtitle}
         </p>
 
         {/* CTA Button */}
         <div className="flex items-center justify-center">
-          <Button
-            ref={startBtnRef}
-            size="lg"
-            className="px-10 py-7 text-lg font-semibold bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-xl shadow-blue-500/25 transition-all duration-300 hover:scale-105 hover:shadow-2xl hover:shadow-blue-500/30"
-            onClick={(e) => {
-              e.stopPropagation();
-              onStart();
-            }}
-          >
-            <Hand className="w-5 h-5 mr-3" />
-            {t('attract.start')}
-          </Button>
+          <div className="relative">
+            {/* Glow sutil animado */}
+            <div className="pointer-events-none absolute -inset-3 rounded-2xl bg-blue-500/20 blur-2xl animate-pulse" />
+
+            <Button
+              ref={startBtnRef}
+              className="relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-xl shadow-blue-500/30 transition-all duration-300 hover:scale-[1.04] hover:shadow-2xl hover:shadow-blue-500/35 flex items-center justify-center gap-3"
+              style={{ width: '320px', height: '76px', fontSize: '22px', fontWeight: '600', borderRadius: '12px' }}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleStart();
+              }}
+            >
+              <Hand className="w-7 h-7" />
+              {t('attract.start')}
+            </Button>
+          </div>
         </div>
 
         {/* Keyboard hint */}
-        <p className="text-sm text-gray-400 mt-8">
+        <p className="text-xs text-gray-400/60 mt-10 font-light">
           {t('attract.keyboardHint')}
         </p>
       </div>

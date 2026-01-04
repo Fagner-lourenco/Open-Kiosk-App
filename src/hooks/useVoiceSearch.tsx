@@ -1,6 +1,16 @@
 
 import { useState, useEffect, useRef } from 'react';
 
+// Mapeamento de erros para mensagens amigáveis
+const VOICE_ERROR_MESSAGES: Record<string, string> = {
+  'not-allowed': 'Permissão de microfone negada. Habilite nas configurações do navegador.',
+  'no-speech': 'Nenhuma fala detectada. Tente novamente.',
+  'audio-capture': 'Microfone não disponível.',
+  'network': 'Erro de rede. Verifique sua conexão.',
+  'aborted': 'Reconhecimento cancelado.',
+  'language-not-supported': 'Idioma não suportado.',
+};
+
 interface VoiceSearchHook {
   isListening: boolean;
   transcript: string;
@@ -9,6 +19,8 @@ interface VoiceSearchHook {
   resetTranscript: () => void;
   isSupported: boolean;
   confidence: number;
+  error: string | null;
+  clearError: () => void;
 }
 
 // Define Web Speech API types
@@ -73,10 +85,13 @@ export const useVoiceSearch = (): VoiceSearchHook => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [confidence, setConfidence] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout>();
   const autoStopRef = useRef<NodeJS.Timeout>();
   const isMountedRef = useRef(true);
+
+  const clearError = () => setError(null);
 
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
 
@@ -150,6 +165,11 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
       if (!isMountedRef.current) return;
       console.error('Speech recognition error:', event.error);
+      
+      // Mapear erro para mensagem amigável
+      const errorMessage = VOICE_ERROR_MESSAGES[event.error] || `Erro no reconhecimento de voz: ${event.error}`;
+      setError(errorMessage);
+      
       setIsListening(false);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
@@ -177,6 +197,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     if (recognition && !isListening) {
       setTranscript('');
       setConfidence(0);
+      setError(null); // Limpar erro anterior
       recognition.start();
     }
   };
@@ -199,6 +220,8 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     stopListening,
     resetTranscript,
     isSupported,
-    confidence
+    confidence,
+    error,
+    clearError
   };
 };

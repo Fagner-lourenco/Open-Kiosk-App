@@ -145,9 +145,19 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       
       fetchOrderNumber().catch((err) => {
         console.error('Error generating order number (unhandled):', err);
+        // Garantir que sempre tenhamos um orderNumber válido
+        if (!orderNumber) {
+          const fallback = `${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+          setOrderNumber(fallback);
+          toast({
+            title: t('checkout.orderNumberWarning') || 'Aviso',
+            description: t('checkout.orderNumberFallback') || 'Número de pedido gerado localmente',
+            variant: 'default'
+          });
+        }
       });
     }
-  }, [isOpen, orderNumber]);
+  }, [isOpen, orderNumber, t, toast]);
 
   const getTotalPrice = () => {
     return cartItems.reduce((total, item) => total + (item.unitPrice * item.quantity), 0);
@@ -220,9 +230,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       // Iniciar polling via hook
       startPolling(result.orderId!);
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Checkout] Erro ao criar QR:', error);
-      const errorMsg = error.message || t('checkout.paymentErrorGeneric');
+      const errorMsg = error instanceof Error ? error.message : t('checkout.paymentErrorGeneric');
       setMpError(errorMsg);
       setPaymentProcessed(false);
       toast({
@@ -284,9 +294,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       setPointStatus('at_terminal');
       startPolling(result.orderId!, true);
       
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[Checkout] Erro ao criar Point order:', error);
-      const errorMsg = error.message || t('checkout.terminalSendError');
+      const errorMsg = error instanceof Error ? error.message : t('checkout.terminalSendError');
       setMpError(errorMsg);
       setPointStatus('error');
       setPaymentProcessed(false);
@@ -318,8 +328,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     setSaleRecorded(true);
     setPaymentProcessed(true);
     
-    // Criar Promise para mutex
-    let resolvePayment: () => void;
+    // Criar Promise para mutex - inicializar resolve com no-op para evitar race condition
+    let resolvePayment: () => void = () => {};
     paymentInProgressRef.current = new Promise<void>((resolve) => {
       resolvePayment = resolve;
     });
@@ -460,7 +470,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       stopPolling();
       clearPersistedState();
     }
-  }, [isOpen, stopPolling, clearPersistedState]);
+  }, [isOpen, stopPolling, clearPersistedState, resetCheckout]);
 
   const handleCancelPayment = async () => {
     // Capturar orderId ANTES de qualquer operação (evita race condition)
@@ -508,7 +518,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   if (isCompleted) {
     return (
       <Sheet open={isOpen} onOpenChange={handleClose}>
-        <SheetContent className="w-full sm:max-w-lg">
+        <SheetContent className="w-full sm:max-w-lg md:max-w-xl flex flex-col max-h-screen">
           <SheetHeader>
             <SheetTitle className="flex items-center gap-2">
               <Check className="w-5 h-5 text-green-600" />
@@ -539,10 +549,10 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
   return (
     <Sheet open={isOpen} onOpenChange={handleClose}>
-      <SheetContent className="w-full sm:max-w-lg flex flex-col">
+      <SheetContent className="w-full sm:max-w-lg md:max-w-xl flex flex-col max-h-[100dvh]">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={handleClose} className="p-0 h-auto">
+            <Button variant="ghost" size="sm" onClick={handleClose} className="p-0 h-auto touch-manipulation">
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <Receipt className="w-5 h-5" />
@@ -668,20 +678,20 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                           <p className="text-sm text-gray-600">{t('checkout.generatingQr')}</p>
                         </div>
                       ) : (
-                        <div className="space-y-4">
-                          <div className="bg-white p-4 rounded-lg border-2 border-gray-200 flex justify-center">
+                        <div className="space-y-3">
+                          <div className="bg-white p-3 rounded-lg border-2 border-gray-200 flex justify-center">
                             <QRCode
                               value={mpQrData}
-                              size={256}
+                              size={180}
                               level="H"
                               fgColor="#000000"
                               bgColor="#FFFFFF"
                             />
                           </div>
 
-                          <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                          <div className="bg-blue-50 p-2 rounded-lg border border-blue-200">
                             <p className="text-xs font-medium text-blue-900">{t('checkout.instructions')}:</p>
-                            <ol className="text-xs text-blue-800 mt-2 space-y-1 list-decimal list-inside">
+                            <ol className="text-xs text-blue-800 mt-1 space-y-0.5 list-decimal list-inside">
                               <li>{t('checkout.instruction1')}</li>
                               <li>{t('checkout.instruction2')}</li>
                               <li>{t('checkout.instruction3')}</li>

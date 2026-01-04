@@ -269,11 +269,12 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
           return;
         }
         
-        // Limitar tamanho do Set para evitar memory leak
+        // Limitar tamanho do Set para evitar memory leak - remover entradas mais antigas
         if (processedOrdersRef.current.size >= MAX_PROCESSED_ORDERS) {
-          const firstEntry = processedOrdersRef.current.values().next().value;
-          if (firstEntry) processedOrdersRef.current.delete(firstEntry);
-          logPolling('info', 'Set de ordens processadas limpo (limite atingido)');
+          // Converter para array, remover os primeiros 10 (mais antigos)
+          const entries = Array.from(processedOrdersRef.current);
+          entries.slice(0, 10).forEach(id => processedOrdersRef.current.delete(id));
+          logPolling('info', `Set de ordens processadas limpo (removidas ${Math.min(10, entries.length)} entradas antigas)`);
         }
         processedOrdersRef.current.add(orderId);
         
@@ -352,6 +353,7 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
   }, [cleanup, poll]);
 
   // Restaurar polling ao montar (se houver estado persistido)
+  // Intencionalmente executado apenas uma vez no mount
   useEffect(() => {
     isMountedRef.current = true;
     
@@ -363,28 +365,31 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
         elapsedMinutes: ((Date.now() - persistedState.startedAt) / 60000).toFixed(1),
       });
 
+      // Verificar se ainda está montado antes de atualizar estados
+      if (!isMountedRef.current) {
+        logPolling('warn', 'Componente desmontado durante restore, abortando');
+        return;
+      }
+
       setCurrentOrderId(persistedState.orderId);
       setAttempts(persistedState.attempts);
       currentAttemptRef.current = persistedState.attempts;
       isPointPaymentRef.current = persistedState.isPointPayment;
       setIsPolling(true);
 
-      // Retomar polling
-      poll(persistedState.orderId);
+      // Verificar novamente antes de iniciar polling async
+      if (isMountedRef.current) {
+        // Retomar polling
+        poll(persistedState.orderId);
+      }
     }
 
     return () => {
       isMountedRef.current = false;
       cleanup();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Cleanup ao desmontar
-  useEffect(() => {
-    return () => {
-      cleanup();
-    };
-  }, [cleanup]);
 
   return {
     isPolling,

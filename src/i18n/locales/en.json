@@ -135,8 +135,8 @@
     "remaining": "remaining",
     "showingProducts": "Showing {{displayed}} of {{total}} products",
     "stockCount": "{{count}} in stock",
-    "orderHere": "Order here",
-    "touchToStart": "Touch to start"
+    "orderHere": "Choose and get your beer",
+    "touchToStart": "Touch to serve"
   },
   "cart": {
     "yourCart": "Your Cart",
@@ -344,7 +344,9 @@
     "totalAmountToday": "Total amount today",
     "todaysOrders": "Today's Orders",
     "ordersToday": "Orders today",
-    "fromLastMonth": "from last month"
+    "fromLastMonth": "from last month",
+    "goToShop": "Go to Shop",
+    "exitKiosk": "Exit Kiosk"
   },
   "products": {
     "title": "Products",
@@ -602,9 +604,9 @@
     "generatePdf": "Generate PDF Receipt"
   },
   "attract": {
-    "title": "Place your order here",
-    "subtitle": "Touch to start",
-    "start": "Start",
+    "title": "Choose and get your beer",
+    "subtitle": "Touch to serve",
+    "start": "Get now",
     "keyboardHint": "Also works with keyboard (Enter/Space)",
     "kioskStartScreen": "Kiosk start screen",
     "touchAnywhere": "Touch anywhere to start"

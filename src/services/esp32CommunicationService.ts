@@ -1,5 +1,5 @@
 import { Capacitor } from '@capacitor/core';
-import { BleClient, BleDevice } from '@capacitor-community/bluetooth-le';
+import { BleClient } from '@capacitor-community/bluetooth-le';
 
 // UUIDs padrão para ESP32 BLE
 const ESP32_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
@@ -183,33 +183,43 @@ class ESP32CommunicationService {
 
   /**
    * Lista portas USB disponíveis
+   * Tenta Web Serial API primeiro, depois fallback
    */
   async scanUSBDevices(): Promise<ESP32Device[]> {
-    const webSerial = getWebSerial();
-    if (!webSerial) {
-      console.log('[USB] Web Serial API não disponível');
-      return [];
-    }
-
     const devices: ESP32Device[] = [];
+    const webSerial = getWebSerial();
 
-    try {
-      const ports = await webSerial.getPorts();
+    if (webSerial) {
+      try {
+        const ports = await webSerial.getPorts();
 
-      ports.forEach((port: SerialPort, index: number) => {
-        devices.push({
-          id: `usb-${index}`,
-          name: `Porta USB ${index + 1}`,
-          type: 'usb',
+        ports.forEach((port: SerialPort, index: number) => {
+          devices.push({
+            id: `usb-${index}`,
+            name: `Porta USB ${index + 1}`,
+            type: 'usb',
+          });
         });
-      });
 
-      console.log('[USB] Portas encontradas:', ports.length);
-      return devices;
-    } catch (error) {
-      console.error('[USB] Erro ao listar portas:', error);
-      return [];
+        console.log('[USB] Portas Web Serial encontradas:', ports.length);
+      } catch (error) {
+        console.warn('[USB] Erro ao listar Web Serial:', error);
+      }
+    } else {
+      console.log('[USB] Web Serial API não disponível - tente conectar um dispositivo USB');
     }
+
+    // No Android com Capacitor, o USB é detectado via permissões
+    if (this.isAndroid()) {
+      devices.push({
+        id: 'android-usb',
+        name: 'Conexão USB Android (OTG)',
+        type: 'usb',
+      });
+      console.log('[USB] Dispositivo USB Android adicionado');
+    }
+
+    return devices;
   }
 
   /**
@@ -254,19 +264,21 @@ class ESP32CommunicationService {
       return false;
     }
 
+    const writer = this.serialPort.writable.getWriter();
     try {
-      const writer = this.serialPort.writable.getWriter();
       const encoder = new TextEncoder();
       const data = encoder.encode(command + '\n');
 
       await writer.write(data);
-      writer.releaseLock();
 
       console.log('[USB] Comando enviado:', command);
       return true;
     } catch (error) {
       console.error('[USB] Erro ao enviar:', error);
       return false;
+    } finally {
+      // Garantir que o lock seja sempre liberado
+      writer.releaseLock();
     }
   }
 
@@ -278,10 +290,9 @@ class ESP32CommunicationService {
       return null;
     }
 
+    const reader = this.serialPort.readable.getReader();
     try {
-      const reader = this.serialPort.readable.getReader();
       const { value } = await reader.read();
-      reader.releaseLock();
 
       if (value) {
         const decoder = new TextDecoder();
@@ -289,8 +300,11 @@ class ESP32CommunicationService {
       }
       return null;
     } catch (error) {
-      console.error('[USB] Erro ao ler:', error);
+      console.error('[USB] Erro ao ler dados:', error);
       return null;
+    } finally {
+      // Garantir que o lock seja sempre liberado
+      reader.releaseLock();
     }
   }
 

@@ -20,6 +20,8 @@ export default function AdminOverview() {
       setTodayStats(stats);
     };
     fetchTodayStats();
+    // getTodayStats é estável (vem do hook useReports)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

@@ -135,8 +135,8 @@
     "remaining": "restantes",
     "showingProducts": "Exibindo {{displayed}} de {{total}} produtos",
     "stockCount": "{{count}} em estoque",
-    "orderHere": "Faça seu pedido aqui",
-    "touchToStart": "Toque para iniciar"
+    "orderHere": "Escolha e pegue seu chopp",
+    "touchToStart": "Toque para servir"
   },
   "cart": {
     "yourCart": "Seu Carrinho",
@@ -342,7 +342,9 @@
     "totalAmountToday": "Total do dia",
     "todaysOrders": "Pedidos de hoje",
     "ordersToday": "Pedidos hoje",
-    "fromLastMonth": "em relação ao mês anterior"
+    "fromLastMonth": "em relação ao mês anterior",
+    "goToShop": "Ir para Loja",
+    "exitKiosk": "Sair do Kiosk"
   },
   "products": {
     "title": "Produtos",
@@ -600,9 +602,9 @@
     "generatePdf": "Gerar Recibo PDF"
   },
   "attract": {
-    "title": "Faça seu pedido aqui",
-    "subtitle": "Toque para iniciar",
-    "start": "Iniciar",
+    "title": "Escolha e pegue seu chopp",
+    "subtitle": "Toque para servir",
+    "start": "Pegar agora",
     "keyboardHint": "Também funciona com teclado (Enter/Espaço)",
     "kioskStartScreen": "Tela de início do quiosque",
     "touchAnywhere": "Toque em qualquer lugar para iniciar"
