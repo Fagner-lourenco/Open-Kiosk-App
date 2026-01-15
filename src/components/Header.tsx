@@ -3,6 +3,7 @@ import React from 'react';
 import { Search, Bell, User, Menu, Store } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useStoreContext } from '@/context/StoreContext';
+import { ESP32StatusIndicator } from './ESP32StatusIndicator';
 
 interface HeaderProps {
   onMenuToggle: () => void;
@@ -32,6 +33,9 @@ const Header = ({ onMenuToggle }: HeaderProps) => {
               </span>
             </div>
           )}
+          
+          {/* ESP32 Connection Status Indicator */}
+          <ESP32StatusIndicator className="mr-4" />
           
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />

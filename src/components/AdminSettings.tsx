@@ -1,21 +1,30 @@
 
 import SettingsPanel from "@/components/SettingsPanel";
-import ESP32ConnectionPanel from "@/components/ESP32ConnectionPanel";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Settings, Globe } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useLanguage, useTranslation } from "@/i18n";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import type { Language } from "@/i18n";
+import type { ESP32ConnectionType } from "@/types/store";
+import esp32Service from "@/services/esp32CommunicationService";
 
 export default function AdminSettings() {
   const { currentCurrency, currencies, updateCurrency, loading } = useSettings();
   const { settings, updateSettings } = useStoreSettings();
   const { language, setLanguage } = useLanguage();
   const { t } = useTranslation();
+
+  // ESP32 settings com defaults
+  const esp32AutoConnect = settings?.esp32AutoConnect ?? true;
+  const esp32ConnectionOrder = settings?.esp32ConnectionOrder ?? ['usb', 'wifi', 'bluetooth'];
+  const esp32HeartbeatIntervalMs = settings?.esp32HeartbeatIntervalMs ?? 15000;
 
   const handleLanguageChange = async (newLanguage: Language) => {
     try {
@@ -33,6 +42,55 @@ export default function AdminSettings() {
     } catch (error) {
       console.error('Erro ao salvar idioma no Firebase:', error);
       toast.error(t('common.error'));
+    }
+  };
+
+  const handleAutoConnectChange = async (enabled: boolean) => {
+    if (settings) {
+      await updateSettings({ ...settings, esp32AutoConnect: enabled });
+      toast.success(enabled ? t('esp32.autoConnect') + ' ativado' : t('esp32.autoConnect') + ' desativado');
+    }
+  };
+
+  const handleConnectionOrderChange = async (order: ESP32ConnectionType[]) => {
+    if (settings) {
+      await updateSettings({ ...settings, esp32ConnectionOrder: order });
+      toast.success(t('esp32.connectionOrder') + ' atualizado');
+    }
+  };
+
+  const handleHeartbeatChange = async (intervalMs: number) => {
+    if (settings && intervalMs >= 5000 && intervalMs <= 60000) {
+      await updateSettings({ ...settings, esp32HeartbeatIntervalMs: intervalMs });
+      toast.success(t('esp32.heartbeatInterval') + ': ' + intervalMs + 'ms');
+    }
+  };
+
+  const handleClearLastConnection = () => {
+    esp32Service.clearLastConnection();
+    toast.success(t('esp32.lastConnectionCleared'));
+  };
+
+  const moveConnectionOrder = (from: number, to: number) => {
+    const newOrder = [...esp32ConnectionOrder];
+    const [removed] = newOrder.splice(from, 1);
+    newOrder.splice(to, 0, removed);
+    handleConnectionOrderChange(newOrder as ESP32ConnectionType[]);
+  };
+
+  const getConnectionIcon = (type: ESP32ConnectionType) => {
+    switch (type) {
+      case 'usb': return <Usb className="h-4 w-4" />;
+      case 'wifi': return <Wifi className="h-4 w-4" />;
+      case 'bluetooth': return <Bluetooth className="h-4 w-4" />;
+    }
+  };
+
+  const getConnectionLabel = (type: ESP32ConnectionType) => {
+    switch (type) {
+      case 'usb': return 'USB Serial';
+      case 'wifi': return 'WiFi';
+      case 'bluetooth': return 'Bluetooth';
     }
   };
 
@@ -75,10 +133,112 @@ export default function AdminSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Configurações ESP32 Auto-Connect */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5" />
+            {t('esp32.autoConnectSettings')}
+          </CardTitle>
+          <CardDescription>
+            {t('esp32.description')}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Toggle Autoconexão */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="auto-connect">{t('esp32.enableAutoConnect')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('esp32.tryingToConnect')}
+              </p>
+            </div>
+            <Switch
+              id="auto-connect"
+              checked={esp32AutoConnect}
+              onCheckedChange={handleAutoConnectChange}
+            />
+          </div>
+
+          {/* Ordem de Prioridade */}
+          <div className="space-y-3">
+            <div>
+              <Label>{t('esp32.connectionOrder')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('esp32.connectionOrderDescription')}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              {esp32ConnectionOrder.map((type, index) => (
+                <div
+                  key={type}
+                  className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-muted-foreground w-6">
+                      {index + 1}.
+                    </span>
+                    {getConnectionIcon(type)}
+                    <span className="font-medium">{getConnectionLabel(type)}</span>
+                  </div>
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => moveConnectionOrder(index, Math.max(0, index - 1))}
+                      disabled={index === 0}
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => moveConnectionOrder(index, Math.min(esp32ConnectionOrder.length - 1, index + 1))}
+                      disabled={index === esp32ConnectionOrder.length - 1}
+                    >
+                      ↓
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Intervalo de Heartbeat */}
+          <div className="space-y-2">
+            <Label htmlFor="heartbeat-interval">{t('esp32.heartbeatInterval')}</Label>
+            <p className="text-xs text-muted-foreground">
+              {t('esp32.heartbeatDescription')}
+            </p>
+            <Input
+              id="heartbeat-interval"
+              type="number"
+              min={5000}
+              max={60000}
+              step={1000}
+              value={esp32HeartbeatIntervalMs}
+              onChange={(e) => handleHeartbeatChange(parseInt(e.target.value) || 15000)}
+              className="w-32"
+            />
+          </div>
+
+          {/* Limpar Última Conexão */}
+          <div className="pt-4 border-t">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleClearLastConnection}
+              className="flex items-center gap-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              {t('esp32.clearLastConnection')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
       
-      {/* ESP32 Connection Panel */}
-      <ESP32ConnectionPanel />
-      
+      {/* Configurações gerais da loja */}
       <SettingsPanel />
     </div>
   );

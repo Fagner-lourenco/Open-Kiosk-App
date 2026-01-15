@@ -68,9 +68,9 @@ const releaseResult = await esp32Printer.releaseDrink({
 
 ### Configuração de Conexão
 ```typescript
-// esp32PrinterService.ts
+// esp32PrinterService.ts / esp32SerialService.ts
 - Porta Serial: Configurável via Admin > Settings
-- Baudrate: 9600 bps
+- Baudrate: 115200 bps (padrão Open Kiosk)
 - Protocolo: JSON via UART
 - Terminador: '\n' (newline)
 ```

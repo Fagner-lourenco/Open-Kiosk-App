@@ -59,13 +59,13 @@ const ESP32ConnectionPanel: React.FC = () => {
       if (foundDevices.length === 0) {
         toast({
           title: t('common.error'),
-          description: 'Nenhum ESP32 encontrado',
+          description: t('esp32.noDevicesFound'),
           variant: 'destructive',
         });
       } else {
         toast({
           title: t('common.success'),
-          description: `${foundDevices.length} dispositivo(s) encontrado(s)`,
+          description: `${foundDevices.length} ${t('esp32.devicesFound').toLowerCase()}`,
         });
       }
     } catch (error) {
@@ -92,12 +92,12 @@ const ESP32ConnectionPanel: React.FC = () => {
         setConnectionStatus(esp32Service.getConnectionStatus());
         toast({
           title: t('common.success'),
-          description: `Conectado ao ${device.name}`,
+          description: `${t('esp32.connected')}: ${device.name}`,
         });
       } else {
         toast({
           title: t('common.error'),
-          description: 'Falha na conexão',
+          description: t('esp32.connectionFailed'),
           variant: 'destructive',
         });
       }
@@ -127,12 +127,12 @@ const ESP32ConnectionPanel: React.FC = () => {
         setConnectionStatus(esp32Service.getConnectionStatus());
         toast({
           title: t('common.success'),
-          description: `Conectado ao ESP32 em ${manualIp}`,
+          description: `${t('esp32.connected')}: ${manualIp}`,
         });
       } else {
         toast({
           title: t('common.error'),
-          description: 'Verifique o IP e se o ESP32 está acessível',
+          description: t('esp32.connectionFailed'),
           variant: 'destructive',
         });
       }
@@ -154,8 +154,8 @@ const ESP32ConnectionPanel: React.FC = () => {
     await esp32Service.disconnect();
     setConnectionStatus({ connected: false, type: 'none' });
     toast({
-      title: 'Desconectado',
-      description: 'Conexão encerrada',
+      title: t('esp32.disconnected'),
+      description: t('uart.portDisconnected'),
     });
   };
 
@@ -163,17 +163,18 @@ const ESP32ConnectionPanel: React.FC = () => {
    * Testar conexão
    */
   const handleTest = async () => {
-    const success = await esp32Service.beep(2);
+    // Usar ping em vez de beep (beep não existe no firmware)
+    const success = await esp32Service.ping();
 
     if (success) {
       toast({
         title: t('common.success'),
-        description: 'ESP32 respondeu ao comando',
+        description: t('esp32.deviceResponded'),
       });
     } else {
       toast({
         title: t('common.error'),
-        description: 'ESP32 não respondeu',
+        description: t('esp32.deviceNotResponding'),
         variant: 'destructive',
       });
     }
@@ -210,10 +211,10 @@ const ESP32ConnectionPanel: React.FC = () => {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Plug className="w-5 h-5" />
-          Conexão ESP32
+          {t('esp32.title')}
         </CardTitle>
         <CardDescription>
-          Conecte ao ESP32 via WiFi, Bluetooth ou USB
+          {t('esp32.description')}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -224,7 +225,7 @@ const ESP32ConnectionPanel: React.FC = () => {
             {getConnectionIcon(connectionStatus.type)}
             <div>
               <p className="font-medium">
-                {connectionStatus.connected ? 'Conectado' : 'Desconectado'}
+                {connectionStatus.connected ? t('esp32.connected') : t('esp32.disconnected')}
               </p>
               {connectionStatus.deviceName && (
                 <p className="text-sm text-gray-500">{connectionStatus.deviceName}</p>
@@ -235,11 +236,11 @@ const ESP32ConnectionPanel: React.FC = () => {
           <Badge variant={connectionStatus.connected ? 'default' : 'secondary'}>
             {connectionStatus.connected ? (
               <>
-                <CheckCircle className="w-3 h-3 mr-1" /> Online
+                <CheckCircle className="w-3 h-3 mr-1" /> {t('esp32.online')}
               </>
             ) : (
               <>
-                <XCircle className="w-3 h-3 mr-1" /> Offline
+                <XCircle className="w-3 h-3 mr-1" /> {t('esp32.offline')}
               </>
             )}
           </Badge>
@@ -249,26 +250,26 @@ const ESP32ConnectionPanel: React.FC = () => {
         {connectionStatus.connected ? (
           <div className="flex gap-2">
             <Button onClick={handleTest} variant="outline" className="flex-1">
-              Testar Conexão
+              {t('esp32.testConnection')}
             </Button>
             <Button onClick={handleDisconnect} variant="destructive" className="flex-1">
               <Unplug className="w-4 h-4 mr-2" />
-              Desconectar
+              {t('esp32.disconnect')}
             </Button>
           </div>
         ) : (
           <>
             {/* Scan Automático */}
             <div className="space-y-2">
-              <Label>Buscar Dispositivos Automaticamente</Label>
+              <Label>{t('esp32.scanDevices')}</Label>
               <Button onClick={handleScan} disabled={scanning} className="w-full">
                 {scanning ? (
                   <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Escaneando...
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" /> {t('esp32.scanning')}
                   </>
                 ) : (
                   <>
-                    <RefreshCw className="w-4 h-4 mr-2" /> Buscar ESP32
+                    <RefreshCw className="w-4 h-4 mr-2" /> {t('esp32.scanDevices')}
                   </>
                 )}
               </Button>
@@ -278,7 +279,7 @@ const ESP32ConnectionPanel: React.FC = () => {
             {devices.length > 0 && (
               <div className="space-y-2">
                 <Label>
-                  Dispositivos Encontrados ({devices.length})
+                  {t('esp32.devicesFound')} ({devices.length})
                 </Label>
                 <div className="space-y-2 max-h-48 overflow-y-auto border rounded-lg p-2">
                   {devices.map((device) => (
@@ -307,7 +308,7 @@ const ESP32ConnectionPanel: React.FC = () => {
                         {connecting ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
-                          'Conectar'
+                          t('uart.connect')
                         )}
                       </Button>
                     </div>
@@ -318,7 +319,7 @@ const ESP32ConnectionPanel: React.FC = () => {
 
             {/* Conexão Manual (WiFi) */}
             <div className="space-y-2 pt-4 border-t">
-              <Label>Conexão Manual (WiFi)</Label>
+              <Label>{t('esp32.manualWifi')}</Label>
               <div className="flex gap-2">
                 <Input
                   placeholder="192.168.1.100"
@@ -337,7 +338,7 @@ const ESP32ConnectionPanel: React.FC = () => {
                 </Button>
               </div>
               <p className="text-xs text-gray-500">
-                Digite o IP do ESP32 na sua rede local
+                {t('esp32.enterIp')}
               </p>
             </div>
           </>
@@ -345,16 +346,16 @@ const ESP32ConnectionPanel: React.FC = () => {
 
         {/* Informações */}
         <div className="p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
-          <p className="font-semibold mb-1">💡 Dicas de Conexão:</p>
+          <p className="font-semibold mb-1">💡 {t('esp32.tips')}:</p>
           <ul className="list-disc list-inside space-y-1 text-xs">
             <li>
-              <strong>WiFi:</strong> ESP32 e tablet na mesma rede
+              <strong>WiFi:</strong> {t('esp32.tipWifi')}
             </li>
             <li>
-              <strong>Bluetooth:</strong> Ative Bluetooth do tablet
+              <strong>Bluetooth:</strong> {t('esp32.tipBluetooth')}
             </li>
             <li>
-              <strong>USB:</strong> Use cabo OTG para tablet
+              <strong>USB:</strong> {t('esp32.tipUsb')}
             </li>
           </ul>
         </div>

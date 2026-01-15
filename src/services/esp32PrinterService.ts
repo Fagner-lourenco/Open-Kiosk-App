@@ -1,4 +1,3 @@
-
 import { CartItem } from '@/types/product';
 import { StoreSettings } from '@/types/store';
 
@@ -53,7 +52,7 @@ export class ESP32PrinterService {
         for (const port of ports) {
           try {
             if (!port.readable) {
-              await port.open({ baudRate: 9600 });
+              await port.open({ baudRate: 115200 }); // ESP32 usa 115200 baud
             }
             targetPort = port;
             break;
@@ -66,7 +65,7 @@ export class ESP32PrinterService {
         // If no existing port worked, request a new one
         if (!targetPort) {
           targetPort = await navigator.serial.requestPort();
-          await targetPort.open({ baudRate: 9600 });
+          await targetPort.open({ baudRate: 115200 }); // ESP32 usa 115200 baud
         }
         
         this.port = targetPort;

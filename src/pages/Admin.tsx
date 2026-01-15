@@ -11,7 +11,7 @@ import AdminReports from "@/components/AdminReports";
 import AdminSettings from "@/components/AdminSettings";
 import AdminOrders from "@/components/AdminOrders";
 import InventoryManager from "@/components/InventoryManager";
-import { ESP32TestPanel } from "@/components/ESP32TestPanel";
+import { ESP32DispenserPanel } from "@/components/ESP32DispenserPanel";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { Product } from "@/types/product";
 import { ProductWithInventory, InventoryLog } from "@/types/store";
@@ -153,7 +153,7 @@ export default function Admin() {
           </TabsContent>
           
           <TabsContent value="esp32">
-            <ESP32TestPanel />
+            <ESP32DispenserPanel />
           </TabsContent>
           
           <TabsContent value="settings">

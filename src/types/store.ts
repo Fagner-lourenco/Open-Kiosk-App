@@ -52,6 +52,9 @@ export interface Store {
 // Store Settings (Local + Firebase Config)
 // ============================================
 
+// Tipos de conexão ESP32
+export type ESP32ConnectionType = 'usb' | 'wifi' | 'bluetooth';
+
 export interface StoreSettings {
   name: string;
   storeId?: string;        // ID da loja no Firestore
@@ -72,6 +75,22 @@ export interface StoreSettings {
   attractTimeoutSeconds?: number;
   // Idioma da interface (salvo no Firebase para sincronizar entre dispositivos)
   language?: 'en' | 'pt-BR';
+  
+  // ============================================
+  // Configurações ESP32 Auto-Connect
+  // ============================================
+  
+  /** Habilita autoconexão ao iniciar (padrão: true) */
+  esp32AutoConnect?: boolean;
+  
+  /** Ordem de preferência para conexão (padrão: ['usb', 'wifi', 'bluetooth']) */
+  esp32ConnectionOrder?: ESP32ConnectionType[];
+  
+  /** Intervalo de heartbeat em ms (padrão: 15000) */
+  esp32HeartbeatIntervalMs?: number;
+  
+  /** Último IP WiFi do ESP32 (para reconexão) */
+  esp32LastWifiIp?: string;
 }
 
 export interface InventoryLog {
