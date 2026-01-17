@@ -5,6 +5,13 @@ import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId } fro
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, CollectionReference } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
+import { 
+  saveProductsToCache, 
+  loadProductsFromCache, 
+  updateProductInCache, 
+  removeProductFromCache,
+  isCacheStale,
+} from '@/services/productCacheService';
 
 // Shared subscription to avoid duplicate listeners when multiple components mount
 let productsGlobal: Product[] = [];
@@ -88,6 +95,16 @@ export const useFirebaseProducts = () => {
     });
 
     try {
+      // 1. OFFLINE-FIRST: Carrega do cache PRIMEIRO (não bloqueia UI)
+      const cachedProducts = await loadProductsFromCache();
+      if (cachedProducts && cachedProducts.length > 0) {
+        console.log('[useFirebaseProducts] Loaded from cache:', cachedProducts.length, 'products');
+        productsGlobal = cachedProducts;
+        loadingGlobal = false;
+        productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
+      }
+
+      // 2. Configura listener do Firebase (sync em background)
       const productsCollection = getProductsCollection(storeId);
       
       unsubscribeGlobal = onSnapshot(productsCollection, (snapshot) => {
@@ -95,27 +112,53 @@ export const useFirebaseProducts = () => {
           id: d.id,
           ...d.data()
         })) as Product[];
+        
         productsGlobal = productsData;
         loadingGlobal = false;
         errorGlobal = null;
+        
+        // Atualiza cache em background (não bloqueia)
+        saveProductsToCache(productsData).catch((err) => {
+          console.warn('[useFirebaseProducts] Error saving to cache:', err);
+        });
+        
         productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
       }, (snapshotError) => {
         console.error('[useFirebaseProducts] Error fetching products:', snapshotError);
         errorGlobal = snapshotError.message;
-        loadingGlobal = false;
-        if (!hasToastedError) {
-          toastRef.current({
-            title: "Error",
-            description: "Failed to fetch products from Firebase",
-            variant: "destructive"
-          });
-          hasToastedError = true;
+        
+        // Se offline e temos cache, não mostra erro
+        if (!navigator.onLine && productsGlobal.length > 0) {
+          console.log('[useFirebaseProducts] Offline, using cached data');
+          loadingGlobal = false;
+          errorGlobal = null;
+        } else {
+          loadingGlobal = false;
+          if (!hasToastedError) {
+            toastRef.current({
+              title: "Error",
+              description: "Failed to fetch products from Firebase",
+              variant: "destructive"
+            });
+            hasToastedError = true;
+          }
         }
+        
         productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
       });
       subscriptionActive = true;
     } catch (setupError) {
       console.error('[useFirebaseProducts] Error setting up products listener:', setupError);
+      
+      // Fallback: tenta carregar do cache se ainda não carregou
+      if (productsGlobal.length === 0) {
+        const cached = await loadProductsFromCache();
+        if (cached && cached.length > 0) {
+          productsGlobal = cached;
+          console.log('[useFirebaseProducts] Fallback to cache after error');
+        }
+      }
+      
       errorGlobal = setupError instanceof Error ? setupError.message : 'Unknown error';
       loadingGlobal = false;
       productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
@@ -196,6 +239,13 @@ export const useFirebaseProducts = () => {
       });
       
       console.log('[useFirebaseProducts] Product added with ID:', docRef.id);
+      
+      // Atualiza cache local com novo produto
+      const newProduct = { ...product, id: docRef.id } as Product;
+      updateProductInCache(newProduct).catch((err) => {
+        console.warn('[useFirebaseProducts] Error caching new product:', err);
+      });
+      
       toast({
         title: "Success",
         description: "Product added successfully"
@@ -249,6 +299,15 @@ export const useFirebaseProducts = () => {
       });
       
       console.log('[useFirebaseProducts] Product updated:', id);
+      
+      // Atualiza cache local
+      const updatedProduct = products.find(p => p.id === id);
+      if (updatedProduct) {
+        updateProductInCache({ ...updatedProduct, ...updates }).catch((err) => {
+          console.warn('[useFirebaseProducts] Error caching updated product:', err);
+        });
+      }
+      
       toast({
         title: "Success",
         description: "Product updated successfully"
@@ -277,6 +336,12 @@ export const useFirebaseProducts = () => {
       await deleteDoc(productDoc);
       
       console.log('[useFirebaseProducts] Product deleted:', id);
+      
+      // Remove do cache local
+      removeProductFromCache(id).catch((err) => {
+        console.warn('[useFirebaseProducts] Error removing from cache:', err);
+      });
+      
       toast({
         title: "Success",
         description: "Product deleted successfully"

@@ -91,6 +91,16 @@ export interface StoreSettings {
   
   /** Último IP WiFi do ESP32 (para reconexão) */
   esp32LastWifiIp?: string;
+  
+  // ============================================
+  // Configurações de Retirada de Bebida
+  // ============================================
+  
+  /** Timeout para iniciar retirada em segundos (padrão: 90) */
+  drinkPickupTimeoutSeconds?: number;
+  
+  /** Habilita som de confirmação ao completar dispensação (padrão: true) */
+  drinkPickupSoundEnabled?: boolean;
 }
 
 export interface InventoryLog {

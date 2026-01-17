@@ -9,6 +9,7 @@ import { CartItem } from "@/types/product";
 import { useTranslation } from "@/i18n";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+// NOTA: esp32Printer usado APENAS para impressão térmica (printReceipt), não para dispensação
 import { esp32Printer } from "@/services/esp32PrinterService";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";

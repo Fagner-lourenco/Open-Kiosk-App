@@ -81,15 +81,14 @@ export const useAdminPin = () => {
         return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
       } catch (error) {
         console.error('[useAdminPin] Erro ao gerar hash PBKDF2:', error);
-        // Fallback para hash simples
-        return btoa(input);
+        // SEGURANÇA: Não usar fallback inseguro - propagar erro
+        throw new Error('Falha ao gerar hash seguro do PIN. Verifique se o navegador suporta Web Crypto API.');
       }
     }
 
-    // Fallback: Base64 se SubtleCrypto não disponível
-    // AVISO: Base64 não é criptograficamente seguro, apenas encoding
-    console.warn('[useAdminPin] ⚠️ SubtleCrypto indisponível - usando Base64 (inseguro)');
-    return btoa(input);
+    // SEGURANÇA: Não permitir operação sem criptografia adequada
+    // Base64 não é hash, é encoding reversível - NÃO É SEGURO
+    throw new Error('Navegador não suporta operações criptográficas seguras (Web Crypto API). Use um navegador moderno.');
   };
 
   /**

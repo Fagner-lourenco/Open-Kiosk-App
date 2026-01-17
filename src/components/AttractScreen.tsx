@@ -5,6 +5,7 @@ import { Hand } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getFirebaseDb, getCurrentStoreId } from '@/services/firebase';
 import { AttractVideoSettings } from '@/types/store';
+import { useCachedVideo } from '@/hooks/useCachedVideo';
 
 type AttractScreenProps = {
   visible: boolean;
@@ -26,6 +27,17 @@ const AttractScreen = ({
   const [isEntering, setIsEntering] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const startTriggeredRef = useRef(false);
+
+  // Hook para cache de vídeo - baixa uma vez, usa do cache depois
+  const { 
+    videoUrl: cachedVideoUrl, 
+    isCached, 
+    isDownloading, 
+    downloadProgress 
+  } = useCachedVideo(
+    videoSettings?.videoUrl && videoSettings.isEnabled ? videoSettings.videoUrl : null,
+    { autoDownload: true, useFallbackWhileDownloading: true }
+  );
 
   // Título e subtítulo: prioridade props > Firebase > i18n
   const displayTitle = title || videoSettings?.displayTitle || t('attract.title');
@@ -137,23 +149,38 @@ const AttractScreen = ({
       <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-blue-50 z-0" />
 
       {/* Video background layer - z-index 1, acima do gradiente */}
-      {videoSettings?.videoUrl && videoSettings.isEnabled && (
-        <video
-          autoPlay
-          muted
-          loop
-          playsInline
-          className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
-          style={{
-            objectFit: videoSettings.videoCoverMode === 'contain' ? 'contain' : 'cover',
-            opacity: videoSettings.videoOpacity ?? 0.4,
-          }}
-          onError={(e) => {
-            console.error('Error loading attract video:', e);
-          }}
-        >
-          <source src={videoSettings.videoUrl} type="video/mp4" />
-        </video>
+      {/* Usa vídeo em cache quando disponível, fallback para URL original */}
+      {cachedVideoUrl && videoSettings?.isEnabled && (
+        <>
+          <video
+            autoPlay
+            muted
+            loop
+            playsInline
+            className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
+            style={{
+              objectFit: videoSettings.videoCoverMode === 'contain' ? 'contain' : 'cover',
+              opacity: videoSettings.videoOpacity ?? 0.4,
+            }}
+            onError={(e) => {
+              console.error('Error loading attract video:', e);
+            }}
+          >
+            <source src={cachedVideoUrl} type="video/mp4" />
+          </video>
+          
+          {/* Indicador de download/cache (apenas em dev ou debug) */}
+          {isDownloading && (
+            <div className="absolute bottom-4 right-4 z-[2] bg-black/60 text-white text-xs px-2 py-1 rounded">
+              Caching video: {downloadProgress}%
+            </div>
+          )}
+          {isCached && !isDownloading && process.env.NODE_ENV === 'development' && (
+            <div className="absolute bottom-4 right-4 z-[2] bg-green-600/60 text-white text-xs px-2 py-1 rounded">
+              ✓ Cached
+            </div>
+          )}
+        </>
       )}
 
       {/* Animated background elements */}

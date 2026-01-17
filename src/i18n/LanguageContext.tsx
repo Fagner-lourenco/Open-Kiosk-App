@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import en from './locales/en.json';
 import ptBR from './locales/pt-BR.json';
 
@@ -17,6 +17,8 @@ const translationsMap: Record<Language, Translations> = {
   'pt-BR': ptBR,
 };
 
+const LANGUAGE_STORAGE_KEY = 'kiosk_language';
+
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 interface LanguageProviderProps {
@@ -24,45 +26,88 @@ interface LanguageProviderProps {
   initialLanguage?: Language;
 }
 
-export const LanguageProvider = ({ children, initialLanguage = 'en' }: LanguageProviderProps) => {
-  const [language, setLanguageState] = useState<Language>(initialLanguage);
+/**
+ * Carrega idioma do localStorage (hot cache)
+ */
+const loadLanguageFromStorage = (): Language | null => {
+  try {
+    const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language;
+    if (saved && translationsMap[saved]) {
+      return saved;
+    }
+  } catch {
+    // localStorage indisponível
+  }
+  return null;
+};
 
-  // Sincronizar com initialLanguage quando ele mudar (ex: vindo do Firebase)
+/**
+ * Salva idioma no localStorage
+ */
+const saveLanguageToStorage = (lang: Language): void => {
+  try {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+  } catch {
+    // localStorage indisponível
+  }
+};
+
+export const LanguageProvider = ({ children, initialLanguage = 'en' }: LanguageProviderProps) => {
+  // Prioridade: localStorage > initialLanguage (Firebase) > 'en'
+  const [language, setLanguageState] = useState<Language>(() => {
+    const stored = loadLanguageFromStorage();
+    if (stored) {
+      return stored;
+    }
+    if (initialLanguage && translationsMap[initialLanguage]) {
+      return initialLanguage;
+    }
+    return 'en';
+  });
+
+  // Sincroniza quando initialLanguage muda (vindo do Firebase)
+  // Mas só atualiza se for diferente E se não houver valor salvo localmente
   useEffect(() => {
     if (initialLanguage && translationsMap[initialLanguage]) {
-      setLanguageState(initialLanguage);
-      try {
-        localStorage.setItem('kiosk_language', initialLanguage);
-      } catch {
-        // localStorage indisponível (modo privado, quota excedida)
+      const stored = loadLanguageFromStorage();
+      
+      // Se não há nada salvo localmente, usa o do Firebase
+      if (!stored) {
+        console.log('[LanguageContext] Setting language from Firebase:', initialLanguage);
+        setLanguageState(initialLanguage);
+        saveLanguageToStorage(initialLanguage);
+      } else if (stored !== initialLanguage) {
+        // Se o local é diferente do Firebase, mantém o local
+        // (usuário escolheu manualmente)
+        console.log('[LanguageContext] Keeping local language preference:', stored);
       }
     }
   }, [initialLanguage]);
 
-  // Carregar idioma do localStorage como fallback inicial
-  useEffect(() => {
+  /**
+   * Altera o idioma e persiste localmente
+   */
+  const setLanguage = useCallback((lang: Language) => {
+    if (!translationsMap[lang]) {
+      console.warn('[LanguageContext] Invalid language:', lang);
+      return;
+    }
+    
+    console.log('[LanguageContext] Setting language:', lang);
+    setLanguageState(lang);
+    saveLanguageToStorage(lang);
+    
+    // Notifica para sync com Firebase (via evento customizado)
     try {
-      const savedLang = localStorage.getItem('kiosk_language') as Language;
-      if (savedLang && translationsMap[savedLang]) {
-        setLanguageState(savedLang);
-      }
+      window.dispatchEvent(new CustomEvent('language-changed', { detail: { language: lang } }));
     } catch {
-      // localStorage indisponível
+      // Evento não suportado
     }
   }, []);
 
-  const setLanguage = (lang: Language) => {
-    setLanguageState(lang);
-    try {
-      localStorage.setItem('kiosk_language', lang);
-    } catch {
-      // localStorage indisponível
-    }
-  };
-
   // Função de tradução com suporte a nested keys: t('checkout.title')
   // E suporte a interpolação: t('shop.stockCount', { count: 5 }) -> "5 em estoque"
-  const t = (key: string, params?: Record<string, string | number>): string => {
+  const t = useCallback((key: string, params?: Record<string, string | number>): string => {
     const keys = key.split('.');
     let value: unknown = translationsMap[language];
     
@@ -95,7 +140,7 @@ export const LanguageProvider = ({ children, initialLanguage = 'en' }: LanguageP
     }
     
     return result;
-  };
+  }, [language]);
 
   return (
     <LanguageContext.Provider value={{ 

@@ -1,5 +1,27 @@
+/**
+ * @deprecated Este serviço está DEPRECIADO para funcionalidades de dispensação.
+ * 
+ * PROBLEMA: Este serviço mantém sua própria conexão serial separada, causando
+ * conflito de lock no WritableStream quando o ESP32Context já está conectado.
+ * 
+ * SOLUÇÃO: Para DISPENSAÇÃO, use o ESP32Context (useESP32 hook):
+ *   - import { useESP32 } from '@/context/ESP32Context';
+ *   - const { releaseDrink, status } = useESP32();
+ *   - await releaseDrink(orderId, mlPerUnit, quantity, sizeLabel);
+ * 
+ * Este serviço é mantido APENAS para funcionalidades de IMPRESSÃO TÉRMICA
+ * (generatePrintData, sendPrintData) quando necessário usar uma impressora
+ * separada do ESP32 dispensador.
+ * 
+ * Para novos desenvolvimentos, NÃO use esp32Printer.releaseDrink().
+ * 
+ * @see ESP32Context - Serviço unificado de comunicação ESP32
+ * @see esp32SerialService - Driver de baixo nível para USB Serial
+ */
+
 import { CartItem } from '@/types/product';
 import { StoreSettings } from '@/types/store';
+import esp32Serial from './esp32SerialService';
 
 interface PrinterResponse {
   success: boolean;
@@ -20,6 +42,10 @@ interface DrinkReleaseResponse {
   message: string;
 }
 
+/**
+ * @deprecated Use ESP32Context para dispensação.
+ * Mantido apenas para compatibilidade com impressão térmica.
+ */
 export class ESP32PrinterService {
   private port: SerialPort | null = null;
   private writer: WritableStreamDefaultWriter<Uint8Array> | null = null;
@@ -200,43 +226,63 @@ export class ESP32PrinterService {
     }
   }
 
+  /**
+   * @deprecated Use ESP32Context.releaseDrink() em vez deste método.
+   * 
+   * Este método agora delega para esp32Serial para evitar conflito de lock.
+   * O esp32Serial é o único dono da porta USB Serial.
+   */
   async releaseDrink(
     data: { orderId: string; sizeLabel: string; mlPerUnit: number; quantity: number },
     settings?: StoreSettings
   ): Promise<DrinkReleaseResponse> {
+    console.warn(
+      '[esp32PrinterService] ⚠️ DEPRECATED: Use ESP32Context.releaseDrink() em vez de esp32Printer.releaseDrink(). ' +
+      'Delegando para esp32Serial...'
+    );
+    
     try {
-      if (!this.writer) {
-        if (settings?.comPort) {
-          const connected = await this.connectToComPort(settings.comPort);
-          if (!connected || !this.writer) {
-            return {
-              success: false,
-              message: `Failed to connect to COM port ${settings.comPort}`,
-            };
-          }
-        } else {
-          return { success: false, message: 'ESP32 not connected and no COM port configured' };
-        }
+      // NOVA LÓGICA: Usar esp32Serial (serviço unificado) para evitar conflito de lock
+      if (esp32Serial.isConnected()) {
+        console.log('[esp32PrinterService] Usando esp32Serial (já conectado)');
+        const success = await esp32Serial.releaseDrink(
+          data.orderId,
+          data.mlPerUnit,
+          data.quantity,
+          data.sizeLabel
+        );
+        return {
+          success,
+          message: success ? 'Drink release signal sent via unified serial service' : 'Failed to send command',
+        };
       }
-
-      const payload: ReleaseDrinkPayload = {
-        action: 'release_drink',
-        orderId: data.orderId,
-        sizeLabel: data.sizeLabel,
-        mlPerUnit: data.mlPerUnit,
-        quantity: data.quantity,
-        timestamp: new Date().toISOString(),
+      
+      // Tentar reconectar via esp32Serial se não estiver conectado
+      console.log('[esp32PrinterService] esp32Serial não conectado, tentando reconectar...');
+      const reconnected = await esp32Serial.tryAutoReconnect();
+      
+      if (reconnected) {
+        console.log('[esp32PrinterService] Reconectado via esp32Serial');
+        const success = await esp32Serial.releaseDrink(
+          data.orderId,
+          data.mlPerUnit,
+          data.quantity,
+          data.sizeLabel
+        );
+        return {
+          success,
+          message: success ? 'Drink release signal sent via unified serial service' : 'Failed to send command',
+        };
+      }
+      
+      // Fallback: Se esp32Serial não conseguiu conectar, retornar erro claro
+      console.error('[esp32PrinterService] Não foi possível conectar ao ESP32');
+      return {
+        success: false,
+        message: 'ESP32 não conectado. Conecte via painel de administração primeiro.',
       };
-
-      const jsonString = JSON.stringify(payload);
-      const encodedData = new TextEncoder().encode(jsonString + '\n');
-
-      console.log('Sending drink release command:', payload);
-      await this.writer.write(encodedData);
-
-      return { success: true, message: 'Drink release signal sent to ESP32' };
     } catch (error) {
-      console.error('Failed to send drink release command:', error);
+      console.error('[esp32PrinterService] Failed to send drink release command:', error);
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to send drink release signal',

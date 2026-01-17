@@ -1,3 +1,9 @@
+/**
+ * ESP32TestPanel - Painel de teste para dispensação
+ * 
+ * Usa o ESP32Context (serviço unificado) para comunicação.
+ */
+
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,38 +12,30 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
-import { esp32Printer } from "@/services/esp32PrinterService";
+import { useESP32 } from "@/context/ESP32Context";
+import esp32Serial from "@/services/esp32SerialService";
 import { Beaker, Loader2, CheckCircle, XCircle, Wifi, WifiOff } from "lucide-react";
 
 export function ESP32TestPanel() {
   const { toast } = useToast();
   const { settings: storeSettings } = useStoreSettings();
-  const [isConnected, setIsConnected] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testMl, setTestMl] = useState(300);
   const [testQuantity, setTestQuantity] = useState(1);
   const [lastResponse, setLastResponse] = useState<string>("");
+  
+  // Usar ESP32Context para status e comandos unificados
+  const { status, releaseDrink, isConnecting } = useESP32();
+  const isConnected = status.connected;
 
   const handleConnect = async () => {
-    if (!storeSettings?.comPort) {
-      toast({
-        title: "⚠️ Porta COM não configurada",
-        description: "Configure a porta COM em Admin > Configurações",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setIsConnecting(true);
     try {
-      const connected = await esp32Printer.connectToComPort(storeSettings.comPort);
-      setIsConnected(connected);
+      const connected = await esp32Serial.connect();
       
       if (connected) {
         toast({
           title: "✅ ESP32 Conectado",
-          description: `Conectado na porta ${storeSettings.comPort}`,
+          description: "Conectado via USB Serial",
         });
       } else {
         toast({
@@ -52,15 +50,12 @@ export function ESP32TestPanel() {
         description: error instanceof Error ? error.message : "Erro desconhecido",
         variant: "destructive"
       });
-    } finally {
-      setIsConnecting(false);
     }
   };
 
   const handleDisconnect = async () => {
     try {
-      await esp32Printer.disconnect();
-      setIsConnected(false);
+      await esp32Serial.disconnect();
       toast({
         title: "🔌 Desconectado",
         description: "ESP32 desconectado com sucesso",
@@ -75,27 +70,21 @@ export function ESP32TestPanel() {
   };
 
   const handleTestDispense = async () => {
-    if (!isConnected && storeSettings?.comPort) {
-      await handleConnect();
-    }
-
     setIsTesting(true);
     setLastResponse("");
 
     try {
-      const result = await esp32Printer.releaseDrink(
-        {
-          orderId: `TEST-${Date.now()}`,
-          sizeLabel: `Teste ${testMl}ml`,
-          mlPerUnit: testMl,
-          quantity: testQuantity,
-        },
-        storeSettings || undefined
+      // Usar o serviço unificado via ESP32Context
+      const success = await releaseDrink(
+        `TEST-${Date.now()}`,
+        testMl,
+        testQuantity,
+        `Teste ${testMl}ml`
       );
 
-      setLastResponse(JSON.stringify(result, null, 2));
+      setLastResponse(JSON.stringify({ success, timestamp: new Date().toISOString() }, null, 2));
 
-      if (result.success) {
+      if (success) {
         toast({
           title: "🎯 Comando Enviado",
           description: `Dispensando ${testMl}ml x ${testQuantity} copo(s)`,
@@ -103,7 +92,7 @@ export function ESP32TestPanel() {
       } else {
         toast({
           title: "❌ Falha no Envio",
-          description: result.message,
+          description: "Não foi possível enviar comando. Verifique a conexão.",
           variant: "destructive"
         });
       }
@@ -151,10 +140,10 @@ export function ESP32TestPanel() {
 
       {/* Conexão */}
       <div className="space-y-3">
-        <Label className="text-sm font-medium">Porta COM Configurada</Label>
+        <Label className="text-sm font-medium">Conexão USB Serial</Label>
         <div className="flex items-center gap-3">
           <Input 
-            value={storeSettings?.comPort || "Não configurada"}
+            value={isConnected ? (status.deviceName || "USB Serial") : "Não conectado"}
             disabled
             className="flex-1"
           />
@@ -169,7 +158,7 @@ export function ESP32TestPanel() {
           ) : (
             <Button 
               onClick={handleConnect}
-              disabled={isConnecting || !storeSettings?.comPort}
+              disabled={isConnecting}
               className="w-32"
             >
               {isConnecting ? (
@@ -183,6 +172,9 @@ export function ESP32TestPanel() {
             </Button>
           )}
         </div>
+        <p className="text-xs text-muted-foreground">
+          Clique em Conectar para selecionar a porta USB no navegador.
+        </p>
       </div>
 
       {/* Configuração do Teste */}

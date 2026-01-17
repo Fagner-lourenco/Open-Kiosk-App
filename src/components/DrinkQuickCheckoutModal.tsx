@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
-import { esp32Printer } from "@/services/esp32PrinterService";
+import { useESP32 } from "@/context/ESP32Context";
 import { paymentService } from "@/services/paymentService";
 import { CartItem, Product } from "@/types/product";
 import { useSettings } from "@/hooks/useSettings";
@@ -67,6 +67,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const { toast } = useToast();
   const { settings: storeSettings } = useStoreSettings();
   const { t } = useTranslation();
+  
+  // Hook unificado para comunicação ESP32
+  const { releaseDrink: esp32ReleaseDrink, status: esp32Status } = useESP32();
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
@@ -408,21 +411,30 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       updateProcessingStage("dispensing");
 
       try {
-        const releaseResult = await esp32Printer.releaseDrink(
-          {
-            orderId: orderNumber,
-            sizeLabel: selectedSize.label,
-            mlPerUnit: selectedSize.ml,
-            quantity,
-          },
-          storeSettings || undefined
+        // Usar o serviço unificado via ESP32Context
+        console.log('[DrinkMP] 🍺 Enviando comando de dispensação via ESP32Context...');
+        console.log('[DrinkMP] Status ESP32:', esp32Status.connected ? 'Conectado' : 'Desconectado');
+        
+        const releaseSuccess = await esp32ReleaseDrink(
+          orderNumber,
+          selectedSize.ml,
+          quantity,
+          selectedSize.label
         );
 
-        if (!releaseResult.success) {
-          toast({ title: t('checkout.dispenserWarning'), description: releaseResult.message, variant: "destructive" });
+        if (!releaseSuccess) {
+          toast({ 
+            title: t('checkout.dispenserWarning'), 
+            description: esp32Status.connected 
+              ? t('checkout.dispenserCommandFailed') 
+              : t('checkout.dispenserNotConnected'), 
+            variant: "destructive" 
+          });
+        } else {
+          console.log('[DrinkMP] ✅ Comando de dispensação enviado com sucesso');
         }
       } catch (esp32Error) {
-        console.warn("ESP32 release failed (non-blocking):", esp32Error);
+        console.warn("[DrinkMP] ESP32 release failed (non-blocking):", esp32Error);
         toast({
           title: t('checkout.dispenserWarning'),
           description: t('checkout.dispenserNotAvailable'),

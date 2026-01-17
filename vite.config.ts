@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { VitePWA } from 'vite-plugin-pwa';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -46,6 +47,100 @@ export default defineConfig(({ mode }) => ({
     react(),
     mode === 'development' &&
     componentTagger(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['robots.txt'],
+      workbox: {
+        // Precache de assets estáticos
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        // Excluir arquivos grandes do precache
+        globIgnores: ['**/attract/**', '**/node_modules/**'],
+        // Aumentar limite para 5MB
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // Runtime caching strategies
+        runtimeCaching: [
+          {
+            // Cache de fontes (Google Fonts, etc)
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 365, // 1 ano
+              },
+              cacheableResponse: {
+                statuses: [0, 200],
+              },
+            },
+          },
+          {
+            // Cache de imagens externas
+            urlPattern: /\.(?:png|jpg|jpeg|svg|gif|webp)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'images-cache',
+              expiration: {
+                maxEntries: 100,
+                maxAgeSeconds: 60 * 60 * 24 * 30, // 30 dias
+              },
+            },
+          },
+          {
+            // Network First para API Firebase (dados sempre frescos quando online)
+            urlPattern: /^https:\/\/firestore\.googleapis\.com\/.*/i,
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'firebase-cache',
+              expiration: {
+                maxEntries: 50,
+                maxAgeSeconds: 60 * 60 * 24, // 1 dia
+              },
+              networkTimeoutSeconds: 10,
+            },
+          },
+          {
+            // Cache de vídeos (StaleWhileRevalidate para melhor UX)
+            urlPattern: /\.(?:mp4|webm|ogg)$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'videos-cache',
+              expiration: {
+                maxEntries: 10,
+                maxAgeSeconds: 60 * 60 * 24 * 7, // 7 dias
+              },
+              rangeRequests: true,
+            },
+          },
+        ],
+      },
+      manifest: {
+        name: 'Open Kiosk App',
+        short_name: 'Kiosk',
+        description: 'Sistema de autoatendimento para lojas',
+        theme_color: '#2563eb',
+        background_color: '#ffffff',
+        display: 'standalone',
+        orientation: 'portrait',
+        scope: '/',
+        start_url: '/',
+        icons: [
+          {
+            src: '/attract/beer-mug.png',
+            sizes: '192x192',
+            type: 'image/png',
+          },
+          {
+            src: '/attract/beer-mug.png',
+            sizes: '512x512',
+            type: 'image/png',
+          },
+        ],
+      },
+      devOptions: {
+        enabled: false, // Desabilitar em dev para evitar conflitos
+      },
+    }),
   ].filter(Boolean),
   resolve: {
     alias: {

@@ -129,6 +129,14 @@ int targetMl = 0;
 unsigned long dispensingStartTime = 0;
 unsigned long lastStatusUpdate = 0;
 unsigned long lastHeartbeat = 0;
+unsigned long firstPulseTime = 0;       // Momento em que o usuário abriu a torneira
+bool flowStarted = false;                // Flag: usuário já abriu a torneira?
+
+// ----- Timeout de Segurança (Torneira Manual) -----
+// Timeout máximo para a sessão completa (usuário pode demorar para abrir a torneira)
+const unsigned long SESSION_TIMEOUT_MS = 300000;  // 5 minutos (300 segundos)
+// Timeout após o fluxo parar (sensor parou de detectar pulsos)
+const unsigned long NO_FLOW_TIMEOUT_MS = 10000;   // 10 segundos sem pulsos após iniciar
 
 // ============================================================================
 // 🆕 DECLARAÇÕES ANTECIPADAS DE FUNÇÕES (Forward Declarations)
@@ -140,6 +148,7 @@ void processCommand(String jsonString);
 String processCommandAndGetResult(String jsonString);
 void sendStatus(const char* orderId, const char* stage, String message);
 void sendProgress(const char* orderId, int cup, float mlDispensed, int target, int percent);
+void sendProgressExtended(const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec);
 void openValve();
 void closeValve();
 void processDispensing();
@@ -746,6 +755,8 @@ String handleReleaseDrink(JsonDocument& doc) {
   currentCup = 1;
   totalMlDispensed = 0;
   pulseCount = 0;
+  flowStarted = false;      // Aguardar usuário abrir a torneira
+  firstPulseTime = 0;       // Resetar tempo do primeiro pulso
   
   // Log detalhado
   Serial.println();
@@ -931,60 +942,124 @@ void closeValve() {
 }
 
 // ============================================================================
-// PROCESSAMENTO DA DISPENSAÇÃO
+// PROCESSAMENTO DA DISPENSAÇÃO (TORNEIRA MANUAL ITALIANA)
 // ============================================================================
+// O sistema usa torneira italiana manual. O usuário abre quando desejar.
+// O firmware aguarda indefinidamente o primeiro pulso, respeitando apenas
+// o timeout global de segurança (SESSION_TIMEOUT_MS).
 
 void processDispensing() {
-  // Calcular ml dispensados baseado nos pulsos do sensor
-  float mlFromSensor = pulseCount * (1000.0 / pulsosPorLitro);
+  unsigned long now = millis();
+  unsigned long sessionElapsedMs = now - dispensingStartTime;
   
-  // Calcular ml baseado no tempo (backup)
-  unsigned long elapsedMs = millis() - dispensingStartTime;
-  float mlFromTime = (elapsedMs / 1000.0) * mlPorSegundo;
-  
-  // Usar o maior valor entre sensor e tempo (mais seguro)
-  if (mlFromSensor > 0) {
-    totalMlDispensed = mlFromSensor;
-  } else {
-    // Sensor não está detectando - usar tempo como backup
-    totalMlDispensed = mlFromTime;
+  // ============================================
+  // DETECTAR PRIMEIRO PULSO (usuário abriu a torneira)
+  // ============================================
+  if (!flowStarted && pulseCount > 0) {
+    flowStarted = true;
+    firstPulseTime = now;
+    Serial.println("[DISPENSE] 🚿 Fluxo detectado! Usuário abriu a torneira.");
   }
   
-  // Calcular progresso
+  // ============================================
+  // CALCULAR ML DISPENSADOS
+  // ============================================
+  if (flowStarted) {
+    // Usar sensor de fluxo como fonte primária
+    float mlFromSensor = pulseCount * (1000.0 / pulsosPorLitro);
+    
+    // Fallback por tempo: APENAS se o sensor parou de funcionar após ter iniciado
+    unsigned long timeSinceLastPulse = now - lastPulseTime;
+    
+    if (pulseCount > 0) {
+      // Sensor funcionando normalmente
+      totalMlDispensed = mlFromSensor;
+    } else if (timeSinceLastPulse > 3000) {
+      // Sensor parou há mais de 3 segundos - possível falha do sensor
+      // Usar estimativa por tempo como backup
+      unsigned long flowElapsedMs = now - firstPulseTime;
+      float mlFromTime = (flowElapsedMs / 1000.0) * mlPorSegundo;
+      totalMlDispensed = max(mlFromSensor, mlFromTime);
+      Serial.println("[DISPENSE] ⚠️ Usando fallback por tempo - sensor pode estar com problema");
+    }
+  } else {
+    // Aguardando usuário abrir a torneira - não calcular por tempo!
+    totalMlDispensed = 0;
+  }
+  
+  // ============================================
+  // CALCULAR PROGRESSO E TEMPOS
+  // ============================================
   int progress = (targetMl > 0) ? (int)((totalMlDispensed / targetMl) * 100) : 0;
+  if (progress > 100) progress = 100;
   
-  // 🔴 LED PISCANDO durante dispensação (feedback visual)
-  if (millis() % 500 < 250) {
-    digitalWrite(LED_PIN, HIGH);
+  int elapsedSeconds = sessionElapsedMs / 1000;
+  int remainingSeconds = (SESSION_TIMEOUT_MS - sessionElapsedMs) / 1000;
+  if (remainingSeconds < 0) remainingSeconds = 0;
+  
+  // ============================================
+  // LED: Feedback visual
+  // ============================================
+  if (!flowStarted) {
+    // Aguardando: LED pisca lento (1s on, 1s off)
+    if ((now / 1000) % 2 == 0) {
+      digitalWrite(LED_PIN, HIGH);
+    } else {
+      digitalWrite(LED_PIN, LOW);
+    }
   } else {
-    digitalWrite(LED_PIN, LOW);
+    // Dispensando: LED pisca rápido (250ms)
+    if ((now / 250) % 2 == 0) {
+      digitalWrite(LED_PIN, HIGH);
+    } else {
+      digitalWrite(LED_PIN, LOW);
+    }
   }
   
-  // Enviar atualização de progresso a cada 250ms
-  if (millis() - lastStatusUpdate > 250) {
-    sendProgress(currentOrderId.c_str(), currentCup, totalMlDispensed, targetMl, progress);
-    lastStatusUpdate = millis();
+  // ============================================
+  // ENVIAR PROGRESSO (a cada 250ms)
+  // ============================================
+  if (now - lastStatusUpdate > 250) {
+    sendProgressExtended(
+      currentOrderId.c_str(), 
+      currentCup, 
+      totalCups,
+      totalMlDispensed, 
+      targetMl, 
+      progress,
+      flowStarted,
+      elapsedSeconds,
+      remainingSeconds
+    );
+    lastStatusUpdate = now;
     
     // Log no serial
-    Serial.print("[DISPENSE] Copo ");
-    Serial.print(currentCup);
-    Serial.print("/");
-    Serial.print(totalCups);
-    Serial.print(" | ");
-    Serial.print(totalMlDispensed, 0);
-    Serial.print("/");
-    Serial.print(targetMl);
-    Serial.print("ml (");
-    Serial.print(progress);
-    Serial.println("%)");
+    if (flowStarted) {
+      Serial.print("[DISPENSE] Copo ");
+      Serial.print(currentCup);
+      Serial.print("/");
+      Serial.print(totalCups);
+      Serial.print(" | ");
+      Serial.print(totalMlDispensed, 0);
+      Serial.print("/");
+      Serial.print(targetMl);
+      Serial.print("ml (");
+      Serial.print(progress);
+      Serial.print("%) | Pulsos: ");
+      Serial.println(pulseCount);
+    } else {
+      Serial.println("[DISPENSE] ⏳ Aguardando usuário abrir a torneira... (" + String(elapsedSeconds) + "s)");
+    }
   }
   
-  // Verificar se atingiu o volume alvo
-  if (totalMlDispensed >= targetMl) {
+  // ============================================
+  // VERIFICAR CONCLUSÃO DO COPO
+  // ============================================
+  if (flowStarted && totalMlDispensed >= targetMl) {
     // Copo concluído!
     closeValve();
     
-    // 🟢 LED ACESO fixo por 1 segundo (sucesso)
+    // LED ACESO fixo por 1 segundo (sucesso)
     digitalWrite(LED_PIN, HIGH);
     delay(1000);
     digitalWrite(LED_PIN, LOW);
@@ -997,10 +1072,10 @@ void processDispensing() {
     
     // Verificar se há mais copos
     if (currentCup < totalCups) {
-      // Aguardar um pouco antes do próximo copo
+      // Aguardar antes do próximo copo
       sendStatus(currentOrderId.c_str(), "waiting_next", "Aguardando para próximo copo...");
       
-      // 🟡 LED piscando lento durante espera
+      // LED piscando lento durante espera
       Serial.println("[DISPENSE] ⏳ Aguardando retirada do copo...");
       for (int i = 0; i < 4; i++) {
         digitalWrite(LED_PIN, HIGH);
@@ -1013,7 +1088,9 @@ void processDispensing() {
       currentCup++;
       pulseCount = 0;
       totalMlDispensed = 0;
-      dispensingStartTime = millis();
+      flowStarted = false;        // Resetar - aguardar usuário abrir novamente
+      firstPulseTime = 0;
+      dispensingStartTime = millis();  // Resetar timer da sessão
       
       // Abrir válvula para próximo copo
       openValve();
@@ -1023,7 +1100,7 @@ void processDispensing() {
       // Todos os copos concluídos!
       isDispensing = false;
       
-      // 🟢 LED com 3 piscadas longas (pedido completo!)
+      // LED com 3 piscadas longas (pedido completo!)
       Serial.println("[DISPENSE] 🎉 Todos os copos concluídos!");
       for (int i = 0; i < 3; i++) {
         digitalWrite(LED_PIN, HIGH);
@@ -1046,15 +1123,32 @@ void processDispensing() {
       
       currentOrderId = "";
     }
+    return;
   }
   
-  // Timeout de segurança (máximo 60 segundos por copo)
-  if (elapsedMs > 60000) {
+  // ============================================
+  // TIMEOUT: Fluxo parou após ter iniciado
+  // ============================================
+  if (flowStarted) {
+    unsigned long timeSinceLastPulse = now - lastPulseTime;
+    
+    // Se o sensor não detecta pulsos há NO_FLOW_TIMEOUT_MS após ter iniciado
+    if (timeSinceLastPulse > NO_FLOW_TIMEOUT_MS && totalMlDispensed < targetMl) {
+      Serial.println("[DISPENSE] ⚠️ Fluxo parou - usuário fechou a torneira antes de completar?");
+      // Não fechar automaticamente - pode ser pausa temporária
+      // Apenas avisar no log
+    }
+  }
+  
+  // ============================================
+  // TIMEOUT GLOBAL DE SEGURANÇA
+  // ============================================
+  if (sessionElapsedMs > SESSION_TIMEOUT_MS) {
     closeValve();
     isDispensing = false;
     
-    // 🔴 LED piscando rápido (ERRO!)
-    Serial.println("[ERROR] ⚠️ Timeout! Dispensação interrompida por segurança");
+    // LED piscando rápido (ERRO!)
+    Serial.println("[ERROR] ⚠️ Timeout global! Sessão expirada após " + String(SESSION_TIMEOUT_MS/1000) + " segundos");
     for (int i = 0; i < 5; i++) {
       digitalWrite(LED_PIN, HIGH);
       delay(100);
@@ -1062,7 +1156,7 @@ void processDispensing() {
       delay(100);
     }
     
-    sendStatus(currentOrderId.c_str(), "error", "Timeout - dispensação interrompida por segurança");
+    sendStatus(currentOrderId.c_str(), "error", "Timeout - sessão expirada por segurança");
     currentOrderId = "";
   }
 }
@@ -1102,6 +1196,33 @@ void sendProgress(const char* orderId, int cup, float mlDispensed, int target, i
   doc["ml"] = (int)mlDispensed;
   doc["target"] = target;
   doc["percent"] = percent;
+  
+  String json;
+  serializeJson(doc, json);
+  
+  // Enviar via Serial
+  Serial.println(json);
+  
+  // Enviar via Bluetooth (se conectado)
+  if (deviceConnected && pCharacteristic != NULL) {
+    pCharacteristic->setValue(json.c_str());
+    pCharacteristic->notify();
+  }
+}
+
+// Enviar progresso estendido (para torneira manual com mais informações)
+void sendProgressExtended(const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec) {
+  JsonDocument doc;
+  doc["type"] = "progress";
+  doc["orderId"] = orderId;
+  doc["cup"] = cup;
+  doc["total_cups"] = totalCupsCount;
+  doc["ml"] = (int)mlDispensed;
+  doc["target"] = target;
+  doc["percent"] = percent;
+  doc["flow_started"] = flowStartedFlag;
+  doc["elapsed_seconds"] = elapsedSec;
+  doc["remaining_seconds"] = remainingSec;
   
   String json;
   serializeJson(doc, json);

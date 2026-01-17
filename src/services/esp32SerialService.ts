@@ -23,6 +23,10 @@ export interface ESP32Response {
   ml?: number;
   target?: number;
   percent?: number;
+  // Campos de progresso estendido (torneira manual v2.1+)
+  flow_started?: boolean;
+  elapsed_seconds?: number;
+  remaining_seconds?: number;
   // Campos de status
   device?: string;
   status?: string;

@@ -1,3 +1,10 @@
+/**
+ * OrderHistory - Histórico de pedidos com opção de reimprimir recibos
+ * 
+ * NOTA: Este componente usa esp32Printer APENAS para IMPRESSÃO TÉRMICA,
+ * não para dispensação de bebidas. O uso do esp32Printer aqui é apropriado
+ * pois impressora térmica pode ser um dispositivo separado do dispensador.
+ */
 
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";

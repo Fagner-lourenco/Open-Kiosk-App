@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2 } from "lucide-react";
+import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2 } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useLanguage, useTranslation } from "@/i18n";
@@ -25,6 +25,10 @@ export default function AdminSettings() {
   const esp32AutoConnect = settings?.esp32AutoConnect ?? true;
   const esp32ConnectionOrder = settings?.esp32ConnectionOrder ?? ['usb', 'wifi', 'bluetooth'];
   const esp32HeartbeatIntervalMs = settings?.esp32HeartbeatIntervalMs ?? 15000;
+  
+  // Drink Pickup settings com defaults
+  const drinkPickupTimeoutSeconds = settings?.drinkPickupTimeoutSeconds ?? 90;
+  const drinkPickupSoundEnabled = settings?.drinkPickupSoundEnabled ?? true;
 
   const handleLanguageChange = async (newLanguage: Language) => {
     try {
@@ -69,6 +73,23 @@ export default function AdminSettings() {
   const handleClearLastConnection = () => {
     esp32Service.clearLastConnection();
     toast.success(t('esp32.lastConnectionCleared'));
+  };
+
+  const handlePickupTimeoutChange = async (seconds: number) => {
+    if (settings && seconds >= 30 && seconds <= 300) {
+      await updateSettings({ ...settings, drinkPickupTimeoutSeconds: seconds });
+      toast.success(t('drinkPickup.timeoutUpdated') || `Timeout atualizado: ${seconds}s`);
+    }
+  };
+
+  const handlePickupSoundChange = async (enabled: boolean) => {
+    if (settings) {
+      await updateSettings({ ...settings, drinkPickupSoundEnabled: enabled });
+      toast.success(enabled 
+        ? (t('drinkPickup.soundEnabled') || 'Som de confirmação ativado')
+        : (t('drinkPickup.soundDisabled') || 'Som de confirmação desativado')
+      );
+    }
   };
 
   const moveConnectionOrder = (from: number, to: number) => {
@@ -234,6 +255,58 @@ export default function AdminSettings() {
               <Trash2 className="h-4 w-4" />
               {t('esp32.clearLastConnection')}
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Configurações de Retirada de Bebida */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Beer className="h-5 w-5" />
+            {t('drinkPickup.settingsTitle') || 'Retirada de Bebida'}
+          </CardTitle>
+          <CardDescription>
+            {t('drinkPickup.settingsDescription') || 'Configure o tempo máximo para retirada e feedback sonoro'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Timeout para iniciar retirada */}
+          <div className="space-y-2">
+            <Label htmlFor="pickup-timeout">
+              {t('drinkPickup.timeoutLabel') || 'Tempo máximo para iniciar (segundos)'}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t('drinkPickup.timeoutDescription') || 'Tempo que o usuário tem para posicionar o copo e abrir a torneira antes da sessão expirar'}
+            </p>
+            <Input
+              id="pickup-timeout"
+              type="number"
+              min={30}
+              max={300}
+              step={10}
+              value={drinkPickupTimeoutSeconds}
+              onChange={(e) => handlePickupTimeoutChange(parseInt(e.target.value) || 90)}
+              className="w-32"
+            />
+          </div>
+
+          {/* Som de confirmação */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label htmlFor="pickup-sound" className="flex items-center gap-2">
+                <Volume2 className="h-4 w-4" />
+                {t('drinkPickup.soundLabel') || 'Som de confirmação'}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t('drinkPickup.soundDescription') || 'Reproduz um som ao concluir a dispensação da bebida'}
+              </p>
+            </div>
+            <Switch
+              id="pickup-sound"
+              checked={drinkPickupSoundEnabled}
+              onCheckedChange={handlePickupSoundChange}
+            />
           </div>
         </CardContent>
       </Card>

@@ -1,5 +1,5 @@
 
-import { useEffect } from "react";
+import { useEffect, Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -20,6 +20,9 @@ import Index from "./pages/Index";
 import Admin from "./pages/Admin";
 import Shop from "./pages/Shop";
 import NotFound from "./pages/NotFound";
+
+// PWA Update Prompt - lazy loaded para não bloquear
+const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
 
 const queryClient = new QueryClient();
 
@@ -43,6 +46,28 @@ const AppContent = () => {
 
     return () => {
       backButtonListener.then(listener => listener.remove());
+    };
+  }, []);
+
+  // Listener para visibilitychange - trata transições background/foreground no Android
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[App] App voltou ao foreground');
+        // Re-verificar conexão de rede
+        if (navigator.onLine) {
+          // Trigger online event para resync se necessário
+          window.dispatchEvent(new Event('online'));
+        }
+      } else {
+        console.log('[App] App foi para background');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
@@ -83,6 +108,10 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AppContent />
+      {/* PWA Update Prompt */}
+      <Suspense fallback={null}>
+        <PWAUpdatePrompt />
+      </Suspense>
     </TooltipProvider>
   </QueryClientProvider>
 );

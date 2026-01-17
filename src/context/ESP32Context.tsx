@@ -35,6 +35,12 @@ export interface ESP32DispensingProgress {
   ml: number;
   targetMl: number;
   percent: number;
+  /** Se o fluxo já começou (usuário abriu a torneira) */
+  flowStarted: boolean;
+  /** Segundos decorridos desde o início da sessão */
+  elapsedSeconds: number;
+  /** Segundos restantes até o timeout global */
+  remainingSeconds: number;
 }
 
 export interface ESP32Settings {
@@ -172,6 +178,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           ml: response.ml || 0,
           targetMl: response.target || response.target_ml || 0,
           percent: response.percent || 0,
+          flowStarted: response.flow_started ?? false,
+          elapsedSeconds: response.elapsed_seconds ?? 0,
+          remainingSeconds: response.remaining_seconds ?? 300,
         });
         break;
         
@@ -433,6 +442,36 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     quantity: number = 1,
     sizeLabel: string = 'Padrão'
   ): Promise<boolean> => {
+    console.log('[ESP32Context] releaseDrink chamado:', { orderId, mlPerUnit, quantity, sizeLabel });
+    console.log('[ESP32Context] Status atual:', status);
+    
+    // Verificar se está conectado via USB Serial
+    const isSerialConnected = esp32Serial.isConnected();
+    console.log('[ESP32Context] esp32Serial.isConnected():', isSerialConnected);
+    
+    // Se não estiver conectado, tentar reconexão automática
+    if (!isSerialConnected) {
+      console.log('[ESP32Context] Não conectado, tentando reconexão automática...');
+      addLog('info', '🔄 Tentando reconectar para dispensar...');
+      
+      const reconnected = await esp32Serial.tryAutoReconnect();
+      
+      if (!reconnected) {
+        console.error('[ESP32Context] Falha na reconexão automática');
+        addLog('error', '❌ Falha na reconexão - ESP32 não conectado');
+        toast({
+          title: '❌ ESP32 Desconectado',
+          description: 'Conecte o ESP32 via USB no painel de administração.',
+          variant: 'destructive',
+        });
+        return false;
+      }
+      
+      console.log('[ESP32Context] ✅ Reconexão automática bem-sucedida');
+      addLog('info', '✅ Reconectado automaticamente');
+    }
+    
+    // Agora enviar comando de dispensação via esp32Serial
     setIsDispensing(true);
     setCurrentProgress({
       orderId,
@@ -441,11 +480,36 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       ml: 0,
       targetMl: mlPerUnit,
       percent: 0,
+      flowStarted: false,
+      elapsedSeconds: 0,
+      remainingSeconds: 300, // 5 minutos padrão
     });
     
-    // O serviço usa dispenseDrink
-    return esp32Service.dispenseDrink(orderId, mlPerUnit, quantity, sizeLabel);
-  }, []);
+    addLog('sent', `release_drink: ${orderId} (${mlPerUnit}ml x${quantity})`);
+    
+    try {
+      // Usar esp32Serial diretamente para enviar comando
+      const success = await esp32Serial.releaseDrink(orderId, mlPerUnit, quantity, sizeLabel);
+      
+      if (success) {
+        console.log('[ESP32Context] ✅ Comando de dispensação enviado com sucesso');
+        addLog('info', '✅ Comando enviado ao ESP32');
+      } else {
+        console.error('[ESP32Context] ❌ Falha ao enviar comando de dispensação');
+        addLog('error', '❌ Falha ao enviar comando');
+        setIsDispensing(false);
+        setCurrentProgress(null);
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('[ESP32Context] Erro ao dispensar:', error);
+      addLog('error', `Erro: ${error instanceof Error ? error.message : 'Desconhecido'}`);
+      setIsDispensing(false);
+      setCurrentProgress(null);
+      return false;
+    }
+  }, [status, addLog, toast]);
   
   const ping = useCallback(async (): Promise<boolean> => {
     return esp32Service.ping();

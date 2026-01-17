@@ -1,11 +1,26 @@
 
 import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
-import { getFirestore, Firestore, collection, doc, CollectionReference, DocumentReference } from 'firebase/firestore';
+import { 
+  getFirestore, 
+  Firestore, 
+  collection, 
+  doc, 
+  CollectionReference, 
+  DocumentReference,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  CACHE_SIZE_UNLIMITED,
+} from 'firebase/firestore';
 import { StoreSettings } from '@/types/store';
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let persistenceEnabled = false;
 
+/**
+ * Inicializa Firebase com suporte a cache offline persistente
+ */
 export const initializeFirebase = (settings: StoreSettings) => {
   try {
     const existingApps = getApps();
@@ -13,18 +28,40 @@ export const initializeFirebase = (settings: StoreSettings) => {
       app = existingApps[0];
       db = getFirestore(app);
       console.log('Firebase already initialized, reusing existing instance');
-      return { app, db };
+      return { app, db, persistenceEnabled };
     }
     
     app = initializeApp(settings.firebaseConfig);
-    db = getFirestore(app);
-    console.log('Firebase initialized successfully');
-    return { app, db };
+    
+    // Inicializa Firestore com cache persistente offline
+    try {
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({
+          tabManager: persistentMultipleTabManager(),
+          cacheSizeBytes: CACHE_SIZE_UNLIMITED,
+        }),
+      });
+      persistenceEnabled = true;
+      console.log('Firebase initialized with persistent offline cache');
+    } catch (persistError) {
+      // Fallback para Firestore padrão se persistência falhar
+      console.warn('Persistent cache failed, using default Firestore:', persistError);
+      db = getFirestore(app);
+      persistenceEnabled = false;
+    }
+    
+    console.log('Firebase initialized successfully, persistence:', persistenceEnabled);
+    return { app, db, persistenceEnabled };
   } catch (error) {
     console.error('Firebase initialization error:', error);
     throw error;
   }
 };
+
+/**
+ * Verifica se a persistência offline está habilitada
+ */
+export const isPersistenceEnabled = (): boolean => persistenceEnabled;
 
 export const getFirebaseDb = (): Firestore => {
   if (!db) {

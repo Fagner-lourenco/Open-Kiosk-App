@@ -1,3 +1,9 @@
+/**
+ * UartPortSelector - Componente para conexão USB Serial com ESP32
+ * 
+ * Este componente agora usa o ESP32Context (serviço unificado) para gerenciar
+ * a conexão USB Serial, evitando conflitos de lock na porta.
+ */
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -6,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Wifi, WifiOff, Usb, RefreshCw } from "lucide-react";
-import { esp32Printer } from "@/services/esp32PrinterService";
+import { useESP32 } from "@/context/ESP32Context";
+import esp32Serial from "@/services/esp32SerialService";
 import { useToast } from "@/hooks/use-toast";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useTranslation } from "@/i18n";
@@ -19,43 +26,32 @@ interface UartPortSelectorProps {
 
 const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = false }: UartPortSelectorProps) => {
   const [comPortInput, setComPortInput] = useState("");
-  const [isConnected, setIsConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
   const { settings } = useStoreSettings();
   const { t } = useTranslation();
+  
+  // Usar ESP32Context para status de conexão unificado
+  const { status, connectUSB, disconnect } = useESP32();
+  const isConnected = status.connected && status.type === 'usb';
 
   useEffect(() => {
-    checkConnectionStatus();
     // Load COM port from settings if available
     if (settings?.comPort) {
       setComPortInput(settings.comPort);
     }
   }, [settings]);
 
-  const checkConnectionStatus = () => {
-    setIsConnected(esp32Printer.isConnected());
-  };
-
   const handleConnect = async () => {
-    if (!comPortInput.trim()) {
-      toast({
-        title: t('common.error'),
-        description: t('uart.enterComPort'),
-        variant: "destructive"
-      });
-      return;
-    }
-
     setLoading(true);
     try {
-      const connected = await esp32Printer.connectToComPort(comPortInput.trim());
+      // Usar serviço unificado via esp32Serial
+      const connected = await esp32Serial.connect();
       if (connected) {
-        setIsConnected(true);
-        onPortSelected?.(comPortInput.trim());
+        onPortSelected?.(comPortInput.trim() || 'USB Serial');
         toast({
           title: t('common.success'),
-          description: t('uart.connectedTo', { port: comPortInput.trim() })
+          description: t('uart.connectedTo', { port: 'USB Serial' })
         });
       } else {
         throw new Error('Failed to connect');
@@ -64,7 +60,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
       console.error('Connection error:', error);
       toast({
         title: t('common.error'),
-        description: t('uart.failedToConnect', { port: comPortInput.trim() }),
+        description: t('uart.failedToConnect', { port: comPortInput.trim() || 'USB Serial' }),
         variant: "destructive"
       });
     } finally {
@@ -74,8 +70,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
 
   const handleDisconnect = async () => {
     try {
-      await esp32Printer.disconnect();
-      setIsConnected(false);
+      await esp32Serial.disconnect();
       toast({
         title: t('uart.disconnected'),
         description: t('uart.portDisconnected')
@@ -99,13 +94,9 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
             <Usb className="w-5 h-5 mr-2" />
             {t('uart.portConnection')}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={checkConnectionStatus}
-          >
-            <RefreshCw className="w-4 h-4" />
-          </Button>
+          <Badge variant={isConnected ? "default" : "secondary"}>
+            {isConnected ? "Conectado" : "Desconectado"}
+          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -121,23 +112,26 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
               {isConnected ? t('uart.connected') : t('uart.disconnected')}
             </span>
           </div>
-          {isConnected && comPortInput && (
+          {isConnected && status.deviceName && (
             <Badge variant="outline">
-              {comPortInput}
+              {status.deviceName}
             </Badge>
           )}
         </div>
 
-        {/* COM Port Input */}
+        {/* COM Port Input (informativo - Web Serial usa seletor do navegador) */}
         <div className="space-y-2">
           <Label htmlFor="comPort">{t('uart.comPort')}</Label>
           <Input
             id="comPort"
-            placeholder="e.g., COM3, COM4, COM5..."
+            placeholder="Clique em Conectar para selecionar a porta..."
             value={comPortInput}
             onChange={(e) => setComPortInput(e.target.value)}
-            disabled={loading}
+            disabled={loading || isConnected}
           />
+          <p className="text-xs text-muted-foreground">
+            O navegador abrirá um seletor de porta ao conectar.
+          </p>
         </div>
 
         {/* Action Buttons */}
@@ -145,7 +139,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
           {!isConnected ? (
             <Button
               onClick={handleConnect}
-              disabled={loading || !comPortInput.trim()}
+              disabled={loading}
               className="flex-1"
             >
               {loading ? t('common.loading') : t('uart.connect')}
@@ -162,7 +156,7 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
         </div>
 
         {/* Print Test Button */}
-        {showPrintButton && isConnected && comPortInput && (
+        {showPrintButton && isConnected && (
           <Button
             onClick={handleTestPrint}
             className="w-full"
