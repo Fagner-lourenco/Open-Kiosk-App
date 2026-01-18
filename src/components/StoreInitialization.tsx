@@ -175,8 +175,8 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
       localStorage.setItem('storeInitialized', 'true');
       localStorage.setItem('currentStoreId', settings.storeId);
 
-      // Create store document in Firestore (after Firebase is initialized by App)
-      // This will be done on first use via ensureStoreExists
+      // Create store document in Firestore
+      // IMPORTANTE: Agora propaga erro se falhar, para garantir consistência
       try {
         await storeService.ensureStoreExists(
           settings.storeId,
@@ -185,9 +185,15 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
           settings.taxId,
           settings.taxPercentage || 0
         );
+        console.log('[StoreInitialization] ✅ Store document created in Firestore');
       } catch (storeError) {
-        console.warn('Could not create store document (Firebase may not be initialized yet):', storeError);
-        // Continue anyway - store will be created on first access
+        console.error('[StoreInitialization] Failed to create store document:', storeError);
+        // Mostrar aviso mas continuar - será recuperado automaticamente depois
+        toast({
+          title: "Aviso",
+          description: "Loja criada localmente. Sincronização com nuvem pendente.",
+          variant: "default"
+        });
       }
 
       toast({

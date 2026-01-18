@@ -295,15 +295,37 @@ export class MercadoPagoAPI {
   }
 }
 
-// Factory com configuração do ambiente
-export function createMercadoPagoAPI(): MercadoPagoAPI | null {
-  const mode = import.meta.env.VITE_MP_MODE as 'sandbox' | 'production' || 'sandbox';
+/**
+ * Configuração de override para criar API com credenciais customizadas
+ */
+export interface MercadoPagoAPIOverride {
+  accessToken?: string;
+  mode?: 'sandbox' | 'production';
+}
+
+/**
+ * Factory com configuração do ambiente
+ * 
+ * @param overrideConfig - Configuração opcional para sobrescrever env vars
+ *                         Usado quando configuração vem do Firestore
+ * @returns Instância da API ou null se não configurado
+ */
+export function createMercadoPagoAPI(overrideConfig?: MercadoPagoAPIOverride): MercadoPagoAPI | null {
+  // Prioridade: override > env vars
+  const envMode = import.meta.env.VITE_MP_MODE as 'sandbox' | 'production' || 'sandbox';
+  const mode = overrideConfig?.mode || envMode;
   
-  // Selecionar token baseado no modo
+  // Selecionar token: prioridade para override
   let accessToken: string;
-  if (mode === 'production') {
+  
+  if (overrideConfig?.accessToken) {
+    // Usar token do Firestore
+    accessToken = overrideConfig.accessToken;
+  } else if (mode === 'production') {
+    // Fallback para env vars - produção
     accessToken = import.meta.env.VITE_MP_ACCESS_TOKEN_PRODUCTION || import.meta.env.VITE_MP_ACCESS_TOKEN || '';
   } else {
+    // Fallback para env vars - sandbox
     accessToken = import.meta.env.VITE_MP_ACCESS_TOKEN_SANDBOX || import.meta.env.VITE_MP_ACCESS_TOKEN || '';
   }
 
@@ -324,11 +346,13 @@ export function createMercadoPagoAPI(): MercadoPagoAPI | null {
     : 'https://api.mercadopago.com';  // Nativo ou produção - chamadas diretas
 
   // Log de inicialização sem expor credenciais
-  console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()}`, {
+  const configSource = overrideConfig?.accessToken ? 'firestore' : 'env';
+  console.log(`[MercadoPagoAPI] Inicializado em modo ${mode.toUpperCase()} (config: ${configSource})`, {
     isDev,
     isNative,
     baseUrl,
     hasToken: !!accessToken,
+    configSource,
   });
 
   const config: MercadoPagoConfig = {

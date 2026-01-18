@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
-import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { useESP32 } from "@/context/ESP32Context";
@@ -15,6 +16,7 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
 import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
+import { usePaymentGateway } from "@/context/PaymentGatewayContext";
 import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
@@ -43,7 +45,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const [selectedSizeKey, setSelectedSizeKey] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(0);
   const [maxQty, setMaxQty] = useState<number>(0);
-  const [selectedPayment, setSelectedPayment] = useState<"pix_qr" | "credit_card" | "debit_card">("pix_qr");
+  
+  // Função para determinar método de pagamento inicial baseado nos habilitados
+  const getDefaultPaymentMethod = (): "pix_qr" | "credit_card" | "debit_card" => {
+    // Usar enabledMethods do contexto quando disponível
+    // Como o hook é chamado depois, usamos uma verificação lazy
+    return "pix_qr"; // Será atualizado pelo useEffect
+  };
+  
+  const [selectedPayment, setSelectedPayment] = useState<"pix_qr" | "credit_card" | "debit_card">(getDefaultPaymentMethod());
   const [currentTransactionId, setCurrentTransactionId] = useState<string | null>(null);
   
   // Estado de verificação de idade (antes do fluxo de checkout)
@@ -67,6 +77,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const { toast } = useToast();
   const { settings: storeSettings } = useStoreSettings();
   const { t } = useTranslation();
+  
+  // Configuração do gateway de pagamento (Firestore > env vars)
+  const { gatewayConfig, resolvedConfig, isConfigured, enabledMethods } = usePaymentGateway();
   
   // Hook unificado para comunicação ESP32
   const { releaseDrink: esp32ReleaseDrink, status: esp32Status } = useESP32();
@@ -279,6 +292,21 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
     }
   }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage, stopPolling, clearPersistedState]);
+
+  // Ajustar método de pagamento se o atual estiver desabilitado
+  useEffect(() => {
+    const isCurrentMethodDisabled = 
+      (selectedPayment === 'pix_qr' && !enabledMethods.pix) ||
+      (selectedPayment === 'credit_card' && !enabledMethods.credit) ||
+      (selectedPayment === 'debit_card' && !enabledMethods.debit);
+    
+    if (isCurrentMethodDisabled) {
+      // Selecionar primeiro método habilitado
+      if (enabledMethods.pix) setSelectedPayment('pix_qr');
+      else if (enabledMethods.credit) setSelectedPayment('credit_card');
+      else if (enabledMethods.debit) setSelectedPayment('debit_card');
+    }
+  }, [enabledMethods, selectedPayment]);
 
   const handleNext = (fromStep: number) => {
     resetInactivityTimer();
@@ -551,7 +579,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             totalAmount,
             mpItems,
             externalRef,
-            MERCADO_PAGO_CONFIG.EXTERNAL_POS_ID
+            resolvedConfig.externalPosId,
+            gatewayConfig
           );
 
           console.log('[DrinkQR] QR Order criada:', { orderId: result.orderId });
@@ -601,18 +630,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             items: mpItems.length,
             externalRef,
             paymentType,
-            terminalId: MERCADO_PAGO_CONFIG.TERMINAL_ID || 'auto-detect'
+            terminalId: resolvedConfig.terminalId || 'auto-detect',
+            configSource: resolvedConfig.source,
           });
 
           const result = await paymentService.processMercadoPagoPoint(
             totalAmount,
             mpItems,
             externalRef,
-            MERCADO_PAGO_CONFIG.TERMINAL_ID || undefined, // Se não configurado, busca automaticamente
+            resolvedConfig.terminalId || undefined, // Se não configurado, busca automaticamente
             {
               defaultPaymentType: paymentType, // Pré-seleciona crédito ou débito no terminal
               defaultInstallments: paymentType === "debit_card" ? 1 : undefined, // Débito sempre 1x
-            }
+            },
+            gatewayConfig
           );
 
           console.log('[DrinkPoint] Point Order criada:', { orderId: result.orderId, paymentType });
@@ -910,65 +941,82 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               <div className="space-y-2">
                 <Label className="block font-medium text-sm">{t('checkout.selectPaymentMethod')}</Label>
                 
-                <div
-                  className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
-                    selectedPayment === "pix_qr" 
-                      ? "border-green-500 bg-green-50" 
-                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                  }`}
-                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("pix_qr"); }}
-                >
-                  <QrCode className={`w-6 h-6 ${selectedPayment === "pix_qr" ? "text-green-600" : "text-gray-400"}`} />
-                  <div className="flex-1">
-                    <p className="font-medium">{t('checkout.pixQrCode')}</p>
-                    <p className="text-xs text-gray-500">{t('checkout.qrCodeInstant')}</p>
+                {/* Alerta se nenhum método está habilitado */}
+                {!enabledMethods.pix && !enabledMethods.credit && !enabledMethods.debit && (
+                  <Alert variant="destructive" className="mb-2">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Pagamentos Indisponíveis</AlertTitle>
+                    <AlertDescription>
+                      {t('admin.noPaymentMethodsEnabled')}
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {enabledMethods.pix && (
+                  <div
+                    className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                      selectedPayment === "pix_qr" 
+                        ? "border-green-500 bg-green-50" 
+                        : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
+                    onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("pix_qr"); }}
+                  >
+                    <QrCode className={`w-6 h-6 ${selectedPayment === "pix_qr" ? "text-green-600" : "text-gray-400"}`} />
+                    <div className="flex-1">
+                      <p className="font-medium">{t('checkout.pixQrCode')}</p>
+                      <p className="text-xs text-gray-500">{t('checkout.qrCodeInstant')}</p>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                      selectedPayment === "pix_qr" ? "border-green-500 bg-green-500" : "border-gray-300"
+                    }`}>
+                      {selectedPayment === "pix_qr" && <div className="w-2 h-2 bg-white rounded-full" />}
+                    </div>
                   </div>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                    selectedPayment === "pix_qr" ? "border-green-500 bg-green-500" : "border-gray-300"
-                  }`}>
-                    {selectedPayment === "pix_qr" && <div className="w-2 h-2 bg-white rounded-full" />}
-                  </div>
-                </div>
+                )}
 
-                <div
-                  className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
-                    selectedPayment === "credit_card" 
-                      ? "border-blue-500 bg-blue-50" 
-                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                  }`}
-                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("credit_card"); }}
-                >
-                  <CreditCard className={`w-6 h-6 ${selectedPayment === "credit_card" ? "text-blue-600" : "text-gray-400"}`} />
-                  <div className="flex-1">
-                    <p className="font-medium">{t('checkout.creditCardLabel')}</p>
-                    <p className="text-xs text-gray-500">{t('checkout.visaMasterElo')}</p>
+                {enabledMethods.credit && (
+                  <div
+                    className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                      selectedPayment === "credit_card" 
+                        ? "border-blue-500 bg-blue-50" 
+                        : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
+                    onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("credit_card"); }}
+                  >
+                    <CreditCard className={`w-6 h-6 ${selectedPayment === "credit_card" ? "text-blue-600" : "text-gray-400"}`} />
+                    <div className="flex-1">
+                      <p className="font-medium">{t('checkout.creditCardLabel')}</p>
+                      <p className="text-xs text-gray-500">{t('checkout.visaMasterElo')}</p>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                      selectedPayment === "credit_card" ? "border-blue-500 bg-blue-500" : "border-gray-300"
+                    }`}>
+                      {selectedPayment === "credit_card" && <div className="w-2 h-2 bg-white rounded-full" />}
+                    </div>
                   </div>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                    selectedPayment === "credit_card" ? "border-blue-500 bg-blue-500" : "border-gray-300"
-                  }`}>
-                    {selectedPayment === "credit_card" && <div className="w-2 h-2 bg-white rounded-full" />}
-                  </div>
-                </div>
+                )}
 
-                <div
-                  className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
-                    selectedPayment === "debit_card" 
-                      ? "border-orange-500 bg-orange-50" 
-                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                  }`}
-                  onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("debit_card"); }}
-                >
-                  <CreditCard className={`w-6 h-6 ${selectedPayment === "debit_card" ? "text-orange-600" : "text-gray-400"}`} />
-                  <div className="flex-1">
-                    <p className="font-medium">{t('checkout.debitCardLabel')}</p>
-                    <p className="text-xs text-gray-500">{t('checkout.debitCardInstant')}</p>
+                {enabledMethods.debit && (
+                  <div
+                    className={`flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer transition-all ${
+                      selectedPayment === "debit_card" 
+                        ? "border-orange-500 bg-orange-50" 
+                        : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
+                    onClick={() => { flowActions.resetInactivityTimer(); setSelectedPayment("debit_card"); }}
+                  >
+                    <CreditCard className={`w-6 h-6 ${selectedPayment === "debit_card" ? "text-orange-600" : "text-gray-400"}`} />
+                    <div className="flex-1">
+                      <p className="font-medium">{t('checkout.debitCardLabel')}</p>
+                      <p className="text-xs text-gray-500">{t('checkout.debitCardInstant')}</p>
+                    </div>
+                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                      selectedPayment === "debit_card" ? "border-orange-500 bg-orange-500" : "border-gray-300"
+                    }`}>
+                      {selectedPayment === "debit_card" && <div className="w-2 h-2 bg-white rounded-full" />}
+                    </div>
                   </div>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${
-                    selectedPayment === "debit_card" ? "border-orange-500 bg-orange-500" : "border-gray-300"
-                  }`}>
-                    {selectedPayment === "debit_card" && <div className="w-2 h-2 bg-white rounded-full" />}
-                  </div>
-                </div>
+                )}
               </div>
 
               {/* Botões de Ação */}
@@ -982,7 +1030,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 </Button>
                 <Button 
                   onClick={handleStartPayment} 
-                  className="flex-1 h-14 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white font-semibold text-lg touch-manipulation transition-colors"
+                  disabled={!enabledMethods.pix && !enabledMethods.credit && !enabledMethods.debit}
+                  className="flex-1 h-14 bg-green-600 hover:bg-green-700 active:bg-green-800 text-white font-semibold text-lg touch-manipulation transition-colors disabled:opacity-50"
                 >
                   {t('checkout.pay')} {currentCurrency.symbol}{calculateTotal().toFixed(2)}
                 </Button>

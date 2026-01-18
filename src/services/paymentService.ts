@@ -8,7 +8,9 @@
 
 import { createMercadoPagoAPI } from './mercadopagoAPI';
 import { MERCADO_PAGO_CONFIG } from '@/config/mercadopago';
+import { getPaymentConfig, type ResolvedPaymentConfig } from '@/config/paymentGateway';
 import type { Order } from '@/types/mercadopago';
+import type { PaymentGatewayConfig } from '@/types/store';
 
 // Chave para armazenar último orderId do terminal (para limpar antes de nova ordem)
 const LAST_TERMINAL_ORDER_KEY = 'mp_last_terminal_order';
@@ -307,26 +309,36 @@ class PaymentService {
    * 2. Exibir QR code para cliente (type_response.qr_data)
    * 3. Aguardar polling do status até 'processed'
    * 4. Retornar sucesso/erro
+   * 
+   * @param gatewayConfig - Configuração opcional do Firestore (prioridade sobre env vars)
    */
   async processMercadoPagoQR(
     amount: number,
     items: Array<{ title: string; unit_price: string; quantity: number; unit_measure: string; total_amount: string }>,
     externalReference: string,
-    externalPosId: string = MERCADO_PAGO_CONFIG.EXTERNAL_POS_ID
+    externalPosId?: string,
+    gatewayConfig?: PaymentGatewayConfig | null
   ): Promise<PaymentResult> {
-    const mpAPI = createMercadoPagoAPI();
+    // Resolver configuração: Firestore > env vars
+    const config = getPaymentConfig(gatewayConfig);
+    const finalExternalPosId = externalPosId || config.externalPosId;
+    
+    const mpAPI = createMercadoPagoAPI({
+      accessToken: config.accessToken,
+      mode: config.mode,
+    });
     
     if (!mpAPI) {
       throw new PaymentError(
         'MP_NOT_CONFIGURED', 
-        'Mercado Pago não configurado. Verifique as variáveis de ambiente.'
+        'Mercado Pago não configurado. Verifique as credenciais no painel Admin ou variáveis de ambiente.'
       );
     }
 
     try {
       // Validar POS externo configurado
-      if (!externalPosId || externalPosId.length === 0) {
-        throw new PaymentError('MP_QR_ERROR', 'EXTERNAL_POS_ID não configurado. Defina VITE_MP_EXTERNAL_POS_ID nas variáveis de ambiente.');
+      if (!finalExternalPosId || finalExternalPosId.length === 0) {
+        throw new PaymentError('MP_QR_ERROR', 'EXTERNAL_POS_ID não configurado. Configure no painel Admin > Pagamentos ou defina VITE_MP_EXTERNAL_POS_ID.');
       }
 
       // Payload 100% aderente à documentação Mercado Pago QR dinâmico
@@ -339,7 +351,7 @@ class PaymentService {
         total_amount: amount.toFixed(2), // STRING com 2 decimais
         config: {
           qr: {
-            external_pos_id: externalPosId, // Deve ser igual ao external_id do POS criado
+            external_pos_id: finalExternalPosId, // Deve ser igual ao external_id do POS criado
             mode: 'dynamic' as const // QR único por transação
           }
         },
@@ -389,6 +401,8 @@ class PaymentService {
    * 3. Order enviada automaticamente para o terminal
    * 4. Cliente paga no terminal físico
    * 5. Aguardar confirmação via polling
+   * 
+   * @param gatewayConfig - Configuração opcional do Firestore (prioridade sobre env vars)
    */
   async processMercadoPagoPoint(
     amount: number,
@@ -400,20 +414,27 @@ class PaymentService {
       defaultInstallments?: number;
       installmentsCost?: 'seller' | 'buyer';
       printOnTerminal?: 'receipt' | 'no_ticket';
-    }
+    },
+    gatewayConfig?: PaymentGatewayConfig | null
   ): Promise<PaymentResult> {
-    const mpAPI = createMercadoPagoAPI();
+    // Resolver configuração: Firestore > env vars
+    const config = getPaymentConfig(gatewayConfig);
+    
+    const mpAPI = createMercadoPagoAPI({
+      accessToken: config.accessToken,
+      mode: config.mode,
+    });
     
     if (!mpAPI) {
       throw new PaymentError(
         'MP_NOT_CONFIGURED', 
-        'Mercado Pago não configurado. Verifique as variáveis de ambiente.'
+        'Mercado Pago não configurado. Verifique as credenciais no painel Admin ou variáveis de ambiente.'
       );
     }
 
     try {
       // Se não tiver terminal_id, usar do config ou buscar primeiro disponível em modo PDV
-      let finalTerminalId = terminalId || MERCADO_PAGO_CONFIG.TERMINAL_ID;
+      let finalTerminalId = terminalId || config.terminalId;
       
       if (!finalTerminalId) {
         console.log('[PaymentService Point] Terminal não configurado, buscando automaticamente...');
@@ -485,7 +506,7 @@ class PaymentService {
         type: 'point' as const,
         external_reference: externalReference,
         description: `Pedido Kiosk #${externalReference}`,
-        expiration_time: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME,
+        expiration_time: config.pointExpirationTime,
         transactions: {
           payments: [
             {
@@ -501,7 +522,8 @@ class PaymentService {
         amount: amount.toFixed(2),
         externalReference,
         paymentType: options?.defaultPaymentType || 'any',
-        expirationTime: MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME,
+        expirationTime: config.pointExpirationTime,
+        configSource: config.source,
       });
       
       // Log do payload completo para debug (apenas em desenvolvimento)

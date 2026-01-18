@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route } from "react-router-dom";
 import { AuthContextProvider } from "@/context/AuthContext";
 import { ESP32Provider } from "@/context/ESP32Context";
+import { PaymentGatewayProvider } from "@/context/PaymentGatewayContext";
 import { AdminSecretAccess } from "@/components/AdminSecretAccess";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { LanguageProvider } from "@/i18n";
@@ -82,20 +83,22 @@ const AppContent = () => {
         <StoreInitialization onComplete={updateSettings} />
       ) : (
         <StoreProvider initialStoreId={storeId}>
-          <ESP32Provider>
-            <AuthContextProvider>
-              <HashRouter>
-                <AdminSecretAccess>
-                  <Routes>
-                    <Route path="/" element={<Index />} />
-                    <Route path="/admin" element={<Admin />} />
-                    <Route path="/shop" element={<Shop />} />
-                    <Route path="*" element={<NotFound />} />
-                  </Routes>
-                </AdminSecretAccess>
-              </HashRouter>
-            </AuthContextProvider>
-          </ESP32Provider>
+          <PaymentGatewayProvider>
+            <ESP32Provider>
+              <AuthContextProvider>
+                <HashRouter>
+                  <AdminSecretAccess>
+                    <Routes>
+                      <Route path="/" element={<Index />} />
+                      <Route path="/admin" element={<Admin />} />
+                      <Route path="/shop" element={<Shop />} />
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </AdminSecretAccess>
+                </HashRouter>
+              </AuthContextProvider>
+            </ESP32Provider>
+          </PaymentGatewayProvider>
         </StoreProvider>
       )}
     </LanguageProvider>

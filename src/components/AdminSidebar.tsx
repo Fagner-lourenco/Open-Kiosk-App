@@ -1,5 +1,5 @@
 
-import { Home, Package, Plus, BarChart3, Settings, ReceiptText } from "lucide-react";
+import { Home, Package, Plus, BarChart3, Settings, ReceiptText, CreditCard } from "lucide-react";
 import { Sidebar, SidebarContent, SidebarGroup, SidebarMenu, SidebarMenuItem, SidebarMenuButton } from "@/components/ui/sidebar";
 import { useTranslation } from "@/i18n";
 
@@ -17,6 +17,7 @@ export default function AdminSidebar({ active, onChange }: AdminSidebarProps) {
     { label: t('admin.products'), icon: Package, tab: "products" },
     { label: t('admin.addProduct'), icon: Plus, tab: "add-product" },
     { label: t('admin.reports'), icon: BarChart3, tab: "reports" },
+    { label: t('admin.payments') || 'Pagamentos', icon: CreditCard, tab: "payments" },
     { label: t('admin.settings'), icon: Settings, tab: "settings" },
   ];
 

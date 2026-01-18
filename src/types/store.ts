@@ -101,6 +101,62 @@ export interface StoreSettings {
   
   /** Habilita som de confirmação ao completar dispensação (padrão: true) */
   drinkPickupSoundEnabled?: boolean;
+  
+  // ============================================
+  // Configurações do Gateway de Pagamento
+  // ============================================
+  
+  /** Configuração do gateway de pagamento (opcional - fallback para env vars) */
+  paymentGatewayConfig?: PaymentGatewayConfig;
+}
+
+// ============================================
+// Payment Gateway Configuration
+// ============================================
+
+/** Provedores de pagamento suportados */
+export type PaymentProvider = 'mercadopago' | 'stone' | 'pagseguro' | 'cielo' | 'stripe';
+
+/** Métodos de pagamento habilitados */
+export interface EnabledPaymentMethods {
+  pix: boolean;
+  credit: boolean;
+  debit: boolean;
+}
+
+/** Configuração do gateway de pagamento */
+export interface PaymentGatewayConfig {
+  // Identificação do provedor
+  provider: PaymentProvider;
+  
+  // Modo de operação
+  mode: 'sandbox' | 'production';
+  
+  // Métodos de pagamento habilitados (default: todos true)
+  enabledMethods?: EnabledPaymentMethods;
+  
+  // Credenciais (Mercado Pago)
+  accessToken: string;
+  
+  // Identificadores do integrador/loja
+  userId?: string;
+  storeId?: string;
+  externalPosId?: string;
+  
+  // Terminal Point (cartão físico)
+  terminalId?: string;
+  
+  // Timeouts customizáveis
+  pollingIntervalMs?: number;      // default: 3000
+  pollingMaxAttempts?: number;     // default: 45
+  pointExpirationTime?: string;    // default: 'PT2M' (ISO 8601)
+  qrExpirationMinutes?: number;    // default: 2
+  
+  // Metadados de auditoria
+  configuredAt?: string;
+  configuredBy?: string;
+  lastValidatedAt?: string;
+  lastValidationResult?: 'success' | 'error';
 }
 
 export interface InventoryLog {

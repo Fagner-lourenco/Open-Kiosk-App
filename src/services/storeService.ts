@@ -16,14 +16,19 @@ class StoreService {
   }
   
   /**
-   * Validar que storeId existe no Firestore
+   * Validar que storeId existe no Firestore E tem dados válidos
    */
   async validateStoreExists(storeId: string): Promise<boolean> {
     try {
       const db = getFirebaseDb();
       const storeDoc = doc(db, 'stores', storeId);
       const snapshot = await getDoc(storeDoc);
-      return snapshot.exists();
+      
+      // Verificar se existe E tem dados válidos (não é placeholder vazio)
+      const data = snapshot.data();
+      const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
+      
+      return snapshot.exists() && !!hasValidData;
     } catch (error) {
       console.error('[StoreService] Error validating store:', error);
       return false;
@@ -32,6 +37,7 @@ class StoreService {
   
   /**
    * Obter dados completos de uma loja
+   * NOTA: Detecta documentos vazios (placeholder) e tenta recuperar automaticamente
    */
   async getStore(storeId: string): Promise<Store | null> {
     try {
@@ -39,15 +45,78 @@ class StoreService {
       const storeDoc = doc(db, 'stores', storeId);
       const snapshot = await getDoc(storeDoc);
       
-      if (!snapshot.exists()) {
-        console.warn(`[StoreService] Store ${storeId} not found`);
+      const data = snapshot.data();
+      const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
+      
+      // Documento não existe OU está vazio (placeholder de subcoleção)
+      if (!snapshot.exists() || !hasValidData) {
+        console.warn(`[StoreService] Store ${storeId} not found or empty - attempting auto-recovery`);
+        
+        // Tentar recuperar dados do localStorage para popular o documento
+        const recovered = await this.recoverStoreFromLocalStorage(storeId);
+        if (recovered) {
+          return recovered;
+        }
+        
+        console.warn(`[StoreService] Could not recover store ${storeId}`);
         return null;
       }
       
-      return { id: snapshot.id, ...snapshot.data() } as Store;
+      return { id: snapshot.id, ...data } as Store;
     } catch (error) {
       console.error('[StoreService] Error fetching store:', error);
       throw error;
+    }
+  }
+  
+  /**
+   * Recuperar dados da loja a partir do localStorage
+   * Usado quando o documento Firestore está vazio ou corrompido
+   */
+  private async recoverStoreFromLocalStorage(storeId: string): Promise<Store | null> {
+    try {
+      const localSettings = localStorage.getItem('storeSettings');
+      if (!localSettings) {
+        console.log('[StoreService] No localStorage settings available for recovery');
+        return null;
+      }
+      
+      const parsed = JSON.parse(localSettings);
+      if (parsed.storeId !== storeId) {
+        console.log(`[StoreService] localStorage storeId (${parsed.storeId}) does not match requested (${storeId})`);
+        return null;
+      }
+      
+      if (!parsed.name) {
+        console.log('[StoreService] localStorage missing required field: name');
+        return null;
+      }
+      
+      console.log('[StoreService] 🔧 Recovering store from localStorage...');
+      
+      // Popular o documento no Firestore
+      await this.ensureStoreExists(
+        storeId,
+        parsed.name,
+        parsed.currency || 'BRL',
+        parsed.taxId || '',
+        parsed.taxPercentage || 0
+      );
+      
+      // Buscar novamente após criar
+      const db = getFirebaseDb();
+      const storeDoc = doc(db, 'stores', storeId);
+      const newSnapshot = await getDoc(storeDoc);
+      
+      if (newSnapshot.exists() && newSnapshot.data()?.storeId) {
+        console.log('[StoreService] ✅ Store recovered successfully from localStorage');
+        return { id: newSnapshot.id, ...newSnapshot.data() } as Store;
+      }
+      
+      return null;
+    } catch (recoveryError) {
+      console.error('[StoreService] Recovery failed:', recoveryError);
+      return null;
     }
   }
   
@@ -155,6 +224,7 @@ class StoreService {
   /**
    * Criar ou atualizar loja a partir das configurações locais
    * Usado durante o setup inicial do kiosk
+   * CORRIGIDO: Detecta documentos vazios (placeholder) e popula corretamente
    */
   async ensureStoreExists(storeId: string, name: string, currency: string, taxId: string, taxPercentage: number): Promise<void> {
     try {
@@ -162,8 +232,14 @@ class StoreService {
       const storeRef = doc(db, 'stores', storeId);
       const snapshot = await getDoc(storeRef);
       
-      if (!snapshot.exists()) {
-        // Criar nova loja
+      const data = snapshot.data();
+      const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
+      
+      // Criar se não existe OU se é um placeholder vazio (sem campos)
+      if (!snapshot.exists() || !hasValidData) {
+        console.log(`[StoreService] Creating/populating store document: ${storeId}`);
+        
+        // Usar setDoc com merge:true para não sobrescrever subcoleções existentes
         await setDoc(storeRef, {
           storeId,
           name,
@@ -177,14 +253,16 @@ class StoreService {
           language: 'pt-BR',
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
-        });
-        console.log('[StoreService] Store created during setup:', storeId);
+        }, { merge: true });
+        
+        console.log('[StoreService] ✅ Store document created/populated:', storeId);
       } else {
-        console.log('[StoreService] Store already exists:', storeId);
+        console.log('[StoreService] Store already exists with valid data:', storeId);
       }
     } catch (error) {
       console.error('[StoreService] Error ensuring store exists:', error);
-      // Não lançar erro para não bloquear o setup
+      // IMPORTANTE: Propagar erro para que o chamador saiba que falhou
+      throw error;
     }
   }
 }

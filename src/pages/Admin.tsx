@@ -10,6 +10,7 @@ import AdminAddProduct from "@/components/AdminAddProduct";
 import AdminReports from "@/components/AdminReports";
 import AdminSettings from "@/components/AdminSettings";
 import AdminOrders from "@/components/AdminOrders";
+import AdminPaymentGatewayHub from "@/components/AdminPaymentGatewayHub";
 import InventoryManager from "@/components/InventoryManager";
 import { ESP32DispenserPanel } from "@/components/ESP32DispenserPanel";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
@@ -114,13 +115,14 @@ export default function Admin() {
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-6 h-auto min-h-[48px] gap-1 p-1">
+          <TabsList className="grid w-full grid-cols-5 md:grid-cols-9 mb-6 h-auto min-h-[48px] gap-1 p-1">
             <TabsTrigger value="overview" className="text-xs sm:text-sm min-h-[40px] px-2">{t('admin.overview')}</TabsTrigger>
             <TabsTrigger value="products" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.products')}</TabsTrigger>
             <TabsTrigger value="add-product" className="text-xs sm:text-sm min-h-[40px] px-2">{t('common.add')}</TabsTrigger>
             <TabsTrigger value="inventory" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.inventory')}</TabsTrigger>
             <TabsTrigger value="orders" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.orders')}</TabsTrigger>
             <TabsTrigger value="reports" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.reports')}</TabsTrigger>
+            <TabsTrigger value="payments" className="text-xs sm:text-sm min-h-[40px] px-2">{t('admin.payments') || 'Pagamentos'}</TabsTrigger>
             <TabsTrigger value="esp32" className="text-xs sm:text-sm min-h-[40px] px-2">ESP32</TabsTrigger>
             <TabsTrigger value="settings" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.settings')}</TabsTrigger>
           </TabsList>
@@ -150,6 +152,10 @@ export default function Admin() {
           
           <TabsContent value="reports">
             <AdminReports />
+          </TabsContent>
+          
+          <TabsContent value="payments">
+            <AdminPaymentGatewayHub />
           </TabsContent>
           
           <TabsContent value="esp32">

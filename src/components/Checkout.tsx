@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, Receipt, QrCode, Printer, Check, CreditCard, Wifi, AlertCircle, Loader, Clock } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ArrowLeft, Receipt, QrCode, Printer, Check, CreditCard, Wifi, AlertCircle, Loader, Clock, AlertTriangle } from "lucide-react";
 import { getCartItemKey } from "@/utils/productUtils";
 import { CartItem } from "@/types/product";
 import { useTranslation } from "@/i18n";
@@ -18,6 +19,7 @@ import UartPortSelector from "./UartPortSelector";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { paymentService } from "@/services/paymentService";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig } from "@/config/mercadopago";
+import { usePaymentGateway } from "@/context/PaymentGatewayContext";
 import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
@@ -41,9 +43,20 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   const currentCurrency = useCurrentCurrency();
   const { settings } = useStoreSettings();
   const { toast } = useToast();
+  
+  // Configuração do gateway de pagamento (Firestore > env vars)
+  const { gatewayConfig, resolvedConfig, isConfigured, enabledMethods } = usePaymentGateway();
 
   // Estados para Mercado Pago QR e Point
-  const [paymentMethod, setPaymentMethod] = useState<'pix_qr' | 'credit_card' | 'debit_card'>('pix_qr');
+  // Determinar método de pagamento inicial baseado nos métodos habilitados
+  const getDefaultPaymentMethod = (): 'pix_qr' | 'credit_card' | 'debit_card' => {
+    if (enabledMethods.pix) return 'pix_qr';
+    if (enabledMethods.credit) return 'credit_card';
+    if (enabledMethods.debit) return 'debit_card';
+    return 'pix_qr'; // fallback (será tratado pelo alerta)
+  };
+  
+  const [paymentMethod, setPaymentMethod] = useState<'pix_qr' | 'credit_card' | 'debit_card'>(getDefaultPaymentMethod());
   const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'processing' | 'error'>('idle');
   const [qrFlowStarted, setQrFlowStarted] = useState(false); // Controla quando o fluxo QR foi iniciado
   const [mpOrderId, setMpOrderId] = useState<string | null>(null);
@@ -220,7 +233,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
         totalAmount,
         mpItems,
         externalRef,
-        MERCADO_PAGO_CONFIG.EXTERNAL_POS_ID
+        resolvedConfig.externalPosId,
+        gatewayConfig
       );
 
       console.log('[Checkout] QR Order criada:', { orderId: result.orderId });
@@ -275,18 +289,20 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
         items: mpItems.length,
         externalRef,
         paymentType,
-        terminalId: MERCADO_PAGO_CONFIG.TERMINAL_ID || 'auto-detect'
+        terminalId: resolvedConfig.terminalId || 'auto-detect',
+        configSource: resolvedConfig.source,
       });
 
       const result = await paymentService.processMercadoPagoPoint(
         getFinalTotal(),
         mpItems,
         externalRef,
-        MERCADO_PAGO_CONFIG.TERMINAL_ID || undefined,
+        resolvedConfig.terminalId || undefined,
         {
           defaultPaymentType: paymentType,
           defaultInstallments: paymentType === 'debit_card' ? 1 : undefined,
-        }
+        },
+        gatewayConfig
       );
 
       console.log('[Checkout] Point Order criada:', { orderId: result.orderId, paymentType });
@@ -606,60 +622,78 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 <Card>
                   <CardContent className="p-4">
                     <h3 className="font-medium mb-4">{t('checkout.paymentMethod')}</h3>
+                    
+                    {/* Alerta se nenhum método está habilitado */}
+                    {!enabledMethods.pix && !enabledMethods.credit && !enabledMethods.debit && (
+                      <Alert variant="destructive" className="mb-4">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertTitle>Pagamentos Indisponíveis</AlertTitle>
+                        <AlertDescription>
+                          {t('admin.noPaymentMethodsEnabled')}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
                     <div className="space-y-3">
-                      <button
-                        onClick={() => setPaymentMethod('pix_qr')}
-                        className={`w-full p-4 border-2 rounded-lg text-left transition ${
-                          paymentMethod === 'pix_qr'
-                            ? 'border-green-500 bg-green-50'
-                            : 'border-gray-200 bg-white hover:border-gray-300'
-                        }`}
-                        disabled={paymentProcessed}
-                      >
-                        <div className="flex items-center gap-3">
-                          <QrCode className="w-5 h-5 text-green-600" />
-                          <div>
-                            <p className="font-medium text-sm">{t('checkout.pixQrCode')}</p>
-                            <p className="text-xs text-gray-600">{t('checkout.instantPayment')}</p>
+                      {enabledMethods.pix && (
+                        <button
+                          onClick={() => setPaymentMethod('pix_qr')}
+                          className={`w-full p-4 border-2 rounded-lg text-left transition ${
+                            paymentMethod === 'pix_qr'
+                              ? 'border-green-500 bg-green-50'
+                              : 'border-gray-200 bg-white hover:border-gray-300'
+                          }`}
+                          disabled={paymentProcessed}
+                        >
+                          <div className="flex items-center gap-3">
+                            <QrCode className="w-5 h-5 text-green-600" />
+                            <div>
+                              <p className="font-medium text-sm">{t('checkout.pixQrCode')}</p>
+                              <p className="text-xs text-gray-600">{t('checkout.instantPayment')}</p>
+                            </div>
                           </div>
-                        </div>
-                      </button>
+                        </button>
+                      )}
 
-                      <button
-                        onClick={() => setPaymentMethod('credit_card')}
-                        className={`w-full p-4 border-2 rounded-lg text-left transition ${
-                          paymentMethod === 'credit_card'
-                            ? 'border-blue-500 bg-blue-50'
-                            : 'border-gray-200 bg-white hover:border-gray-300'
-                        }`}
-                        disabled={paymentProcessed}
-                      >
-                        <div className="flex items-center gap-3">
-                          <CreditCard className="w-5 h-5 text-blue-600" />
-                          <div>
-                            <p className="font-medium text-sm">{t('checkout.creditCard')}</p>
-                            <p className="text-xs text-gray-600">{t('checkout.visaMasterElo')}</p>
+                      {enabledMethods.credit && (
+                        <button
+                          onClick={() => setPaymentMethod('credit_card')}
+                          className={`w-full p-4 border-2 rounded-lg text-left transition ${
+                            paymentMethod === 'credit_card'
+                              ? 'border-blue-500 bg-blue-50'
+                              : 'border-gray-200 bg-white hover:border-gray-300'
+                          }`}
+                          disabled={paymentProcessed}
+                        >
+                          <div className="flex items-center gap-3">
+                            <CreditCard className="w-5 h-5 text-blue-600" />
+                            <div>
+                              <p className="font-medium text-sm">{t('checkout.creditCard')}</p>
+                              <p className="text-xs text-gray-600">{t('checkout.visaMasterElo')}</p>
+                            </div>
                           </div>
-                        </div>
-                      </button>
+                        </button>
+                      )}
 
-                      <button
-                        onClick={() => setPaymentMethod('debit_card')}
-                        className={`w-full p-4 border-2 rounded-lg text-left transition ${
-                          paymentMethod === 'debit_card'
-                            ? 'border-orange-500 bg-orange-50'
-                            : 'border-gray-200 bg-white hover:border-gray-300'
-                        }`}
-                        disabled={paymentProcessed}
-                      >
-                        <div className="flex items-center gap-3">
-                          <CreditCard className="w-5 h-5 text-orange-600" />
-                          <div>
-                            <p className="font-medium text-sm">{t('checkout.debitCard')}</p>
-                            <p className="text-xs text-gray-600">{t('checkout.debitInstant')}</p>
+                      {enabledMethods.debit && (
+                        <button
+                          onClick={() => setPaymentMethod('debit_card')}
+                          className={`w-full p-4 border-2 rounded-lg text-left transition ${
+                            paymentMethod === 'debit_card'
+                              ? 'border-orange-500 bg-orange-50'
+                              : 'border-gray-200 bg-white hover:border-gray-300'
+                          }`}
+                          disabled={paymentProcessed}
+                        >
+                          <div className="flex items-center gap-3">
+                            <CreditCard className="w-5 h-5 text-orange-600" />
+                            <div>
+                              <p className="font-medium text-sm">{t('checkout.debitCard')}</p>
+                              <p className="text-xs text-gray-600">{t('checkout.debitInstant')}</p>
+                            </div>
                           </div>
-                        </div>
-                      </button>
+                        </button>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
