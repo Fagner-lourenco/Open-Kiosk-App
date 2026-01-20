@@ -1,0 +1,415 @@
+/**
+ * ============================================================================
+ * InvitePage - Aceitar Convite de Franquia
+ * ============================================================================
+ */
+
+import { useState, useEffect } from 'react';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
+import { doc, getDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { db, auth } from '@/lib/firebase';
+import { useAuth } from '@/context/AuthContext';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { 
+  Loader2, 
+  AlertCircle, 
+  CheckCircle, 
+  Mail, 
+  Lock, 
+  User,
+  Building2,
+  Store
+} from 'lucide-react';
+
+interface InviteData {
+  id: string;
+  franchiseId: string;
+  franchiseName: string;
+  storeId?: string;
+  storeName?: string;
+  email: string;
+  role: string;
+  invitedBy: string;
+  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+  expiresAt: Date;
+}
+
+export function InvitePage() {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { user, register } = useAuth();
+  
+  const inviteId = searchParams.get('id');
+  
+  const [invite, setInvite] = useState<InviteData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  
+  // Registration form state (for new users)
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
+  useEffect(() => {
+    if (!inviteId) {
+      setError('Link de convite inválido');
+      setIsLoading(false);
+      return;
+    }
+
+    loadInvite();
+  }, [inviteId]);
+
+  const loadInvite = async () => {
+    try {
+      const inviteDoc = await getDoc(doc(db, 'invitations', inviteId!));
+      
+      if (!inviteDoc.exists()) {
+        setError('Convite não encontrado');
+        setIsLoading(false);
+        return;
+      }
+
+      const data = inviteDoc.data();
+      const expiresAt = data.expiresAt?.toDate() || new Date();
+
+      if (data.status !== 'pending') {
+        setError(
+          data.status === 'accepted' 
+            ? 'Este convite já foi aceito' 
+            : 'Este convite foi revogado ou expirou'
+        );
+        setIsLoading(false);
+        return;
+      }
+
+      if (expiresAt < new Date()) {
+        setError('Este convite expirou');
+        setIsLoading(false);
+        return;
+      }
+
+      setInvite({
+        id: inviteDoc.id,
+        franchiseId: data.franchiseId,
+        franchiseName: data.franchiseName || 'Franquia',
+        storeId: data.storeId,
+        storeName: data.storeName,
+        email: data.email,
+        role: data.role,
+        invitedBy: data.invitedByName || data.invitedBy,
+        status: data.status,
+        expiresAt,
+      });
+    } catch (err) {
+      console.error('Error loading invite:', err);
+      setError('Erro ao carregar convite');
+    }
+    
+    setIsLoading(false);
+  };
+
+  const acceptInvite = async () => {
+    if (!invite) return;
+    
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      // If user is not logged in and needs to register
+      if (!user) {
+        if (password !== confirmPassword) {
+          setError('As senhas não coincidem');
+          setIsProcessing(false);
+          return;
+        }
+
+        const result = await register(invite.email, password, displayName);
+        if (!result.success) {
+          setError(result.error || 'Erro ao criar conta');
+          setIsProcessing(false);
+          return;
+        }
+      }
+
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        setError('Usuário não autenticado');
+        setIsProcessing(false);
+        return;
+      }
+
+      // Update invitation status
+      await updateDoc(doc(db, 'invitations', invite.id), {
+        status: 'accepted',
+        acceptedAt: serverTimestamp(),
+        acceptedBy: currentUser.uid,
+      });
+
+      // Add user to franchise
+      await updateDoc(doc(db, 'franchises', invite.franchiseId), {
+        members: arrayUnion({
+          id: currentUser.uid,
+          email: currentUser.email,
+          displayName: currentUser.displayName || displayName,
+          role: invite.role,
+          addedAt: new Date().toISOString(),
+        }),
+      });
+
+      // If store-specific invitation, add to store as well
+      if (invite.storeId) {
+        await updateDoc(doc(db, `franchises/${invite.franchiseId}/stores/${invite.storeId}`), {
+          members: arrayUnion({
+            id: currentUser.uid,
+            email: currentUser.email,
+            role: invite.role,
+            addedAt: new Date().toISOString(),
+          }),
+        });
+      }
+
+      setSuccess(true);
+    } catch (err) {
+      console.error('Error accepting invite:', err);
+      setError('Erro ao aceitar convite');
+    }
+    
+    setIsProcessing(false);
+  };
+
+  const getRoleLabel = (role: string) => {
+    const labels: Record<string, string> = {
+      owner: 'Proprietário',
+      manager: 'Gerente',
+      employee: 'Funcionário',
+      viewer: 'Visualizador',
+    };
+    return labels[role] || role;
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[300px]">
+        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  if (error && !invite) {
+    return (
+      <div className="space-y-6">
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+        
+        <div className="text-center">
+          <Link to="/login">
+            <Button>Ir para login</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (success) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center">
+          <div className="mx-auto w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mb-4">
+            <CheckCircle className="h-6 w-6 text-green-600" />
+          </div>
+          <h2 className="text-xl font-semibold text-gray-900">Convite aceito!</h2>
+          <p className="text-sm text-gray-500 mt-2">
+            Você agora faz parte de {invite?.franchiseName}
+            {invite?.storeName && ` - ${invite.storeName}`}
+          </p>
+        </div>
+
+        <Button className="w-full" onClick={() => navigate('/')}>
+          Ir para o painel
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="text-center">
+        <h2 className="text-xl font-semibold text-gray-900">Convite recebido</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Você foi convidado por {invite?.invitedBy}
+        </p>
+      </div>
+
+      {/* Invite Details */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Detalhes do convite</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <Building2 className="h-5 w-5 text-gray-400" />
+            <div>
+              <p className="text-sm font-medium">{invite?.franchiseName}</p>
+              <p className="text-xs text-gray-500">Franquia</p>
+            </div>
+          </div>
+          
+          {invite?.storeName && (
+            <div className="flex items-center gap-3">
+              <Store className="h-5 w-5 text-gray-400" />
+              <div>
+                <p className="text-sm font-medium">{invite.storeName}</p>
+                <p className="text-xs text-gray-500">Loja</p>
+              </div>
+            </div>
+          )}
+          
+          <div className="flex items-center gap-3">
+            <User className="h-5 w-5 text-gray-400" />
+            <div>
+              <p className="text-sm font-medium">{getRoleLabel(invite?.role || '')}</p>
+              <p className="text-xs text-gray-500">Função</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {/* If user is logged in with matching email */}
+      {user && user.email === invite?.email && (
+        <Button className="w-full" onClick={acceptInvite} disabled={isProcessing}>
+          {isProcessing ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Aceitando...
+            </>
+          ) : (
+            'Aceitar convite'
+          )}
+        </Button>
+      )}
+
+      {/* If user is logged in with different email */}
+      {user && user.email !== invite?.email && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Este convite foi enviado para {invite?.email}. 
+            Você está logado como {user.email}. 
+            Faça logout e acesse com a conta correta.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {/* If user is not logged in, show registration form */}
+      {!user && (
+        <form onSubmit={(e) => { e.preventDefault(); acceptInvite(); }} className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Crie uma conta para aceitar o convite:
+          </p>
+          
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                id="email"
+                type="email"
+                value={invite?.email || ''}
+                className="pl-10 bg-gray-50"
+                disabled
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="name">Nome completo</Label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                id="name"
+                type="text"
+                placeholder="Seu nome"
+                value={displayName}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setDisplayName(e.target.value)}
+                className="pl-10"
+                required
+                disabled={isProcessing}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="password">Senha</Label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                id="password"
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
+                className="pl-10"
+                required
+                minLength={6}
+                disabled={isProcessing}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Confirmar senha</Label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                id="confirmPassword"
+                type="password"
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)}
+                className="pl-10"
+                required
+                disabled={isProcessing}
+              />
+            </div>
+          </div>
+
+          <Button type="submit" className="w-full" disabled={isProcessing}>
+            {isProcessing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Criando conta e aceitando...
+              </>
+            ) : (
+              'Criar conta e aceitar convite'
+            )}
+          </Button>
+        </form>
+      )}
+
+      <div className="text-center">
+        <p className="text-sm text-gray-500">
+          Já tem uma conta?{' '}
+          <Link to={`/login?redirect=/invite?id=${inviteId}`} className="text-blue-600 hover:underline font-medium">
+            Fazer login
+          </Link>
+        </p>
+      </div>
+    </div>
+  );
+}

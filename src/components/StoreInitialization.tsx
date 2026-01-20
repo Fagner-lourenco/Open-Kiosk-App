@@ -24,10 +24,15 @@ const StoreInitialization = ({ onComplete }: StoreInitializationProps) => {
   const defaultSettings: StoreSettings = {
     storeId: "",
     name: "",
-    currency: "INR",
+    currency: "BRL",
     taxId: "",
     taxPercentage: 18,
     comPort: "",
+    // Campos gerenciados pelo Admin Web (inicializados vazios)
+    email: "",
+    phone: "",
+    address: "",
+    description: "",
     firebaseConfig: {
       apiKey: "",
       authDomain: "",

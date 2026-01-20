@@ -109,7 +109,8 @@ export const useFirebaseReports = (storeId?: string) => {
         storeId: effectiveStoreId
       };
 
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       await addDoc(salesCollection, saleData);
       console.log('Sale recorded successfully with order number:', finalOrderNumber);
       
@@ -129,7 +130,8 @@ export const useFirebaseReports = (storeId?: string) => {
     setLoading(true);
     try {
       const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       
       let q = query(salesCollection, orderBy('timestamp', 'desc'));
       

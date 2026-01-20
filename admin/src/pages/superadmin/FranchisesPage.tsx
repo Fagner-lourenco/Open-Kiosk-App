@@ -1,0 +1,406 @@
+/**
+ * ============================================================================
+ * FranchisesPage - Lista de Franquias
+ * ============================================================================
+ * 
+ * Página para gerenciamento de todas as franquias do sistema.
+ * Exclusiva para SuperAdmin.
+ * 
+ * @author Open Kiosk Project
+ * @version 1.0.0
+ */
+
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { collection, getDocs, query, orderBy, Timestamp, deleteDoc, doc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { useAuth } from '@/context/AuthContext';
+import {
+  Building2,
+  Plus,
+  Search,
+  MoreVertical,
+  Eye,
+  Edit,
+  Trash2,
+  Store,
+  Users,
+  RefreshCw,
+  AlertCircle,
+} from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
+
+interface FranchiseData {
+  id: string;
+  name: string;
+  description?: string;
+  ownerEmail?: string;
+  ownerId?: string;
+  status?: string;
+  plan?: string;
+  storeCount: number;
+  memberCount: number;
+  createdAt?: Timestamp;
+}
+
+export default function FranchisesPage() {
+  const navigate = useNavigate();
+  const { isSuperAdmin } = useAuth();
+  
+  const [franchises, setFranchises] = useState<FranchiseData[]>([]);
+  const [filteredFranchises, setFilteredFranchises] = useState<FranchiseData[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<FranchiseData | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Carrega franquias
+  const loadFranchises = async () => {
+    setIsLoading(true);
+    
+    try {
+      const franchisesRef = collection(db, 'franchises');
+      const franchisesQuery = query(franchisesRef, orderBy('createdAt', 'desc'));
+      const snapshot = await getDocs(franchisesQuery);
+      
+      const data: FranchiseData[] = [];
+      
+      for (const docSnap of snapshot.docs) {
+        const docData = docSnap.data();
+        
+        // Conta lojas
+        const storesRef = collection(db, `franchises/${docSnap.id}/stores`);
+        const storesSnapshot = await getDocs(storesRef);
+        
+        // Conta membros
+        const membersRef = collection(db, `franchises/${docSnap.id}/members`);
+        const membersSnapshot = await getDocs(membersRef);
+        
+        data.push({
+          id: docSnap.id,
+          name: docData.name || 'Sem nome',
+          description: docData.description,
+          ownerEmail: docData.ownerEmail,
+          ownerId: docData.ownerId,
+          status: docData.status || 'active',
+          plan: docData.plan || 'trial',
+          storeCount: storesSnapshot.size,
+          memberCount: membersSnapshot.size,
+          createdAt: docData.createdAt,
+        });
+      }
+      
+      setFranchises(data);
+      setFilteredFranchises(data);
+    } catch (error) {
+      console.error('Erro ao carregar franquias:', error);
+      toast.error('Erro ao carregar franquias');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Filtro de busca
+  useEffect(() => {
+    if (!search.trim()) {
+      setFilteredFranchises(franchises);
+      return;
+    }
+
+    const searchLower = search.toLowerCase();
+    const filtered = franchises.filter(
+      (f) =>
+        f.name.toLowerCase().includes(searchLower) ||
+        f.ownerEmail?.toLowerCase().includes(searchLower) ||
+        f.description?.toLowerCase().includes(searchLower)
+    );
+    setFilteredFranchises(filtered);
+  }, [search, franchises]);
+
+  // Carrega ao montar
+  useEffect(() => {
+    if (isSuperAdmin) {
+      loadFranchises();
+    }
+  }, [isSuperAdmin]);
+
+  // Delete franchise
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+
+    setIsDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'franchises', deleteTarget.id));
+      toast.success(`Franquia "${deleteTarget.name}" excluída com sucesso`);
+      setDeleteTarget(null);
+      loadFranchises();
+    } catch (error) {
+      console.error('Erro ao excluir franquia:', error);
+      toast.error('Erro ao excluir franquia');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const formatDate = (timestamp?: Timestamp) => {
+    if (!timestamp) return '-';
+    return timestamp.toDate().toLocaleDateString('pt-BR');
+  };
+
+  const getPlanBadge = (plan?: string) => {
+    const styles: Record<string, string> = {
+      trial: 'bg-yellow-100 text-yellow-800',
+      basic: 'bg-blue-100 text-blue-800',
+      professional: 'bg-purple-100 text-purple-800',
+      enterprise: 'bg-green-100 text-green-800',
+    };
+    return styles[plan || 'trial'] || styles.trial;
+  };
+
+  const getStatusBadge = (status?: string) => {
+    return status === 'active'
+      ? 'bg-green-100 text-green-800'
+      : 'bg-red-100 text-red-800';
+  };
+
+  if (!isSuperAdmin) {
+    return (
+      <div className="p-6">
+        <Card className="max-w-lg mx-auto">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3 text-yellow-600">
+              <AlertCircle className="h-5 w-5" />
+              <p>Você não tem permissão para acessar esta página.</p>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-2 bg-blue-100 rounded-lg">
+            <Building2 className="h-6 w-6 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold">Franquias</h1>
+            <p className="text-muted-foreground">
+              Gerencie todas as franquias do sistema
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={loadFranchises} disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+            Atualizar
+          </Button>
+          <Button onClick={() => navigate('/superadmin/franchises/new')}>
+            <Plus className="h-4 w-4 mr-2" />
+            Nova Franquia
+          </Button>
+        </div>
+      </div>
+
+      {/* Search */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Buscar</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              placeholder="Buscar por nome, email ou descrição..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Table */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">
+            Franquias ({filteredFranchises.length})
+          </CardTitle>
+          <CardDescription>
+            Lista de todas as franquias cadastradas
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="space-y-3">
+              {[...Array(5)].map((_, i) => (
+                <Skeleton key={i} className="h-16 w-full" />
+              ))}
+            </div>
+          ) : filteredFranchises.length === 0 ? (
+            <div className="text-center py-12">
+              <Building2 className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+              <p className="text-gray-500">
+                {search ? 'Nenhuma franquia encontrada' : 'Nenhuma franquia cadastrada'}
+              </p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Franquia</TableHead>
+                  <TableHead>Proprietário</TableHead>
+                  <TableHead className="text-center">Lojas</TableHead>
+                  <TableHead className="text-center">Membros</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Plano</TableHead>
+                  <TableHead>Criada em</TableHead>
+                  <TableHead className="w-12"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {filteredFranchises.map((franchise) => (
+                  <TableRow key={franchise.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-gray-100 rounded-lg">
+                          <Building2 className="h-4 w-4 text-gray-600" />
+                        </div>
+                        <div>
+                          <p className="font-medium">{franchise.name}</p>
+                          {franchise.description && (
+                            <p className="text-xs text-gray-500 truncate max-w-[200px]">
+                              {franchise.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm text-gray-600">
+                        {franchise.ownerEmail || '-'}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Store className="h-4 w-4 text-gray-400" />
+                        <span>{franchise.storeCount}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <Users className="h-4 w-4 text-gray-400" />
+                        <span>{franchise.memberCount}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getStatusBadge(franchise.status)}>
+                        {franchise.status === 'active' ? 'Ativo' : 'Inativo'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge className={getPlanBadge(franchise.plan)}>
+                        {franchise.plan}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-gray-600">
+                      {formatDate(franchise.createdAt)}
+                    </TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={() => navigate(`/superadmin/franchises/${franchise.id}`)}
+                          >
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver Detalhes
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => navigate(`/superadmin/franchises/${franchise.id}/edit`)}
+                          >
+                            <Edit className="h-4 w-4 mr-2" />
+                            Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-red-600"
+                            onClick={() => setDeleteTarget(franchise)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Excluir
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={() => setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Franquia</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir a franquia "{deleteTarget?.name}"?
+              Esta ação não pode ser desfeita e excluirá todas as lojas e dados associados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={isDeleting}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isDeleting ? 'Excluindo...' : 'Excluir'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}

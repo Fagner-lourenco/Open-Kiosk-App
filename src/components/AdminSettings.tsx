@@ -1,23 +1,25 @@
-
-import SettingsPanel from "@/components/SettingsPanel";
+import { useState, useEffect } from "react";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2 } from "lucide-react";
+import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Printer, Video, Store, MonitorPlay } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useLanguage, useTranslation } from "@/i18n";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import type { Language } from "@/i18n";
-import type { ESP32ConnectionType } from "@/types/store";
+import type { ESP32ConnectionType, AttractVideoSettings } from "@/types/store";
+import { getFirebaseDb, getCurrentFranchiseId } from "@/services/firebase";
+import { isFranchiseMode } from "@/lib/pathResolver";
 import esp32Service from "@/services/esp32CommunicationService";
 
 export default function AdminSettings() {
   const { currentCurrency, currencies, updateCurrency, loading } = useSettings();
-  const { settings, updateSettings } = useStoreSettings();
+  const { settings, updateSettings, loading: settingsLoading } = useStoreSettings();
   const { language, setLanguage } = useLanguage();
   const { t } = useTranslation();
 
@@ -29,6 +31,85 @@ export default function AdminSettings() {
   // Drink Pickup settings com defaults
   const drinkPickupTimeoutSeconds = settings?.drinkPickupTimeoutSeconds ?? 90;
   const drinkPickupSoundEnabled = settings?.drinkPickupSoundEnabled ?? true;
+
+  // Estado para configurações de vídeo de fundo
+  const [attractVideoSettings, setAttractVideoSettings] = useState<AttractVideoSettings>({
+    isEnabled: false,
+    videoOpacity: 0.4,
+    videoCoverMode: 'cover'
+  });
+  const [videoSaving, setVideoSaving] = useState(false);
+
+  
+
+  // Carregar configurações de vídeo do Firestore
+  useEffect(() => {
+    const loadAttractVideoSettings = async () => {
+      try {
+        if (!settings?.storeId) return;
+
+        const db = getFirebaseDb();
+        
+        let videoDocRef;
+        if (isFranchiseMode()) {
+          const franchiseId = getCurrentFranchiseId();
+          if (franchiseId) {
+            videoDocRef = doc(db, 'franchises', franchiseId, 'stores', settings.storeId, 'settings', 'attract_video');
+          } else {
+            videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+          }
+        } else {
+          videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+        }
+        
+        const videoSnap = await getDoc(videoDocRef);
+
+        if (videoSnap.exists()) {
+          setAttractVideoSettings(videoSnap.data() as AttractVideoSettings);
+        }
+      } catch (error) {
+        console.error('Error loading attract video settings:', error);
+      }
+    };
+
+    loadAttractVideoSettings();
+  }, [settings?.storeId]);
+
+  const handleAttractVideoChange = (field: keyof AttractVideoSettings, value: string | number | boolean) => {
+    setAttractVideoSettings(prev => ({
+      ...prev,
+      [field]: value
+    }));
+  };
+
+  const handleSaveVideoSettings = async () => {
+    if (!settings?.storeId) return;
+    
+    setVideoSaving(true);
+    try {
+      const db = getFirebaseDb();
+      
+      let videoDocRef;
+      if (isFranchiseMode()) {
+        const franchiseId = getCurrentFranchiseId();
+        if (franchiseId) {
+          videoDocRef = doc(db, 'franchises', franchiseId, 'stores', settings.storeId, 'settings', 'attract_video');
+        } else {
+          videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+        }
+      } else {
+        videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+      }
+
+      await setDoc(videoDocRef, attractVideoSettings, { merge: true });
+      toast.success(t('settings.attractVideoSaved') || 'Configurações de vídeo salvas!');
+    } catch (error) {
+      console.error('Error saving attract video settings:', error);
+      toast.error(t('common.error') || 'Erro ao salvar');
+    } finally {
+      setVideoSaving(false);
+    }
+  };
 
   const handleLanguageChange = async (newLanguage: Language) => {
     try {
@@ -117,6 +198,17 @@ export default function AdminSettings() {
 
   return (
     <div className="space-y-6">
+      {/* Header - Configurações do Kiosk */}
+      <div className="border-b pb-4">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <MonitorPlay className="h-6 w-6" />
+          {t('settings.kioskSettings') || 'Configurações do Kiosk'}
+        </h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          {t('settings.kioskSettingsDescription') || 'Configurações operacionais do terminal de autoatendimento'}
+        </p>
+      </div>
+
       {/* Seletor de Idioma */}
       <Card>
         <CardHeader>
@@ -310,9 +402,276 @@ export default function AdminSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Configurações de Impressora */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Printer className="h-5 w-5" />
+            {t('settings.printer')}
+          </CardTitle>
+          <CardDescription>
+            {t('settings.printerDescription') || 'Configure a impressora para recibos'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="thermalPrinter">{t('settings.useThermalPrinter')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.thermalPrinterDescription')}
+              </p>
+            </div>
+            <Switch
+              id="thermalPrinter"
+              checked={settings?.useThermalPrinter || false}
+              onCheckedChange={(checked) => settings && updateSettings({ ...settings, useThermalPrinter: checked })}
+            />
+          </div>
+
+          {settings?.useThermalPrinter && (
+            <div>
+              <Label htmlFor="comPort">{t('settings.comPortThermal')}</Label>
+              <Input
+                id="comPort"
+                value={settings?.comPort || ""}
+                onChange={(e) => settings && updateSettings({ ...settings, comPort: e.target.value })}
+                placeholder={t('settings.comPortPlaceholder')}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                {t('settings.comPortHelp')}
+              </p>
+            </div>
+          )}
+
+          {!settings?.useThermalPrinter && (
+            <div className="p-3 bg-blue-50 rounded-lg">
+              <p className="text-blue-800 text-sm">
+                {t('settings.pdfModeDescription')}
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Configurações de Vídeo de Fundo (Tela de Espera) */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Video className="h-5 w-5" />
+            {t('settings.attractVideoTitle')}
+          </CardTitle>
+          <CardDescription>
+            {t('settings.attractVideoDescription') || 'Configure o vídeo de fundo para a tela de espera do Kiosk'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Toggle para habilitar/desabilitar */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-0.5">
+              <Label htmlFor="videoEnabled">{t('settings.enableAttractVideo')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.enableAttractVideoDescription')}
+              </p>
+            </div>
+            <Switch
+              id="videoEnabled"
+              checked={attractVideoSettings.isEnabled || false}
+              onCheckedChange={(checked) => handleAttractVideoChange('isEnabled', checked)}
+            />
+          </div>
+
+          {/* Campos de vídeo apenas se habilitado */}
+          {attractVideoSettings.isEnabled && (
+            <div className="space-y-4 border-t pt-4">
+              {/* URL do vídeo */}
+              <div>
+                <Label htmlFor="videoUrl">{t('settings.videoUrl')} *</Label>
+                <Input
+                  id="videoUrl"
+                  type="url"
+                  value={attractVideoSettings.videoUrl || ""}
+                  onChange={(e) => handleAttractVideoChange('videoUrl', e.target.value)}
+                  placeholder={t('settings.videoUrlPlaceholder')}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.videoUrlHelp')}
+                </p>
+              </div>
+
+              {/* Título customizado */}
+              <div>
+                <Label htmlFor="displayTitle">{t('settings.displayTitle')}</Label>
+                <Input
+                  id="displayTitle"
+                  value={attractVideoSettings.displayTitle || ""}
+                  onChange={(e) => handleAttractVideoChange('displayTitle', e.target.value)}
+                  placeholder={t('settings.displayTitlePlaceholder')}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.displayTitleHelp')}
+                </p>
+              </div>
+
+              {/* Subtítulo customizado */}
+              <div>
+                <Label htmlFor="displaySubtitle">{t('settings.displaySubtitle')}</Label>
+                <Input
+                  id="displaySubtitle"
+                  value={attractVideoSettings.displaySubtitle || ""}
+                  onChange={(e) => handleAttractVideoChange('displaySubtitle', e.target.value)}
+                  placeholder={t('settings.displaySubtitlePlaceholder')}
+                />
+              </div>
+
+              {/* Opacidade do vídeo */}
+              <div>
+                <Label htmlFor="videoOpacity">
+                  {t('settings.videoOpacity')} ({Math.round((attractVideoSettings.videoOpacity || 0.4) * 100)}%)
+                </Label>
+                <input
+                  id="videoOpacity"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={attractVideoSettings.videoOpacity || 0.4}
+                  onChange={(e) => handleAttractVideoChange('videoOpacity', parseFloat(e.target.value))}
+                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.videoOpacityHelp')}
+                </p>
+              </div>
+
+              {/* Modo de preenchimento */}
+              <div>
+                <Label htmlFor="coverMode">{t('settings.videoCoverMode')}</Label>
+                <Select
+                  value={attractVideoSettings.videoCoverMode || 'cover'}
+                  onValueChange={(value) => handleAttractVideoChange('videoCoverMode', value)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cover">{t('settings.videoCoverModeFullScreen')}</SelectItem>
+                    <SelectItem value="contain">{t('settings.videoCoverModeContain')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {t('settings.videoCoverModeHelp')}
+                </p>
+              </div>
+
+              {/* Botão de salvar vídeo */}
+              <Button 
+                onClick={handleSaveVideoSettings} 
+                disabled={videoSaving}
+                className="w-full"
+              >
+                {videoSaving ? (t('settings.saving') || 'Salvando...') : (t('settings.saveVideoSettings') || 'Salvar Configurações de Vídeo')}
+              </Button>
+
+              {/* Informação sobre CORS */}
+              <div className="p-3 bg-amber-50 rounded-lg">
+                <p className="text-amber-800 text-sm">
+                  {t('settings.videoSecurityNote')}
+                </p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       
-      {/* Configurações gerais da loja */}
-      <SettingsPanel />
+
+      {/* Card de Informações da Loja - Modo Visualização */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Store className="h-5 w-5" />
+            {t('settings.storeDetails') || 'Dados da Loja'}
+          </CardTitle>
+          <CardDescription>
+            {t('settings.storeDetailsDescription') || 'Para editar estas informações, acesse o Admin Web'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {settingsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Nome da Loja */}
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">{t('settings.storeName')}</Label>
+                <p className="font-medium">{settings?.name ?? '-'}</p>
+              </div>
+
+              {/* CNPJ */}
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">{t('settings.taxId') || 'CNPJ'}</Label>
+                <p className="font-medium">{settings?.taxId ?? '-'}</p>
+              </div>
+
+              {/* E-mail */}
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">{t('settings.storeEmail') || 'E-mail'}</Label>
+                <p className="font-medium">{settings?.email ?? '-'}</p>
+              </div>
+
+              {/* Telefone */}
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">{t('settings.storePhone')}</Label>
+                <p className="font-medium">{settings?.phone ?? '-'}</p>
+              </div>
+
+              {/* Endereço */}
+              <div className="space-y-1 md:col-span-2">
+                <Label className="text-muted-foreground text-xs">{t('settings.storeAddress')}</Label>
+                <p className="font-medium">{settings?.address ?? '-'}</p>
+              </div>
+
+              {/* Taxa de Imposto */}
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">{t('settings.taxPercentage')}</Label>
+                <p className="font-medium">{settings?.taxPercentage ? `${settings.taxPercentage}%` : '-'}</p>
+              </div>
+
+              {/* Moeda */}
+              <div className="space-y-1">
+                <Label className="text-muted-foreground text-xs">{t('settings.currency')}</Label>
+                <p className="font-medium">{currentCurrency?.symbol} {currentCurrency?.code}</p>
+              </div>
+
+              {/* Descrição */}
+              {settings?.description && (
+                <div className="space-y-1 md:col-span-2">
+                  <Label className="text-muted-foreground text-xs">{t('settings.storeDescription') || 'Descrição'}</Label>
+                  <p className="font-medium text-sm">{settings.description}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Nota informativa */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="pt-6">
+          <div className="flex items-start space-x-3">
+            <Store className="h-5 w-5 text-blue-600 mt-0.5" />
+            <div className="text-sm text-blue-800">
+              <p className="font-medium">{t('settings.storeInfoManagedByAdmin') || 'Informações da Loja'}</p>
+              <p className="mt-1 text-xs">
+                {t('settings.storeInfoManagedByAdminDescription') || 'Nome, CNPJ, endereço e outras informações da loja são gerenciadas pelo Admin Web. Acesse o painel administrativo para editar esses dados.'}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

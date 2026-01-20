@@ -9,6 +9,8 @@ import { HashRouter, Routes, Route } from "react-router-dom";
 import { AuthContextProvider } from "@/context/AuthContext";
 import { ESP32Provider } from "@/context/ESP32Context";
 import { PaymentGatewayProvider } from "@/context/PaymentGatewayContext";
+import { FranchiseProvider } from "@/context/FranchiseContext";
+import { PermissionProvider } from "@/context/PermissionContext";
 import { AdminSecretAccess } from "@/components/AdminSecretAccess";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { LanguageProvider } from "@/i18n";
@@ -17,15 +19,42 @@ import { StoreProvider } from "@/context/StoreContext";
 import StoreInitialization from "@/components/StoreInitialization";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
+import { isFranchiseMode } from "@/lib/pathResolver";
 import Index from "./pages/Index";
 import Admin from "./pages/Admin";
 import Shop from "./pages/Shop";
 import NotFound from "./pages/NotFound";
+import LoginPage from "./pages/LoginPage";
+import AcceptInvitePage from "./pages/AcceptInvitePage";
+import StoreSelectPage from "./pages/StoreSelectPage";
+import { FranchiseGuard } from "@/components/FranchiseGuard";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
 
 const queryClient = new QueryClient();
+
+/**
+ * Wrapper para FranchiseProvider - só ativa em modo franquia
+ * Em modo legado, apenas passa os children diretamente
+ */
+const FranchiseProviderWrapper = ({ children }: { children: React.ReactNode }) => {
+  if (isFranchiseMode()) {
+    return <FranchiseProvider>{children}</FranchiseProvider>;
+  }
+  return <>{children}</>;
+};
+
+/**
+ * Wrapper para PermissionProvider - só ativa em modo franquia
+ * Em modo legado, apenas passa os children diretamente
+ */
+const PermissionProviderWrapper = ({ children }: { children: React.ReactNode }) => {
+  if (isFranchiseMode()) {
+    return <PermissionProvider>{children}</PermissionProvider>;
+  }
+  return <>{children}</>;
+};
 
 
 const AppContent = () => {
@@ -34,6 +63,10 @@ const AppContent = () => {
   const initialLanguage: Language = (settings?.language as Language) || 'en';
   // Obter storeId das configurações salvas
   const storeId = settings?.storeId || localStorage.getItem('currentStoreId') || undefined;
+  
+  // Em modo franchise, não requer StoreInitialization - vai direto para login/seleção
+  const franchiseMode = isFranchiseMode();
+  const needsInitialization = !franchiseMode && !isInitialized;
 
   // Bloquear back button em plataformas nativas (Android/iOS)
   useEffect(() => {
@@ -74,28 +107,55 @@ const AppContent = () => {
 
   return (
     <LanguageProvider initialLanguage={initialLanguage}>
-      {loading ? (
+      {loading && !franchiseMode ? (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           <p className="ml-4 text-gray-600">Loading...</p>
         </div>
-      ) : !isInitialized ? (
+      ) : needsInitialization ? (
         <StoreInitialization onComplete={updateSettings} />
       ) : (
         <StoreProvider initialStoreId={storeId}>
           <PaymentGatewayProvider>
             <ESP32Provider>
               <AuthContextProvider>
-                <HashRouter>
-                  <AdminSecretAccess>
-                    <Routes>
-                      <Route path="/" element={<Index />} />
-                      <Route path="/admin" element={<Admin />} />
-                      <Route path="/shop" element={<Shop />} />
-                      <Route path="*" element={<NotFound />} />
-                    </Routes>
-                  </AdminSecretAccess>
-                </HashRouter>
+                <FranchiseProviderWrapper>
+                  <PermissionProviderWrapper>
+                    <HashRouter>
+                      <AdminSecretAccess>
+                        <Routes>
+                          {/* Rotas públicas */}
+                          <Route path="/login" element={<LoginPage />} />
+                          <Route path="/invite" element={<AcceptInvitePage />} />
+                          
+                          {/* Rotas protegidas em modo franchise */}
+                          <Route path="/" element={
+                            <FranchiseGuard kioskMode={true}>
+                              <Index />
+                            </FranchiseGuard>
+                          } />
+                          <Route path="/admin" element={
+                            <FranchiseGuard>
+                              <Admin />
+                            </FranchiseGuard>
+                          } />
+                          <Route path="/shop" element={
+                            <FranchiseGuard>
+                              <Shop />
+                            </FranchiseGuard>
+                          } />
+                          <Route path="/store-select" element={
+                            <FranchiseGuard requireStore={false}>
+                              <StoreSelectPage />
+                            </FranchiseGuard>
+                          } />
+                          
+                          <Route path="*" element={<NotFound />} />
+                        </Routes>
+                      </AdminSecretAccess>
+                    </HashRouter>
+                  </PermissionProviderWrapper>
+                </FranchiseProviderWrapper>
               </AuthContextProvider>
             </ESP32Provider>
           </PaymentGatewayProvider>

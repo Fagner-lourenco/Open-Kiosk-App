@@ -58,6 +58,7 @@ export type ESP32ConnectionType = 'usb' | 'wifi' | 'bluetooth';
 export interface StoreSettings {
   name: string;
   storeId?: string;        // ID da loja no Firestore
+  franchiseId?: string;    // ID da franquia (para modo multi-tenant)
   currency: string;
   taxId: string;
   taxPercentage: number;
@@ -69,6 +70,30 @@ export interface StoreSettings {
     messagingSenderId: string;
     appId: string;
   };
+  
+  // ============================================
+  // Campos gerenciados pelo Admin Web
+  // ============================================
+  
+  /** E-mail da loja */
+  email?: string;
+  
+  /** Telefone da loja */
+  phone?: string;
+  
+  /** Endereço da loja */
+  address?: string;
+  
+  /** Descrição da loja */
+  description?: string;
+  
+  /** Fuso horário da loja (ex: 'America/Sao_Paulo') */
+  timezone?: string;
+  
+  // ============================================
+  // Configurações do Kiosk
+  // ============================================
+  
   comPort?: string;
   useThermalPrinter?: boolean;
   // Optional: tempo de inatividade para mostrar tela de atração

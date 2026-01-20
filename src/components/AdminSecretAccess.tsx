@@ -3,10 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { Device } from '@capacitor/device';
 import { useAuth } from '@/context/AuthContext';
 import { useAdminPin } from '@/hooks/useAdminPin';
+import { isFranchiseMode } from '@/lib/pathResolver';
 
 /**
  * Componente que detecta gesto secreto (5 cliques rápidos)
- * Abre modal com PIN, e navega para /admin se correto
+ * 
+ * Em modo legado: Abre modal com PIN
+ * Em modo franquia: Redireciona para /login (usa Firebase Auth)
  *
  * Use envolvendo o App inteiro:
  * <AdminSecretAccess>
@@ -20,14 +23,14 @@ interface AdminSecretAccessProps {
 
 export const AdminSecretAccess: React.FC<AdminSecretAccessProps> = ({ children }) => {
   const navigate = useNavigate();
-  const { setIsAuthenticated } = useAuth();
+  const { setIsAuthenticated, isAuthenticated, loginWithPin } = useAuth();
   const { validatePinWithRateLimit } = useAdminPin();
 
   // State do gesto
   const [tapCount, setTapCount] = useState(0);
   const tapTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // State do modal
+  // State do modal (apenas modo legado)
   const [showModal, setShowModal] = useState(false);
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -59,9 +62,19 @@ export const AdminSecretAccess: React.FC<AdminSecretAccessProps> = ({ children }
 
     // Se 5 cliques em 500ms
     if (newCount === 5) {
-      console.log('[AdminAccess] 🎯 Gesto secreto detectado! Abrindo modal...');
-      setShowModal(true);
+      console.log('[AdminAccess] 🎯 Gesto secreto detectado!');
       setTapCount(0);
+      
+      // Modo franquia: redirecionar para login
+      if (isFranchiseMode()) {
+        console.log('[AdminAccess] Modo franquia - redirecionando para /login');
+        navigate('/login');
+        return;
+      }
+      
+      // Modo legado: abrir modal PIN
+      console.log('[AdminAccess] Modo legado - abrindo modal PIN');
+      setShowModal(true);
       setPin('');
       setError('');
     } else {
@@ -70,7 +83,7 @@ export const AdminSecretAccess: React.FC<AdminSecretAccessProps> = ({ children }
         setTapCount(0);
       }, 500);
     }
-  }, [tapCount, showModal]);
+  }, [tapCount, showModal, navigate]);
 
   /**
    * Limpar timer ao desmontar
@@ -84,14 +97,30 @@ export const AdminSecretAccess: React.FC<AdminSecretAccessProps> = ({ children }
   }, []);
 
   /**
-   * Validar PIN e desbloquear
+   * Validar PIN e desbloquear (modo legado)
    */
   const handlePinSubmit = async () => {
     try {
       setLoading(true);
       setError('');
 
-      // Validar PIN
+      // Em modo franquia, usar loginWithPin do contexto
+      if (isFranchiseMode()) {
+        const result = await loginWithPin(pin);
+        
+        if (!result.success) {
+          setError(result.error || 'PIN incorreto');
+          setPin('');
+          return;
+        }
+        
+        setShowModal(false);
+        setPin('');
+        setTimeout(() => navigate('/admin'), 300);
+        return;
+      }
+
+      // Modo legado: usar validatePinWithRateLimit
       const result = await validatePinWithRateLimit(pin);
 
       if (!result.valid) {

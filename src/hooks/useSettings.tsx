@@ -45,6 +45,12 @@ export const useSettings = (storeId?: string) => {
   const fetchCurrency = async () => {
     const effectiveStoreId = getEffectiveStoreId();
     
+    // Se não tem storeId, não tenta buscar do Firestore - usa valor padrão
+    if (!effectiveStoreId) {
+      console.warn('[useSettings] No storeId available, using default currency');
+      return;
+    }
+    
     // If already initialized for this store, avoid duplicate network calls
     if (currencyInitializedForStore === effectiveStoreId) return;
     if (currencyInitPromise) {

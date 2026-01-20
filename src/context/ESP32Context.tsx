@@ -8,6 +8,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import esp32Service, { ConnectionStatus, ConnectionType, ESP32Device } from '@/services/esp32CommunicationService';
 import esp32Serial, { ESP32Response } from '@/services/esp32SerialService';
+import { hardwareStatusService } from '@/services/hardwareStatusService';
 import { useToast } from '@/hooks/use-toast';
 
 // ============================================
@@ -201,6 +202,12 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           mdnsHostname: response.mdns_hostname,
           bleName: response.ble_name,
         });
+        // Atualizar status remoto com todos os dados do ESP32
+        hardwareStatusService.updateStatus({
+          firmwareVersion: response.firmware_version,
+          esp32Ip: response.wifi_ip,
+          macAddress: response.mac,
+        });
         break;
         
       case 'error':
@@ -220,8 +227,18 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   const updateConnectionStatus = useCallback((newStatus: ConnectionStatus) => {
     setStatus(newStatus);
     
+    // Persistir status no Firestore para monitoramento remoto (Admin)
+    hardwareStatusService.updateStatus({
+      esp32Connected: newStatus.connected,
+      esp32Type: newStatus.type !== 'none' ? newStatus.type as 'usb' | 'wifi' | 'bluetooth' : undefined,
+      esp32Port: newStatus.deviceName,
+    });
+    
     if (newStatus.connected) {
       setLastError(null);
+      
+      // Iniciar heartbeat local e remoto
+      hardwareStatusService.startHeartbeat();
       
       // Iniciar heartbeat
       if (heartbeatRef.current) {
@@ -233,6 +250,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         });
       }, heartbeatInterval);
     } else {
+      // Parar heartbeat local e remoto
+      hardwareStatusService.stopHeartbeat();
+      
       // Parar heartbeat
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
@@ -260,17 +280,18 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     const unsubscribeConnection = esp32Serial.onConnectionChange((connected: boolean) => {
       if (connected) {
         addLog('info', '✅ Connected USB Serial');
-        setStatus({ connected: true, type: 'usb', deviceName: 'USB Serial' });
+        // Usar updateConnectionStatus para também persistir no Firestore
+        updateConnectionStatus({ connected: true, type: 'usb', deviceName: 'USB Serial' });
       } else {
         addLog('info', '🔌 Disconnected');
-        setStatus({ connected: false, type: 'none' });
+        updateConnectionStatus({ connected: false, type: 'none' });
       }
     });
     
     // Verificar conexão inicial
     const initialStatus = esp32Service.getConnectionStatus();
     if (initialStatus.connected) {
-      setStatus(initialStatus);
+      updateConnectionStatus(initialStatus);
     } else if (autoReconnect) {
       // Tentar reconexão automática USB se não conectado
       // Pequeno delay para garantir que a página carregou
@@ -415,7 +436,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       await esp32Service.disconnect();
       await esp32Serial.disconnect();
       
-      setStatus({ connected: false, type: 'none' });
+      updateConnectionStatus({ connected: false, type: 'none' });
       setIsDispensing(false);
       setCurrentProgress(null);
       

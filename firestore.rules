@@ -1,0 +1,768 @@
+/**
+ * ============================================================================
+ * Firestore Security Rules - Multi-Franchise RBAC
+ * ============================================================================
+ * 
+ * ESTRUTURA DE DADOS:
+ * - users/{userId} - Dados do usuário autenticado
+ * - franchises/{franchiseId} - Dados da franquia
+ * - franchises/{franchiseId}/members/{userId} - Membros com roles
+ * - franchises/{franchiseId}/stores/{storeId} - Lojas da franquia
+ * - franchises/{franchiseId}/stores/{storeId}/products - Produtos
+ * - franchises/{franchiseId}/stores/{storeId}/sales - Vendas
+ * - franchises/{franchiseId}/stores/{storeId}/settings - Configurações
+ * - franchises/{franchiseId}/stores/{storeId}/dispensers - Torneiras
+ * - stores/{storeId} - LEGADO: Compatibilidade com sistema atual
+ * - invitations/{inviteId} - Convites pendentes
+ * - audit_logs/{logId} - Logs de auditoria
+ * 
+ * ROLES:
+ * - owner: Dono da franquia (acesso total)
+ * - admin: Administrador (quase tudo, exceto billing)
+ * - manager: Gerente de loja (apenas lojas atribuídas)
+ * - operator: Operador de caixa (apenas PDV)
+ * - technician: Técnico (apenas hardware/ESP32)
+ * 
+ * @author Open Kiosk Project
+ * @version 1.0.0
+ */
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // FUNÇÕES AUXILIARES
+    // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * Verifica se o usuário está autenticado
+     */
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    /**
+     * Verifica se o usuário é super admin
+     */
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'superadmin';
+    }
+    
+    /**
+     * Obtém os dados do membership do usuário em uma franquia
+     */
+    function getMembership(franchiseId) {
+      return get(/databases/$(database)/documents/franchises/$(franchiseId)/members/$(request.auth.uid)).data;
+    }
+    
+    /**
+     * Verifica se o usuário é membro de uma franquia
+     */
+    function isFranchiseMember(franchiseId) {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/franchises/$(franchiseId)/members/$(request.auth.uid));
+    }
+    
+    /**
+     * Verifica se o usuário é membro ou super admin
+     */
+    function isFranchiseMemberOrSuperAdmin(franchiseId) {
+      return isSuperAdmin() || isFranchiseMember(franchiseId);
+    }
+    
+    /**
+     * Verifica se o usuário tem um dos roles especificados
+     */
+    function hasRole(franchiseId, roles) {
+      return isFranchiseMember(franchiseId) && 
+             getMembership(franchiseId).role in roles;
+    }
+    
+    /**
+     * Verifica se o usuário é owner ou admin da franquia
+     */
+    function isOwnerOrAdmin(franchiseId) {
+      return hasRole(franchiseId, ['owner', 'admin']);
+    }
+    
+    /**
+     * Verifica se o usuário é o owner da franquia pelo campo ownerId do documento
+     * Isso é mais robusto que verificar o membership, pois funciona mesmo se
+     * o documento de membership ainda não existir
+     */
+    function isFranchiseOwner(franchiseId) {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/franchises/$(franchiseId)).data.ownerId == request.auth.uid;
+    }
+    
+    /**
+     * Verifica se é owner/admin ou super admin
+     */
+    function isOwnerAdminOrSuperAdmin(franchiseId) {
+      return isSuperAdmin() || isFranchiseOwner(franchiseId) || isOwnerOrAdmin(franchiseId);
+    }
+    
+    /**
+     * Verifica se o usuário tem acesso a uma loja específica
+     * Retorna true se:
+     * - Usuário é o owner da franquia (tem acesso a todas as lojas)
+     * - storeAccess contém '*' (todas as lojas)
+     * - storeAccess contém o storeId específico
+     */
+    function hasStoreAccess(franchiseId, storeId) {
+      // Owner da franquia tem acesso a todas as lojas
+      let franchiseData = get(/databases/$(database)/documents/franchises/$(franchiseId)).data;
+      return franchiseData.ownerId == request.auth.uid ||
+             (isFranchiseMember(franchiseId) && 
+              ('*' in getMembership(franchiseId).storeAccess || 
+               storeId in getMembership(franchiseId).storeAccess));
+    }
+    
+    /**
+     * Verifica se o usuário pode acessar uma loja com role mínimo
+     */
+    function canAccessStoreWithRole(franchiseId, storeId, minRoles) {
+      // Owner da franquia pode tudo
+      let franchiseData = get(/databases/$(database)/documents/franchises/$(franchiseId)).data;
+      return franchiseData.ownerId == request.auth.uid ||
+             (isFranchiseMember(franchiseId) && 
+              hasStoreAccess(franchiseId, storeId) &&
+              hasRole(franchiseId, minRoles));
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // SUPERADMINS COLLECTION (Gerenciado apenas por Cloud Functions)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /superadmins/{userId} {
+      // Super admins podem ler a lista
+      allow read: if isSuperAdmin();
+      
+      // Apenas Cloud Functions podem escrever
+      allow write: if false;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // USERS COLLECTION (Global)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /users/{userId} {
+      // Super admin pode ler qualquer usuário
+      // Usuário comum pode ler apenas seus próprios dados
+      allow read: if isSuperAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      
+      // Usuário pode criar seu próprio documento (no registro)
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Super admin pode atualizar qualquer usuário
+      // Usuário pode atualizar seus próprios dados
+      allow update: if isSuperAdmin() || (isAuthenticated() && request.auth.uid == userId);
+      
+      // Não permite delete (apenas via Cloud Function)
+      allow delete: if false;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // FRANCHISES COLLECTION
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /franchises/{franchiseId} {
+      // Super admin pode ler qualquer franquia
+      // Owner pode ler sua própria franquia (verificado pelo campo ownerId do documento)
+      // Membros podem ler a franquia (verificado via subcollection members)
+      // IMPORTANTE: A verificação de owner é feita PRIMEIRO para evitar erro de permissão
+      // quando o membership ainda não existe ou está sendo criado
+      allow read: if isSuperAdmin() || 
+                    (isAuthenticated() && resource.data.ownerId == request.auth.uid) ||
+                    isFranchiseMember(franchiseId);
+      
+      // Qualquer usuário autenticado pode criar uma franquia (se torna owner)
+      allow create: if isAuthenticated();
+      
+      // Super admin ou owner (pelo campo ownerId) ou admin/owner (pelo membership) podem atualizar
+      allow update: if isSuperAdmin() || 
+                      (isAuthenticated() && resource.data.ownerId == request.auth.uid) ||
+                      isOwnerOrAdmin(franchiseId);
+      
+      // Super admin pode deletar franquias
+      allow delete: if isSuperAdmin();
+      
+      // ──────────────────────────────────────────────────────────────────────
+      // MEMBERS SUBCOLLECTION
+      // ──────────────────────────────────────────────────────────────────────
+      
+      match /members/{memberId} {
+        // Super admin pode ver membros de qualquer franquia
+        // Membros da franquia podem ver outros membros
+        // IMPORTANTE: Usuário pode ler seu PRÓPRIO membership de duas formas:
+        // 1. memberId == uid (ID do documento é o userId)
+        // 2. resource.data.userId == uid (campo userId é o uid do usuário)
+        // Isso permite tanto leituras diretas quanto queries collectionGroup
+        // NOTA: Para collectionGroup queries, isFranchiseMember não funciona pois
+        // não temos o franchiseId antes de ler o documento. Por isso a regra
+        // resource.data.userId == uid é essencial para queries como:
+        // collectionGroup('members').where('userId', '==', uid).where('isActive', '==', true)
+        allow read: if isSuperAdmin() || 
+                      (isAuthenticated() && request.auth.uid == memberId) ||
+                      (isAuthenticated() && resource.data.userId == request.auth.uid) ||
+                      isFranchiseMember(franchiseId);
+        
+        // Super admin ou owner/admin podem adicionar membros
+        allow create: if isOwnerAdminOrSuperAdmin(franchiseId);
+        
+        // Super admin pode atualizar qualquer membro
+        // Owner e admin podem atualizar membros (não podem mudar próprio role)
+        allow update: if isSuperAdmin() || 
+                        (isOwnerOrAdmin(franchiseId) && 
+                        (request.auth.uid != memberId || 
+                         request.resource.data.role == resource.data.role));
+        
+        // Super admin pode remover qualquer membro
+        // Owner e admin podem remover membros (não a si mesmo)
+        allow delete: if isSuperAdmin() || 
+                        (isOwnerOrAdmin(franchiseId) && request.auth.uid != memberId);
+      }
+      
+      // ──────────────────────────────────────────────────────────────────────
+      // STORES SUBCOLLECTION (dentro de franchise)
+      // ──────────────────────────────────────────────────────────────────────
+      
+      match /stores/{storeId} {
+        // Super admin pode ler qualquer loja
+        // Owner da franquia ou membros com acesso à loja podem ler
+        allow read: if isSuperAdmin() || 
+                      isFranchiseOwner(franchiseId) ||
+                      (isFranchiseMember(franchiseId) && hasStoreAccess(franchiseId, storeId));
+        
+        // Super admin ou owner/admin podem criar lojas
+        allow create: if isOwnerAdminOrSuperAdmin(franchiseId);
+        
+        // Super admin ou owner/admin/manager podem atualizar
+        allow update: if isSuperAdmin() || 
+                        canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+        
+        // Super admin ou owner da franquia pode deletar lojas
+        allow delete: if isSuperAdmin() || isFranchiseOwner(franchiseId);
+        
+        // ────────────────────────────────────────────────────────────────────
+        // PRODUCTS
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /products/{productId} {
+          // Super admin ou owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Super admin ou owner/admin/manager podem criar/editar produtos
+          allow create, update: if isSuperAdmin() || 
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+          
+          // Owner da franquia ou admin podem deletar produtos
+          allow delete: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // SALES (Vendas são imutáveis após criação)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /sales/{saleId} {
+          // Owner da franquia ou membros com acesso podem ler vendas
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Owner ou qualquer membro com acesso pode registrar vendas
+          allow create: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+          
+          // Vendas são imutáveis (não permite update/delete)
+          allow update, delete: if false;
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // ORDERS (Alias para SALES - compatibilidade com Kiosk App)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /orders/{orderId} {
+          // Owner da franquia ou membros com acesso podem ler pedidos
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Owner ou qualquer membro com acesso pode registrar pedidos
+          allow create: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+          
+          // Permitir update APENAS para mudanças de status (cancelamento, estorno)
+          // Restringe a apenas owner/admin da franquia
+          allow update: if (isSuperAdmin() || 
+                           isFranchiseOwner(franchiseId) ||
+                           canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin'])) &&
+                        // Apenas permite atualizar campos específicos de status
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'paymentStatus', 'cancelledAt', 'refundedAt', 'notes', 'updatedAt']);
+          
+          // Pedidos nunca podem ser deletados (audit trail)
+          allow delete: if false;
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // SETTINGS
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /settings/{settingId} {
+          // Owner da franquia ou membros com acesso podem ler configurações
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Owner da franquia ou admin/manager podem editar configurações
+          allow create, update: if isSuperAdmin() || 
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+          
+          allow delete: if false;
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // DISPENSERS (Torneiras ESP32)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /dispensers/{dispenserId} {
+          // Owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Owner da franquia ou admin/manager/technician podem criar/editar
+          allow create, update: if isSuperAdmin() || 
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']);
+          
+          // Owner da franquia ou admin podem deletar
+          allow delete: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // HARDWARE STATUS (ESP32, impressoras, etc.)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /hardware/{docId} {
+          // Owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Owner da franquia ou admin/manager/technician podem criar/editar
+          // Também permite escrita de dispositivos autenticados via storeId claim
+          allow create, update: if isSuperAdmin() || 
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']) ||
+                                  (isAuthenticated() && request.auth.token.storeId == storeId);
+          
+          // Apenas admin pode deletar
+          allow delete: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId);
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // DEVICES (dispositivos conectados)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /devices/{deviceId} {
+          // Owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Dispositivos podem registrar/atualizar via storeId claim
+          allow create, update: if isSuperAdmin() || 
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']) ||
+                                  (isAuthenticated() && request.auth.token.storeId == storeId);
+          
+          // Apenas admin pode deletar
+          allow delete: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId);
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // DAILY STATS (estatísticas diárias - escritas via Cloud Functions)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /dailyStats/{dateId} {
+          // Owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Apenas Cloud Functions escrevem estatísticas
+          allow write: if false;
+        }
+        
+        // ────────────────────────────────────────────────────────────────────
+        // METRICS (métricas materializadas - escritas via Cloud Functions)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /metrics/{metricId} {
+          // Owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Apenas Cloud Functions escrevem métricas
+          allow write: if false;
+        }
+      }
+      
+      // ──────────────────────────────────────────────────────────────────────
+      // NOTIFICATIONS SUBCOLLECTION (dentro de franchise)
+      // ──────────────────────────────────────────────────────────────────────
+      
+      match /notifications/{notificationId} {
+        // Owner, admin ou o usuário destinatário podem ler notificações
+        allow read: if isSuperAdmin() || 
+                      isFranchiseOwner(franchiseId) ||
+                      isOwnerOrAdmin(franchiseId) ||
+                      (isAuthenticated() && resource.data.userId == request.auth.uid);
+        
+        // Owner ou admin podem criar notificações (ou Cloud Functions)
+        allow create: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        isOwnerOrAdmin(franchiseId);
+        
+        // Usuário pode atualizar próprias notificações (marcar como lida/dispensada)
+        // Owner/admin podem atualizar qualquer notificação
+        allow update: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        isOwnerOrAdmin(franchiseId) ||
+                        (isAuthenticated() && resource.data.userId == request.auth.uid);
+        
+        // Owner ou admin podem deletar notificações
+        allow delete: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        isOwnerOrAdmin(franchiseId);
+      }
+      
+      // ──────────────────────────────────────────────────────────────────────
+      // BILLING EVENTS SUBCOLLECTION (dentro de franchise)
+      // ──────────────────────────────────────────────────────────────────────
+      
+      match /billingEvents/{eventId} {
+        // Owner e admin podem ler eventos de billing
+        allow read: if isSuperAdmin() || 
+                      isFranchiseOwner(franchiseId) ||
+                      isOwnerOrAdmin(franchiseId);
+        
+        // Apenas Cloud Functions devem criar eventos de billing
+        // Permitimos create para owner para fallback manual se necessário
+        allow create: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId);
+        
+        // Eventos de billing são imutáveis (histórico)
+        allow update, delete: if false;
+      }
+      
+      // ──────────────────────────────────────────────────────────────────────
+      // AUDIT LOGS SUBCOLLECTION (dentro de franchise)
+      // ──────────────────────────────────────────────────────────────────────
+      
+      match /auditLogs/{logId} {
+        // Owner e admin podem ler logs de auditoria
+        allow read: if isSuperAdmin() || 
+                      isFranchiseOwner(franchiseId) ||
+                      isOwnerOrAdmin(franchiseId);
+        
+        // Qualquer membro autenticado da franquia pode criar logs
+        allow create: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        isFranchiseMember(franchiseId);
+        
+        // Logs de auditoria são imutáveis (não podem ser alterados ou deletados)
+        allow update, delete: if false;
+      }
+      
+      // ──────────────────────────────────────────────────────────────────────
+      // SETTINGS SUBCOLLECTION (dentro de franchise - configurações gerais)
+      // ──────────────────────────────────────────────────────────────────────
+      
+      match /settings/{settingId} {
+        // Membros da franquia podem ler configurações
+        allow read: if isSuperAdmin() || 
+                      isFranchiseOwner(franchiseId) ||
+                      isFranchiseMember(franchiseId);
+        
+        // Owner e admin podem criar/editar configurações
+        allow create, update: if isSuperAdmin() || 
+                                isFranchiseOwner(franchiseId) ||
+                                isOwnerOrAdmin(franchiseId);
+        
+        // Configurações não podem ser deletadas
+        allow delete: if false;
+      }
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // STORES COLLECTION (LEGADO - Compatibilidade)
+    // ════════════════════════════════════════════════════════════════════════
+    // 
+    // IMPORTANTE: Esta seção mantém compatibilidade com o sistema atual
+    // para lojas que ainda não foram migradas para o modelo de franquias.
+    // 
+    // Regras de segurança:
+    // - Leitura: Usuário deve ter storeId nos claims OU ser super admin
+    // - Escrita: Usuário deve ter storeId nos claims OU ser super admin
+    // ════════════════════════════════════════════════════════════════════════
+    
+    /**
+     * Verifica se o usuário tem acesso a uma loja legada via claims
+     */
+    function hasLegacyStoreAccess(storeId) {
+      return isAuthenticated() && 
+             (isSuperAdmin() || 
+              request.auth.token.storeId == storeId ||
+              request.auth.token.storeAccess == '*' ||
+              (request.auth.token.storeAccess is list && storeId in request.auth.token.storeAccess));
+    }
+    
+    match /stores/{storeId} {
+      // Leitura: Usuário deve ter acesso à loja via claims
+      allow read: if hasLegacyStoreAccess(storeId);
+      
+      // Escrita: Usuário deve ter acesso à loja via claims
+      allow write: if hasLegacyStoreAccess(storeId);
+      
+      // Subcollections legadas - seguem mesma regra de acesso
+      match /products/{productId} {
+        allow read: if hasLegacyStoreAccess(storeId);
+        allow write: if hasLegacyStoreAccess(storeId);
+      }
+      
+      match /orders/{orderId} {
+        allow read: if hasLegacyStoreAccess(storeId);
+        allow create: if hasLegacyStoreAccess(storeId);
+        // Permitir update apenas de campos de status
+        allow update: if hasLegacyStoreAccess(storeId) &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['status', 'paymentStatus', 'cancelledAt', 'refundedAt', 'notes', 'updatedAt']);
+        allow delete: if false; // Pedidos nunca podem ser deletados
+      }
+      
+      match /sales/{saleId} {
+        allow read: if hasLegacyStoreAccess(storeId);
+        allow create: if hasLegacyStoreAccess(storeId);
+        // Permitir update apenas de campos de status
+        allow update: if hasLegacyStoreAccess(storeId) &&
+                      request.resource.data.diff(resource.data).affectedKeys()
+                        .hasOnly(['status', 'paymentStatus', 'cancelledAt', 'refundedAt', 'notes', 'updatedAt']);
+        allow delete: if false; // Vendas nunca podem ser deletadas
+      }
+      
+      match /settings/{settingId} {
+        allow read: if hasLegacyStoreAccess(storeId);
+        allow write: if hasLegacyStoreAccess(storeId);
+      }
+      
+      match /dispensers/{dispenserId} {
+        allow read: if hasLegacyStoreAccess(storeId);
+        allow write: if hasLegacyStoreAccess(storeId);
+      }
+      
+      match /inventoryLogs/{logId} {
+        allow read: if hasLegacyStoreAccess(storeId);
+        allow create: if hasLegacyStoreAccess(storeId);
+        allow update, delete: if false; // Logs são imutáveis
+      }
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // INVITATIONS COLLECTION
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /invitations/{inviteId} {
+      // Usuário pode ler convites destinados ao seu email
+      // Owner/Admin podem ler convites da franquia
+      allow read: if isAuthenticated() && 
+                   (resource.data.email == request.auth.token.email ||
+                    isOwnerOrAdmin(resource.data.franchiseId));
+      
+      // Owner e admin podem criar convites
+      allow create: if isAuthenticated() && 
+                     isOwnerOrAdmin(request.resource.data.franchiseId);
+      
+      // Pode atualizar status (aceitar convite)
+      allow update: if isAuthenticated() && 
+                     (resource.data.email == request.auth.token.email ||
+                      isOwnerOrAdmin(resource.data.franchiseId));
+      
+      // Owner e admin podem revogar convites
+      allow delete: if isAuthenticated() && 
+                     isOwnerOrAdmin(resource.data.franchiseId);
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // SETTINGS COLLECTION (Global fallback - Legacy)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /settings/{settingId} {
+      // Qualquer usuário autenticado pode ler configurações globais
+      allow read: if isAuthenticated();
+      
+      // Apenas super admin pode escrever em configurações globais
+      allow write: if isSuperAdmin();
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // AUDIT LOGS (Append-Only)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /audit_logs/{logId} {
+      // Apenas owner e admin podem ler logs
+      allow read: if isAuthenticated() && 
+                   isOwnerOrAdmin(resource.data.franchiseId);
+      
+      // Qualquer usuário autenticado pode criar logs
+      allow create: if isAuthenticated();
+      
+      // Logs são imutáveis
+      allow update, delete: if false;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // ROLES COLLECTION (Templates de permissões)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /roles/{roleId} {
+      // Todos podem ler roles (são públicos)
+      allow read: if isAuthenticated();
+      
+      // Apenas Cloud Functions podem escrever
+      allow write: if false;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // ANALYTICS COLLECTION (Métricas Materializadas - Global)
+    // ════════════════════════════════════════════════════════════════════════
+    // 
+    // Estrutura:
+    // - analytics/daily/{YYYY-MM-DD} - Agregados diários globais
+    // - analytics/hourly/{YYYY-MM-DD-HH} - Agregados por hora
+    // 
+    // Acessível por: superadmins e Cloud Functions
+    // ════════════════════════════════════════════════════════════════════════
+    
+    match /analytics/{docType}/{docId} {
+      // Super admin pode ler métricas globais
+      allow read: if isSuperAdmin();
+      
+      // Apenas Cloud Functions podem escrever (via admin SDK)
+      allow write: if false;
+    }
+    
+    // ════════════════════════════════════════════════════════════════════════
+    // COLLECTION GROUP QUERIES - Regras para consultas agregadas
+    // ════════════════════════════════════════════════════════════════════════
+    // 
+    // Permite queries collectionGroup para:
+    // - members (membros de franquias)
+    // - orders (pedidos de todas as lojas)
+    // - devices (dispositivos de todas as lojas)
+    // - dailyStats (estatísticas diárias)
+    // - metrics (métricas materializadas)
+    // ════════════════════════════════════════════════════════════════════════
+    
+    // CollectionGroup: members - permite buscar memberships do usuário
+    match /{path=**}/members/{memberId} {
+      // Super admin pode ler todos os membros
+      allow read: if isSuperAdmin();
+      
+      // Usuário pode ler seus próprios memberships (por userId no documento)
+      // Essencial para: collectionGroup('members').where('userId', '==', uid)
+      allow read: if isAuthenticated() && 
+                    resource.data.userId == request.auth.uid;
+      
+      // Escrita segue regras da subcollection específica
+      allow write: if false;
+    }
+    
+    // CollectionGroup: orders - permite consultas agregadas
+    match /{path=**}/orders/{orderId} {
+      // Super admin pode ler todos os pedidos via collectionGroup
+      allow read: if isSuperAdmin();
+      
+      // Escrita segue regras da subcollection específica
+      allow write: if false;
+    }
+    
+    // CollectionGroup: devices - status de hardware
+    match /{path=**}/devices/{deviceId} {
+      // Super admin pode ler todos os devices
+      allow read: if isSuperAdmin();
+      
+      // Membros podem ler devices da sua franquia (via storeAccess)
+      // Nota: Para funcionar, o documento deve ter franchiseId
+      allow read: if isAuthenticated() && 
+                    resource.data.franchiseId != null &&
+                    (isFranchiseOwner(resource.data.franchiseId) ||
+                     isFranchiseMember(resource.data.franchiseId));
+      
+      // Escrita apenas via Kiosk (com auth de loja)
+      allow write: if false;
+    }
+    
+    // CollectionGroup: dailyStats - estatísticas diárias por loja
+    match /{path=**}/dailyStats/{dateId} {
+      // Super admin pode ler todas as estatísticas
+      allow read: if isSuperAdmin();
+      
+      // Membros podem ler stats da sua franquia
+      allow read: if isAuthenticated() && 
+                    resource.data.franchiseId != null &&
+                    (isFranchiseOwner(resource.data.franchiseId) ||
+                     isFranchiseMember(resource.data.franchiseId));
+      
+      // Escrita apenas via Cloud Functions
+      allow write: if false;
+    }
+    
+    // CollectionGroup: metrics - métricas materializadas por loja
+    match /{path=**}/metrics/{metricId} {
+      // Super admin pode ler todas as métricas
+      allow read: if isSuperAdmin();
+      
+      // Membros podem ler métricas da sua franquia
+      allow read: if isAuthenticated() && 
+                    resource.data.franchiseId != null &&
+                    (isFranchiseOwner(resource.data.franchiseId) ||
+                     isFranchiseMember(resource.data.franchiseId));
+      
+      // Escrita apenas via Cloud Functions
+      allow write: if false;
+    }
+    
+    // CollectionGroup: hardware - status de hardware
+    match /{path=**}/hardware/{docId} {
+      // Super admin pode ler todo hardware
+      allow read: if isSuperAdmin();
+      
+      // Membros podem ler hardware da sua franquia
+      allow read: if isAuthenticated() && 
+                    resource.data.franchiseId != null &&
+                    (isFranchiseOwner(resource.data.franchiseId) ||
+                     isFranchiseMember(resource.data.franchiseId));
+      
+      // Kiosk pode escrever status (com auth de loja via claims)
+      allow write: if isAuthenticated() &&
+                     request.auth.token.storeId != null;
+    }
+  }
+}

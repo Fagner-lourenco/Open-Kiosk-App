@@ -1,6 +1,7 @@
-import { getFirebaseDb, getCurrentStoreId } from './firebase';
+import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where } from 'firebase/firestore';
 import { Store } from '@/types/store';
+import { isFranchiseMode } from '@/lib/pathResolver';
 
 // ============================================
 // Store Service - Gerenciamento de Lojas
@@ -38,15 +39,30 @@ class StoreService {
   /**
    * Obter dados completos de uma loja
    * NOTA: Detecta documentos vazios (placeholder) e tenta recuperar automaticamente
+   * Suporta modo franchise (franchises/{franchiseId}/stores/{storeId})
    */
   async getStore(storeId: string): Promise<Store | null> {
     try {
       const db = getFirebaseDb();
-      const storeDoc = doc(db, 'stores', storeId);
+      
+      // Determinar path correto baseado no modo
+      let storeDoc;
+      if (isFranchiseMode()) {
+        const franchiseId = getCurrentFranchiseId();
+        if (franchiseId) {
+          storeDoc = doc(db, 'franchises', franchiseId, 'stores', storeId);
+          console.log('[StoreService] Using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
+        } else {
+          storeDoc = doc(db, 'stores', storeId);
+        }
+      } else {
+        storeDoc = doc(db, 'stores', storeId);
+      }
+      
       const snapshot = await getDoc(storeDoc);
       
       const data = snapshot.data();
-      const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
+      const hasValidData = data && Object.keys(data).length > 0 && (data.storeId || data.name);
       
       // Documento não existe OU está vazio (placeholder de subcoleção)
       if (!snapshot.exists() || !hasValidData) {
@@ -63,7 +79,12 @@ class StoreService {
       }
       
       return { id: snapshot.id, ...data } as Store;
-    } catch (error) {
+    } catch (error: any) {
+      // Se for erro de permissão, tentar usar cache local
+      if (error?.code === 'permission-denied' || error?.message?.includes('permission')) {
+        console.warn('[StoreService] Permission denied, trying cache fallback');
+        return await this.recoverStoreFromLocalStorage(storeId);
+      }
       console.error('[StoreService] Error fetching store:', error);
       throw error;
     }
@@ -224,12 +245,22 @@ class StoreService {
   /**
    * Criar ou atualizar loja a partir das configurações locais
    * Usado durante o setup inicial do kiosk
-   * CORRIGIDO: Detecta documentos vazios (placeholder) e popula corretamente
+   * Suporta tanto modo franchise quanto legado
    */
   async ensureStoreExists(storeId: string, name: string, currency: string, taxId: string, taxPercentage: number): Promise<void> {
     try {
       const db = getFirebaseDb();
-      const storeRef = doc(db, 'stores', storeId);
+      
+      // Determinar path correto baseado no modo (consistente com getStore)
+      let storeRef;
+      const franchiseId = getCurrentFranchiseId();
+      if (isFranchiseMode() && franchiseId) {
+        storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
+        console.log('[StoreService] ensureStoreExists using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
+      } else {
+        storeRef = doc(db, 'stores', storeId);
+      }
+      
       const snapshot = await getDoc(storeRef);
       
       const data = snapshot.data();

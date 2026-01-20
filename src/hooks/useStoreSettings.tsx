@@ -1,11 +1,14 @@
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { StoreSettings } from '@/types/store';
-import { initializeFirebase, getFirebaseDb, getCurrentStoreId } from '@/services/firebase';
+import { getApps } from 'firebase/app';
+import { initializeFirebase, getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
+import { authService } from '@/services/authService';
 import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { cacheSet, cacheGet, ensureDBReady, STORES, CachedSettings } from '@/services/cacheService';
 import { initNetworkListeners, startBackgroundSync } from '@/services/syncService';
 import { startAutoCleanup } from '@/services/cleanupService';
+import { isFranchiseMode } from '@/lib/pathResolver';
 
 const SETTINGS_CACHE_KEY = 'storeSettings';
 const SETTINGS_DOC_ID = 'store_settings';
@@ -37,10 +40,19 @@ export const useStoreSettings = () => {
 
   /**
    * Salva settings no localStorage
+   * Inclui franchiseId automaticamente se disponível
    */
   const saveToLocalStorage = useCallback((newSettings: StoreSettings) => {
     try {
-      localStorage.setItem('storeSettings', JSON.stringify(newSettings));
+      // Enriquecer com franchiseId se disponível e não presente
+      const enrichedSettings = { ...newSettings };
+      if (!enrichedSettings.franchiseId) {
+        const franchiseId = getCurrentFranchiseId();
+        if (franchiseId) {
+          enrichedSettings.franchiseId = franchiseId;
+        }
+      }
+      localStorage.setItem('storeSettings', JSON.stringify(enrichedSettings));
       localStorage.setItem('storeInitialized', 'true');
     } catch (error) {
       console.error('[useStoreSettings] Error saving to localStorage:', error);
@@ -93,7 +105,20 @@ export const useStoreSettings = () => {
       const storeId = newSettings.storeId || getCurrentStoreId();
       
       if (storeId) {
-        const settingsDocRef = doc(db, 'stores', storeId, 'settings', 'config');
+        // Determinar path correto baseado no modo
+        let settingsDocRef;
+        if (isFranchiseMode()) {
+          const franchiseId = getCurrentFranchiseId();
+          if (franchiseId) {
+            settingsDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'settings', 'config');
+          } else {
+            console.warn('[useStoreSettings] Franchise mode but no franchiseId, using legacy path');
+            settingsDocRef = doc(db, 'stores', storeId, 'settings', 'config');
+          }
+        } else {
+          settingsDocRef = doc(db, 'stores', storeId, 'settings', 'config');
+        }
+        
         await setDoc(settingsDocRef, {
           ...newSettings,
           updatedAt: serverTimestamp(),
@@ -109,13 +134,20 @@ export const useStoreSettings = () => {
 
   /**
    * Inicializa serviços apenas uma vez (singleton)
+   * Protegido contra HMR verificando getApps()
    */
   const initializeServicesOnce = useCallback(async (settingsData: StoreSettings) => {
-    if (servicesInitialized) return;
+    // Verificar se já inicializado (flag OU Firebase já existe - protege contra HMR)
+    if (servicesInitialized || getApps().length > 0) {
+      servicesInitialized = true; // Sincronizar flag caso Firebase já exista
+      return;
+    }
     
     servicesInitialized = true;
     try {
       initializeFirebase(settingsData);
+      // Inicializa authService após Firebase estar pronto
+      authService.initialize();
       startBackgroundSync();
       startAutoCleanup();
     } catch (error) {
@@ -172,6 +204,37 @@ export const useStoreSettings = () => {
           await initializeServicesOnce(idbSettings);
         } else {
           console.log('[useStoreSettings] No saved settings found');
+          
+          // 4. Em franchise mode, criar settings mínimos para ativar listeners Firebase
+          if (isFranchiseMode()) {
+            const storeId = getCurrentStoreId();
+            const franchiseId = getCurrentFranchiseId();
+            
+            console.log('[useStoreSettings] Franchise mode detected, creating minimal settings:', { storeId, franchiseId });
+            
+            if (storeId) {
+              // Criar settings mínimos para ativar os listeners do Firebase
+              const minimalSettings: StoreSettings = {
+                storeId,
+                franchiseId: franchiseId || undefined,
+                name: '',
+                currency: 'BRL',
+                taxId: '',
+                taxPercentage: 0,
+                firebaseConfig: {
+                  apiKey: '',
+                  authDomain: '',
+                  projectId: '',
+                  storageBucket: '',
+                  messagingSenderId: '',
+                  appId: '',
+                },
+              };
+              setSettings(minimalSettings);
+              setIsInitialized(true);
+              console.log('[useStoreSettings] Minimal settings created, Firebase listeners will fetch real data');
+            }
+          }
         }
       }
       
@@ -185,81 +248,162 @@ export const useStoreSettings = () => {
     });
   }, [loadFromLocalStorage, loadFromIndexedDB, saveToLocalStorage, initializeServicesOnce]);
 
+  // Memoizar firebaseConfig key para evitar re-execuções do useEffect
+  // (objetos mudam de referência a cada render mesmo com conteúdo igual)
+  const firebaseConfigKey = useMemo(
+    () => settings?.firebaseConfig ? JSON.stringify(settings.firebaseConfig) : null,
+    [settings?.firebaseConfig]
+  );
+
   /**
    * Listener para mudanças do Firebase (sync em background)
+   * Escuta DOIS documentos:
+   * 1. Documento principal da loja (dados gerenciados pelo Admin Web)
+   * 2. Subcoleção settings/config (configs específicas do Kiosk)
    */
   useEffect(() => {
     if (!isInitialized || !settings?.storeId) return;
 
-    let unsubscribe: (() => void) | null = null;
+    const unsubscribers: (() => void)[] = [];
 
-    /**
-     * Normaliza timestamp para milissegundos
-     * Suporta: Firebase Timestamp, Date, string ISO, número
-     */
-    const normalizeTimestamp = (value: unknown): number => {
-      if (!value) return 0;
-      if (typeof value === 'number') return value;
-      if (value instanceof Date) return value.getTime();
-      // Firebase Timestamp tem método toDate()
-      if (typeof value === 'object' && 'toDate' in value && typeof (value as { toDate: () => Date }).toDate === 'function') {
-        return (value as { toDate: () => Date }).toDate().getTime();
-      }
-      // String ISO
-      if (typeof value === 'string') {
-        const parsed = new Date(value).getTime();
-        return isNaN(parsed) ? 0 : parsed;
-      }
-      return 0;
-    };
-
-    const setupFirebaseListener = async () => {
+    const setupFirebaseListeners = async () => {
       try {
         const db = getFirebaseDb();
         const storeId = settings.storeId || getCurrentStoreId();
         
-        if (!storeId) return;
+        if (!storeId) {
+          console.warn('[useStoreSettings] No storeId available for Firebase listeners');
+          return;
+        }
 
-        const settingsDocRef = doc(db, 'stores', storeId, 'settings', 'config');
+        // Determinar paths corretos baseado no modo
+        let storeDocRef;
+        let kioskConfigRef;
         
-        unsubscribe = onSnapshot(settingsDocRef, (snapshot) => {
+        // Tentar obter franchiseId de múltiplas fontes (settings tem prioridade)
+        const franchiseId = settings.franchiseId || getCurrentFranchiseId();
+        const isInFranchiseMode = isFranchiseMode();
+        
+        console.log('[useStoreSettings] Setting up Firebase listeners:', {
+          storeId,
+          franchiseId,
+          isInFranchiseMode,
+        });
+        
+        // Usar franchise path se franchiseId existir (independente do mode flag)
+        if (franchiseId) {
+          // Documento principal da loja (dados do Admin Web)
+          storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
+          // Configs específicas do Kiosk
+          kioskConfigRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'settings', 'config');
+          console.log('[useStoreSettings] Using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
+        } else {
+          storeDocRef = doc(db, 'stores', storeId);
+          kioskConfigRef = doc(db, 'stores', storeId, 'settings', 'config');
+          console.log('[useStoreSettings] Using legacy path:', `stores/${storeId}`);
+        }
+
+        // Listener 1: Documento principal da loja (nome, taxId, taxPercentage, email, etc.)
+        const unsubStore = onSnapshot(storeDocRef, (snapshot) => {
           if (snapshot.exists()) {
-            const firebaseSettings = snapshot.data() as StoreSettings;
+            const storeData = snapshot.data();
+            console.log('[useStoreSettings] Store data updated from Admin Web');
             
-            // Merge com settings locais (local tem prioridade para firebaseConfig)
-            const mergedSettings: StoreSettings = {
-              ...firebaseSettings,
-              firebaseConfig: settings.firebaseConfig, // Mantém config local
-              storeId: settings.storeId,
+            // Normaliza language do Admin Web (en-US → en)
+            const normalizeLanguage = (lang?: string): 'en' | 'pt-BR' | undefined => {
+              if (!lang) return undefined;
+              if (lang === 'en-US' || lang === 'en') return 'en';
+              if (lang === 'pt-BR') return 'pt-BR';
+              return undefined;
             };
             
-            // Atualiza apenas se houver diferenças significativas
-            // Usa normalização para comparar timestamps corretamente
-            const localUpdatedAt = normalizeTimestamp(localStorage.getItem('settingsUpdatedAt'));
-            const firebaseUpdatedAt = normalizeTimestamp((firebaseSettings as StoreSettings & { updatedAt?: unknown }).updatedAt);
-            
-            if (!localUpdatedAt || (firebaseUpdatedAt && firebaseUpdatedAt > localUpdatedAt)) {
-              console.log('[useStoreSettings] Updating from Firebase');
-              setSettings(mergedSettings);
-              saveToLocalStorage(mergedSettings);
-              saveToIndexedDB(mergedSettings);
-              localStorage.setItem('settingsUpdatedAt', new Date().toISOString());
-            }
+            // Atualiza apenas os campos gerenciados pelo Admin Web
+            setSettings(prev => {
+              if (!prev) return prev;
+              
+              const updatedSettings: StoreSettings = {
+                ...prev,
+                // Campos do Admin Web
+                name: storeData.name || prev.name,
+                taxId: storeData.taxId || prev.taxId,
+                taxPercentage: storeData.taxPercentage ?? prev.taxPercentage,
+                currency: storeData.currency || prev.currency,
+                // Novos campos do Admin Web
+                email: storeData.email,
+                phone: storeData.phone,
+                address: storeData.address,
+                description: storeData.description,
+                // Language normalizado (en-US → en)
+                language: normalizeLanguage(storeData.language) ?? prev.language,
+                // Timezone do Admin
+                timezone: storeData.timezone,
+              };
+              
+              // Salva em cache
+              saveToLocalStorage(updatedSettings);
+              saveToIndexedDB(updatedSettings);
+              
+              return updatedSettings;
+            });
           }
         }, (error) => {
-          console.error('[useStoreSettings] Firebase listener error:', error);
+          console.error('[useStoreSettings] Store listener error:', error);
         });
+        
+        unsubscribers.push(unsubStore);
+
+        // Listener 2: Configs específicas do Kiosk (ESP32, vídeo, printer, etc.)
+        const unsubKiosk = onSnapshot(kioskConfigRef, (snapshot) => {
+          if (snapshot.exists()) {
+            const kioskConfig = snapshot.data() as Partial<StoreSettings>;
+            console.log('[useStoreSettings] Kiosk config updated');
+            
+            // Atualiza apenas os campos específicos do Kiosk
+            setSettings(prev => {
+              if (!prev) return prev;
+              
+              const updatedSettings: StoreSettings = {
+                ...prev,
+                // Configs do Kiosk
+                esp32AutoConnect: kioskConfig.esp32AutoConnect ?? prev.esp32AutoConnect,
+                esp32ConnectionOrder: kioskConfig.esp32ConnectionOrder ?? prev.esp32ConnectionOrder,
+                esp32HeartbeatIntervalMs: kioskConfig.esp32HeartbeatIntervalMs ?? prev.esp32HeartbeatIntervalMs,
+                esp32LastWifiIp: kioskConfig.esp32LastWifiIp ?? prev.esp32LastWifiIp,
+                drinkPickupTimeoutSeconds: kioskConfig.drinkPickupTimeoutSeconds ?? prev.drinkPickupTimeoutSeconds,
+                drinkPickupSoundEnabled: kioskConfig.drinkPickupSoundEnabled ?? prev.drinkPickupSoundEnabled,
+                useThermalPrinter: kioskConfig.useThermalPrinter ?? prev.useThermalPrinter,
+                comPort: kioskConfig.comPort ?? prev.comPort,
+                attractTimeoutSeconds: kioskConfig.attractTimeoutSeconds ?? prev.attractTimeoutSeconds,
+                language: kioskConfig.language ?? prev.language,
+              };
+              
+              // Salva em cache
+              saveToLocalStorage(updatedSettings);
+              saveToIndexedDB(updatedSettings);
+              
+              return updatedSettings;
+            });
+          }
+        }, (error) => {
+          console.error('[useStoreSettings] Kiosk config listener error:', error);
+        });
+        
+        unsubscribers.push(unsubKiosk);
+        
       } catch (error) {
-        console.error('[useStoreSettings] Error setting up Firebase listener:', error);
+        console.error('[useStoreSettings] Error setting up Firebase listeners:', error);
       }
     };
 
-    setupFirebaseListener();
+    setupFirebaseListeners();
 
     return () => {
-      unsubscribe?.();
+      unsubscribers.forEach(unsub => unsub());
     };
-  }, [isInitialized, settings?.storeId, settings?.firebaseConfig, saveToLocalStorage, saveToIndexedDB]);
+  // 🔧 FIX: Removido saveToLocalStorage e saveToIndexedDB das dependências
+  // Esses callbacks são estáveis (useCallback sem deps mutáveis), mas causavam
+  // re-execução desnecessária. O storeId é a única dependência que importa.
+  }, [isInitialized, settings?.storeId, firebaseConfigKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
    * Atualiza settings (salva em todos os caches + sync)
@@ -282,6 +426,8 @@ export const useStoreSettings = () => {
     if (!servicesInitialized) {
       try {
         initializeFirebase(newSettings);
+        // Inicializa authService após Firebase estar pronto
+        authService.initialize();
         startBackgroundSync();
         startAutoCleanup();
         servicesInitialized = true;

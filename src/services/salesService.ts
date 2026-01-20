@@ -1,7 +1,8 @@
-import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId } from './firebase';
-import { runTransaction, collection, doc } from 'firebase/firestore';
+import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
+import { runTransaction, collection, doc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { CartItem, Product } from '@/types/product';
 import { PaymentMethod, SaleTimingData } from '@/types/sales';
+import { deviceHeartbeatService } from './deviceHeartbeatService';
 
 class SalesService {
   private calculateSaleTimingData(now: Date): SaleTimingData {
@@ -155,12 +156,32 @@ class SalesService {
       // 6. Criar registro de venda
       const now = new Date();
       const timingData = this.calculateSaleTimingData(now);
+      
+      // Obter deviceId para rastreabilidade
+      const deviceId = await deviceHeartbeatService.getDeviceId();
+      
+      // Obter franchiseId para agregação multi-tenant
+      const franchiseId = getCurrentFranchiseId();
 
       const saleData = {
         orderNumber,
         storeId: effectiveStoreId || undefined, // Incluir storeId se disponível
+        franchiseId: franchiseId || undefined,   // Incluir franchiseId para agregação
+        deviceId,                                // Rastreabilidade do dispositivo
         paymentMethod,
         ...timingData,
+        
+        // ======= CAMPOS DE STATUS PARA SINCRONIZAÇÃO COM ADMIN =======
+        // Vendas do Kiosk são self-service: já estão completas e pagas
+        status: 'completed' as const,
+        paymentStatus: 'paid' as const,
+        createdAt: serverTimestamp(),          // Timestamp Firebase de criação
+        paidAt: serverTimestamp(),             // Momento do pagamento
+        completedAt: serverTimestamp(),        // Momento da conclusão
+        lastSync: serverTimestamp(),           // Momento da sincronização
+        notes: '',                              // Campo para observações futuras
+        // ==============================================================
+        
         items: cartItems.map((item) => {
           const baseItem = {
             productId: item.product.id,
@@ -192,13 +213,18 @@ class SalesService {
       };
 
       // Usar subcollection se storeId disponível, senão usar raiz
+      // Nota: Usando 'orders' para compatibilidade com Admin
       const salesRef = effectiveStoreId 
-        ? getStoreCollection(effectiveStoreId, 'sales')
-        : collection(db, 'sales');
+        ? getStoreCollection(effectiveStoreId, 'orders')
+        : collection(db, 'orders');
       const newDocRef = doc(salesRef);
       transaction.set(newDocRef, saleData);
       
       console.log('[SalesService] Sale recorded:', newDocRef.id);
+      
+      // Enviar heartbeat após venda bem sucedida
+      deviceHeartbeatService.sendHeartbeat();
+      
       return newDocRef.id;
     });
   }

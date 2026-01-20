@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- * ESP32-S3 Drink Dispenser Controller - Versão 2.1
+ * ESP32-S3 Drink Dispenser Controller - Versão 3.0 (Kiosk_Bier)
  * ============================================================================
  * 
  * DESCRIÇÃO:
@@ -8,10 +8,11 @@
  * e sensor de fluxo. Compatível com o Open Kiosk App.
  * 
  * COMUNICAÇÃO SUPORTADA:
- * - WiFi (HTTP REST API com WiFi Manager) ✅ ATIVADO
+ * - WiFi Access Point fixo (Kiosk_Bier) ✅ ATIVADO
+ * - HTTP REST API (192.168.4.1) ✅ ATIVADO
  * - Bluetooth Low Energy (BLE) ✅ ATIVADO
  * - USB Serial (para testes e debug) ✅ ATIVADO
- * - mDNS: http://openkiosk.local ✅ ATIVADO
+ * - mDNS: http://kiosk-bier.local ✅ ATIVADO
  * 
  * HARDWARE NECESSÁRIO:
  * - ESP32-S3 DevKit ou XIAO ESP32S3
@@ -38,8 +39,8 @@
  * ────────────────────────────────────────────────────────
  * 
  * AUTOR: Open Kiosk Project
- * DATA: 12/01/2026
- * VERSÃO: 2.1 (WiFi Manager + NVS + mDNS)
+ * DATA: 20/01/2026
+ * VERSÃO: 3.0 (Access Point Fixo - Kiosk_Bier)
  * 
  * ============================================================================
  */
@@ -54,22 +55,24 @@
 #include <BLEDevice.h>         // Bluetooth Low Energy
 #include <BLEServer.h>
 #include <BLEUtils.h>
-#include <WiFiManager.h>       // WiFi Manager - Portal AP para configurar WiFi
+// WiFiManager REMOVIDO - Agora usa Access Point fixo (Kiosk_Bier)
 #include <Preferences.h>       // NVS - Salvar configurações na flash
-#include <ESPmDNS.h>           // mDNS - Acessar via openkiosk.local
+#include <ESPmDNS.h>           // mDNS - Acessar via kiosk-bier.local
 // NOTA: BLE2902 removido - deprecated no ESP32 Core 3.x (NimBLE adiciona automaticamente)
 
 // ============================================================================
 // ⚙️ CONFIGURAÇÕES - AJUSTE CONFORME SUA NECESSIDADE
 // ============================================================================
 
-// ----- WIFI MANAGER -----
-// O ESP32 cria um Access Point para configurar o WiFi via celular
-const char* AP_NAME = "OpenKiosk-Setup";  // Nome do AP de configuração
-const int AP_TIMEOUT = 180;               // Timeout do portal em segundos (3 min)
+// ----- WIFI ACCESS POINT (MODO SERVIDOR LOCAL) -----
+// O ESP32 cria uma rede WiFi própria para o Kiosk se conectar
+// Não depende de roteador externo - funciona offline
+const char* AP_SSID = "Kiosk_Bier";       // Nome da rede WiFi do Kiosk
+const char* AP_PASSWORD = "bier2026";     // Senha da rede WiFi
+// IP padrão do Access Point: 192.168.4.1 (fixo do ESP32)
 
 // ----- MDNS -----
-const char* MDNS_HOSTNAME = "openkiosk";  // Acessar via http://openkiosk.local
+const char* MDNS_HOSTNAME = "kiosk-bier";  // Acessar via http://kiosk-bier.local
 
 // ----- PINOS DO HARDWARE -----
 // XIAO ESP32S3: Use pinos disponíveis (evitar pinos USB/JTAG)
@@ -87,14 +90,14 @@ float pulsosPorLitro = 450.0;   // Pulsos para 1 litro (YF-S201: ~450)
 float mlPorSegundo = 50.0;      // Vazão média da sua válvula em ml/s
 
 // ----- BLUETOOTH -----
-const char* BLE_DEVICE_NAME = "OpenKiosk-ESP32";  // Nome do dispositivo BLE
+const char* BLE_DEVICE_NAME = "Kiosk_Bier";  // Nome do dispositivo BLE (igual ao WiFi)
 
 // UUIDs para BLE (padrão do Open Kiosk)
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // ----- VERSÃO DO FIRMWARE -----
-const char* FIRMWARE_VERSION = "2.1.0";
+const char* FIRMWARE_VERSION = "3.0.0";
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
@@ -166,14 +169,14 @@ String handleCalibration(int durationMs);
 String getStatusJson();
 void IRAM_ATTR flowPulseCounter();
 
-// Novas funções v2.1
+// Novas funções v3.0
 void loadSettings();
 void saveSettings();
 String handleSaveCalibration(JsonDocument& doc);
-String handleResetWifi();
 String handleGetSettings();
-String handleStartWifiPortal();
+String handleWifiInfo();
 String handleDiagnoseGPIO();  // Diagnóstico de GPIO para debugging
+// handleResetWifi e handleStartWifiPortal REMOVIDOS - Access Point fixo
 
 
 
@@ -297,23 +300,19 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   delay(300);
   
-  // 🟡 FASE 3: WiFi (ATIVADO)
+  // 🟡 FASE 3: WiFi Access Point (SERVIDOR LOCAL)
   Serial.println();
-  Serial.println("[INIT] FASE 3: Iniciando WiFi...");
-  initWiFi();
-  if (WiFi.status() == WL_CONNECTED) {
-    initHTTPServer();
-    // Piscar 4x = WiFi conectado
-    for (int i = 0; i < 4; i++) {
-      digitalWrite(LED_PIN, LOW);
-      delay(100);
-      digitalWrite(LED_PIN, HIGH);
-      delay(100);
-    }
+  Serial.println("[INIT] FASE 3: Iniciando Access Point WiFi...");
+  initWiFi();  // Cria AP e inicia HTTP Server internamente
+  
+  // Piscar 4x = WiFi AP ativo
+  for (int i = 0; i < 4; i++) {
     digitalWrite(LED_PIN, LOW);
-  } else {
-    Serial.println("[INIT] WiFi falhou - continuando sem WiFi");
+    delay(100);
+    digitalWrite(LED_PIN, HIGH);
+    delay(100);
   }
+  digitalWrite(LED_PIN, LOW);
   delay(300);
   
   // ----- Tudo Pronto! -----
@@ -385,29 +384,34 @@ void loop() {
 }
 
 // ============================================================================
-// INICIALIZAÇÃO WIFI (com WiFi Manager - NÃO BLOQUEANTE)
+// INICIALIZAÇÃO WIFI (ACCESS POINT FIXO - SERVIDOR LOCAL)
 // ============================================================================
 
 void initWiFi() {
-  // Criar instância do WiFi Manager
-  WiFiManager wifiManager;
+  // ============================================
+  // MODO ACCESS POINT FIXO (Servidor Local)
+  // O ESP32 cria sua própria rede WiFi
+  // Não depende de roteador externo
+  // ============================================
   
-  // Configurações do portal - TIMEOUT CURTO para não bloquear
-  wifiManager.setConfigPortalTimeout(30);  // Apenas 30 segundos no modo AP inicial
-  wifiManager.setConnectTimeout(10);       // 10 segundos para tentar conectar
+  Serial.println("[WIFI] Iniciando Access Point do Kiosk...");
   
-  // Modo não-bloqueante: se não tiver WiFi salvo, NÃO abre portal
-  // O usuário pode resetar via comando para configurar
-  wifiManager.setEnableConfigPortal(false);  // Desabilita portal automático
+  // Configurar como Access Point
+  WiFi.mode(WIFI_AP);
   
-  Serial.println("  → Tentando conectar ao WiFi salvo...");
+  // Criar rede WiFi com SSID e senha fixos
+  bool success = WiFi.softAP(AP_SSID, AP_PASSWORD);
   
-  // autoConnect com portal desabilitado: apenas tenta conectar ao WiFi salvo
-  if (wifiManager.autoConnect(AP_NAME)) {
-    // Conexão bem sucedida!
-    Serial.println("[WIFI] ✅ Conectado!");
-    Serial.println("  → IP: " + WiFi.localIP().toString());
-    Serial.println("  → RSSI: " + String(WiFi.RSSI()) + " dBm");
+  if (success) {
+    IPAddress IP = WiFi.softAPIP();
+    
+    Serial.println("[WIFI] ✅ Access Point ativo!");
+    Serial.println("  → SSID: " + String(AP_SSID));
+    Serial.println("  → Senha: " + String(AP_PASSWORD));
+    Serial.println("  → IP: " + IP.toString());
+    
+    // Iniciar servidor HTTP
+    initHTTPServer();
     
     // Iniciar mDNS
     if (MDNS.begin(MDNS_HOSTNAME)) {
@@ -415,11 +419,21 @@ void initWiFi() {
       MDNS.addService("openkiosk", "tcp", 80);
       Serial.println("  → mDNS: http://" + String(MDNS_HOSTNAME) + ".local");
     } else {
-      Serial.println("  → mDNS: Falha ao iniciar");
+      Serial.println("  → mDNS: Falha ao iniciar (não crítico)");
     }
+    
+    Serial.println();
+    Serial.println("╔════════════════════════════════════════╗");
+    Serial.println("║   🍺 KIOSK BIER - SERVIDOR ATIVO       ║");
+    Serial.println("╠════════════════════════════════════════╣");
+    Serial.println("║ Conecte o celular/tablet na rede:      ║");
+    Serial.println("║   WiFi: Kiosk_Bier                     ║");
+    Serial.println("║   Senha: bier2026                      ║");
+    Serial.println("║   URL: http://192.168.4.1              ║");
+    Serial.println("╚════════════════════════════════════════╝");
+    Serial.println();
   } else {
-    Serial.println("[WIFI] ⚠️ Sem WiFi configurado");
-    Serial.println("  → Use {\"action\":\"start_wifi_portal\"} para configurar");
+    Serial.println("[WIFI] ❌ Falha ao criar Access Point!");
     Serial.println("  → Sistema funcionará via USB e Bluetooth");
   }
 }
@@ -474,16 +488,18 @@ void initHTTPServer() {
   server.on("/discover", HTTP_GET, []() {
     sendCORSHeaders();
     JsonDocument doc;
-    doc["device"] = "OpenKiosk-ESP32";
+    doc["device"] = "Kiosk_Bier";
     doc["type"] = "drink-dispenser";
     doc["version"] = FIRMWARE_VERSION;
-    doc["ip"] = WiFi.localIP().toString();
+    doc["wifi_mode"] = "access_point";
+    doc["wifi_ssid"] = AP_SSID;
+    doc["ip"] = WiFi.softAPIP().toString();
     doc["mac"] = WiFi.macAddress();
     doc["hostname"] = String(MDNS_HOSTNAME) + ".local";
     doc["status"] = isDispensing ? "dispensing" : "ready";
     doc["ble_name"] = BLE_DEVICE_NAME;
     doc["uptime"] = millis();
-    doc["rssi"] = WiFi.RSSI();
+    doc["clients_connected"] = WiFi.softAPgetStationNum();
     String response;
     serializeJson(doc, response);
     server.send(200, "application/json", response);
@@ -491,19 +507,26 @@ void initHTTPServer() {
   
   // Rota raiz
   server.on("/", HTTP_GET, []() {
-    String html = "<html><head><title>OpenKiosk Dispenser</title>";
+    String html = "<html><head><title>Kiosk Bier</title>";
     html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
-    html += "<style>body{font-family:Arial;text-align:center;padding:20px;background:#f0f0f0;}";
-    html += ".card{background:white;border-radius:10px;padding:20px;max-width:400px;margin:auto;box-shadow:0 2px 10px rgba(0,0,0,0.1);}";
-    html += ".status{color:green;font-weight:bold;}</style></head>";
+    html += "<style>body{font-family:Arial;text-align:center;padding:20px;background:linear-gradient(135deg,#1a1a2e,#16213e);min-height:100vh;}";
+    html += ".card{background:white;border-radius:15px;padding:25px;max-width:400px;margin:auto;box-shadow:0 4px 20px rgba(0,0,0,0.3);}";
+    html += ".status{color:#27ae60;font-weight:bold;font-size:1.2em;}";
+    html += ".info{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;text-align:left;}";
+    html += "h1{color:#2c3e50;margin-bottom:5px;}</style></head>";
     html += "<body><div class='card'>";
-    html += "<h1>🍺 OpenKiosk Dispenser</h1>";
-    html += "<p>Status: <span class='status'>Online</span></p>";
-    html += "<p>🌐 IP: " + WiFi.localIP().toString() + "</p>";
-    html += "<p>🏠 mDNS: http://" + String(MDNS_HOSTNAME) + ".local</p>";
-    html += "<p>⏱️ Uptime: " + String(millis() / 1000) + " segundos</p>";
-    html += "<p>📡 RSSI: " + String(WiFi.RSSI()) + " dBm</p>";
-    html += "<hr><p>Firmware v" + String(FIRMWARE_VERSION) + "</p>";
+    html += "<h1>🍺 Kiosk Bier</h1>";
+    html += "<p>Servidor de Chopeira</p>";
+    html += "<p>Status: <span class='status'>✅ Online</span></p>";
+    html += "<div class='info'>";
+    html += "<p>📡 WiFi: " + String(AP_SSID) + "</p>";
+    html += "<p>🔑 Senha: " + String(AP_PASSWORD) + "</p>";
+    html += "<p>🌐 IP: " + WiFi.softAPIP().toString() + "</p>";
+    html += "<p>🔗 mDNS: http://" + String(MDNS_HOSTNAME) + ".local</p>";
+    html += "<p>📱 Clientes: " + String(WiFi.softAPgetStationNum()) + "</p>";
+    html += "</div>";
+    html += "<p>⏱️ Uptime: " + String(millis() / 1000) + "s</p>";
+    html += "<hr><p style='color:#95a5a6;'>Firmware v" + String(FIRMWARE_VERSION) + "</p>";
     html += "</div></body></html>";
     server.send(200, "text/html", html);
   });
@@ -520,19 +543,43 @@ void handleStatus() {
   sendCORSHeaders();  // Adicionar headers CORS
   
   JsonDocument doc;
-  doc["device"] = "ESP32-S3";
-  doc["type"] = "kiosk-controller";
+  doc["device"] = "Kiosk_Bier";
+  doc["type"] = "drink-dispenser";
+  doc["firmware_version"] = FIRMWARE_VERSION;
   doc["status"] = isDispensing ? "dispensing" : "ready";
-  doc["uptime"] = millis();
-  doc["wifi_rssi"] = WiFi.RSSI();
+  doc["uptime_ms"] = millis();
+  
+  // WiFi Access Point info
+  doc["wifi_mode"] = "access_point";
+  doc["wifi_ssid"] = AP_SSID;
+  doc["wifi_ip"] = WiFi.softAPIP().toString();
+  doc["wifi_clients"] = WiFi.softAPgetStationNum();
+  doc["mac"] = WiFi.macAddress();
+  doc["hostname"] = String(MDNS_HOSTNAME) + ".local";
+  
+  // Bluetooth
+  doc["ble_name"] = BLE_DEVICE_NAME;
   doc["ble_connected"] = deviceConnected;
   
+  // Hardware
+  doc["valve_pin"] = VALVE_PIN;
+  doc["flow_sensor_pin"] = FLOW_SENSOR_PIN;
+  doc["led_pin"] = LED_PIN;
+  
+  // Calibração
+  doc["pulsos_por_litro"] = pulsosPorLitro;
+  doc["ml_por_segundo"] = mlPorSegundo;
+  
   if (isDispensing) {
-    doc["order_id"] = currentOrderId;
-    doc["current_cup"] = currentCup;
-    doc["total_cups"] = totalCups;
-    doc["ml_dispensed"] = totalMlDispensed;
-    doc["target_ml"] = targetMl;
+    JsonObject order = doc["current_order"].to<JsonObject>();
+    order["order_id"] = currentOrderId;
+    order["current_cup"] = currentCup;
+    order["total_cups"] = totalCups;
+    order["ml_dispensed"] = totalMlDispensed;
+    order["target_ml"] = targetMl;
+    order["progress"] = (targetMl > 0) ? (int)((totalMlDispensed / targetMl) * 100) : 0;
+    order["flow_started"] = flowStarted;
+    order["elapsed_ms"] = millis() - dispensingStartTime;
   }
   
   String response;
@@ -684,14 +731,9 @@ String processCommandAndGetResult(String jsonString) {
     return handleGetSettings();
   }
   
-  // ----- AÇÃO: INICIAR PORTAL WiFi -----
-  else if (strcmp(action, "start_wifi_portal") == 0) {
-    return handleStartWifiPortal();
-  }
-  
-  // ----- AÇÃO: RESETAR WIFI -----
-  else if (strcmp(action, "reset_wifi") == 0) {
-    return handleResetWifi();
+  // ----- AÇÃO: INFO DO ACCESS POINT -----
+  else if (strcmp(action, "wifi_info") == 0) {
+    return handleWifiInfo();
   }
   
   // ----- AÇÃO: DIAGNÓSTICO GPIO -----
@@ -713,8 +755,11 @@ String processCommandAndGetResult(String jsonString) {
 String handlePing() {
   JsonDocument doc;
   doc["type"] = "pong";
+  doc["device"] = "Kiosk_Bier";
+  doc["firmware_version"] = FIRMWARE_VERSION;
   doc["timestamp"] = millis();
-  doc["ip"] = WiFi.localIP().toString();
+  doc["wifi_mode"] = "access_point";
+  doc["ip"] = WiFi.softAPIP().toString();
   doc["status"] = isDispensing ? "dispensing" : "ready";
   
   String response;
@@ -904,20 +949,35 @@ String handleCalibration(int durationMs) {
 String getStatusJson() {
   JsonDocument doc;
   doc["type"] = "status";
-  doc["device"] = "ESP32-S3";
+  doc["device"] = "Kiosk_Bier";
+  doc["firmware_version"] = FIRMWARE_VERSION;
   doc["status"] = isDispensing ? "dispensing" : "ready";
   doc["uptime_ms"] = millis();
-  doc["wifi_connected"] = (WiFi.status() == WL_CONNECTED);
-  doc["wifi_ip"] = WiFi.localIP().toString();
+  
+  // WiFi Access Point
+  doc["wifi_mode"] = "access_point";
+  doc["wifi_ssid"] = AP_SSID;
+  doc["wifi_ip"] = WiFi.softAPIP().toString();
+  doc["wifi_clients"] = WiFi.softAPgetStationNum();
+  doc["mac"] = WiFi.macAddress();
+  
+  // Bluetooth
+  doc["ble_name"] = BLE_DEVICE_NAME;
   doc["ble_connected"] = deviceConnected;
   
+  // Calibração
+  doc["pulsos_por_litro"] = pulsosPorLitro;
+  doc["ml_por_segundo"] = mlPorSegundo;
+  
   if (isDispensing) {
-    doc["order_id"] = currentOrderId;
-    doc["current_cup"] = currentCup;
-    doc["total_cups"] = totalCups;
-    doc["target_ml"] = targetMl;
-    doc["ml_dispensed"] = totalMlDispensed;
-    doc["progress"] = (targetMl > 0) ? (int)((totalMlDispensed / targetMl) * 100) : 0;
+    JsonObject order = doc["current_order"].to<JsonObject>();
+    order["order_id"] = currentOrderId;
+    order["current_cup"] = currentCup;
+    order["total_cups"] = totalCups;
+    order["target_ml"] = targetMl;
+    order["ml_dispensed"] = totalMlDispensed;
+    order["progress"] = (targetMl > 0) ? (int)((totalMlDispensed / targetMl) * 100) : 0;
+    order["flow_started"] = flowStarted;
   }
   
   String response;
@@ -1304,9 +1364,13 @@ String handleGetSettings() {
   doc["pulsos_por_litro"] = pulsosPorLitro;
   doc["ml_por_segundo"] = mlPorSegundo;
   doc["ml_por_pulso"] = 1000.0 / pulsosPorLitro;
-  doc["wifi_ssid"] = WiFi.SSID();
-  doc["wifi_ip"] = WiFi.localIP().toString();
-  doc["wifi_rssi"] = WiFi.RSSI();
+  
+  // WiFi Access Point info
+  doc["wifi_mode"] = "access_point";
+  doc["wifi_ssid"] = AP_SSID;
+  doc["wifi_ip"] = WiFi.softAPIP().toString();
+  doc["wifi_clients"] = WiFi.softAPgetStationNum();
+  doc["mac"] = WiFi.macAddress();
   doc["mdns_hostname"] = String(MDNS_HOSTNAME) + ".local";
   doc["ble_name"] = BLE_DEVICE_NAME;
   doc["uptime_ms"] = millis();
@@ -1316,71 +1380,25 @@ String handleGetSettings() {
   return json;
 }
 
-// Handler: Resetar WiFi (apaga credenciais salvas)
-String handleResetWifi() {
-  Serial.println("[WIFI] ⚠️ Resetando credenciais WiFi...");
+// Handler: Info do Access Point WiFi
+String handleWifiInfo() {
+  JsonDocument doc;
+  doc["type"] = "wifi_info";
+  doc["mode"] = "access_point";
+  doc["ssid"] = AP_SSID;
+  doc["password"] = AP_PASSWORD;
+  doc["ip"] = WiFi.softAPIP().toString();
+  doc["clients"] = WiFi.softAPgetStationNum();
+  doc["hostname"] = String(MDNS_HOSTNAME) + ".local";
+  doc["mac"] = WiFi.macAddress();
   
-  // Resetar WiFi Manager settings
-  WiFiManager wifiManager;
-  wifiManager.resetSettings();
-  
-  Serial.println("[WIFI] ✅ Credenciais apagadas!");
-  Serial.println("[WIFI] Use {\"action\":\"start_wifi_portal\"} ou reinicie o ESP32");
-  
-  return "{\"type\":\"success\",\"message\":\"WiFi resetado. Use start_wifi_portal para configurar nova rede.\"}";
+  String json;
+  serializeJson(doc, json);
+  return json;
 }
 
-// Handler: Iniciar portal de configuração WiFi
-String handleStartWifiPortal() {
-  Serial.println();
-  Serial.println("╔════════════════════════════════════════╗");
-  Serial.println("║     INICIANDO PORTAL WiFi...           ║");
-  Serial.println("╠════════════════════════════════════════╣");
-  Serial.println("║ 1. Conecte seu celular à rede:         ║");
-  Serial.println("║    → " + String(AP_NAME) + "                  ║");
-  Serial.println("║ 2. Abra o navegador                    ║");
-  Serial.println("║ 3. Acesse: 192.168.4.1                 ║");
-  Serial.println("║ 4. Selecione sua rede WiFi             ║");
-  Serial.println("║                                        ║");
-  Serial.println("║ ⚠️  O sistema ficará BLOQUEADO por     ║");
-  Serial.println("║    até 3 minutos durante a config.     ║");
-  Serial.println("╚════════════════════════════════════════╝");
-  Serial.println();
-  
-  // LED piscando rápido = modo AP
-  for (int i = 0; i < 5; i++) {
-    digitalWrite(LED_PIN, HIGH);
-    delay(100);
-    digitalWrite(LED_PIN, LOW);
-    delay(100);
-  }
-  
-  // Criar WiFi Manager e iniciar portal
-  WiFiManager wifiManager;
-  wifiManager.setConfigPortalTimeout(180);  // 3 minutos
-  
-  // Iniciar portal de configuração (BLOQUEANTE)
-  bool connected = wifiManager.startConfigPortal(AP_NAME);
-  
-  if (connected) {
-    Serial.println("[WIFI] ✅ Conectado!");
-    Serial.println("  → IP: " + WiFi.localIP().toString());
-    
-    // Iniciar mDNS se não estiver rodando
-    if (MDNS.begin(MDNS_HOSTNAME)) {
-      MDNS.addService("http", "tcp", 80);
-      Serial.println("  → mDNS: http://" + String(MDNS_HOSTNAME) + ".local");
-    }
-    
-    // Iniciar servidor HTTP se não estiver rodando
-    initHTTPServer();
-    
-    return "{\"type\":\"success\",\"message\":\"WiFi configurado com sucesso!\",\"ip\":\"" + WiFi.localIP().toString() + "\"}";
-  } else {
-    Serial.println("[WIFI] ❌ Portal fechado sem configurar WiFi");
-    return "{\"type\":\"error\",\"code\":\"PORTAL_TIMEOUT\",\"message\":\"Portal fechado. WiFi não configurado.\"}";
-  }
-}
+// NOTA: handleResetWifi e handleStartWifiPortal REMOVIDOS na v3.0
+// O sistema usa Access Point fixo (Kiosk_Bier) - não precisa configuração
 
 // ============================================================================
 // DIAGNÓSTICO DE GPIO - Para debugar problemas de hardware
@@ -1564,13 +1582,10 @@ String handleDiagnoseGPIO() {
  * 10. Salvar calibração:
  *     {"action":"save_calibration","pulsos_por_litro":450,"ml_por_segundo":50}
  * 
- * 11. Iniciar portal WiFi (BLOQUEANTE - para configurar rede):
- *     {"action":"start_wifi_portal"}
+ * 11. Info do Access Point WiFi:
+ *     {"action":"wifi_info"}
  * 
- * 12. Resetar WiFi (apaga credenciais salvas):
- *     {"action":"reset_wifi"}
- * 
- * 13. Diagnóstico de GPIO (verificar se pino funciona):
+ * 12. Diagnóstico de GPIO (verificar se pino funciona):
  *     {"action":"diagnose_gpio"}
  * 
  * ============================================================================

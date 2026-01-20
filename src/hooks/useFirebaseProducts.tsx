@@ -5,6 +5,7 @@ import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId } fro
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, CollectionReference } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
+import { isFranchiseMode } from '@/lib/pathResolver';
 import { 
   saveProductsToCache, 
   loadProductsFromCache, 
@@ -70,6 +71,15 @@ export const useFirebaseProducts = () => {
 
   // Callback para configurar subscription com mutex para evitar race conditions
   const setupSubscription = useCallback(async (storeId: string | null) => {
+    // Se não tem storeId em modo franquia, aguarda até ter
+    // Isso evita queries sem permissão
+    if (!storeId && isFranchiseMode()) {
+      console.log('[useFirebaseProducts] No storeId in franchise mode, waiting...');
+      loadingGlobal = true;
+      productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
+      return;
+    }
+
     // Aguardar setup anterior se existir (mutex)
     if (setupPromise) {
       await setupPromise;

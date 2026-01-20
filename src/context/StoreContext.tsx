@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { Store } from '@/types/store';
 import { storeService } from '@/services/storeService';
 
@@ -38,6 +38,10 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   const [currentStore, setCurrentStore] = useState<Store | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // 🔧 FIX: Flag para evitar fetch duplicado (previne loop infinito)
+  const isFetchingRef = useRef(false);
+  const lastFetchedStoreIdRef = useRef<string | null>(null);
 
   // Carregar storeId do localStorage na inicialização (se não tiver initialStoreId)
   useEffect(() => {
@@ -94,11 +98,21 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
     }));
   }, []);
 
-  // Função para recarregar dados da loja do Firestore
+  // Função para recarregar dados da loja do Firestore (com fallback para cache)
+  // 🔧 FIX: Removido currentStore das dependências para evitar loop infinito
   const refreshStore = useCallback(async () => {
     if (!currentStoreId) return;
     
+    // 🔧 FIX: Evitar fetch duplicado para o mesmo storeId
+    if (isFetchingRef.current && lastFetchedStoreIdRef.current === currentStoreId) {
+      console.log('[StoreContext] Already fetching store, skipping duplicate request');
+      return;
+    }
+    
+    isFetchingRef.current = true;
+    lastFetchedStoreIdRef.current = currentStoreId;
     setLoading(true);
+    
     try {
       console.log('[StoreContext] Refreshing store:', currentStoreId);
       const storeData = await storeService.getStore(currentStoreId);
@@ -108,19 +122,56 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
       }
       setError(null);
     } catch (err) {
-      console.error('[StoreContext] Error refreshing store:', err);
-      setError(err instanceof Error ? err.message : 'Failed to refresh store');
+      console.warn('[StoreContext] Error refreshing store from Firebase:', err);
+      
+      // Fallback: tentar criar Store a partir do localStorage (modo offline)
+      try {
+        const settingsStr = localStorage.getItem('storeSettings');
+        if (settingsStr) {
+          const settings = JSON.parse(settingsStr);
+          if (settings.storeId === currentStoreId) {
+            // Criar objeto Store mínimo a partir do cache local
+            const cachedStore: Store = {
+              id: currentStoreId,
+              storeId: currentStoreId,
+              name: settings.name || 'Loja',
+              slug: currentStoreId,
+              isActive: true,
+              taxId: settings.taxId || '',
+              currency: settings.currency || 'BRL',
+              taxPercentage: settings.taxPercentage || 0,
+              language: settings.language,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            setCurrentStore(cachedStore);
+            console.log('[StoreContext] Using cached store data (offline mode):', cachedStore.name);
+            setError(null);
+            return;
+          }
+        }
+      } catch (cacheErr) {
+        console.error('[StoreContext] Error loading from cache:', cacheErr);
+      }
+      
+      // Definir erro apenas se não temos dados em cache
+      setError('Store data unavailable - working offline');
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [currentStoreId]);
+  }, [currentStoreId]); // 🔧 FIX: Apenas currentStoreId - NÃO incluir currentStore!
 
   // Carregar dados da loja quando storeId muda
+  // 🔧 FIX: Removido refreshStore das dependências - chamamos diretamente
   useEffect(() => {
     if (currentStoreId) {
-      refreshStore();
+      // Só busca se o storeId realmente mudou
+      if (lastFetchedStoreIdRef.current !== currentStoreId) {
+        refreshStore();
+      }
     }
-  }, [currentStoreId, refreshStore]);
+  }, [currentStoreId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <StoreContext.Provider 

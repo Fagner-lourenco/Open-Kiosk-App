@@ -34,12 +34,24 @@ export const useReports = (storeId?: string) => {
 
   const getTodayStats = async (): Promise<TodayStats> => {
     try {
+      const effectiveStoreId = getEffectiveStoreId();
+      
+      // Se não tem storeId, retorna valores padrão (evita query sem permissão)
+      if (!effectiveStoreId) {
+        console.warn('[useReports] No storeId available, returning empty stats');
+        return {
+          totalSales: 0,
+          totalOrders: 0,
+          currency: 'INR'
+        };
+      }
+
       const today = new Date();
       const startOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const endOfDay = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
 
-      const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(startOfDay)),
@@ -59,7 +71,7 @@ export const useReports = (storeId?: string) => {
         currency
       };
     } catch (error) {
-      console.error('Error getting today stats:', error);
+      console.error('[useReports] Error getting today stats:', error);
       return {
         totalSales: 0,
         totalOrders: 0,
@@ -71,13 +83,22 @@ export const useReports = (storeId?: string) => {
   const getSalesReportByDateRange = async (startDate: Date, endDate: Date): Promise<SalesReport[]> => {
     setLoading(true);
     try {
+      const effectiveStoreId = getEffectiveStoreId();
+      
+      // Se não tem storeId, retorna array vazio
+      if (!effectiveStoreId) {
+        console.warn('[useReports] No storeId available for getSalesReportByDateRange');
+        setLoading(false);
+        return [];
+      }
+
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
 
-      const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(start)),
@@ -152,7 +173,8 @@ export const useReports = (storeId?: string) => {
       end.setHours(23, 59, 59, 999);
 
       const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(start)),
@@ -230,7 +252,8 @@ export const useReports = (storeId?: string) => {
       }
 
       const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(startDate)),
@@ -292,7 +315,8 @@ export const useReports = (storeId?: string) => {
       }
 
       const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       const q = query(
         salesCollection,
         where('timestamp', '>=', Timestamp.fromDate(startDate)),
@@ -346,7 +370,8 @@ export const useReports = (storeId?: string) => {
   const recordSale = async (items: any[], totalAmount: number, currency: string) => {
     try {
       const effectiveStoreId = getEffectiveStoreId();
-      const salesCollection = getStoreCollection(effectiveStoreId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       
       await addDoc(salesCollection, {
         total_amount: totalAmount,

@@ -92,7 +92,8 @@ const OrderHistory = () => {
     setLoading(true);
     try {
       const storeId = getCurrentStoreId();
-      const salesCollection = getStoreCollection(storeId, 'sales');
+      // Usar 'orders' para compatibilidade com Admin
+      const salesCollection = getStoreCollection(storeId, 'orders');
       const q = query(salesCollection, orderBy('timestamp', 'desc'));
       const snap = await getDocs(q);
       const records: SaleRecord[] = [];
