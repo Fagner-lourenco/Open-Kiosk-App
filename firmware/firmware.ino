@@ -1,38 +1,60 @@
 /*
  * ============================================================================
- * ESP32-S3 Drink Dispenser Controller - Versão 3.0 (Kiosk_Bier)
+ * ESP32-S3 Drink Dispenser Controller - Versão 4.0 (Multi-Tap)
  * ============================================================================
  * 
  * DESCRIÇÃO:
  * Este firmware controla um dispensador de bebidas com válvula solenóide
  * e sensor de fluxo. Compatível com o Open Kiosk App.
  * 
+ * 🆕 VERSÃO 4.0 - MULTI-TAP:
+ * - Suporte a 2 torneiras independentes por ESP32
+ * - Calibração individual por torneira (NVS)
+ * - LED compartilhado com padrões diferentes por tap
+ * - BLE protegido por PIN (123456)
+ * - Retrocompatível: tapId opcional (default = 0)
+ * 
  * COMUNICAÇÃO SUPORTADA:
  * - WiFi Access Point fixo (Kiosk_Bier) ✅ ATIVADO
  * - HTTP REST API (192.168.4.1) ✅ ATIVADO
- * - Bluetooth Low Energy (BLE) ✅ ATIVADO
+ * - Bluetooth Low Energy (BLE) ✅ ATIVADO + PIN
  * - USB Serial (para testes e debug) ✅ ATIVADO
  * - mDNS: http://kiosk-bier.local ✅ ATIVADO
  * 
  * HARDWARE NECESSÁRIO:
  * - ESP32-S3 DevKit ou XIAO ESP32S3
- * - Módulo Relé 5V (para controlar a válvula)
- * - Válvula Solenóide 12V (controle de fluxo)
- * - Sensor de Fluxo YF-S201 (medir volume)
- * - Fonte 12V 2A (alimentar a válvula)
- * - LED indicador (GPIO 19) - MUITO IMPORTANTE PARA DEBUG
+ * - 2x Módulo Relé 5V (para controlar as válvulas)
+ * - 2x Válvula Solenóide 12V (controle de fluxo)
+ * - 2x Sensor de Fluxo YF-S201 (medir volume)
+ * - Fonte 12V 2A (alimentar as válvulas)
+ * - LED indicador (GPIO21 = USER_LED interno) - COMPARTILHADO
  * 
- * CONEXÕES (XIAO ESP32S3):
- * - GPIO 5 (D4):  Controle da válvula (via módulo relé)
- * - GPIO 6 (D5):  Sensor de fluxo (fio de sinal/amarelo)
- * - GPIO 21 (D10): LED indicador (ou use LED_BUILTIN)
+ * CONEXÕES (XIAO ESP32S3 - MULTI-TAP):
+ * ────────────────────────────────────────────────────────
+ * │ ⚠️ MAPEAMENTO OFICIAL XIAO ESP32S3:                  │
+ * │   D3=GPIO4, D4=GPIO5, D5=GPIO6, D8=GPIO7, D10=GPIO10 │
+ * │   D6=TX(GPIO43), D7=RX(GPIO44) - NÃO USAR!           │
+ * │   USER_LED interno = GPIO21                          │
+ * ├──────────────────────────────────────────────────────┤
+ * │ Tap 0 (Torneira 1)                                   │
+ * │   GPIO 5 (D4):  Válvula 0 (via módulo relé)          │
+ * │   GPIO 4 (D3):  Sensor de fluxo 0                    │
+ * ├──────────────────────────────────────────────────────┤
+ * │ Tap 1 (Torneira 2)                                   │
+ * │   GPIO 6 (D5):  Válvula 1 (via módulo relé)          │
+ * │   GPIO 7 (D8):  Sensor de fluxo 1                    │
+ * ├──────────────────────────────────────────────────────┤
+ * │ Compartilhado                                        │
+ * │   GPIO21: LED indicador (USER_LED interno)           │
+ * ────────────────────────────────────────────────────────
  * 
  * 🔴 PADRÕES DE LED PARA DEBUG:
  * ────────────────────────────────────────────────────────
  * 2 piscadas      = Pinos configurados OK
  * 3 piscadas      = Bluetooth iniciado OK
  * 5 piscadas      = Sistema PRONTO (pode receber comandos)
- * Piscando lento  = Dispensando (pisca a cada 500ms)
+ * Piscando lento  = Tap 0 dispensando
+ * Piscando rápido = Tap 1 dispensando
  * Aceso 1 segundo = Copo concluído com sucesso
  * 3 piscadas longo= Pedido completamente finalizado
  * 5 piscadas rápidas = ERRO - Timeout na dispensação
@@ -40,7 +62,7 @@
  * 
  * AUTOR: Open Kiosk Project
  * DATA: 20/01/2026
- * VERSÃO: 3.0 (Access Point Fixo - Kiosk_Bier)
+ * VERSÃO: 4.0 (Multi-Tap + BLE Seguro)
  * 
  * ============================================================================
  */
@@ -55,9 +77,14 @@
 #include <BLEDevice.h>         // Bluetooth Low Energy
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <BLESecurity.h>       // Para BLESecurity e segurança BLE
+#ifdef CONFIG_NIMBLE_ENABLED
+  #include <host/ble_gap.h>    // Para ble_gap_conn_desc (NimBLE)
+#endif
 // WiFiManager REMOVIDO - Agora usa Access Point fixo (Kiosk_Bier)
 #include <Preferences.h>       // NVS - Salvar configurações na flash
 #include <ESPmDNS.h>           // mDNS - Acessar via kiosk-bier.local
+#include <esp_task_wdt.h>      // Watchdog Timer para segurança
 // NOTA: BLE2902 removido - deprecated no ESP32 Core 3.x (NimBLE adiciona automaticamente)
 
 // ============================================================================
@@ -68,36 +95,52 @@
 // O ESP32 cria uma rede WiFi própria para o Kiosk se conectar
 // Não depende de roteador externo - funciona offline
 const char* AP_SSID = "Kiosk_Bier";       // Nome da rede WiFi do Kiosk
-const char* AP_PASSWORD = "bier2026";     // Senha da rede WiFi
+const char* AP_PASSWORD = "bier2026";     // Senha da rede WiFi (HARDCODED - NÃO ALTERAR)
 // IP padrão do Access Point: 192.168.4.1 (fixo do ESP32)
 
 // ----- MDNS -----
 const char* MDNS_HOSTNAME = "kiosk-bier";  // Acessar via http://kiosk-bier.local
 
-// ----- PINOS DO HARDWARE -----
-// XIAO ESP32S3: Use pinos disponíveis (evitar pinos USB/JTAG)
+// ----- CONFIGURAÇÃO MULTI-TAP -----
+// Número de torneiras suportadas por este ESP32
+const int NUM_TAPS = 2;
+
+// ----- PINOS DO HARDWARE (MULTI-TAP) -----
+// XIAO ESP32S3: Pinos D0-D10 disponíveis
 // 
-// ⚠️ TROCA DE PINO: Se GPIO5 não funcionar, descomente a linha abaixo e comente a atual
-// const int VALVE_PIN = 4;     // GPIO4 = D3 no XIAO (alternativa se GPIO5 queimou)
-const int VALVE_PIN = 5;        // GPIO5 = D4 no XIAO (pino padrão)
+// Tap 0 (Torneira 1)
+const int VALVE_PIN_0 = 5;        // GPIO5 = D4 no XIAO - Válvula Tap 0
+const int FLOW_SENSOR_PIN_0 = 4;  // GPIO4 = D3 no XIAO - Sensor Fluxo Tap 0
 //
-const int FLOW_SENSOR_PIN = 6;  // GPIO para sensor de fluxo - D5 no XIAO (GPIO18 é USB no S3!)
-const int LED_PIN = 21;         // GPIO para LED indicador - LED_BUILTIN ou D10 no XIAO
+// Tap 1 (Torneira 2)
+const int VALVE_PIN_1 = 6;        // GPIO6 = D5 no XIAO - Válvula Tap 1
+const int FLOW_SENSOR_PIN_1 = 7;  // GPIO7 = D8 no XIAO - Sensor Fluxo Tap 1
+//
+// LED compartilhado
+// XIAO ESP32S3: GPIO21 = USER_LED interno da placa
+// Se usar LED externo no D10, mudar para GPIO10
+const int LED_PIN = 21;           // GPIO21 = USER_LED interno do XIAO
+
+// Aliases para retrocompatibilidade (aponta para Tap 0)
+#define VALVE_PIN VALVE_PIN_0
+#define FLOW_SENSOR_PIN FLOW_SENSOR_PIN_0
 
 // ----- CALIBRAÇÃO DO SENSOR DE FLUXO (valores padrão) -----
-// Estes valores podem ser alterados e salvos via NVS
-float pulsosPorLitro = 450.0;   // Pulsos para 1 litro (YF-S201: ~450)
-float mlPorSegundo = 50.0;      // Vazão média da sua válvula em ml/s
+// Estes valores podem ser alterados e salvos via NVS por torneira
+// ⚠️ YF-S201: ~450 pulsos/litro | YF-S402: ~5880 pulsos/litro | Ajustado: 1200
+const float DEFAULT_PULSOS_POR_LITRO = 1200.0;  // Pulsos para 1 litro (ajustado pelo usuário)
+const float DEFAULT_ML_POR_SEGUNDO = 50.0;      // Vazão média da válvula em ml/s
 
 // ----- BLUETOOTH -----
 const char* BLE_DEVICE_NAME = "Kiosk_Bier";  // Nome do dispositivo BLE (igual ao WiFi)
+const uint32_t BLE_PIN = 123456;              // 🔒 PIN para pareamento BLE
 
 // UUIDs para BLE (padrão do Open Kiosk)
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // ----- VERSÃO DO FIRMWARE -----
-const char* FIRMWARE_VERSION = "3.0.0";
+const char* FIRMWARE_VERSION = "4.1.0";  // GPIO4=Sensor, GPIO5=Válvula, GPIO6=Válvula2
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
@@ -115,25 +158,69 @@ BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
 bool oldDeviceConnected = false;
 
-// ----- Sensor de Fluxo -----
-volatile unsigned long pulseCount = 0;
+// ============================================================================
+// 🆕 ESTRUTURAS MULTI-TAP
+// ============================================================================
+
+// Configuração de cada torneira (pinos + calibração)
+struct TapConfig {
+  int valvePin;
+  int sensorPin;
+  float pulsosPorLitro;
+  float mlPorSegundo;
+};
+
+// Estado de cada torneira durante dispensação
+struct TapState {
+  bool isDispensing;
+  String orderId;
+  volatile unsigned long pulseCount;
+  float mlDispensed;
+  unsigned long lastPulseTime;
+  unsigned long dispensingStartTime;
+  unsigned long firstPulseTime;
+  bool flowStarted;
+  int currentCup;
+  int totalCups;
+  int targetMl;
+  // 🆕 Ajuste 1: Status update por tap (evita conflito entre taps)
+  unsigned long lastStatusUpdate;
+  // 🆕 Ajuste 2: Timeout por tap (permite calibração por torneira)
+  unsigned long sessionTimeoutMs;
+};
+
+// Arrays para as torneiras
+TapConfig tapConfig[NUM_TAPS];
+TapState tapState[NUM_TAPS];
+
+// 🆕 Spinlock para proteção de leitura atômica de pulseCount (evita race condition com ISR)
+static portMUX_TYPE pulseCountMux = portMUX_INITIALIZER_UNLOCKED;
+
+// ----- Variáveis de compatibilidade (legado - usadas em algumas funções) -----
+// NOTA: Mantidas para retrocompatibilidade com código existente
+volatile unsigned long pulseCount = 0;  // Alias para tap 0
 float totalMlDispensed = 0;
 unsigned long lastPulseTime = 0;
 float flowRate = 0;
-
-// ----- Estado do Sistema -----
 bool isDispensing = false;
 String currentOrderId = "";
 int currentCup = 0;
 int totalCups = 0;
 int targetMl = 0;
+unsigned long dispensingStartTime = 0;
+unsigned long firstPulseTime = 0;
+bool flowStarted = false;
+
+// Variáveis globais de calibração legadas (aponta para tap 0)
+float pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;
+float mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
+
+// Tap ativo atual (para processamento)
+int activeTap = -1;  // -1 = nenhum tap dispensando
 
 // ----- Timing -----
-unsigned long dispensingStartTime = 0;
-unsigned long lastStatusUpdate = 0;
+// NOTA: lastStatusUpdate movido para TapState (por tap)
 unsigned long lastHeartbeat = 0;
-unsigned long firstPulseTime = 0;       // Momento em que o usuário abriu a torneira
-bool flowStarted = false;                // Flag: usuário já abriu a torneira?
 
 // ----- Timeout de Segurança (Torneira Manual) -----
 // Timeout máximo para a sessão completa (usuário pode demorar para abrir a torneira)
@@ -163,13 +250,28 @@ void handleCommand();
 String handlePing();
 String handleReleaseDrink(JsonDocument& doc);
 String handleStop();
+String handleStopTap(int tapId);
 String handleTestValve(int durationMs);
-String handleTestFlow(int durationMs);
-String handleCalibration(int durationMs);
+String handleTestValveTap(int tapId, int durationMs);
+String handleTestFlow(int durationMs, int tapId = 0);  // 🆕 Multi-Tap: tapId opcional
+String handleCalibration(int durationMs, int tapId = 0);  // 🆕 Multi-Tap: tapId opcional
 String getStatusJson();
-void IRAM_ATTR flowPulseCounter();
 
-// Novas funções v3.0
+// 🆕 ISRs para Multi-Tap (uma por sensor)
+void IRAM_ATTR flowPulseCounter0();
+void IRAM_ATTR flowPulseCounter1();
+
+// 🆕 Funções Multi-Tap v4.0
+void initTaps();
+void openValveTap(int tapId);
+void closeValveTap(int tapId);
+void processDispensingTap(int tapId);
+String handleGetTaps();
+String handleReleaseDrinkTap(int tapId, JsonDocument& doc);
+void sendStatusTap(int tapId, const char* orderId, const char* stage, String message);
+void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec);
+
+// Funções v3.0
 void loadSettings();
 void saveSettings();
 String handleSaveCalibration(JsonDocument& doc);
@@ -212,14 +314,175 @@ class MyCallbacks : public BLECharacteristicCallbacks {
 };
 
 // ============================================================================
-// INTERRUPÇÃO DO SENSOR DE FLUXO
+// 🔒 CALLBACK DE SEGURANÇA BLE (ESP32 Core 3.x)
 // ============================================================================
 
-// Esta função é chamada automaticamente cada vez que o sensor de fluxo
-// detecta um pulso (passagem de água)
-void IRAM_ATTR flowPulseCounter() {
-  pulseCount++;
-  lastPulseTime = millis();
+class MySecurity : public BLESecurityCallbacks {
+  uint32_t onPassKeyRequest() override {
+    Serial.println("[BLE] 🔑 PIN solicitado: " + String(BLE_PIN));
+    return BLE_PIN;
+  }
+  
+  void onPassKeyNotify(uint32_t pass_key) override {
+    Serial.println("[BLE] 🔑 PIN para pareamento: " + String(pass_key));
+  }
+  
+  bool onConfirmPIN(uint32_t pass_key) override {
+    Serial.println("[BLE] ✅ PIN confirmado: " + String(pass_key));
+    return true;
+  }
+  
+  bool onSecurityRequest() override {
+    Serial.println("[BLE] 🔒 Solicitação de segurança aceita");
+    return true;
+  }
+  
+#ifdef CONFIG_NIMBLE_ENABLED
+  void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
+    if (desc && desc->sec_state.encrypted) {
+      Serial.println("[BLE] ✅ Conexão encriptada com sucesso!");
+    } else {
+      Serial.println("[BLE] ⚠️ Conexão não encriptada");
+    }
+  }
+#else
+  void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
+    if (cmpl.success) {
+      Serial.println("[BLE] ✅ Autenticação completa!");
+    } else {
+      Serial.println("[BLE] ❌ Falha na autenticação");
+    }
+  }
+#endif
+};
+
+// ============================================================================
+// INTERRUPÇÕES DOS SENSORES DE FLUXO (MULTI-TAP)
+// ============================================================================
+// 🔧 CORREÇÃO v4.0.1: ISRs simplificadas como na v2.1 que funcionava
+// - Variáveis globais simples (não struct)
+// - Sem portENTER_CRITICAL_ISR (causa problemas)
+// - Operações atômicas naturais
+
+// Variáveis globais SIMPLES para ISR (como na v2.1 que funcionava)
+volatile unsigned long isr_pulseCount0 = 0;
+volatile unsigned long isr_lastPulseTime0 = 0;
+volatile unsigned long isr_pulseCount1 = 0;
+volatile unsigned long isr_lastPulseTime1 = 0;
+
+// 🔧 Debounce mínimo em microssegundos (50us = filtra ruído, permite até ~20000 pulsos/s)
+const unsigned long ISR_DEBOUNCE_US = 50;
+
+// ISR para Tap 0 (Torneira 1) - COM DEBOUNCE
+void IRAM_ATTR flowPulseCounter0() {
+  static unsigned long lastMicros = 0;
+  unsigned long now = micros();
+  if (now - lastMicros >= ISR_DEBOUNCE_US) {
+    isr_pulseCount0++;
+    isr_lastPulseTime0 = millis();
+    lastMicros = now;
+  }
+}
+
+// ISR para Tap 1 (Torneira 2) - COM DEBOUNCE
+void IRAM_ATTR flowPulseCounter1() {
+  static unsigned long lastMicros = 0;
+  unsigned long now = micros();
+  if (now - lastMicros >= ISR_DEBOUNCE_US) {
+    isr_pulseCount1++;
+    isr_lastPulseTime1 = millis();
+    lastMicros = now;
+  }
+}
+
+// 🔧 Função para sincronizar contadores da ISR para tapState
+// Chamada no loop principal (FORA da ISR, seguro)
+void syncPulseCounters() {
+  noInterrupts();
+  tapState[0].pulseCount = isr_pulseCount0;
+  tapState[0].lastPulseTime = isr_lastPulseTime0;
+  tapState[1].pulseCount = isr_pulseCount1;
+  tapState[1].lastPulseTime = isr_lastPulseTime1;
+  // Compatibilidade legada
+  pulseCount = isr_pulseCount0;
+  lastPulseTime = isr_lastPulseTime0;
+  interrupts();
+}
+
+// 🔧 Função para zerar contador de um tap
+void resetPulseCounter(int tapId) {
+  noInterrupts();
+  if (tapId == 0) {
+    isr_pulseCount0 = 0;
+    isr_lastPulseTime0 = 0;
+  } else if (tapId == 1) {
+    isr_pulseCount1 = 0;
+    isr_lastPulseTime1 = 0;
+  }
+  interrupts();
+  syncPulseCounters();
+}
+
+// ============================================================================
+// INICIALIZAÇÃO DAS TORNEIRAS (MULTI-TAP)
+// ============================================================================
+
+void initTaps() {
+  Serial.println("[INIT] Configurando " + String(NUM_TAPS) + " torneiras...");
+  
+  // ----- Tap 0 (Torneira 1) -----
+  tapConfig[0].valvePin = VALVE_PIN_0;
+  tapConfig[0].sensorPin = FLOW_SENSOR_PIN_0;
+  // 🔧 NÃO sobrescrever calibração - loadSettings() já carregou do NVS
+  // tapConfig[0].pulsosPorLitro e mlPorSegundo são definidos por loadSettings()
+  
+  tapState[0].isDispensing = false;
+  tapState[0].orderId = "";
+  tapState[0].pulseCount = 0;
+  tapState[0].mlDispensed = 0;
+  tapState[0].lastPulseTime = 0;
+  tapState[0].dispensingStartTime = 0;
+  tapState[0].firstPulseTime = 0;
+  tapState[0].flowStarted = false;
+  tapState[0].currentCup = 0;
+  tapState[0].totalCups = 0;
+  tapState[0].targetMl = 0;
+  tapState[0].lastStatusUpdate = 0;  // 🆕 Por tap
+  tapState[0].sessionTimeoutMs = SESSION_TIMEOUT_MS;  // 🆕 Timeout por tap
+  
+  pinMode(VALVE_PIN_0, OUTPUT);
+  digitalWrite(VALVE_PIN_0, LOW);
+  pinMode(FLOW_SENSOR_PIN_0, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN_0), flowPulseCounter0, FALLING);
+  Serial.println("  → Tap 0: Válvula GPIO" + String(VALVE_PIN_0) + ", Sensor GPIO" + String(FLOW_SENSOR_PIN_0));
+  Serial.println("    Calibração: " + String(tapConfig[0].pulsosPorLitro) + " pulsos/L");
+  
+  // ----- Tap 1 (Torneira 2) -----
+  tapConfig[1].valvePin = VALVE_PIN_1;
+  tapConfig[1].sensorPin = FLOW_SENSOR_PIN_1;
+  // 🔧 NÃO sobrescrever calibração - loadSettings() já carregou do NVS
+  
+  tapState[1].isDispensing = false;
+  tapState[1].orderId = "";
+  tapState[1].pulseCount = 0;
+  tapState[1].mlDispensed = 0;
+  tapState[1].lastPulseTime = 0;
+  tapState[1].dispensingStartTime = 0;
+  tapState[1].firstPulseTime = 0;
+  tapState[1].flowStarted = false;
+  tapState[1].currentCup = 0;
+  tapState[1].totalCups = 0;
+  tapState[1].targetMl = 0;
+  tapState[1].lastStatusUpdate = 0;  // 🆕 Por tap
+  tapState[1].sessionTimeoutMs = SESSION_TIMEOUT_MS;  // 🆕 Timeout por tap
+  
+  pinMode(VALVE_PIN_1, OUTPUT);
+  digitalWrite(VALVE_PIN_1, LOW);
+  pinMode(FLOW_SENSOR_PIN_1, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN_1), flowPulseCounter1, FALLING);
+  Serial.println("  → Tap 1: Válvula GPIO" + String(VALVE_PIN_1) + ", Sensor GPIO" + String(FLOW_SENSOR_PIN_1));
+  
+  Serial.println("[INIT] ✅ Torneiras configuradas!");
 }
 
 // ============================================================================
@@ -229,7 +492,14 @@ void IRAM_ATTR flowPulseCounter() {
 void setup() {
   // ----- Iniciar Serial (para debug e comandos USB) -----
   Serial.begin(115200);
-  delay(1000);  // Aguarda estabilizar
+  
+  // 🔧 Aguardar Serial estar pronta (até 3 segundos)
+  // Isso garante que você não perca as mensagens de boot
+  unsigned long serialWait = millis();
+  while (!Serial && millis() - serialWait < 3000) {
+    delay(10);
+  }
+  delay(500);  // Pequeno delay extra para estabilizar
   
   // ----- Configurar Pino LED PRIMEIRO (para feedback de inicialização) -----
   pinMode(LED_PIN, OUTPUT);
@@ -240,34 +510,26 @@ void setup() {
   Serial.println();
   Serial.println("=====================================");
   Serial.println("ESP32-S3 Drink Dispenser v" + String(FIRMWARE_VERSION));
-  Serial.println("Open Kiosk Project");
+  Serial.println("Open Kiosk Project - MULTI-TAP");
   Serial.println("=====================================");
   Serial.println();
   
   // ----- Carregar configurações do NVS -----
   Serial.println("[INIT] Carregando configurações do NVS...");
   preferences.begin("openkiosk", false);
-  loadSettings();
-  Serial.println("  → Pulsos/Litro: " + String(pulsosPorLitro));
-  Serial.println("  → ML/Segundo: " + String(mlPorSegundo));
+  loadSettings();  // Carrega calibração para cada tap
   
-  // 🟡 FASE 1: Configurar Pinos
-  Serial.println("[INIT] FASE 1: Configurando pinos...");
+  // 🟡 FASE 1: Configurar Torneiras (Multi-Tap)
+  Serial.println("[INIT] FASE 1: Configurando torneiras...");
   digitalWrite(LED_PIN, HIGH);  // LED ACESO
   delay(200);
   
-  pinMode(VALVE_PIN, OUTPUT);
-  digitalWrite(VALVE_PIN, LOW);  // Válvula começa fechada
-  Serial.println("  → Válvula (GPIO " + String(VALVE_PIN) + "): OK");
-  
-  pinMode(FLOW_SENSOR_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN), flowPulseCounter, FALLING);
-  Serial.println("  → Sensor de Fluxo (GPIO " + String(FLOW_SENSOR_PIN) + "): OK");
+  initTaps();  // Configura pinos e interrupções para todas as torneiras
   
   Serial.println("  → LED (GPIO " + String(LED_PIN) + "): OK");
   
   // 🟡 FASE 1 Concluída: piscar 2x
-  Serial.println("[INIT] ✅ Pinos OK!");
+  Serial.println("[INIT] ✅ Torneiras OK!");
   for (int i = 0; i < 2; i++) {
     digitalWrite(LED_PIN, LOW);
     delay(150);
@@ -277,9 +539,9 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   delay(300);
   
-  // 🟡 FASE 2: Iniciar Bluetooth (mais simples, sem WiFi)
+  // 🟡 FASE 2: Iniciar Bluetooth com segurança
   Serial.println();
-  Serial.println("[INIT] FASE 2: Iniciando Bluetooth...");
+  Serial.println("[INIT] FASE 2: Iniciando Bluetooth com PIN...");
   digitalWrite(LED_PIN, HIGH);
   delay(100);
   digitalWrite(LED_PIN, LOW);
@@ -290,7 +552,7 @@ void setup() {
   initBluetooth();
   
   // 🟡 FASE 2 Concluída: piscar 3x
-  Serial.println("[INIT] ✅ Bluetooth OK!");
+  Serial.println("[INIT] ✅ Bluetooth OK (PIN: " + String(BLE_PIN) + ")!");
   for (int i = 0; i < 3; i++) {
     digitalWrite(LED_PIN, LOW);
     delay(100);
@@ -318,8 +580,9 @@ void setup() {
   // ----- Tudo Pronto! -----
   Serial.println();
   Serial.println("=====================================");
-  Serial.println("[INIT] Sistema pronto!");
-  Serial.println("[INIT] Aguardando comandos via USB Serial ou Bluetooth");
+  Serial.println("[INIT] Sistema MULTI-TAP pronto!");
+  Serial.println("[INIT] Torneiras: " + String(NUM_TAPS));
+  Serial.println("[INIT] Aguardando comandos via USB, WiFi ou BLE");
   Serial.println("=====================================");
   Serial.println();
   
@@ -334,6 +597,17 @@ void setup() {
   
   delay(500);
   
+  // 🆕 Ajuste 4: Watchdog de segurança (10 segundos)
+  // Se o loop travar por mais de 10s, o ESP32 reinicia automaticamente
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 10000,           // 10 segundos
+    .idle_core_mask = (1 << 0),    // Core 0
+    .trigger_panic = true          // Reinicia se travar
+  };
+  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_add(NULL);       // Adiciona a task atual ao watchdog
+  Serial.println("[INIT] ✅ Watchdog configurado (10s)");
+  
   // Enviar status inicial
   sendStatus("", "ready", "ESP32-S3 pronto para receber pedidos via USB e Bluetooth");
 }
@@ -343,6 +617,9 @@ void setup() {
 // ============================================================================
 
 void loop() {
+  // 🆕 Reset do watchdog (indica que o loop está funcionando)
+  esp_task_wdt_reset();
+  
   // ----- Processar comandos Serial (USB) -----
   if (Serial.available()) {
     String command = Serial.readStringUntil('\n');
@@ -356,6 +633,10 @@ void loop() {
   // ----- Processar requisições HTTP (WiFi) -----
   server.handleClient();
   
+  // ----- Sincronizar contadores de pulso das ISRs -----
+  // 🔧 CORREÇÃO v4.0.1: Copiar valores das ISRs para tapState
+  syncPulseCounters();
+  
   // ----- Gerenciar conexão Bluetooth -----
   // Reconectar se desconectou
   if (!deviceConnected && oldDeviceConnected) {
@@ -368,13 +649,19 @@ void loop() {
     oldDeviceConnected = deviceConnected;
   }
   
-  // ----- Processar dispensação em andamento -----
-  if (isDispensing) {
-    processDispensing();
+  // ----- Processar dispensação em andamento (Multi-Tap) -----
+  bool anyDispensing = false;
+  for (int i = 0; i < NUM_TAPS; i++) {
+    if (tapState[i].isDispensing) {
+      processDispensingTap(i);
+      anyDispensing = true;
+    }
   }
+  // Atualizar flag global para compatibilidade
+  isDispensing = anyDispensing;
   
   // ----- Heartbeat do LED -----
-  if (!isDispensing && millis() - lastHeartbeat > 2000) {
+  if (!anyDispensing && millis() - lastHeartbeat > 2000) {
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
     lastHeartbeat = millis();
   }
@@ -395,12 +682,16 @@ void initWiFi() {
   // ============================================
   
   Serial.println("[WIFI] Iniciando Access Point do Kiosk...");
+  Serial.println("[WIFI] SSID: " + String(AP_SSID) + " | Senha: " + String(AP_PASSWORD));
   
   // Configurar como Access Point
   WiFi.mode(WIFI_AP);
+  delay(100);  // 🔧 Pequeno delay para estabilizar modo WiFi
   
   // Criar rede WiFi com SSID e senha fixos
   bool success = WiFi.softAP(AP_SSID, AP_PASSWORD);
+  
+  Serial.println("[WIFI] softAP() retornou: " + String(success ? "TRUE ✅" : "FALSE ❌"));
   
   if (success) {
     IPAddress IP = WiFi.softAPIP();
@@ -467,6 +758,12 @@ void initHTTPServer() {
     server.send(204);  // No Content
   });
   
+  // 🆕 Handler OPTIONS para /taps (Multi-Tap)
+  server.on("/taps", HTTP_OPTIONS, []() {
+    sendCORSHeaders();
+    server.send(204);  // No Content
+  });
+  
   // Rota: Status do dispositivo
   server.on("/status", HTTP_GET, handleStatus);
   
@@ -477,6 +774,13 @@ void initHTTPServer() {
   server.on("/ping", HTTP_GET, []() {
     sendCORSHeaders();
     server.send(200, "application/json", "{\"pong\":true,\"timestamp\":" + String(millis()) + "}");
+  });
+  
+  // 🆕 Rota: Status de todas as torneiras (Multi-Tap)
+  server.on("/taps", HTTP_GET, []() {
+    sendCORSHeaders();
+    String response = handleGetTaps();
+    server.send(200, "application/json", response);
   });
   
   // Rota: Auto-descoberta (para o app encontrar o ESP32 na rede)
@@ -496,8 +800,10 @@ void initHTTPServer() {
     doc["ip"] = WiFi.softAPIP().toString();
     doc["mac"] = WiFi.macAddress();
     doc["hostname"] = String(MDNS_HOSTNAME) + ".local";
+    doc["num_taps"] = NUM_TAPS;  // 🆕 Número de torneiras
     doc["status"] = isDispensing ? "dispensing" : "ready";
     doc["ble_name"] = BLE_DEVICE_NAME;
+    doc["ble_pin"] = BLE_PIN;  // 🆕 Informar que BLE tem PIN
     doc["uptime"] = millis();
     doc["clients_connected"] = WiFi.softAPgetStationNum();
     String response;
@@ -512,15 +818,26 @@ void initHTTPServer() {
     html += "<style>body{font-family:Arial;text-align:center;padding:20px;background:linear-gradient(135deg,#1a1a2e,#16213e);min-height:100vh;}";
     html += ".card{background:white;border-radius:15px;padding:25px;max-width:400px;margin:auto;box-shadow:0 4px 20px rgba(0,0,0,0.3);}";
     html += ".status{color:#27ae60;font-weight:bold;font-size:1.2em;}";
+    html += ".tap{background:#e8f5e9;padding:10px;border-radius:5px;margin:5px 0;}";
+    html += ".tap.busy{background:#fff3e0;}";
     html += ".info{background:#f8f9fa;padding:15px;border-radius:8px;margin:15px 0;text-align:left;}";
     html += "h1{color:#2c3e50;margin-bottom:5px;}</style></head>";
     html += "<body><div class='card'>";
     html += "<h1>🍺 Kiosk Bier</h1>";
-    html += "<p>Servidor de Chopeira</p>";
+    html += "<p>Servidor Multi-Tap</p>";
     html += "<p>Status: <span class='status'>✅ Online</span></p>";
     html += "<div class='info'>";
+    html += "<p><strong>🚿 Torneiras:</strong></p>";
+    for (int i = 0; i < NUM_TAPS; i++) {
+      String tapClass = tapState[i].isDispensing ? "tap busy" : "tap";
+      String tapStatus = tapState[i].isDispensing ? "Dispensando" : "Livre";
+      html += "<div class='" + tapClass + "'>Tap " + String(i) + ": " + tapStatus + "</div>";
+    }
+    html += "</div>";
+    html += "<div class='info'>";
     html += "<p>📡 WiFi: " + String(AP_SSID) + "</p>";
-    html += "<p>🔑 Senha: " + String(AP_PASSWORD) + "</p>";
+    html += "<p>🔑 Senha WiFi: " + String(AP_PASSWORD) + "</p>";
+    html += "<p>🔒 PIN BLE: " + String(BLE_PIN) + "</p>";
     html += "<p>🌐 IP: " + WiFi.softAPIP().toString() + "</p>";
     html += "<p>🔗 mDNS: http://" + String(MDNS_HOSTNAME) + ".local</p>";
     html += "<p>📱 Clientes: " + String(WiFi.softAPgetStationNum()) + "</p>";
@@ -565,6 +882,17 @@ void handleStatus() {
   doc["valve_pin"] = VALVE_PIN;
   doc["flow_sensor_pin"] = FLOW_SENSOR_PIN;
   doc["led_pin"] = LED_PIN;
+  doc["num_taps"] = NUM_TAPS;
+  
+  // 🆕 Ajuste 3: Identificação do hardware (facilita suporte técnico)
+  char chipId[18];
+  uint64_t efuse = ESP.getEfuseMac();
+  snprintf(chipId, sizeof(chipId), "%04X%08X", (uint16_t)(efuse >> 32), (uint32_t)efuse);
+  doc["chip_id"] = chipId;
+  doc["board"] = "XIAO_ESP32S3";
+  doc["sdk_version"] = ESP.getSdkVersion();
+  doc["cpu_freq_mhz"] = ESP.getCpuFreqMHz();
+  doc["free_heap"] = ESP.getFreeHeap();
   
   // Calibração
   doc["pulsos_por_litro"] = pulsosPorLitro;
@@ -604,11 +932,21 @@ void handleCommand() {
 }
 
 // ============================================================================
-// INICIALIZAÇÃO BLUETOOTH
+// INICIALIZAÇÃO BLUETOOTH (COM SEGURANÇA PIN)
 // ============================================================================
 
 void initBluetooth() {
   BLEDevice::init(BLE_DEVICE_NAME);
+  
+  // 🔒 Configurar segurança BLE com PIN (NimBLE - ESP32 Core 3.x)
+  BLEDevice::setSecurityCallbacks(new MySecurity());
+  
+  // Configurar autenticação com PIN estático usando API NimBLE
+  BLESecurity* pSecurity = new BLESecurity();
+  pSecurity->setPassKey(true, BLE_PIN);  // PIN estático = true, valor do PIN
+  pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
+  pSecurity->setCapability(ESP_IO_CAP_OUT);  // Display only - mostra PIN
+  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
   
   // Criar servidor BLE
   pServer = BLEDevice::createServer();
@@ -638,9 +976,10 @@ void initBluetooth() {
   pAdvertising->setScanResponse(true);
   pAdvertising->start();
   
-  Serial.println("[BLE] ✅ Bluetooth iniciado!");
+  Serial.println("[BLE] ✅ Bluetooth iniciado com segurança!");
   Serial.println("  → Nome: " + String(BLE_DEVICE_NAME));
-  Serial.println("  → Aguardando conexões...");
+  Serial.println("  → PIN: " + String(BLE_PIN));
+  Serial.println("  → Aguardando conexões pareadas...");
 }
 
 // ============================================================================
@@ -649,7 +988,19 @@ void initBluetooth() {
 
 void processCommand(String jsonString) {
   String result = processCommandAndGetResult(jsonString);
-  Serial.println("[RESULT] " + result);
+  
+  // Enviar via Serial (USB) - apenas o JSON puro para parsing
+  Serial.println(result);
+  
+  // 🔧 CORREÇÃO v4.0.4: Enviar também via Bluetooth (se conectado)
+  // Isso garante que o Android receba as respostas dos comandos
+  if (deviceConnected && pCharacteristic != NULL) {
+    // 🔧 FIX: Adicionar \n para que o app reconheça linha completa
+    String bleResult = result + "\n";
+    pCharacteristic->setValue(bleResult.c_str());
+    pCharacteristic->notify();
+    Serial.println("[BLE] Resultado enviado (" + String(result.length()) + " bytes)");
+  }
 }
 
 String processCommandAndGetResult(String jsonString) {
@@ -663,8 +1014,19 @@ String processCommandAndGetResult(String jsonString) {
     return "{\"type\":\"error\",\"code\":\"JSON_PARSE_ERROR\",\"message\":\"" + String(error.c_str()) + "\"}";
   }
   
-  // Pegar a ação solicitada
+  // 🔧 FIX: Detectar JSON duplamente encapsulado
+  // Ex: {"action":"{\"action\":\"ping\"}"} ao invés de {"action":"ping"}
   const char* action = doc["action"];
+  if (action != nullptr && action[0] == '{') {
+    Serial.println("[WARN] JSON duplamente encapsulado detectado, extraindo...");
+    // O valor de action é outro JSON, re-parsear
+    JsonDocument innerDoc;
+    DeserializationError innerError = deserializeJson(innerDoc, action);
+    if (!innerError) {
+      // Usar o JSON interno
+      return processCommandAndGetResult(String(action));
+    }
+  }
   
   if (action == nullptr) {
     return "{\"type\":\"error\",\"code\":\"NO_ACTION\",\"message\":\"Campo 'action' obrigatório\"}";
@@ -675,37 +1037,49 @@ String processCommandAndGetResult(String jsonString) {
     return handlePing();
   }
   
-  // ----- AÇÃO: DISPENSAR BEBIDA -----
+  // ----- AÇÃO: DISPENSAR BEBIDA (com tapId opcional) -----
   else if (strcmp(action, "release_drink") == 0) {
     return handleReleaseDrink(doc);
   }
   
   // ----- AÇÃO: PARAR DISPENSAÇÃO -----
   else if (strcmp(action, "stop") == 0) {
-    return handleStop();
+    int tapId = doc["tapId"] | -1;  // -1 = parar todas
+    if (tapId >= 0 && tapId < NUM_TAPS) {
+      return handleStopTap(tapId);
+    }
+    return handleStop();  // Parar todas
   }
   
-  // ----- AÇÃO: TESTAR VÁLVULA -----
+  // ----- AÇÃO: TESTAR VÁLVULA (com tapId opcional) -----
   else if (strcmp(action, "test_valve") == 0) {
     int duration = doc["duration"] | 1000;  // Padrão 1 segundo
-    return handleTestValve(duration);
+    int tapId = doc["tapId"] | 0;  // Padrão tap 0
+    return handleTestValveTap(tapId, duration);
   }
   
-  // ----- AÇÃO: TESTAR SENSOR DE FLUXO -----
+  // ----- AÇÃO: TESTAR SENSOR DE FLUXO (com tapId opcional) -----
   else if (strcmp(action, "test_flow") == 0) {
     int duration = doc["duration"] | 5000;  // Padrão 5 segundos
-    return handleTestFlow(duration);
+    int tapId = doc["tapId"] | 0;  // 🆕 Multi-Tap: suporte a tapId
+    return handleTestFlow(duration, tapId);
   }
   
   // ----- AÇÃO: CALIBRAR -----
   else if (strcmp(action, "calibrate") == 0) {
     int duration = doc["duration"] | 5000;
-    return handleCalibration(duration);
+    int tapId = doc["tapId"] | 0;  // 🆕 Multi-Tap: suporte a tapId
+    return handleCalibration(duration, tapId);
   }
   
   // ----- AÇÃO: STATUS -----
   else if (strcmp(action, "status") == 0) {
     return getStatusJson();
+  }
+  
+  // 🆕 ----- AÇÃO: STATUS DAS TORNEIRAS (MULTI-TAP) -----
+  else if (strcmp(action, "get_taps") == 0) {
+    return handleGetTaps();
   }
   
   // ----- AÇÃO: BEEP (feedback visual com LED) -----
@@ -741,6 +1115,342 @@ String processCommandAndGetResult(String jsonString) {
     return handleDiagnoseGPIO();
   }
   
+  // 🆕 ----- AÇÃO: TESTE RÁPIDO DE ISR (sem água) -----
+  else if (strcmp(action, "test_isr") == 0) {
+    Serial.println("[ISR TEST] Testando interrupções manualmente...");
+    
+    // Ler valores atuais das ISRs
+    unsigned long before0 = isr_pulseCount0;
+    unsigned long before1 = isr_pulseCount1;
+    
+    // Verificar estado dos pinos
+    int pin0_state = digitalRead(FLOW_SENSOR_PIN_0);
+    int pin1_state = digitalRead(FLOW_SENSOR_PIN_1);
+    
+    Serial.println("[ISR TEST] Estado GPIO4 (Tap0): " + String(pin0_state ? "HIGH" : "LOW"));
+    Serial.println("[ISR TEST] Estado GPIO7 (Tap1): " + String(pin1_state ? "HIGH" : "LOW"));
+    Serial.println("[ISR TEST] Contador Tap0: " + String(before0));
+    Serial.println("[ISR TEST] Contador Tap1: " + String(before1));
+    
+    // Verificar se interrupção está anexada (testar digitalPinToInterrupt)
+    int int0 = digitalPinToInterrupt(FLOW_SENSOR_PIN_0);
+    int int1 = digitalPinToInterrupt(FLOW_SENSOR_PIN_1);
+    Serial.println("[ISR TEST] Interrupt# Tap0: " + String(int0) + (int0 >= 0 ? " ✅" : " ❌ INVÁLIDO"));
+    Serial.println("[ISR TEST] Interrupt# Tap1: " + String(int1) + (int1 >= 0 ? " ✅" : " ❌ INVÁLIDO"));
+    
+    JsonDocument doc;
+    doc["type"] = "isr_test";
+    doc["tap0_gpio"] = FLOW_SENSOR_PIN_0;
+    doc["tap0_state"] = pin0_state ? "HIGH" : "LOW";
+    doc["tap0_pulses"] = before0;
+    doc["tap0_interrupt"] = int0;
+    doc["tap1_gpio"] = FLOW_SENSOR_PIN_1;
+    doc["tap1_state"] = pin1_state ? "HIGH" : "LOW";
+    doc["tap1_pulses"] = before1;
+    doc["tap1_interrupt"] = int1;
+    
+    String response;
+    serializeJson(doc, response);
+    return response;
+  }
+  
+  // 🆕 ----- AÇÃO: MONITOR DE SENSOR EM TEMPO REAL -----
+  else if (strcmp(action, "sensor_monitor") == 0) {
+    int tapId = doc["tapId"] | 0;
+    int duration = doc["duration"] | 3000;
+    
+    if (tapId < 0 || tapId >= NUM_TAPS) {
+      return "{\"type\":\"error\",\"message\":\"tapId inválido\"}";
+    }
+    
+    int sensorPin = (tapId == 0) ? FLOW_SENSOR_PIN_0 : FLOW_SENSOR_PIN_1;
+    
+    Serial.println("[MONITOR] Monitorando sensor Tap " + String(tapId) + " (GPIO" + String(sensorPin) + ")");
+    Serial.println("[MONITOR] Duração: " + String(duration) + "ms");
+    Serial.println("[MONITOR] Observe as transições HIGH/LOW...");
+    
+    // Resetar contador
+    resetPulseCounter(tapId);
+    
+    int lastState = -1;
+    int transitions = 0;
+    unsigned long start = millis();
+    
+    while (millis() - start < duration) {
+      esp_task_wdt_reset();
+      
+      int currentState = digitalRead(sensorPin);
+      
+      // Detectar transição
+      if (currentState != lastState && lastState != -1) {
+        transitions++;
+        String stateStr = currentState ? "HIGH" : "LOW";
+        Serial.println("[MONITOR] " + String(millis() - start) + "ms: " + stateStr + " (transição #" + String(transitions) + ")");
+      }
+      lastState = currentState;
+      
+      delayMicroseconds(100);  // Amostragem a cada 100us = 10kHz
+    }
+    
+    syncPulseCounters();
+    unsigned long finalPulses = tapState[tapId].pulseCount;
+    
+    Serial.println("[MONITOR] ✅ Concluído!");
+    Serial.println("[MONITOR] Transições detectadas (polling): " + String(transitions));
+    Serial.println("[MONITOR] Pulsos contados (ISR): " + String(finalPulses));
+    
+    JsonDocument respDoc;
+    respDoc["type"] = "sensor_monitor";
+    respDoc["tapId"] = tapId;
+    respDoc["gpio"] = sensorPin;
+    respDoc["duration_ms"] = duration;
+    respDoc["transitions_polling"] = transitions;
+    respDoc["pulses_isr"] = finalPulses;
+    respDoc["pulses_expected"] = transitions / 2;  // Cada pulso = 2 transições
+    
+    String response;
+    serializeJson(respDoc, response);
+    return response;
+  }
+  
+  // 🆕 ----- AÇÃO: DEBUG COMPLETO DO SENSOR -----
+  else if (strcmp(action, "debug_sensor") == 0) {
+    int tapId = doc["tapId"] | 0;
+    int duration = doc["duration"] | 5000;
+    
+    if (tapId < 0 || tapId >= NUM_TAPS) {
+      return "{\"type\":\"error\",\"message\":\"tapId inválido\"}";
+    }
+    
+    int sensorPin = (tapId == 0) ? FLOW_SENSOR_PIN_0 : FLOW_SENSOR_PIN_1;
+    
+    Serial.println();
+    Serial.println("╔══════════════════════════════════════════════════════════╗");
+    Serial.println("║     🔬 DEBUG COMPLETO DO SENSOR - TAP " + String(tapId) + "                  ║");
+    Serial.println("╠══════════════════════════════════════════════════════════╣");
+    Serial.println("║  GPIO: " + String(sensorPin) + " (D" + String(sensorPin == 6 ? "5" : "8") + ")");
+    Serial.println("║  Duração: " + String(duration) + "ms");
+    Serial.println("╚══════════════════════════════════════════════════════════╝");
+    Serial.println();
+    
+    // ========== FASE 1: Verificar estado inicial ==========
+    Serial.println("[DEBUG] FASE 1: Estado inicial do pino");
+    int initialState = digitalRead(sensorPin);
+    Serial.println("  Estado atual: " + String(initialState ? "HIGH" : "LOW"));
+    Serial.println("  Interrupt#: " + String(digitalPinToInterrupt(sensorPin)));
+    
+    // ========== FASE 2: Desanexar ISR e testar com polling puro ==========
+    Serial.println();
+    Serial.println("[DEBUG] FASE 2: Teste com POLLING (sem ISR)");
+    Serial.println("  Desanexando interrupção...");
+    detachInterrupt(digitalPinToInterrupt(sensorPin));
+    
+    // Configurar como INPUT_PULLUP
+    pinMode(sensorPin, INPUT_PULLUP);
+    delay(10);
+    
+    int pollingTransitions = 0;
+    int lastState = digitalRead(sensorPin);
+    int highCount = 0;
+    int lowCount = 0;
+    unsigned long start = millis();
+    
+    Serial.println("  Contando transições por " + String(duration) + "ms...");
+    Serial.println("  🔴 PASSE ÁGUA PELO SENSOR AGORA! 🔴");
+    
+    while (millis() - start < duration) {
+      esp_task_wdt_reset();
+      int currentState = digitalRead(sensorPin);
+      
+      if (currentState != lastState) {
+        pollingTransitions++;
+        if (pollingTransitions <= 20) {  // Mostrar só primeiras 20
+          Serial.println("  [" + String(millis() - start) + "ms] " + String(currentState ? "HIGH" : "LOW"));
+        }
+      }
+      
+      if (currentState == HIGH) highCount++;
+      else lowCount++;
+      
+      lastState = currentState;
+      delayMicroseconds(50);  // ~20kHz sampling
+    }
+    
+    int pollingPulses = pollingTransitions / 2;
+    Serial.println("  Transições: " + String(pollingTransitions));
+    Serial.println("  Pulsos estimados: " + String(pollingPulses));
+    Serial.println("  Amostras HIGH: " + String(highCount));
+    Serial.println("  Amostras LOW: " + String(lowCount));
+    float dutyCycle = (float)highCount / (highCount + lowCount) * 100;
+    Serial.println("  Duty Cycle: " + String(dutyCycle, 1) + "%");
+    
+    // ========== FASE 3: Reanexar ISR e testar ==========
+    Serial.println();
+    Serial.println("[DEBUG] FASE 3: Teste com ISR (FALLING)");
+    
+    // Resetar contadores ISR
+    noInterrupts();
+    if (tapId == 0) {
+      isr_pulseCount0 = 0;
+      isr_lastPulseTime0 = 0;
+    } else {
+      isr_pulseCount1 = 0;
+      isr_lastPulseTime1 = 0;
+    }
+    interrupts();
+    
+    // Reanexar com FALLING
+    attachInterrupt(digitalPinToInterrupt(sensorPin), 
+                    (tapId == 0) ? flowPulseCounter0 : flowPulseCounter1, 
+                    FALLING);
+    
+    Serial.println("  ISR anexada com FALLING");
+    Serial.println("  Contando por " + String(duration) + "ms...");
+    Serial.println("  🔴 PASSE ÁGUA PELO SENSOR AGORA! 🔴");
+    
+    start = millis();
+    while (millis() - start < duration) {
+      esp_task_wdt_reset();
+      delay(100);
+    }
+    
+    syncPulseCounters();
+    unsigned long isrPulsesFalling = tapState[tapId].pulseCount;
+    Serial.println("  Pulsos com FALLING: " + String(isrPulsesFalling));
+    
+    // ========== FASE 4: Testar com RISING ==========
+    Serial.println();
+    Serial.println("[DEBUG] FASE 4: Teste com ISR (RISING)");
+    
+    noInterrupts();
+    if (tapId == 0) {
+      isr_pulseCount0 = 0;
+    } else {
+      isr_pulseCount1 = 0;
+    }
+    interrupts();
+    
+    detachInterrupt(digitalPinToInterrupt(sensorPin));
+    attachInterrupt(digitalPinToInterrupt(sensorPin), 
+                    (tapId == 0) ? flowPulseCounter0 : flowPulseCounter1, 
+                    RISING);
+    
+    Serial.println("  ISR anexada com RISING");
+    Serial.println("  Contando por " + String(duration) + "ms...");
+    Serial.println("  🔴 PASSE ÁGUA PELO SENSOR AGORA! 🔴");
+    
+    start = millis();
+    while (millis() - start < duration) {
+      esp_task_wdt_reset();
+      delay(100);
+    }
+    
+    syncPulseCounters();
+    unsigned long isrPulsesRising = tapState[tapId].pulseCount;
+    Serial.println("  Pulsos com RISING: " + String(isrPulsesRising));
+    
+    // ========== FASE 5: Testar com CHANGE ==========
+    Serial.println();
+    Serial.println("[DEBUG] FASE 5: Teste com ISR (CHANGE)");
+    
+    noInterrupts();
+    if (tapId == 0) {
+      isr_pulseCount0 = 0;
+    } else {
+      isr_pulseCount1 = 0;
+    }
+    interrupts();
+    
+    detachInterrupt(digitalPinToInterrupt(sensorPin));
+    attachInterrupt(digitalPinToInterrupt(sensorPin), 
+                    (tapId == 0) ? flowPulseCounter0 : flowPulseCounter1, 
+                    CHANGE);
+    
+    Serial.println("  ISR anexada com CHANGE");
+    Serial.println("  Contando por " + String(duration) + "ms...");
+    Serial.println("  🔴 PASSE ÁGUA PELO SENSOR AGORA! 🔴");
+    
+    start = millis();
+    while (millis() - start < duration) {
+      esp_task_wdt_reset();
+      delay(100);
+    }
+    
+    syncPulseCounters();
+    unsigned long isrPulsesChange = tapState[tapId].pulseCount;
+    Serial.println("  Pulsos com CHANGE: " + String(isrPulsesChange));
+    
+    // ========== Restaurar configuração original ==========
+    Serial.println();
+    Serial.println("[DEBUG] Restaurando configuração original (FALLING)...");
+    detachInterrupt(digitalPinToInterrupt(sensorPin));
+    attachInterrupt(digitalPinToInterrupt(sensorPin), 
+                    (tapId == 0) ? flowPulseCounter0 : flowPulseCounter1, 
+                    FALLING);
+    
+    // ========== RESUMO ==========
+    Serial.println();
+    Serial.println("╔══════════════════════════════════════════════════════════╗");
+    Serial.println("║                    📊 RESUMO DO DEBUG                     ║");
+    Serial.println("╠══════════════════════════════════════════════════════════╣");
+    Serial.println("║  Polling (sem ISR): " + String(pollingPulses) + " pulsos");
+    Serial.println("║  ISR FALLING: " + String(isrPulsesFalling) + " pulsos");
+    Serial.println("║  ISR RISING: " + String(isrPulsesRising) + " pulsos");
+    Serial.println("║  ISR CHANGE: " + String(isrPulsesChange) + " pulsos");
+    Serial.println("╠══════════════════════════════════════════════════════════╣");
+    
+    // Diagnóstico automático
+    if (pollingPulses == 0) {
+      Serial.println("║  ❌ PROBLEMA: Nenhum pulso detectado (nem polling)");
+      Serial.println("║  → Verificar conexão física do sensor");
+      Serial.println("║  → Verificar alimentação do sensor (VCC/GND)");
+    } else if (isrPulsesFalling == 0 && isrPulsesRising == 0 && isrPulsesChange == 0) {
+      Serial.println("║  ❌ PROBLEMA: Polling OK, mas ISR não funciona");
+      Serial.println("║  → GPIO" + String(sensorPin) + " pode ter conflito");
+      Serial.println("║  → Tentar outro pino para o sensor");
+    } else if (isrPulsesFalling > 0) {
+      Serial.println("║  ✅ FALLING funciona! (" + String(isrPulsesFalling) + " pulsos)");
+    } else if (isrPulsesRising > 0) {
+      Serial.println("║  ⚠️ RISING funciona, mas FALLING não");
+      Serial.println("║  → Alterar firmware para usar RISING");
+    } else if (isrPulsesChange > 0) {
+      Serial.println("║  ⚠️ CHANGE funciona, mas edges individuais não");
+      Serial.println("║  → Sinal pode estar com bounce excessivo");
+    }
+    Serial.println("╚══════════════════════════════════════════════════════════╝");
+    
+    JsonDocument respDoc;
+    respDoc["type"] = "debug_sensor";
+    respDoc["tapId"] = tapId;
+    respDoc["gpio"] = sensorPin;
+    respDoc["duration_ms"] = duration;
+    respDoc["polling_transitions"] = pollingTransitions;
+    respDoc["polling_pulses"] = pollingPulses;
+    respDoc["polling_duty_cycle"] = dutyCycle;
+    respDoc["isr_falling"] = isrPulsesFalling;
+    respDoc["isr_rising"] = isrPulsesRising;
+    respDoc["isr_change"] = isrPulsesChange;
+    
+    // Recomendação
+    if (pollingPulses > 0 && isrPulsesFalling == 0) {
+      if (isrPulsesRising > 0) {
+        respDoc["recommendation"] = "USE_RISING";
+      } else if (isrPulsesChange > 0) {
+        respDoc["recommendation"] = "USE_CHANGE";
+      } else {
+        respDoc["recommendation"] = "GPIO_CONFLICT";
+      }
+    } else if (pollingPulses == 0) {
+      respDoc["recommendation"] = "CHECK_WIRING";
+    } else {
+      respDoc["recommendation"] = "OK";
+    }
+    
+    String response;
+    serializeJson(respDoc, response);
+    return response;
+  }
+  
   // ----- AÇÃO DESCONHECIDA -----
   else {
     return "{\"type\":\"error\",\"code\":\"UNKNOWN_ACTION\",\"message\":\"Ação desconhecida: " + String(action) + "\"}";
@@ -762,16 +1472,27 @@ String handlePing() {
   doc["ip"] = WiFi.softAPIP().toString();
   doc["status"] = isDispensing ? "dispensing" : "ready";
   
+  // 🆕 Multi-Tap: Informar quantas torneiras existem
+  doc["num_taps"] = NUM_TAPS;
+  
   String response;
   serializeJson(doc, response);
   return response;
 }
 
-// ----- DISPENSAR BEBIDA -----
+// ----- DISPENSAR BEBIDA (MULTI-TAP) -----
 String handleReleaseDrink(JsonDocument& doc) {
-  // Verificar se já está dispensando
-  if (isDispensing) {
-    return "{\"type\":\"error\",\"code\":\"BUSY\",\"message\":\"Sistema ocupado com outro pedido\"}";
+  // 🆕 Pegar tapId (opcional, default = 0 para retrocompatibilidade)
+  int tapId = doc["tapId"] | 0;
+  
+  // Validar tapId
+  if (tapId < 0 || tapId >= NUM_TAPS) {
+    return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId deve ser entre 0 e " + String(NUM_TAPS - 1) + "\"}";
+  }
+  
+  // Verificar se ESTA torneira já está dispensando
+  if (tapState[tapId].isDispensing) {
+    return "{\"type\":\"error\",\"code\":\"BUSY\",\"message\":\"Torneira " + String(tapId) + " ocupada com outro pedido\"}";
   }
   
   // Pegar parâmetros
@@ -793,61 +1514,119 @@ String handleReleaseDrink(JsonDocument& doc) {
     return "{\"type\":\"error\",\"code\":\"INVALID_PARAMS\",\"message\":\"quantity deve ser entre 1 e 10\"}";
   }
   
-  // Configurar dispensação
-  currentOrderId = String(orderId);
-  targetMl = mlPerUnit;
-  totalCups = quantity;
-  currentCup = 1;
-  totalMlDispensed = 0;
-  pulseCount = 0;
-  flowStarted = false;      // Aguardar usuário abrir a torneira
-  firstPulseTime = 0;       // Resetar tempo do primeiro pulso
+  // Configurar dispensação para este tap
+  tapState[tapId].orderId = String(orderId);
+  tapState[tapId].targetMl = mlPerUnit;
+  tapState[tapId].totalCups = quantity;
+  tapState[tapId].currentCup = 1;
+  tapState[tapId].mlDispensed = 0;
+  tapState[tapId].flowStarted = false;
+  tapState[tapId].firstPulseTime = 0;
+  tapState[tapId].dispensingStartTime = millis();
+  tapState[tapId].isDispensing = true;
+  
+  // 🔧 CORREÇÃO v4.0.1: Zerar contador via função
+  resetPulseCounter(tapId);
+  
+  // Compatibilidade: atualizar variáveis globais legadas (para tap 0)
+  if (tapId == 0) {
+    currentOrderId = tapState[0].orderId;
+    targetMl = tapState[0].targetMl;
+    totalCups = tapState[0].totalCups;
+    currentCup = tapState[0].currentCup;
+    totalMlDispensed = 0;
+    flowStarted = false;
+    firstPulseTime = 0;
+    dispensingStartTime = tapState[0].dispensingStartTime;
+  }
+  isDispensing = true;
   
   // Log detalhado
   Serial.println();
   Serial.println("╔════════════════════════════════════════╗");
   Serial.println("║        NOVO PEDIDO RECEBIDO            ║");
   Serial.println("╠════════════════════════════════════════╣");
-  Serial.println("║ Pedido: " + currentOrderId);
+  Serial.println("║ Tap: " + String(tapId));
+  Serial.println("║ Pedido: " + tapState[tapId].orderId);
   Serial.println("║ Tamanho: " + String(sizeLabel));
-  Serial.println("║ Volume: " + String(targetMl) + "ml x " + String(totalCups) + " copo(s)");
+  Serial.println("║ Volume: " + String(tapState[tapId].targetMl) + "ml x " + String(tapState[tapId].totalCups) + " copo(s)");
   Serial.println("╚════════════════════════════════════════╝");
   Serial.println();
   
-  // Iniciar dispensação
-  isDispensing = true;
-  dispensingStartTime = millis();
-  lastStatusUpdate = millis();
-  
-  // Abrir válvula
-  openValve();
+  // Abrir válvula deste tap
+  openValveTap(tapId);
   
   // Enviar confirmação
-  sendStatus(currentOrderId.c_str(), "received", "Pedido recebido, iniciando dispensação");
+  sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "received", "Pedido recebido na torneira " + String(tapId));
   
-  return "{\"type\":\"success\",\"message\":\"Dispensação iniciada\",\"orderId\":\"" + currentOrderId + "\"}";
+  return "{\"type\":\"success\",\"message\":\"Dispensação iniciada\",\"orderId\":\"" + tapState[tapId].orderId + "\",\"tapId\":" + String(tapId) + "}";
 }
 
-// ----- PARAR -----
+// ----- PARAR TODAS AS TORNEIRAS -----
 String handleStop() {
-  if (isDispensing) {
-    closeValve();
-    isDispensing = false;
-    sendStatus(currentOrderId.c_str(), "stopped", "Dispensação interrompida pelo usuário");
-    return "{\"type\":\"success\",\"message\":\"Dispensação interrompida\"}";
+  bool anyActive = false;
+  for (int i = 0; i < NUM_TAPS; i++) {
+    if (tapState[i].isDispensing) {
+      closeValveTap(i);
+      tapState[i].isDispensing = false;
+      sendStatusTap(i, tapState[i].orderId.c_str(), "stopped", "Dispensação interrompida");
+      anyActive = true;
+    }
+  }
+  isDispensing = false;
+  if (anyActive) {
+    return "{\"type\":\"success\",\"message\":\"Todas as dispensações interrompidas\"}";
   }
   return "{\"type\":\"info\",\"message\":\"Nenhuma dispensação em andamento\"}";
 }
 
-// ----- TESTE DE VÁLVULA -----
+// ----- PARAR UMA TORNEIRA ESPECÍFICA -----
+String handleStopTap(int tapId) {
+  if (tapId < 0 || tapId >= NUM_TAPS) {
+    return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId inválido\"}";
+  }
+  if (tapState[tapId].isDispensing) {
+    closeValveTap(tapId);
+    tapState[tapId].isDispensing = false;
+    sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "stopped", "Dispensação interrompida");
+    // Verificar se ainda há alguma torneira dispensando
+    isDispensing = false;
+    for (int i = 0; i < NUM_TAPS; i++) {
+      if (tapState[i].isDispensing) {
+        isDispensing = true;
+        break;
+      }
+    }
+    return "{\"type\":\"success\",\"message\":\"Torneira " + String(tapId) + " interrompida\",\"tapId\":" + String(tapId) + "}";
+  }
+  return "{\"type\":\"info\",\"message\":\"Torneira " + String(tapId) + " não está dispensando\"}";
+}
+
+// ----- TESTE DE VÁLVULA (LEGADO - tap 0) -----
 String handleTestValve(int durationMs) {
-  Serial.println("[TEST] 🔴 Testando válvula por " + String(durationMs) + "ms");
+  return handleTestValveTap(0, durationMs);
+}
+
+// ----- TESTE DE VÁLVULA POR TAP -----
+String handleTestValveTap(int tapId, int durationMs) {
+  if (tapId < 0 || tapId >= NUM_TAPS) {
+    return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId inválido\"}";
+  }
+  
+  Serial.println("[TEST] 🔴 Testando válvula do Tap " + String(tapId) + " por " + String(durationMs) + "ms");
   
   // LED ligado durante o teste
   digitalWrite(LED_PIN, HIGH);
-  openValve();
-  delay(durationMs);
-  closeValve();
+  openValveTap(tapId);
+  
+  // 🔧 FIX: Usar loop com reset do watchdog ao invés de delay() bloqueante
+  unsigned long start = millis();
+  while (millis() - start < (unsigned long)durationMs) {
+    esp_task_wdt_reset();  // Evitar timeout do watchdog
+    delay(100);  // Pequena pausa para não sobrecarregar CPU
+  }
+  
+  closeValveTap(tapId);
   digitalWrite(LED_PIN, LOW);
   
   // Piscar 2x para indicar fim do teste
@@ -863,16 +1642,27 @@ String handleTestValve(int durationMs) {
   return "{\"type\":\"success\",\"message\":\"Teste de válvula concluído\",\"duration\":" + String(durationMs) + "}";
 }
 
-// ----- TESTE DE SENSOR DE FLUXO -----
-String handleTestFlow(int durationMs) {
-  Serial.println("[TEST] 🟡 Testando sensor de fluxo por " + String(durationMs/1000) + "s");
-  Serial.println("[TEST] Abra a água manualmente e observe os pulsos");
+// ----- TESTE DE SENSOR DE FLUXO (MULTI-TAP) -----
+String handleTestFlow(int durationMs, int tapId) {
+  // 🆕 Validar tapId
+  if (tapId < 0 || tapId >= NUM_TAPS) {
+    return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId inválido: " + String(tapId) + "\"}";
+  }
   
-  // LED piscando durante teste
-  pulseCount = 0;
+  Serial.println("[TEST] 🟡 Testando sensor de fluxo (Tap " + String(tapId) + ") por " + String(durationMs/1000) + "s");
+  Serial.println("[TEST] Abra a água manualmente e observe os pulsos");
+  Serial.println("[TEST] Calibração atual: " + String(tapConfig[tapId].pulsosPorLitro) + " pulsos/litro");
+  
+  // 🔧 CORREÇÃO v4.0.1: Usar função resetPulseCounter
+  resetPulseCounter(tapId);
+  
   unsigned long start = millis();
+  unsigned long lastPrint = 0;
   
   while (millis() - start < durationMs) {
+    // 🔧 FIX: Reset do watchdog para evitar timeout em testes longos
+    esp_task_wdt_reset();
+    
     // LED piscando
     if ((millis() / 300) % 2 == 0) {
       digitalWrite(LED_PIN, HIGH);
@@ -880,29 +1670,44 @@ String handleTestFlow(int durationMs) {
       digitalWrite(LED_PIN, LOW);
     }
     
-    if (pulseCount > 0) {
-      Serial.println("[FLOW] Pulsos: " + String(pulseCount) + " | ML: " + String(pulseCount * (1000.0 / pulsosPorLitro), 1));
-      delay(500);
+    // 🔧 CORREÇÃO v4.0.1: Sincronizar e ler
+    syncPulseCounters();
+    unsigned long currentPulses = tapState[tapId].pulseCount;
+    
+    // Mostrar progresso a cada 500ms
+    if (millis() - lastPrint > 500) {
+      float mlCalculado = currentPulses * (1000.0 / tapConfig[tapId].pulsosPorLitro);
+      Serial.println("[FLOW] Pulsos: " + String(currentPulses) + " | ML: " + String(mlCalculado, 1));
+      lastPrint = millis();
     }
     delay(10);
   }
   
   digitalWrite(LED_PIN, LOW);
   
-  float totalMl = pulseCount * (1000.0 / pulsosPorLitro);
+  // 🔧 CORREÇÃO v4.0.1: Leitura final via sync
+  syncPulseCounters();
+  unsigned long finalPulses = tapState[tapId].pulseCount;
+  
+  float totalMl = finalPulses * (1000.0 / tapConfig[tapId].pulsosPorLitro);
   
   JsonDocument doc;
   doc["type"] = "flow_test";
   doc["duration_ms"] = durationMs;
-  doc["pulses"] = pulseCount;
+  doc["pulses"] = finalPulses;
   doc["ml_calculated"] = totalMl;
-  doc["pulses_per_liter"] = (pulseCount > 0) ? (pulseCount / (totalMl / 1000.0)) : 0;
+  doc["tapId"] = tapId;
+  doc["pulses_per_liter_configured"] = tapConfig[tapId].pulsosPorLitro;
+  doc["pulses_per_liter_measured"] = (totalMl > 0) ? (finalPulses / (totalMl / 1000.0)) : 0;
+  doc["sensor_type"] = "YF-S402";
   
   String response;
   serializeJson(doc, response);
   
   Serial.println("[TEST] ✅ Teste de fluxo concluído!");
-  Serial.println("[TEST] Resultado: " + response);
+  Serial.println("[TEST] Total pulsos: " + String(finalPulses));
+  Serial.println("[TEST] ML calculado: " + String(totalMl, 1));
+  // NOTA: Não imprimir response aqui - já será impresso em processCommand()
   
   // Piscar 2x para indicar fim
   delay(200);
@@ -916,36 +1721,71 @@ String handleTestFlow(int durationMs) {
   return response;
 }
 
-// ----- CALIBRAÇÃO -----
-String handleCalibration(int durationMs) {
-  Serial.println("[CALIBRATE] Iniciando calibração...");
+// ----- CALIBRAÇÃO (MULTI-TAP) -----
+String handleCalibration(int durationMs, int tapId) {
+  // 🆕 Validar tapId
+  if (tapId < 0 || tapId >= NUM_TAPS) {
+    Serial.println("[CALIBRATE] ❌ tapId inválido: " + String(tapId));
+    return "{\"type\":\"error\",\"message\":\"tapId inválido\"}";
+  }
+  
+  Serial.println("[CALIBRATE] Iniciando calibração do Tap " + String(tapId) + "...");
   Serial.println("[CALIBRATE] Abrindo válvula por " + String(durationMs/1000) + " segundos");
+  Serial.println("[CALIBRATE] Sensor: YF-S402 (~5880 pulsos/litro esperado)");
   
-  pulseCount = 0;
+  // 🔧 CORREÇÃO v4.0.1: Usar função resetPulseCounter
+  resetPulseCounter(tapId);
   
-  openValve();
-  delay(durationMs);
-  closeValve();
+  // 🆕 Abrir válvula do tap específico
+  openValveTap(tapId);
   
-  float mlEstimated = (durationMs / 1000.0) * mlPorSegundo;
-  float calculatedPulsesPerLiter = (mlEstimated > 0) ? (pulseCount / (mlEstimated / 1000.0)) : 0;
+  // Monitorar pulsos durante a calibração
+  unsigned long start = millis();
+  unsigned long lastPrint = 0;
+  while (millis() - start < durationMs) {
+    // 🔧 Reset do watchdog para evitar timeout em calibrações longas
+    esp_task_wdt_reset();
+    
+    // 🔧 CORREÇÃO v4.0.1: Sincronizar e ler
+    syncPulseCounters();
+    
+    // Mostrar progresso a cada 500ms
+    if (millis() - lastPrint > 500) {
+      unsigned long currentPulses = tapState[tapId].pulseCount;
+      Serial.println("[CALIBRATE] Pulsos: " + String(currentPulses));
+      lastPrint = millis();
+    }
+    delay(10);
+  }
+  
+  closeValveTap(tapId);
+  
+  // 🔧 CORREÇÃO v4.0.1: Leitura final via sync
+  syncPulseCounters();
+  unsigned long finalPulses = tapState[tapId].pulseCount;
+  
+  // 🆕 Usar configurações do tap específico
+  float mlEstimated = (durationMs / 1000.0) * tapConfig[tapId].mlPorSegundo;
+  float calculatedPulsesPerLiter = (mlEstimated > 0) ? (finalPulses / (mlEstimated / 1000.0)) : 0;
   
   JsonDocument doc;
   doc["type"] = "calibration";
+  doc["tapId"] = tapId;  // 🆕 Incluir tapId na resposta
   doc["duration_ms"] = durationMs;
-  doc["pulses"] = pulseCount;
+  doc["pulses"] = finalPulses;
   doc["ml_estimated"] = mlEstimated;
   doc["calculated_pulses_per_liter"] = calculatedPulsesPerLiter;
+  doc["sensor_type"] = "YF-S402";
   doc["message"] = "Meça o volume real dispensado e calcule: pulsos / (ml / 1000)";
   
   String response;
   serializeJson(doc, response);
   
-  Serial.println("[CALIBRATE] Resultado: " + response);
+  Serial.println("[CALIBRATE] Tap " + String(tapId) + " - Resultado: " + response);
   return response;
 }
 
-// ----- STATUS JSON -----
+// ----- STATUS JSON (atualizado para Multi-Tap) -----
 String getStatusJson() {
   JsonDocument doc;
   doc["type"] = "status";
@@ -953,6 +1793,7 @@ String getStatusJson() {
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["status"] = isDispensing ? "dispensing" : "ready";
   doc["uptime_ms"] = millis();
+  doc["num_taps"] = NUM_TAPS;
   
   // WiFi Access Point
   doc["wifi_mode"] = "access_point";
@@ -963,21 +1804,77 @@ String getStatusJson() {
   
   // Bluetooth
   doc["ble_name"] = BLE_DEVICE_NAME;
+  doc["ble_pin"] = BLE_PIN;
   doc["ble_connected"] = deviceConnected;
   
-  // Calibração
-  doc["pulsos_por_litro"] = pulsosPorLitro;
-  doc["ml_por_segundo"] = mlPorSegundo;
+  // 🆕 Status de cada torneira
+  JsonArray tapsArray = doc["taps"].to<JsonArray>();
+  for (int i = 0; i < NUM_TAPS; i++) {
+    JsonObject tap = tapsArray.add<JsonObject>();
+    tap["id"] = i;
+    tap["isDispensing"] = tapState[i].isDispensing;
+    tap["valvePin"] = tapConfig[i].valvePin;
+    tap["sensorPin"] = tapConfig[i].sensorPin;
+    tap["pulsosPorLitro"] = tapConfig[i].pulsosPorLitro;
+    tap["mlPorSegundo"] = tapConfig[i].mlPorSegundo;
+    
+    if (tapState[i].isDispensing) {
+      tap["orderId"] = tapState[i].orderId;
+      tap["currentCup"] = tapState[i].currentCup;
+      tap["totalCups"] = tapState[i].totalCups;
+      tap["targetMl"] = tapState[i].targetMl;
+      tap["mlDispensed"] = tapState[i].mlDispensed;
+      int progress = (tapState[i].targetMl > 0) ? (int)((tapState[i].mlDispensed / tapState[i].targetMl) * 100) : 0;
+      tap["progress"] = progress;
+      tap["flowStarted"] = tapState[i].flowStarted;
+    }
+  }
   
-  if (isDispensing) {
+  // Compatibilidade: manter current_order legado para tap 0
+  if (tapState[0].isDispensing) {
     JsonObject order = doc["current_order"].to<JsonObject>();
-    order["order_id"] = currentOrderId;
-    order["current_cup"] = currentCup;
-    order["total_cups"] = totalCups;
-    order["target_ml"] = targetMl;
-    order["ml_dispensed"] = totalMlDispensed;
-    order["progress"] = (targetMl > 0) ? (int)((totalMlDispensed / targetMl) * 100) : 0;
-    order["flow_started"] = flowStarted;
+    order["order_id"] = tapState[0].orderId;
+    order["current_cup"] = tapState[0].currentCup;
+    order["total_cups"] = tapState[0].totalCups;
+    order["target_ml"] = tapState[0].targetMl;
+    order["ml_dispensed"] = tapState[0].mlDispensed;
+    order["progress"] = (tapState[0].targetMl > 0) ? (int)((tapState[0].mlDispensed / tapState[0].targetMl) * 100) : 0;
+    order["flow_started"] = tapState[0].flowStarted;
+    order["tap_id"] = 0;
+  }
+  
+  String response;
+  serializeJson(doc, response);
+  return response;
+}
+
+// 🆕 ----- STATUS DAS TORNEIRAS (MULTI-TAP) -----
+String handleGetTaps() {
+  JsonDocument doc;
+  doc["type"] = "taps_status";
+  doc["num_taps"] = NUM_TAPS;
+  doc["timestamp"] = millis();
+  
+  JsonArray tapsArray = doc["taps"].to<JsonArray>();
+  for (int i = 0; i < NUM_TAPS; i++) {
+    JsonObject tap = tapsArray.add<JsonObject>();
+    tap["id"] = i;
+    tap["isDispensing"] = tapState[i].isDispensing;
+    tap["valvePin"] = tapConfig[i].valvePin;
+    tap["sensorPin"] = tapConfig[i].sensorPin;
+    tap["pulsosPorLitro"] = tapConfig[i].pulsosPorLitro;
+    tap["mlDispensed"] = tapState[i].mlDispensed;
+    tap["pulseCount"] = (unsigned long)tapState[i].pulseCount;
+    
+    if (tapState[i].isDispensing) {
+      tap["orderId"] = tapState[i].orderId;
+      tap["currentCup"] = tapState[i].currentCup;
+      tap["totalCups"] = tapState[i].totalCups;
+      tap["targetMl"] = tapState[i].targetMl;
+      int progress = (tapState[i].targetMl > 0) ? (int)((tapState[i].mlDispensed / tapState[i].targetMl) * 100) : 0;
+      tap["progress"] = progress;
+      tap["flowStarted"] = tapState[i].flowStarted;
+    }
   }
   
   String response;
@@ -986,90 +1883,134 @@ String getStatusJson() {
 }
 
 // ============================================================================
-// CONTROLE DA VÁLVULA
+// CONTROLE DA VÁLVULA (MULTI-TAP)
 // ============================================================================
 
+// Abrir válvula legada (compatibilidade - usa tap 0)
 void openValve() {
-  digitalWrite(VALVE_PIN, HIGH);
-  digitalWrite(LED_PIN, HIGH);
-  Serial.println("[VALVE] 🟢 Válvula ABERTA");
+  openValveTap(0);
 }
 
+// Fechar válvula legada (compatibilidade - usa tap 0)
 void closeValve() {
-  digitalWrite(VALVE_PIN, LOW);
-  digitalWrite(LED_PIN, LOW);
-  Serial.println("[VALVE] 🔴 Válvula FECHADA");
+  closeValveTap(0);
+}
+
+// 🆕 Abrir válvula de um tap específico
+void openValveTap(int tapId) {
+  if (tapId < 0 || tapId >= NUM_TAPS) return;
+  
+  digitalWrite(tapConfig[tapId].valvePin, HIGH);
+  digitalWrite(LED_PIN, HIGH);
+  Serial.println("[VALVE] 🟢 Tap " + String(tapId) + " - Válvula ABERTA (GPIO" + String(tapConfig[tapId].valvePin) + ")");
+}
+
+// 🆕 Fechar válvula de um tap específico
+void closeValveTap(int tapId) {
+  if (tapId < 0 || tapId >= NUM_TAPS) return;
+  
+  digitalWrite(tapConfig[tapId].valvePin, LOW);
+  
+  // Só apagar LED se nenhum tap estiver dispensando
+  bool anyDispensing = false;
+  for (int i = 0; i < NUM_TAPS; i++) {
+    if (tapState[i].isDispensing && i != tapId) {
+      anyDispensing = true;
+      break;
+    }
+  }
+  if (!anyDispensing) {
+    digitalWrite(LED_PIN, LOW);
+  }
+  
+  Serial.println("[VALVE] 🔴 Tap " + String(tapId) + " - Válvula FECHADA (GPIO" + String(tapConfig[tapId].valvePin) + ")");
 }
 
 // ============================================================================
-// PROCESSAMENTO DA DISPENSAÇÃO (TORNEIRA MANUAL ITALIANA)
+// PROCESSAMENTO DA DISPENSAÇÃO POR TAP (MULTI-TAP)
 // ============================================================================
-// O sistema usa torneira italiana manual. O usuário abre quando desejar.
-// O firmware aguarda indefinidamente o primeiro pulso, respeitando apenas
-// o timeout global de segurança (SESSION_TIMEOUT_MS).
 
+// Legado: processa tap 0 (para compatibilidade)
 void processDispensing() {
+  processDispensingTap(0);
+}
+
+// 🆕 Processa dispensação de um tap específico
+void processDispensingTap(int tapId) {
+  if (tapId < 0 || tapId >= NUM_TAPS) return;
+  if (!tapState[tapId].isDispensing) return;
+  
   unsigned long now = millis();
-  unsigned long sessionElapsedMs = now - dispensingStartTime;
+  unsigned long sessionElapsedMs = now - tapState[tapId].dispensingStartTime;
+  
+  // 🔧 CORREÇÃO v4.0.1: Ler valores já sincronizados pelo loop principal
+  // (syncPulseCounters é chamado no loop antes de processDispensingTap)
+  unsigned long currentPulseCount = tapState[tapId].pulseCount;
+  unsigned long currentLastPulseTime = tapState[tapId].lastPulseTime;
   
   // ============================================
   // DETECTAR PRIMEIRO PULSO (usuário abriu a torneira)
   // ============================================
-  if (!flowStarted && pulseCount > 0) {
-    flowStarted = true;
-    firstPulseTime = now;
-    Serial.println("[DISPENSE] 🚿 Fluxo detectado! Usuário abriu a torneira.");
+  if (!tapState[tapId].flowStarted && currentPulseCount > 0) {
+    tapState[tapId].flowStarted = true;
+    tapState[tapId].firstPulseTime = now;
+    Serial.println("[DISPENSE] Tap " + String(tapId) + " 🚿 Fluxo detectado!");
+    
+    // Compatibilidade tap 0
+    if (tapId == 0) {
+      flowStarted = true;
+      firstPulseTime = now;
+    }
   }
   
   // ============================================
   // CALCULAR ML DISPENSADOS
   // ============================================
-  if (flowStarted) {
-    // Usar sensor de fluxo como fonte primária
-    float mlFromSensor = pulseCount * (1000.0 / pulsosPorLitro);
+  if (tapState[tapId].flowStarted) {
+    // 🆕 Usar variável local lida atomicamente
+    float mlFromSensor = currentPulseCount * (1000.0 / tapConfig[tapId].pulsosPorLitro);
+    unsigned long timeSinceLastPulse = now - currentLastPulseTime;
     
-    // Fallback por tempo: APENAS se o sensor parou de funcionar após ter iniciado
-    unsigned long timeSinceLastPulse = now - lastPulseTime;
-    
-    if (pulseCount > 0) {
-      // Sensor funcionando normalmente
-      totalMlDispensed = mlFromSensor;
+    if (currentPulseCount > 0) {
+      tapState[tapId].mlDispensed = mlFromSensor;
     } else if (timeSinceLastPulse > 3000) {
-      // Sensor parou há mais de 3 segundos - possível falha do sensor
-      // Usar estimativa por tempo como backup
-      unsigned long flowElapsedMs = now - firstPulseTime;
-      float mlFromTime = (flowElapsedMs / 1000.0) * mlPorSegundo;
-      totalMlDispensed = max(mlFromSensor, mlFromTime);
-      Serial.println("[DISPENSE] ⚠️ Usando fallback por tempo - sensor pode estar com problema");
+      unsigned long flowElapsedMs = now - tapState[tapId].firstPulseTime;
+      float mlFromTime = (flowElapsedMs / 1000.0) * tapConfig[tapId].mlPorSegundo;
+      tapState[tapId].mlDispensed = max(mlFromSensor, mlFromTime);
+    }
+    
+    // Compatibilidade tap 0
+    if (tapId == 0) {
+      totalMlDispensed = tapState[0].mlDispensed;
     }
   } else {
-    // Aguardando usuário abrir a torneira - não calcular por tempo!
-    totalMlDispensed = 0;
+    tapState[tapId].mlDispensed = 0;
   }
   
   // ============================================
   // CALCULAR PROGRESSO E TEMPOS
   // ============================================
-  int progress = (targetMl > 0) ? (int)((totalMlDispensed / targetMl) * 100) : 0;
+  int progress = (tapState[tapId].targetMl > 0) ? (int)((tapState[tapId].mlDispensed / tapState[tapId].targetMl) * 100) : 0;
   if (progress > 100) progress = 100;
   
   int elapsedSeconds = sessionElapsedMs / 1000;
-  int remainingSeconds = (SESSION_TIMEOUT_MS - sessionElapsedMs) / 1000;
+  int remainingSeconds = (tapState[tapId].sessionTimeoutMs - sessionElapsedMs) / 1000;  // 🆕 Timeout por tap
   if (remainingSeconds < 0) remainingSeconds = 0;
   
   // ============================================
-  // LED: Feedback visual
+  // LED: Feedback visual diferenciado por tap
   // ============================================
-  if (!flowStarted) {
-    // Aguardando: LED pisca lento (1s on, 1s off)
+  if (!tapState[tapId].flowStarted) {
+    // Aguardando: LED pisca lento
     if ((now / 1000) % 2 == 0) {
       digitalWrite(LED_PIN, HIGH);
     } else {
       digitalWrite(LED_PIN, LOW);
     }
   } else {
-    // Dispensando: LED pisca rápido (250ms)
-    if ((now / 250) % 2 == 0) {
+    // Dispensando: padrão diferente por tap
+    int blinkRate = (tapId == 0) ? 500 : 250;  // Tap 0 pisca lento, Tap 1 pisca rápido
+    if ((now / blinkRate) % 2 == 0) {
       digitalWrite(LED_PIN, HIGH);
     } else {
       digitalWrite(LED_PIN, LOW);
@@ -1077,66 +2018,65 @@ void processDispensing() {
   }
   
   // ============================================
-  // ENVIAR PROGRESSO (a cada 250ms)
+  // ENVIAR PROGRESSO (a cada 250ms) - POR TAP
   // ============================================
-  if (now - lastStatusUpdate > 250) {
-    sendProgressExtended(
-      currentOrderId.c_str(), 
-      currentCup, 
-      totalCups,
-      totalMlDispensed, 
-      targetMl, 
+  if (now - tapState[tapId].lastStatusUpdate > 250) {
+    sendProgressTap(
+      tapId,
+      tapState[tapId].orderId.c_str(),
+      tapState[tapId].currentCup,
+      tapState[tapId].totalCups,
+      tapState[tapId].mlDispensed,
+      tapState[tapId].targetMl,
       progress,
-      flowStarted,
+      tapState[tapId].flowStarted,
       elapsedSeconds,
       remainingSeconds
     );
-    lastStatusUpdate = now;
+    tapState[tapId].lastStatusUpdate = now;  // 🆕 Por tap, não global
     
     // Log no serial
-    if (flowStarted) {
-      Serial.print("[DISPENSE] Copo ");
-      Serial.print(currentCup);
+    if (tapState[tapId].flowStarted) {
+      Serial.print("[DISPENSE] Tap ");
+      Serial.print(tapId);
+      Serial.print(" | Copo ");
+      Serial.print(tapState[tapId].currentCup);
       Serial.print("/");
-      Serial.print(totalCups);
+      Serial.print(tapState[tapId].totalCups);
       Serial.print(" | ");
-      Serial.print(totalMlDispensed, 0);
+      Serial.print(tapState[tapId].mlDispensed, 0);
       Serial.print("/");
-      Serial.print(targetMl);
+      Serial.print(tapState[tapId].targetMl);
       Serial.print("ml (");
       Serial.print(progress);
       Serial.print("%) | Pulsos: ");
-      Serial.println(pulseCount);
+      Serial.println((unsigned long)tapState[tapId].pulseCount);
     } else {
-      Serial.println("[DISPENSE] ⏳ Aguardando usuário abrir a torneira... (" + String(elapsedSeconds) + "s)");
+      Serial.println("[DISPENSE] Tap " + String(tapId) + " ⏳ Aguardando abrir torneira... (" + String(elapsedSeconds) + "s)");
     }
   }
   
   // ============================================
   // VERIFICAR CONCLUSÃO DO COPO
   // ============================================
-  if (flowStarted && totalMlDispensed >= targetMl) {
-    // Copo concluído!
-    closeValve();
+  if (tapState[tapId].flowStarted && tapState[tapId].mlDispensed >= tapState[tapId].targetMl) {
+    closeValveTap(tapId);
     
     // LED ACESO fixo por 1 segundo (sucesso)
     digitalWrite(LED_PIN, HIGH);
     delay(1000);
     digitalWrite(LED_PIN, LOW);
     
-    sendStatus(currentOrderId.c_str(), "cup_complete", 
-      "Copo " + String(currentCup) + " concluído (" + String(targetMl) + "ml)");
+    sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "cup_complete",
+      "Copo " + String(tapState[tapId].currentCup) + " concluído (" + String(tapState[tapId].targetMl) + "ml)");
     
-    Serial.println();
-    Serial.println("[DISPENSE] ✅ Copo " + String(currentCup) + " concluído!");
+    Serial.println("[DISPENSE] Tap " + String(tapId) + " ✅ Copo " + String(tapState[tapId].currentCup) + " concluído!");
     
     // Verificar se há mais copos
-    if (currentCup < totalCups) {
-      // Aguardar antes do próximo copo
-      sendStatus(currentOrderId.c_str(), "waiting_next", "Aguardando para próximo copo...");
+    if (tapState[tapId].currentCup < tapState[tapId].totalCups) {
+      sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "waiting_next", "Aguardando próximo copo...");
       
       // LED piscando lento durante espera
-      Serial.println("[DISPENSE] ⏳ Aguardando retirada do copo...");
       for (int i = 0; i < 4; i++) {
         digitalWrite(LED_PIN, HIGH);
         delay(250);
@@ -1145,23 +2085,33 @@ void processDispensing() {
       }
       
       // Preparar próximo copo
-      currentCup++;
-      pulseCount = 0;
-      totalMlDispensed = 0;
-      flowStarted = false;        // Resetar - aguardar usuário abrir novamente
-      firstPulseTime = 0;
-      dispensingStartTime = millis();  // Resetar timer da sessão
+      tapState[tapId].currentCup++;
+      tapState[tapId].mlDispensed = 0;
+      tapState[tapId].flowStarted = false;
+      tapState[tapId].firstPulseTime = 0;
+      tapState[tapId].dispensingStartTime = millis();
       
-      // Abrir válvula para próximo copo
-      openValve();
-      sendStatus(currentOrderId.c_str(), "dispensing", 
-        "Dispensando copo " + String(currentCup) + " de " + String(totalCups));
+      // 🔧 CORREÇÃO v4.0.1: Zerar contador via função
+      resetPulseCounter(tapId);
+      
+      // Compatibilidade tap 0
+      if (tapId == 0) {
+        currentCup = tapState[0].currentCup;
+        totalMlDispensed = 0;
+        flowStarted = false;
+        firstPulseTime = 0;
+        dispensingStartTime = tapState[0].dispensingStartTime;
+      }
+      
+      openValveTap(tapId);
+      sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "dispensing",
+        "Dispensando copo " + String(tapState[tapId].currentCup) + " de " + String(tapState[tapId].totalCups));
     } else {
       // Todos os copos concluídos!
-      isDispensing = false;
+      tapState[tapId].isDispensing = false;
       
       // LED com 3 piscadas longas (pedido completo!)
-      Serial.println("[DISPENSE] 🎉 Todos os copos concluídos!");
+      Serial.println("[DISPENSE] Tap " + String(tapId) + " 🎉 Todos os copos concluídos!");
       for (int i = 0; i < 3; i++) {
         digitalWrite(LED_PIN, HIGH);
         delay(300);
@@ -1169,46 +2119,44 @@ void processDispensing() {
         delay(300);
       }
       
-      Serial.println();
       Serial.println("╔════════════════════════════════════════╗");
       Serial.println("║        PEDIDO CONCLUÍDO! ✅            ║");
-      Serial.println("╠════════════════════════════════════════╣");
-      Serial.println("║ Pedido: " + currentOrderId);
-      Serial.println("║ Total: " + String(totalCups) + " copo(s) de " + String(targetMl) + "ml");
+      Serial.println("║ Tap: " + String(tapId));
+      Serial.println("║ Pedido: " + tapState[tapId].orderId);
+      Serial.println("║ Total: " + String(tapState[tapId].totalCups) + " copo(s) de " + String(tapState[tapId].targetMl) + "ml");
       Serial.println("╚════════════════════════════════════════╝");
-      Serial.println();
       
-      sendStatus(currentOrderId.c_str(), "completed", 
-        "Pedido concluído! " + String(totalCups) + " copo(s) dispensados");
+      sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "completed",
+        "Pedido concluído! " + String(tapState[tapId].totalCups) + " copo(s) dispensados");
       
-      currentOrderId = "";
+      tapState[tapId].orderId = "";
+      
+      // Atualizar flag global
+      isDispensing = false;
+      for (int i = 0; i < NUM_TAPS; i++) {
+        if (tapState[i].isDispensing) {
+          isDispensing = true;
+          break;
+        }
+      }
+      
+      // Compatibilidade tap 0
+      if (tapId == 0) {
+        currentOrderId = "";
+      }
     }
     return;
   }
   
   // ============================================
-  // TIMEOUT: Fluxo parou após ter iniciado
+  // TIMEOUT GLOBAL DE SEGURANÇA (POR TAP)
   // ============================================
-  if (flowStarted) {
-    unsigned long timeSinceLastPulse = now - lastPulseTime;
-    
-    // Se o sensor não detecta pulsos há NO_FLOW_TIMEOUT_MS após ter iniciado
-    if (timeSinceLastPulse > NO_FLOW_TIMEOUT_MS && totalMlDispensed < targetMl) {
-      Serial.println("[DISPENSE] ⚠️ Fluxo parou - usuário fechou a torneira antes de completar?");
-      // Não fechar automaticamente - pode ser pausa temporária
-      // Apenas avisar no log
-    }
-  }
-  
-  // ============================================
-  // TIMEOUT GLOBAL DE SEGURANÇA
-  // ============================================
-  if (sessionElapsedMs > SESSION_TIMEOUT_MS) {
-    closeValve();
-    isDispensing = false;
+  if (sessionElapsedMs > tapState[tapId].sessionTimeoutMs) {  // 🆕 Timeout por tap
+    closeValveTap(tapId);
+    tapState[tapId].isDispensing = false;
     
     // LED piscando rápido (ERRO!)
-    Serial.println("[ERROR] ⚠️ Timeout global! Sessão expirada após " + String(SESSION_TIMEOUT_MS/1000) + " segundos");
+    Serial.println("[ERROR] Tap " + String(tapId) + " ⚠️ Timeout!");
     for (int i = 0; i < 5; i++) {
       digitalWrite(LED_PIN, HIGH);
       delay(100);
@@ -1216,8 +2164,17 @@ void processDispensing() {
       delay(100);
     }
     
-    sendStatus(currentOrderId.c_str(), "error", "Timeout - sessão expirada por segurança");
-    currentOrderId = "";
+    sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "error", "Timeout - sessão expirada");
+    tapState[tapId].orderId = "";
+    
+    // Atualizar flag global
+    isDispensing = false;
+    for (int i = 0; i < NUM_TAPS; i++) {
+      if (tapState[i].isDispensing) {
+        isDispensing = true;
+        break;
+      }
+    }
   }
 }
 
@@ -1225,15 +2182,24 @@ void processDispensing() {
 // ENVIO DE MENSAGENS
 // ============================================================================
 
-// Enviar status geral
+// Enviar status geral (legado - para compatibilidade)
 void sendStatus(const char* orderId, const char* stage, String message) {
+  sendStatusTap(0, orderId, stage, message);
+}
+
+// 🆕 Enviar status por tap
+void sendStatusTap(int tapId, const char* orderId, const char* stage, String message) {
   JsonDocument doc;
   doc["type"] = "status";
+  doc["tapId"] = tapId;
   doc["orderId"] = orderId;
   doc["stage"] = stage;
   doc["message"] = message;
   doc["timestamp"] = millis();
   
+  // 🆕 Sempre incluir num_taps para o frontend saber quantas torneiras existem
+  doc["num_taps"] = NUM_TAPS;
+  
   String json;
   serializeJson(doc, json);
   
@@ -1242,38 +2208,28 @@ void sendStatus(const char* orderId, const char* stage, String message) {
   
   // Enviar via Bluetooth (se conectado)
   if (deviceConnected && pCharacteristic != NULL) {
-    pCharacteristic->setValue(json.c_str());
+    // 🔧 FIX v4.0.4: Adicionar \n para que o app reconheça linha completa
+    String bleJson = json + "\n";
+    pCharacteristic->setValue(bleJson.c_str());
     pCharacteristic->notify();
   }
 }
 
-// Enviar progresso da dispensação
+// Enviar progresso da dispensação (legado)
 void sendProgress(const char* orderId, int cup, float mlDispensed, int target, int percent) {
-  JsonDocument doc;
-  doc["type"] = "progress";
-  doc["orderId"] = orderId;
-  doc["cup"] = cup;
-  doc["ml"] = (int)mlDispensed;
-  doc["target"] = target;
-  doc["percent"] = percent;
-  
-  String json;
-  serializeJson(doc, json);
-  
-  // Enviar via Serial
-  Serial.println(json);
-  
-  // Enviar via Bluetooth (se conectado)
-  if (deviceConnected && pCharacteristic != NULL) {
-    pCharacteristic->setValue(json.c_str());
-    pCharacteristic->notify();
-  }
+  sendProgressTap(0, orderId, cup, 1, mlDispensed, target, percent, false, 0, 0);
 }
 
-// Enviar progresso estendido (para torneira manual com mais informações)
+// Enviar progresso estendido (legado)
 void sendProgressExtended(const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec) {
+  sendProgressTap(0, orderId, cup, totalCupsCount, mlDispensed, target, percent, flowStartedFlag, elapsedSec, remainingSec);
+}
+
+// 🆕 Enviar progresso por tap
+void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec) {
   JsonDocument doc;
   doc["type"] = "progress";
+  doc["tapId"] = tapId;
   doc["orderId"] = orderId;
   doc["cup"] = cup;
   doc["total_cups"] = totalCupsCount;
@@ -1292,39 +2248,88 @@ void sendProgressExtended(const char* orderId, int cup, int totalCupsCount, floa
   
   // Enviar via Bluetooth (se conectado)
   if (deviceConnected && pCharacteristic != NULL) {
-    pCharacteristic->setValue(json.c_str());
+    // 🔧 FIX v4.0.4: Adicionar \n para que o app reconheça linha completa
+    String bleJson = json + "\n";
+    pCharacteristic->setValue(bleJson.c_str());
     pCharacteristic->notify();
   }
 }
 
 // ============================================================================
-// FUNÇÕES NVS (PERSISTÊNCIA)
+// FUNÇÕES NVS (PERSISTÊNCIA) - MULTI-TAP
 // ============================================================================
 
-// Carregar configurações do NVS
+// Carregar configurações do NVS (Multi-Tap)
 void loadSettings() {
-  // Carregar calibração do sensor de fluxo
-  if (preferences.isKey("pulsos_litro")) {
-    pulsosPorLitro = preferences.getFloat("pulsos_litro", 450.0);
-  }
-  if (preferences.isKey("ml_segundo")) {
-    mlPorSegundo = preferences.getFloat("ml_segundo", 50.0);
+  // 🔧 CORREÇÃO: Inicializar tapConfig com valores padrão PRIMEIRO
+  for (int i = 0; i < NUM_TAPS; i++) {
+    tapConfig[i].pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;  // 5880 para YF-S402
+    tapConfig[i].mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
   }
   
-  Serial.println("[NVS] ✅ Configurações carregadas");
+  // Carregar calibração legada (para compatibilidade)
+  if (preferences.isKey("pulsos_litro")) {
+    pulsosPorLitro = preferences.getFloat("pulsos_litro", DEFAULT_PULSOS_POR_LITRO);
+  } else {
+    pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;
+  }
+  if (preferences.isKey("ml_segundo")) {
+    mlPorSegundo = preferences.getFloat("ml_segundo", DEFAULT_ML_POR_SEGUNDO);
+  } else {
+    mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
+  }
+  
+  // 🆕 Carregar calibração por tap
+  for (int i = 0; i < NUM_TAPS; i++) {
+    String keyPulsos = "tap" + String(i) + "_pulsos";
+    String keyMl = "tap" + String(i) + "_ml";
+    
+    if (preferences.isKey(keyPulsos.c_str())) {
+      tapConfig[i].pulsosPorLitro = preferences.getFloat(keyPulsos.c_str(), DEFAULT_PULSOS_POR_LITRO);
+    } else {
+      // Usar valor legado para tap 0, padrão para outros
+      tapConfig[i].pulsosPorLitro = (i == 0) ? pulsosPorLitro : DEFAULT_PULSOS_POR_LITRO;
+    }
+    
+    if (preferences.isKey(keyMl.c_str())) {
+      tapConfig[i].mlPorSegundo = preferences.getFloat(keyMl.c_str(), DEFAULT_ML_POR_SEGUNDO);
+    } else {
+      tapConfig[i].mlPorSegundo = (i == 0) ? mlPorSegundo : DEFAULT_ML_POR_SEGUNDO;
+    }
+    
+    Serial.println("  → Tap " + String(i) + ": " + String(tapConfig[i].pulsosPorLitro) + " pulsos/L, " + String(tapConfig[i].mlPorSegundo) + " ml/s");
+  }
+  
+  Serial.println("[NVS] ✅ Configurações carregadas (YF-S402: 5880 pulsos/L padrão)");
 }
 
-// Salvar configurações no NVS
+// Salvar configurações no NVS (Multi-Tap)
 void saveSettings() {
+  // Salvar calibração legada
   preferences.putFloat("pulsos_litro", pulsosPorLitro);
   preferences.putFloat("ml_segundo", mlPorSegundo);
+  
+  // 🆕 Salvar calibração por tap
+  for (int i = 0; i < NUM_TAPS; i++) {
+    String keyPulsos = "tap" + String(i) + "_pulsos";
+    String keyMl = "tap" + String(i) + "_ml";
+    preferences.putFloat(keyPulsos.c_str(), tapConfig[i].pulsosPorLitro);
+    preferences.putFloat(keyMl.c_str(), tapConfig[i].mlPorSegundo);
+  }
+  
   Serial.println("[NVS] ✅ Configurações salvas");
 }
 
-// Handler: Salvar calibração
+// Handler: Salvar calibração (Multi-Tap)
 String handleSaveCalibration(JsonDocument& doc) {
-  float novoPulsos = doc["pulsos_por_litro"] | pulsosPorLitro;
-  float novoMlSeg = doc["ml_por_segundo"] | mlPorSegundo;
+  int tapId = doc["tapId"] | 0;  // Padrão tap 0 para retrocompatibilidade
+  
+  if (tapId < 0 || tapId >= NUM_TAPS) {
+    return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId inválido\"}";
+  }
+  
+  float novoPulsos = doc["pulsos_por_litro"] | tapConfig[tapId].pulsosPorLitro;
+  float novoMlSeg = doc["ml_por_segundo"] | tapConfig[tapId].mlPorSegundo;
   
   // Validar valores
   if (novoPulsos <= 0 || novoPulsos > 10000) {
@@ -1334,36 +2339,58 @@ String handleSaveCalibration(JsonDocument& doc) {
     return "{\"type\":\"error\",\"code\":\"INVALID_PARAMS\",\"message\":\"ml_por_segundo deve ser entre 1 e 500\"}";
   }
   
-  // Aplicar novos valores
-  pulsosPorLitro = novoPulsos;
-  mlPorSegundo = novoMlSeg;
+  // Aplicar novos valores ao tap específico
+  tapConfig[tapId].pulsosPorLitro = novoPulsos;
+  tapConfig[tapId].mlPorSegundo = novoMlSeg;
+  
+  // Atualizar variáveis legadas se tap 0
+  if (tapId == 0) {
+    pulsosPorLitro = novoPulsos;
+    mlPorSegundo = novoMlSeg;
+  }
   
   // Salvar no NVS
   saveSettings();
   
-  Serial.println("[CALIB] ✅ Nova calibração salva:");
-  Serial.println("  → Pulsos/Litro: " + String(pulsosPorLitro));
-  Serial.println("  → ML/Segundo: " + String(mlPorSegundo));
+  Serial.println("[CALIB] ✅ Nova calibração salva para Tap " + String(tapId) + ":");
+  Serial.println("  → Pulsos/Litro: " + String(tapConfig[tapId].pulsosPorLitro));
+  Serial.println("  → ML/Segundo: " + String(tapConfig[tapId].mlPorSegundo));
   
   JsonDocument response;
   response["type"] = "success";
   response["message"] = "Calibração salva no NVS";
-  response["pulsos_por_litro"] = pulsosPorLitro;
-  response["ml_por_segundo"] = mlPorSegundo;
+  response["tapId"] = tapId;
+  response["pulsos_por_litro"] = tapConfig[tapId].pulsosPorLitro;
+  response["ml_por_segundo"] = tapConfig[tapId].mlPorSegundo;
   
   String json;
   serializeJson(response, json);
   return json;
 }
 
-// Handler: Obter configurações atuais
+// Handler: Obter configurações atuais (Multi-Tap)
 String handleGetSettings() {
   JsonDocument doc;
   doc["type"] = "settings";
   doc["firmware_version"] = FIRMWARE_VERSION;
+  doc["num_taps"] = NUM_TAPS;
+  
+  // Valores legados para retrocompatibilidade
   doc["pulsos_por_litro"] = pulsosPorLitro;
   doc["ml_por_segundo"] = mlPorSegundo;
   doc["ml_por_pulso"] = 1000.0 / pulsosPorLitro;
+  
+  // 🆕 Array de calibração por tap
+  JsonArray tapsArray = doc["taps"].to<JsonArray>();
+  for (int i = 0; i < NUM_TAPS; i++) {
+    JsonObject tap = tapsArray.add<JsonObject>();
+    tap["id"] = i;
+    tap["pulsos_por_litro"] = tapConfig[i].pulsosPorLitro;
+    tap["ml_por_segundo"] = tapConfig[i].mlPorSegundo;
+    tap["ml_por_pulso"] = 1000.0 / tapConfig[i].pulsosPorLitro;
+    tap["valve_pin"] = tapConfig[i].valvePin;
+    tap["sensor_pin"] = tapConfig[i].sensorPin;
+  }
   
   // WiFi Access Point info
   doc["wifi_mode"] = "access_point";
@@ -1414,6 +2441,9 @@ bool testOutputPin(int pin, const char* pinName) {
   // Salvar modo atual e configurar como OUTPUT
   pinMode(pin, OUTPUT);
   
+  // 🔧 Reset watchdog antes de testes com delay
+  esp_task_wdt_reset();
+  
   // Teste LOW
   digitalWrite(pin, LOW);
   delay(50);
@@ -1423,6 +2453,7 @@ bool testOutputPin(int pin, const char* pinName) {
   // Teste HIGH (mantém por 500ms para medir com multímetro)
   Serial.println("  HIGH → Mantendo por 500ms... MEÇA AGORA!");
   digitalWrite(pin, HIGH);
+  esp_task_wdt_reset();  // 🔧 Reset watchdog
   delay(500);
   int stateHigh = digitalRead(pin);
   Serial.println("  HIGH → Leitura: " + String(stateHigh ? "HIGH ✓" : "LOW ❌"));
@@ -1436,14 +2467,24 @@ bool testOutputPin(int pin, const char* pinName) {
   return ok;
 }
 
-// Função auxiliar para testar um pino INPUT
-bool testInputPin(int pin, const char* pinName) {
+// Função auxiliar para testar um pino INPUT (sensor de fluxo)
+// 🔧 CORREÇÃO: Recebe tapId para reconectar a ISR correta após o teste
+bool testInputPin(int pin, const char* pinName, int tapId) {
   Serial.println();
   Serial.println("┌─────────────────────────────────────────┐");
   Serial.println("│ Testando " + String(pinName) + " (GPIO" + String(pin) + ")");
   Serial.println("└─────────────────────────────────────────┘");
   
+  // 🔧 Reconfigurar o pino (isso pode desconectar a ISR)
   pinMode(pin, INPUT_PULLUP);
+  
+  // 🔧 IMEDIATAMENTE reconectar a ISR após o pinMode
+  if (tapId == 0) {
+    attachInterrupt(digitalPinToInterrupt(pin), flowPulseCounter0, FALLING);
+  } else if (tapId == 1) {
+    attachInterrupt(digitalPinToInterrupt(pin), flowPulseCounter1, FALLING);
+  }
+  
   delay(50);
   
   int state = digitalRead(pin);
@@ -1451,9 +2492,18 @@ bool testInputPin(int pin, const char* pinName) {
   
   // Para sensor, verificar se há pulsos
   Serial.println("  Aguardando pulsos por 2 segundos...");
-  unsigned long startCount = pulseCount;
-  delay(2000);
-  unsigned long endCount = pulseCount;
+  esp_task_wdt_reset();  // 🔧 Reset watchdog antes de delay longo
+  
+  // 🔧 Resetar contador do tap específico antes de medir
+  unsigned long startCount = (tapId == 0) ? isr_pulseCount0 : isr_pulseCount1;
+  
+  // 🔧 Dividir delay em chunks para reset do watchdog
+  for (int i = 0; i < 4; i++) {
+    delay(500);
+    esp_task_wdt_reset();
+  }
+  
+  unsigned long endCount = (tapId == 0) ? isr_pulseCount0 : isr_pulseCount1;
   unsigned long pulsos = endCount - startCount;
   
   Serial.println("  Pulsos detectados: " + String(pulsos));
@@ -1467,79 +2517,94 @@ bool testInputPin(int pin, const char* pinName) {
 String handleDiagnoseGPIO() {
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════╗");
-  Serial.println("║     🔧 DIAGNÓSTICO COMPLETO DE TODOS OS GPIOs            ║");
+  Serial.println("║     🔧 DIAGNÓSTICO COMPLETO - MULTI-TAP                  ║");
   Serial.println("╠══════════════════════════════════════════════════════════╣");
-  Serial.println("║  GPIO5  (D4) = Válvula     │  GPIO4 (D3) = Alternativo   ║");
-  Serial.println("║  GPIO6  (D5) = Sensor      │  GPIO21(D10)= LED           ║");
+  Serial.println("║  Tap 0: GPIO5 (D4) = Válvula | GPIO4 (D3) = Sensor       ║");
+  Serial.println("║  Tap 1: GPIO6 (D5) = Válvula | GPIO7 (D8) = Sensor       ║");
+  Serial.println("║  Comum: GPIO21 = USER_LED interno                      ║");
   Serial.println("╚══════════════════════════════════════════════════════════╝");
   Serial.println();
   
-  // Testar todos os pinos OUTPUT
-  bool gpio5_ok = testOutputPin(5, "VALVE (D4)");
-  bool gpio4_ok = testOutputPin(4, "ALT   (D3)");
-  bool gpio21_ok = testOutputPin(21, "LED  (D10)");
+  // Testar todos os pinos OUTPUT (Válvulas)
+  bool gpio5_ok = testOutputPin(VALVE_PIN_0, "TAP0 VALVE (D4)");
+  bool gpio6_ok = testOutputPin(VALVE_PIN_1, "TAP1 VALVE (D5)");
+  bool gpio_led_ok = testOutputPin(LED_PIN, "LED  (D10)");
   
-  // Testar pino INPUT (sensor)
-  bool gpio6_ok = testInputPin(6, "SENSOR(D5)");
+  // Testar pinos INPUT (sensores de fluxo)
+  // 🔧 Passar tapId para reconectar ISR correta após o teste
+  bool gpio4_sensor_ok = testInputPin(FLOW_SENSOR_PIN_0, "TAP0 SENSOR(D3)", 0);
+  bool gpio7_ok = testInputPin(FLOW_SENSOR_PIN_1, "TAP1 SENSOR(D8)", 1);
+  
+  // Testar contagem de pulsos
+  Serial.println();
+  Serial.println("[TEST] 🔄 Testando ISRs por 3 segundos...");
+  Serial.println("[TEST] Abra uma torneira para ver os pulsos");
+  
+  // 🔧 CORREÇÃO v4.0.1: Usar funções de reset e sync
+  resetPulseCounter(0);
+  resetPulseCounter(1);
+  
+  unsigned long start = millis();
+  while (millis() - start < 3000) {
+    esp_task_wdt_reset();  // 🔧 Reset watchdog a cada iteração
+    delay(500);
+    syncPulseCounters();
+    unsigned long p0 = tapState[0].pulseCount;
+    unsigned long p1 = tapState[1].pulseCount;
+    Serial.println("[TEST] Tap0: " + String(p0) + " pulsos | Tap1: " + String(p1) + " pulsos");
+  }
+  
+  syncPulseCounters();
+  unsigned long finalP0 = tapState[0].pulseCount;
+  unsigned long finalP1 = tapState[1].pulseCount;
   
   // Restaurar configurações originais
-  pinMode(VALVE_PIN, OUTPUT);
-  digitalWrite(VALVE_PIN, LOW);
+  pinMode(VALVE_PIN_0, OUTPUT);
+  digitalWrite(VALVE_PIN_0, LOW);
+  pinMode(VALVE_PIN_1, OUTPUT);
+  digitalWrite(VALVE_PIN_1, LOW);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  pinMode(FLOW_SENSOR_PIN, INPUT_PULLUP);
+  
+  // 🔧 CORREÇÃO CRÍTICA: Reconectar interrupções dos sensores!
+  // Sem isso, após o diagnóstico o sensor para de funcionar
+  pinMode(FLOW_SENSOR_PIN_0, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN_0), flowPulseCounter0, FALLING);
+  pinMode(FLOW_SENSOR_PIN_1, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN_1), flowPulseCounter1, FALLING);
+  
+  Serial.println("[TEST] ✅ Interrupções reconectadas");
   
   // Resumo
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════╗");
-  Serial.println("║                    📊 RESUMO                              ║");
+  Serial.println("║                    📊 RESUMO MULTI-TAP                    ║");
   Serial.println("╠══════════════════════════════════════════════════════════╣");
-  Serial.println("║  GPIO5  (D4) Válvula:    " + String(gpio5_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
-  Serial.println("║  GPIO4  (D3) Alternativo:" + String(gpio4_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
-  Serial.println("║  GPIO21(D10) LED:        " + String(gpio21_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
-  Serial.println("║  GPIO6  (D5) Sensor:     " + String(gpio6_ok ? "✅ OK " : "⚠️ VER ") + "                         ║");
+  Serial.println("║  Tap 0 Válvula (GPIO5):  " + String(gpio5_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
+  Serial.println("║  Tap 0 Sensor  (GPIO4):  " + String(gpio4_sensor_ok ? "✅ OK " : "⚠️ VER ") + " Pulsos: " + String(finalP0) + "           ║");
+  Serial.println("║  Tap 1 Válvula (GPIO6):  " + String(gpio6_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
+  Serial.println("║  Tap 1 Sensor  (GPIO7):  " + String(gpio7_ok ? "✅ OK " : "⚠️ VER ") + " Pulsos: " + String(finalP1) + "           ║");
+  Serial.println("║  LED           (GPIO21): " + String(gpio_led_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
+  Serial.println("╠══════════════════════════════════════════════════════════╣");
+  Serial.println("║  Calibração: " + String(tapConfig[0].pulsosPorLitro, 0) + " pulsos/L (YF-S402)            ║");
   Serial.println("╚══════════════════════════════════════════════════════════╝");
   Serial.println();
   
-  // Recomendação
-  if (!gpio5_ok && gpio4_ok) {
-    Serial.println("💡 RECOMENDAÇÃO: GPIO5 com problema. Use GPIO4 (D3) em vez de GPIO5 (D4)!");
-    Serial.println("   1. Edite firmware.ino linha ~77");
-    Serial.println("   2. Comente 'const int VALVE_PIN = 5;'");
-    Serial.println("   3. Descomente 'const int VALVE_PIN = 4;'");
-    Serial.println("   4. Mova o fio MARROM do D4 para D3");
-  } else if (!gpio5_ok && !gpio4_ok) {
-    Serial.println("⚠️ ATENÇÃO: Ambos GPIO4 e GPIO5 com problema!");
-    Serial.println("   Possíveis causas:");
-    Serial.println("   1. ESP32 danificado - considere trocar a placa");
-    Serial.println("   2. Problema na protoboard");
-    Serial.println("   3. Curto-circuito nas conexões");
-  } else if (gpio5_ok) {
-    Serial.println("✅ GPIO5 (D4) está funcionando!");
-    Serial.println("   Se a válvula não aciona, verifique:");
-    Serial.println("   1. Conexão física entre D4 e protoboard");
-    Serial.println("   2. Jumper MARROM está bem conectado");
-    Serial.println("   3. Resistor de 100Ω e MOSFET");
-  }
-  Serial.println();
-  
   // Retornar JSON com todos os resultados
-  String result = "{\"type\":\"gpio_diagnostic\",\"results\":{";
-  result += "\"gpio5_valve\":" + String(gpio5_ok ? "true" : "false");
-  result += ",\"gpio4_alt\":" + String(gpio4_ok ? "true" : "false");
-  result += ",\"gpio21_led\":" + String(gpio21_ok ? "true" : "false");
-  result += ",\"gpio6_sensor\":" + String(gpio6_ok ? "true" : "false");
-  result += "},\"recommendation\":\"";
+  JsonDocument doc;
+  doc["type"] = "gpio_diagnostic";
+  doc["tap0_valve_gpio5"] = gpio5_ok;
+  doc["tap0_sensor_gpio4"] = gpio4_sensor_ok;
+  doc["tap0_pulses"] = finalP0;
+  doc["tap1_valve_gpio6"] = gpio6_ok;
+  doc["tap1_sensor_gpio7"] = gpio7_ok;
+  doc["tap1_pulses"] = finalP1;
+  doc["led_gpio21"] = gpio_led_ok;
+  doc["calibration_pulses_per_liter"] = tapConfig[0].pulsosPorLitro;
+  doc["sensor_type"] = "YF-S402";
   
-  if (!gpio5_ok && gpio4_ok) {
-    result += "Use GPIO4 instead of GPIO5";
-  } else if (!gpio5_ok && !gpio4_ok) {
-    result += "Check ESP32 or replace board";
-  } else {
-    result += "GPIOs OK - check physical connections";
-  }
-  result += "\"}";
-  
+  String result;
+  serializeJson(doc, result);
   return result;
 }
 

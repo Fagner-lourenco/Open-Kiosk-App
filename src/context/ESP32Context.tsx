@@ -6,6 +6,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { Capacitor } from '@capacitor/core';
 import esp32Service, { ConnectionStatus, ConnectionType, ESP32Device } from '@/services/esp32CommunicationService';
 import esp32Serial, { ESP32Response } from '@/services/esp32SerialService';
 import { hardwareStatusService } from '@/services/hardwareStatusService';
@@ -14,6 +15,28 @@ import { useToast } from '@/hooks/use-toast';
 // ============================================
 // TIPOS E INTERFACES
 // ============================================
+
+// 🆕 Multi-Tap: Status de cada torneira
+export interface TapStatus {
+  id: number;
+  isDispensing: boolean;
+  orderId?: string;
+  currentCup: number;
+  totalCups: number;
+  mlDispensed: number;
+  targetMl: number;
+  flowStarted: boolean;
+  progress: number;
+}
+
+// 🆕 Multi-Tap: Configuração de cada torneira
+export interface TapConfig {
+  id: number;
+  valvePin: number;
+  sensorPin: number;
+  pulsosPorLitro: number;
+  mlPorSegundo: number;
+}
 
 export interface ESP32State {
   // Status de conexão
@@ -27,6 +50,11 @@ export interface ESP32State {
   
   // Configurações do ESP32
   settings: ESP32Settings | null;
+  
+  // 🆕 Multi-Tap
+  numTaps: number;
+  taps: TapStatus[];
+  selectedTapId: number;
 }
 
 export interface ESP32DispensingProgress {
@@ -42,6 +70,8 @@ export interface ESP32DispensingProgress {
   elapsedSeconds: number;
   /** Segundos restantes até o timeout global */
   remainingSeconds: number;
+  /** 🆕 Multi-Tap: ID da torneira que está dispensando */
+  tapId?: number;
 }
 
 export interface ESP32Settings {
@@ -70,14 +100,22 @@ export interface ESP32ContextValue extends ESP32State {
   connectWifi: (ip: string) => Promise<boolean>;
   disconnect: () => Promise<void>;
   
+  // 🆕 Força sincronização do status de conexão com o serviço
+  refreshConnectionStatus: () => void;
+  
   // Comandos
   sendCommand: (command: string, data?: object) => Promise<boolean>;
-  releaseDrink: (orderId: string, mlPerUnit: number, quantity?: number, sizeLabel?: string) => Promise<boolean>;
+  releaseDrink: (orderId: string, mlPerUnit: number, quantity?: number, sizeLabel?: string, tapId?: number) => Promise<boolean>;
   ping: () => Promise<boolean>;
-  testValve: (durationMs?: number) => Promise<boolean>;
-  stopDispensing: () => Promise<boolean>;
+  testValve: (durationMs?: number, tapId?: number) => Promise<boolean>;
+  stopDispensing: (tapId?: number) => Promise<boolean>;
   getSettings: () => Promise<boolean>;
-  saveCalibration: (pulsosPorLitro: number, mlPorSegundo: number) => Promise<boolean>;
+  saveCalibration: (pulsosPorLitro: number, mlPorSegundo: number, tapId?: number) => Promise<boolean>;
+  
+  // 🆕 Multi-Tap
+  setSelectedTapId: (tapId: number) => void;
+  getTapStatus: (tapId: number) => TapStatus | undefined;
+  refreshTaps: () => Promise<void>;
   
   // Callbacks para respostas
   addResponseListener: (callback: (response: ESP32Response) => void) => () => void;
@@ -106,7 +144,7 @@ interface ESP32ProviderProps {
 
 export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   children,
-  heartbeatInterval = 15000,
+  heartbeatInterval = 60000,  // 🔧 60 segundos (antes: 15s) - reduz spam de ping
   autoReconnect = true,
 }) => {
   const { toast } = useToast();
@@ -118,6 +156,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   const [isDispensing, setIsDispensing] = useState(false);
   const [currentProgress, setCurrentProgress] = useState<ESP32DispensingProgress | null>(null);
   const [settings, setSettings] = useState<ESP32Settings | null>(null);
+  
+  // 🆕 Multi-Tap state
+  const [numTaps, setNumTaps] = useState<number>(1);
+  const [taps, setTaps] = useState<TapStatus[]>([]);
+  const [selectedTapId, setSelectedTapId] = useState<number>(0);
   
   // Logs persistentes
   const [logs, setLogs] = useState<ESP32LogEntry[]>([]);
@@ -153,11 +196,31 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // HANDLERS DE RESPOSTA
   // ============================================
   
+  // 🔧 CORREÇÃO: Ref para rastrear último pong e evitar logs duplicados
+  const lastPongTimeRef = useRef<number>(0);
+  
   const handleESP32Response = useCallback((response: ESP32Response) => {
+    // 🔧 CORREÇÃO: Filtrar pongs repetidos (menos de 5s entre eles)
+    if (response.type === 'pong') {
+      const now = Date.now();
+      if (now - lastPongTimeRef.current < 5000) {
+        // Pong muito recente, não logar (mas ainda processar)
+        console.log('[ESP32Context] Pong recebido (não logado - muito frequente)');
+        return;
+      }
+      lastPongTimeRef.current = now;
+    }
+    
     console.log('[ESP32Context] Resposta recebida:', response);
     
     // Adicionar ao log persistente
     addLog('received', JSON.stringify(response), response);
+    
+    // 🆕 Multi-Tap: Processar num_taps de QUALQUER resposta que inclua
+    if (response.num_taps !== undefined && response.num_taps > 0) {
+      console.log('[ESP32Context] 🚰 num_taps detectado:', response.num_taps);
+      setNumTaps(response.num_taps);
+    }
     
     // Notificar todos os listeners
     responseListeners.current.forEach(listener => {
@@ -168,8 +231,29 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       }
     });
     
+    // 🆕 CORREÇÃO: Detectar tipo por campos quando 'type' está ausente
+    // Isso é necessário porque mensagens BLE podem chegar fragmentadas ou em ordem diferente
+    let responseType = response.type;
+    if (!responseType) {
+      // Detectar tipo por campos característicos
+      if (response.percent !== undefined || response.flow_started !== undefined || 
+          (response.ml !== undefined && response.target !== undefined)) {
+        responseType = 'progress';
+        console.log('[ESP32Context] Tipo detectado por campos: progress');
+      } else if (response.stage !== undefined) {
+        responseType = 'status';
+        console.log('[ESP32Context] Tipo detectado por campos: status');
+      } else if (response.pulses !== undefined && response.duration_ms !== undefined) {
+        responseType = response.ml_calculated !== undefined ? 'flow_test' : 'calibration';
+        console.log('[ESP32Context] Tipo detectado por campos:', responseType);
+      } else if (response.timestamp !== undefined && Object.keys(response).length <= 2) {
+        responseType = 'pong';
+        console.log('[ESP32Context] Tipo detectado por campos: pong');
+      }
+    }
+    
     // Processar tipos específicos
-    switch (response.type) {
+    switch (responseType) {
       case 'progress':
         setIsDispensing(true);
         setCurrentProgress({
@@ -182,13 +266,107 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           flowStarted: response.flow_started ?? false,
           elapsedSeconds: response.elapsed_seconds ?? 0,
           remainingSeconds: response.remaining_seconds ?? 300,
+          tapId: response.tapId, // 🆕 Multi-Tap: incluir tapId no progresso
         });
+        
+        // 🆕 Multi-Tap: Atualizar status do tap específico
+        if (response.tapId !== undefined) {
+          setTaps(prev => {
+            const updated = [...prev];
+            const tapIndex = updated.findIndex(t => t.id === response.tapId);
+            const tapStatus: TapStatus = {
+              id: response.tapId,
+              isDispensing: true,
+              orderId: response.orderId,
+              currentCup: response.cup || 1,
+              totalCups: response.total_cups || 1,
+              mlDispensed: response.ml || 0,
+              targetMl: response.target || response.target_ml || 0,
+              flowStarted: response.flow_started ?? false,
+              progress: response.percent || 0,
+            };
+            if (tapIndex >= 0) {
+              updated[tapIndex] = tapStatus;
+            } else {
+              updated.push(tapStatus);
+            }
+            return updated;
+          });
+        }
         break;
         
       case 'status':
         if (response.stage === 'completed' || response.stage === 'error') {
           setIsDispensing(false);
           setCurrentProgress(null);
+          
+          // 🆕 Multi-Tap: Atualizar tap como não dispensando
+          if (response.tapId !== undefined) {
+            setTaps(prev => prev.map(t => 
+              t.id === response.tapId 
+                ? { ...t, isDispensing: false, progress: response.stage === 'completed' ? 100 : t.progress }
+                : t
+            ));
+          }
+        }
+        
+        // 🆕 Multi-Tap: Processar num_taps do status
+        if (response.num_taps !== undefined) {
+          setNumTaps(response.num_taps);
+          
+          // Atualizar status remoto com info multi-tap
+          hardwareStatusService.updateStatus({
+            numTaps: response.num_taps,
+            hardwareId: response.chip_id || response.hardware_id,
+          });
+        }
+        
+        // 🆕 Multi-Tap: Processar array de taps
+        if (response.taps && Array.isArray(response.taps)) {
+          const tapsData = response.taps.map((t: Record<string, unknown>) => ({
+            id: t.id as number,
+            isDispensing: t.isDispensing as boolean ?? false,
+            orderId: t.orderId as string | undefined,
+            currentCup: t.currentCup as number ?? 0,
+            totalCups: t.totalCups as number ?? 0,
+            mlDispensed: t.mlDispensed as number ?? 0,
+            targetMl: t.targetMl as number ?? 0,
+            flowStarted: t.flowStarted as boolean ?? false,
+            progress: t.progress as number ?? 0,
+          }));
+          setTaps(tapsData);
+          
+          // Atualizar status remoto com estado dos taps
+          hardwareStatusService.updateStatus({
+            taps: tapsData.map(t => ({
+              id: t.id,
+              isDispensing: t.isDispensing,
+              orderId: t.orderId,
+              progress: t.progress,
+            })),
+          });
+        }
+        break;
+      
+      // 🆕 Resposta específica de get_taps
+      case 'taps_status':
+        if (response.num_taps !== undefined) {
+          setNumTaps(response.num_taps);
+        }
+        if (response.taps && Array.isArray(response.taps)) {
+          const tapsData = response.taps.map((t: Record<string, unknown>) => ({
+            id: t.id as number,
+            isDispensing: t.isDispensing as boolean ?? false,
+            orderId: t.orderId as string | undefined,
+            currentCup: t.currentCup as number ?? 0,
+            totalCups: t.totalCups as number ?? 0,
+            mlDispensed: t.mlDispensed as number ?? 0,
+            targetMl: t.targetMl as number ?? 0,
+            flowStarted: t.flowStarted as boolean ?? false,
+            progress: t.progress as number ?? 0,
+          }));
+          setTaps(tapsData);
+          console.log('[ESP32Context] 🚰 Taps atualizados:', tapsData);
         }
         break;
         
@@ -225,6 +403,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // ============================================
   
   const updateConnectionStatus = useCallback((newStatus: ConnectionStatus) => {
+    console.log('[ESP32Context] updateConnectionStatus recebido:', JSON.stringify(newStatus));
     setStatus(newStatus);
     
     // Persistir status no Firestore para monitoramento remoto (Admin)
@@ -260,6 +439,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       }
     }
   }, [heartbeatInterval]);
+
+  // 🆕 Força sincronização do status de conexão com o serviço
+  const refreshConnectionStatus = useCallback(() => {
+    const currentStatus = esp32Service.getConnectionStatus();
+    console.log('[ESP32Context] refreshConnectionStatus:', JSON.stringify(currentStatus));
+    if (currentStatus.connected !== status.connected || currentStatus.type !== status.type) {
+      console.log('[ESP32Context] Status diferente, atualizando...');
+      updateConnectionStatus(currentStatus);
+    }
+  }, [status, updateConnectionStatus]);
   
   // Registrar listener no serviço de comunicação
   useEffect(() => {
@@ -276,8 +465,56 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       }
     });
     
+    // 🆕 Listener para dados recebidos via Bluetooth
+    // NOTA: O serviço agora envia linhas completas (já processou o buffer)
+    esp32Service.setOnBleDataReceived((line: string) => {
+      console.log('[ESP32Context] BLE linha recebida:', line);
+      
+      // Tentar parsear como JSON
+      if (line.startsWith('{')) {
+        try {
+          const json = JSON.parse(line);
+          addLog('received', line, json);
+          handleESP32Response(json);
+        } catch (e) {
+          // Não é JSON válido, logar como texto
+          console.warn('[ESP32Context] JSON inválido:', line, e);
+          addLog('received', line);
+        }
+      } else if (line.trim()) {
+        // Linha de texto normal
+        addLog('received', line);
+      }
+    });
+    
+    // 🆕 Listener para dados recebidos via USB OTG nativo (Android)
+    // NOTA: O serviço agora envia linhas completas (já processou o buffer)
+    esp32Service.setOnUsbDataReceived((line: string) => {
+      console.log('[ESP32Context] USB OTG linha recebida:', line);
+      
+      // Tentar parsear como JSON
+      if (line.startsWith('{')) {
+        try {
+          const json = JSON.parse(line);
+          addLog('received', line, json);
+          handleESP32Response(json);
+        } catch (e) {
+          // Não é JSON válido, logar como texto
+          console.warn('[ESP32Context] JSON inválido:', line, e);
+          addLog('received', line);
+        }
+      } else if (line.trim()) {
+        // Linha de texto normal
+        addLog('received', line);
+      }
+    });
+    
     // Listener para mudanças de conexão Serial
     const unsubscribeConnection = esp32Serial.onConnectionChange((connected: boolean) => {
+      // 🔧 FIX: Sincronizar estado com esp32CommunicationService
+      // Isso garante que sendCommand() funcione quando conexão foi feita via esp32Serial
+      esp32Service.syncExternalUSBConnection(connected);
+      
       if (connected) {
         addLog('info', '✅ Connected USB Serial');
         // Usar updateConnectionStatus para também persistir no Firestore
@@ -316,6 +553,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       return () => {
         clearTimeout(reconnectTimer);
         esp32Service.setOnConnectionChange(null);
+        esp32Service.setOnBleDataReceived(null);
+        esp32Service.setOnUsbDataReceived(null);
         unsubscribeMessage();
         unsubscribeRaw();
         unsubscribeConnection();
@@ -328,6 +567,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     
     return () => {
       esp32Service.setOnConnectionChange(null);
+      esp32Service.setOnBleDataReceived(null);
+      esp32Service.setOnUsbDataReceived(null);
       unsubscribeMessage();
       unsubscribeRaw();
       unsubscribeConnection();
@@ -341,6 +582,43 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // ============================================
   // MÉTODOS DE CONEXÃO
   // ============================================
+  
+  // 🆕 POLLING DE STATUS WiFi DURANTE DISPENSAÇÃO
+  // Quando conectado via WiFi, fazer polling de /status para obter progresso
+  useEffect(() => {
+    if (!isDispensing || status.type !== 'wifi' || !status.connected) {
+      return;
+    }
+    
+    console.log('[ESP32Context] 📶 Iniciando polling WiFi durante dispensação...');
+    
+    const pollInterval = setInterval(async () => {
+      try {
+        // Buscar status via HTTP GET /status
+        const response = await fetch('http://192.168.4.1/status', {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' },
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[ESP32Context] 📶 Polling WiFi resposta:', data);
+          
+          // Processar resposta como se viesse de USB/BLE
+          handleESP32Response(data);
+        } else {
+          console.warn('[ESP32Context] 📶 Polling WiFi falhou:', response.status);
+        }
+      } catch (error) {
+        console.warn('[ESP32Context] 📶 Erro no polling WiFi:', error);
+      }
+    }, 500); // Polling a cada 500ms para feedback em tempo real
+    
+    return () => {
+      console.log('[ESP32Context] 📶 Parando polling WiFi');
+      clearInterval(pollInterval);
+    };
+  }, [isDispensing, status.type, status.connected, handleESP32Response]);
   
   const connect = useCallback(async (device: ESP32Device): Promise<boolean> => {
     setIsConnecting(true);
@@ -461,28 +739,46 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     orderId: string,
     mlPerUnit: number,
     quantity: number = 1,
-    sizeLabel: string = 'Padrão'
+    sizeLabel: string = 'Padrão',
+    tapId: number = selectedTapId  // 🆕 Multi-Tap: usa tap selecionado por padrão
   ): Promise<boolean> => {
-    console.log('[ESP32Context] releaseDrink chamado:', { orderId, mlPerUnit, quantity, sizeLabel });
+    console.log('[ESP32Context] releaseDrink chamado:', { orderId, mlPerUnit, quantity, sizeLabel, tapId });
     console.log('[ESP32Context] Status atual:', status);
     
-    // Verificar se está conectado via USB Serial
-    const isSerialConnected = esp32Serial.isConnected();
-    console.log('[ESP32Context] esp32Serial.isConnected():', isSerialConnected);
-    
-    // Se não estiver conectado, tentar reconexão automática
-    if (!isSerialConnected) {
+    // 🆕 CORREÇÃO: Verificar conexão baseada no tipo atual (não apenas USB Serial)
+    if (!status.connected) {
       console.log('[ESP32Context] Não conectado, tentando reconexão automática...');
       addLog('info', '🔄 Tentando reconectar para dispensar...');
       
-      const reconnected = await esp32Serial.tryAutoReconnect();
+      // Tentar reconexão via protocolo atual ou auto-reconexão
+      let reconnected = false;
+      
+      // No Web, tentar USB Serial
+      if (!Capacitor.isNativePlatform()) {
+        reconnected = await esp32Serial.tryAutoReconnect();
+      } else {
+        // No Android, tentar reconectar via serviço (que usa último tipo conhecido)
+        try {
+          const lastConnection = esp32Service.getLastConnection();
+          if (lastConnection) {
+            reconnected = await esp32Service.connect({
+              id: lastConnection.deviceId || 'auto',
+              name: lastConnection.deviceName || 'ESP32',
+              type: lastConnection.type,
+              ipAddress: lastConnection.ipAddress,
+            });
+          }
+        } catch (e) {
+          console.error('[ESP32Context] Erro ao tentar reconectar:', e);
+        }
+      }
       
       if (!reconnected) {
         console.error('[ESP32Context] Falha na reconexão automática');
         addLog('error', '❌ Falha na reconexão - ESP32 não conectado');
         toast({
           title: '❌ ESP32 Desconectado',
-          description: 'Conecte o ESP32 via USB no painel de administração.',
+          description: 'Conecte o ESP32 (USB, WiFi ou Bluetooth) antes de dispensar.',
           variant: 'destructive',
         });
         return false;
@@ -490,9 +786,12 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       
       console.log('[ESP32Context] ✅ Reconexão automática bem-sucedida');
       addLog('info', '✅ Reconectado automaticamente');
+      
+      // Atualizar status após reconexão
+      setStatus(esp32Service.getConnectionStatus());
     }
     
-    // Agora enviar comando de dispensação via esp32Serial
+    // Preparar UI para dispensação
     setIsDispensing(true);
     setCurrentProgress({
       orderId,
@@ -504,17 +803,25 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       flowStarted: false,
       elapsedSeconds: 0,
       remainingSeconds: 300, // 5 minutos padrão
+      tapId,
     });
     
-    addLog('sent', `release_drink: ${orderId} (${mlPerUnit}ml x${quantity})`);
+    addLog('sent', `release_drink: ${orderId} (${mlPerUnit}ml x${quantity}) [Tap ${tapId}]`);
     
     try {
-      // Usar esp32Serial diretamente para enviar comando
-      const success = await esp32Serial.releaseDrink(orderId, mlPerUnit, quantity, sizeLabel);
+      // 🆕 CORREÇÃO: Usar esp32Service.sendCommand que detecta automaticamente o tipo de conexão
+      // Isso funciona para USB (Web Serial ou OTG nativo), WiFi e Bluetooth
+      const success = await esp32Service.sendCommand('release_drink', {
+        orderId,
+        mlPerUnit,
+        quantity,
+        sizeLabel,
+        tapId,
+      });
       
       if (success) {
-        console.log('[ESP32Context] ✅ Comando de dispensação enviado com sucesso');
-        addLog('info', '✅ Comando enviado ao ESP32');
+        console.log(`[ESP32Context] ✅ Comando de dispensação enviado via ${status.type} (Tap ${tapId})`);
+        addLog('info', `✅ Comando enviado via ${status.type} (Tap ${tapId})`);
       } else {
         console.error('[ESP32Context] ❌ Falha ao enviar comando de dispensação');
         addLog('error', '❌ Falha ao enviar comando');
@@ -530,32 +837,32 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       setCurrentProgress(null);
       return false;
     }
-  }, [status, addLog, toast]);
+  }, [status, selectedTapId, addLog, toast]);
   
   const ping = useCallback(async (): Promise<boolean> => {
     return esp32Service.ping();
   }, []);
   
-  const testValve = useCallback(async (durationMs: number = 1000): Promise<boolean> => {
-    // CORRIGIDO: Enviar test_valve diretamente via Serial ou HTTP
-    const payload = { action: 'test_valve', duration: durationMs };
+  const testValve = useCallback(async (durationMs: number = 1000, tapId: number = selectedTapId): Promise<boolean> => {
+    // 🆕 Multi-Tap: Enviar test_valve com tapId
+    addLog('sent', `test_valve: ${durationMs}ms [Tap ${tapId}]`);
     
-    if (status.type === 'usb') {
-      return esp32Serial.sendCommand(payload as any);
-    }
-    
-    // Via WiFi/BLE
-    return esp32Service.sendWifiCommand('test_valve', payload);
-  }, [status.type]);
+    // 🆕 CORREÇÃO: Usar sendCommand unificado que detecta automaticamente o tipo de conexão
+    return esp32Service.sendCommand('test_valve', { duration: durationMs, tapId });
+  }, [selectedTapId, addLog]);
   
-  const stopDispensing = useCallback(async (): Promise<boolean> => {
-    // Enviar comando para parar (não existe método específico, enviar ping para "interromper")
-    // TODO: Implementar stop_dispensing no firmware se necessário
-    console.warn('[ESP32Context] stopDispensing não implementado no firmware');
+  const stopDispensing = useCallback(async (tapId?: number): Promise<boolean> => {
+    // 🆕 Multi-Tap: Enviar stop com tapId opcional
+    addLog('sent', tapId !== undefined ? `stop [Tap ${tapId}]` : 'stop [All Taps]');
+    
+    // 🆕 CORREÇÃO: Usar sendCommand unificado
+    const params = tapId !== undefined ? { tapId } : {};
+    await esp32Service.sendCommand('stop', params);
+    
     setIsDispensing(false);
     setCurrentProgress(null);
     return true;
-  }, []);
+  }, [addLog]);
   
   const getSettingsCmd = useCallback(async (): Promise<boolean> => {
     return esp32Service.getSettings();
@@ -563,9 +870,34 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   
   const saveCalibration = useCallback(async (
     pulsosPorLitro: number,
-    mlPorSegundo: number
+    mlPorSegundo: number,
+    tapId: number = selectedTapId  // 🆕 Multi-Tap
   ): Promise<boolean> => {
-    return esp32Service.saveCalibration(pulsosPorLitro, mlPorSegundo);
+    addLog('sent', `save_calibration: ${pulsosPorLitro} pulsos/L, ${mlPorSegundo} ml/s [Tap ${tapId}]`);
+    return esp32Service.saveCalibration(pulsosPorLitro, mlPorSegundo, tapId);
+  }, [selectedTapId, addLog]);
+  
+  // ============================================
+  // 🆕 FUNÇÕES MULTI-TAP
+  // ============================================
+  
+  const getTapStatus = useCallback((tapId: number): TapStatus | undefined => {
+    return taps.find(t => t.id === tapId);
+  }, [taps]);
+  
+  const refreshTaps = useCallback(async (): Promise<void> => {
+    // Buscar status de todas as torneiras via comando get_taps ou HTTP /taps
+    try {
+      // 🔧 FIX: Usar sendCommand unificado que funciona em todos os protocolos
+      // Ao invés de fetch hardcoded que só funciona em WiFi
+      const success = await esp32Service.sendCommand('get_taps');
+      if (!success) {
+        console.warn('[ESP32Context] Falha ao enviar comando get_taps');
+      }
+      // A resposta virá via callback handleESP32Response
+    } catch (error) {
+      console.warn('[ESP32Context] Erro ao buscar taps:', error);
+    }
   }, []);
   
   // ============================================
@@ -592,11 +924,17 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     currentProgress,
     settings,
     
+    // 🆕 Multi-Tap
+    numTaps,
+    taps,
+    selectedTapId,
+    
     // Métodos de conexão
     connect,
     connectUSB,
     connectWifi,
     disconnect,
+    refreshConnectionStatus,
     
     // Comandos
     sendCommand,
@@ -606,6 +944,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     stopDispensing,
     getSettings: getSettingsCmd,
     saveCalibration,
+    
+    // 🆕 Multi-Tap methods
+    setSelectedTapId,
+    getTapStatus,
+    refreshTaps,
     
     // Listeners
     addResponseListener,

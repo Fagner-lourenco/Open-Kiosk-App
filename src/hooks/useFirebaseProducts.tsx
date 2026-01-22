@@ -1,7 +1,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Product } from '@/types/product';
-import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId } from '@/services/firebase';
+import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId, getFirebaseAuth } from '@/services/firebase';
 import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, CollectionReference } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
@@ -78,6 +78,17 @@ export const useFirebaseProducts = () => {
       loadingGlobal = true;
       productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
       return;
+    }
+
+    // 🔒 PROTEÇÃO: Em modo franquia, verificar autenticação antes de criar listener
+    if (isFranchiseMode()) {
+      const auth = getFirebaseAuth();
+      if (!auth?.currentUser) {
+        console.log('[useFirebaseProducts] ⚠️ Modo franquia sem autenticação - aguardando login');
+        loadingGlobal = true;
+        productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
+        return;
+      }
     }
 
     // Aguardar setup anterior se existir (mutex)

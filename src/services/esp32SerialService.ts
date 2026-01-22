@@ -13,7 +13,7 @@
 // ============================================
 
 export interface ESP32Response {
-  type: 'pong' | 'status' | 'progress' | 'success' | 'error' | 'flow_test' | 'calibration' | 'info' | 'settings' | 'gpio_test' | 'gpio_diagnostic';
+  type: 'pong' | 'status' | 'progress' | 'success' | 'error' | 'flow_test' | 'calibration' | 'info' | 'settings' | 'gpio_test' | 'gpio_diagnostic' | 'taps_status';
   timestamp?: number;
   orderId?: string;
   stage?: string;
@@ -58,10 +58,18 @@ export interface ESP32Response {
   wifi_rssi?: number;
   mdns_hostname?: string;
   ble_name?: string;
+  // 🆕 Multi-Tap (firmware v4.0+)
+  tapId?: number;
+  num_taps?: number;
+  taps?: unknown[];
+  // 🆕 Identificação do hardware
+  chip_id?: string;
+  hardware_id?: string;
+  mac?: string;
 }
 
 export interface ESP32Command {
-  action: 'ping' | 'status' | 'release_drink' | 'stop' | 'test_valve' | 'test_flow' | 'calibrate' | 'beep' | 'save_calibration' | 'get_settings' | 'start_wifi_portal' | 'reset_wifi';
+  action: 'ping' | 'status' | 'release_drink' | 'stop' | 'test_valve' | 'test_flow' | 'calibrate' | 'beep' | 'save_calibration' | 'get_settings' | 'start_wifi_portal' | 'reset_wifi' | 'diagnose_gpio' | 'get_taps';
   orderId?: string;
   mlPerUnit?: number;
   quantity?: number;
@@ -70,6 +78,7 @@ export interface ESP32Command {
   times?: number;
   pulsos_por_litro?: number;
   ml_por_segundo?: number;
+  tapId?: number;  // 🆕 Multi-Tap: ID da torneira (0 ou 1)
 }
 
 export type ESP32MessageCallback = (response: ESP32Response) => void;
@@ -493,12 +502,14 @@ class ESP32SerialService {
 
   /**
    * Dispensar bebida
+   * 🆕 Multi-Tap: tapId opcional (default 0 para retrocompatibilidade)
    */
   async releaseDrink(
     orderId: string,
     mlPerUnit: number,
     quantity: number = 1,
-    sizeLabel: string = 'Padrão'
+    sizeLabel: string = 'Padrão',
+    tapId: number = 0  // 🆕 Multi-Tap
   ): Promise<boolean> {
     return this.sendCommand({
       action: 'release_drink',
@@ -506,43 +517,54 @@ class ESP32SerialService {
       mlPerUnit,
       quantity,
       sizeLabel,
+      tapId,  // 🆕 Sempre enviar, firmware ignora se não suportar
     });
   }
 
   /**
    * Parar dispensação
+   * 🆕 Multi-Tap: tapId opcional (sem tapId = para todas)
    */
-  async stop(): Promise<boolean> {
-    return this.sendCommand({ action: 'stop' });
+  async stop(tapId?: number): Promise<boolean> {
+    return this.sendCommand({
+      action: 'stop',
+      tapId,  // undefined se não passado, firmware interpreta como "todas"
+    });
   }
 
   /**
    * Testar válvula
+   * 🆕 Multi-Tap: tapId opcional
    */
-  async testValve(durationMs: number = 2000): Promise<boolean> {
+  async testValve(durationMs: number = 2000, tapId: number = 0): Promise<boolean> {
     return this.sendCommand({
       action: 'test_valve',
       duration: durationMs,
+      tapId,  // 🆕 Multi-Tap
     });
   }
 
   /**
    * Testar sensor de fluxo
+   * 🆕 Multi-Tap: tapId opcional
    */
-  async testFlow(durationMs: number = 5000): Promise<boolean> {
+  async testFlow(durationMs: number = 5000, tapId: number = 0): Promise<boolean> {
     return this.sendCommand({
       action: 'test_flow',
       duration: durationMs,
+      tapId,  // 🆕 Multi-Tap
     });
   }
 
   /**
    * Calibrar bomba
+   * 🆕 Multi-Tap: tapId opcional
    */
-  async calibrate(durationMs: number = 5000): Promise<boolean> {
+  async calibrate(durationMs: number = 5000, tapId: number = 0): Promise<boolean> {
     return this.sendCommand({
       action: 'calibrate',
       duration: durationMs,
+      tapId,  // 🆕 Multi-Tap
     });
   }
 

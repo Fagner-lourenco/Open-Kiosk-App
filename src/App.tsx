@@ -1,12 +1,12 @@
 
-import { useEffect, Suspense, lazy } from "react";
+import React, { useEffect, Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { HashRouter, Routes, Route } from "react-router-dom";
-import { AuthContextProvider } from "@/context/AuthContext";
+import { AuthContextProvider, useAuth } from "@/context/AuthContext";
 import { ESP32Provider } from "@/context/ESP32Context";
 import { PaymentGatewayProvider } from "@/context/PaymentGatewayContext";
 import { FranchiseProvider } from "@/context/FranchiseContext";
@@ -28,9 +28,49 @@ import LoginPage from "./pages/LoginPage";
 import AcceptInvitePage from "./pages/AcceptInvitePage";
 import StoreSelectPage from "./pages/StoreSelectPage";
 import { FranchiseGuard } from "@/components/FranchiseGuard";
+import { TapSettingsSync } from "@/components/TapSettingsSync";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
+
+/**
+ * AuthGate - Bloqueia inicialização de providers dependentes até auth ser validada
+ * 
+ * Em modo franquia:
+ * - Enquanto isLoading: mostra loading spinner
+ * - Se não autenticado: mostra apenas rotas públicas (login)
+ * - Se autenticado: monta providers que dependem de sessão (Store, ESP32, etc)
+ */
+const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { isLoading, user } = useAuth();
+
+  // Enquanto valida sessão, mostra loading
+  if (isLoading && isFranchiseMode()) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <p className="ml-4 text-gray-600">Validando sessão...</p>
+      </div>
+    );
+  }
+
+  // Em modo franquia sem user: mostra apenas rotas públicas
+  // Os providers dependentes NÃO são montados
+  if (isFranchiseMode() && !user) {
+    return (
+      <HashRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/invite" element={<AcceptInvitePage />} />
+          <Route path="*" element={<LoginPage />} />
+        </Routes>
+      </HashRouter>
+    );
+  }
+
+  // Autenticado: monta providers dependentes
+  return <>{children}</>;
+};
 
 const queryClient = new QueryClient();
 
@@ -115,18 +155,20 @@ const AppContent = () => {
       ) : needsInitialization ? (
         <StoreInitialization onComplete={updateSettings} />
       ) : (
-        <StoreProvider initialStoreId={storeId}>
-          <PaymentGatewayProvider>
-            <ESP32Provider>
-              <AuthContextProvider>
-                <FranchiseProviderWrapper>
-                  <PermissionProviderWrapper>
-                    <HashRouter>
-                      <AdminSecretAccess>
-                        <Routes>
-                          {/* Rotas públicas */}
-                          <Route path="/login" element={<LoginPage />} />
-                          <Route path="/invite" element={<AcceptInvitePage />} />
+        <AuthContextProvider>
+          <AuthGate>
+            <StoreProvider initialStoreId={storeId}>
+              <PaymentGatewayProvider>
+                <ESP32Provider>
+                  <TapSettingsSync>
+                    <FranchiseProviderWrapper>
+                      <PermissionProviderWrapper>
+                        <HashRouter>
+                          <AdminSecretAccess>
+                            <Routes>
+                              {/* Rotas públicas */}
+                              <Route path="/login" element={<LoginPage />} />
+                              <Route path="/invite" element={<AcceptInvitePage />} />
                           
                           {/* Rotas protegidas em modo franchise */}
                           <Route path="/" element={
@@ -151,15 +193,17 @@ const AppContent = () => {
                           } />
                           
                           <Route path="*" element={<NotFound />} />
-                        </Routes>
-                      </AdminSecretAccess>
-                    </HashRouter>
-                  </PermissionProviderWrapper>
-                </FranchiseProviderWrapper>
-              </AuthContextProvider>
-            </ESP32Provider>
-          </PaymentGatewayProvider>
-        </StoreProvider>
+                            </Routes>
+                          </AdminSecretAccess>
+                        </HashRouter>
+                      </PermissionProviderWrapper>
+                    </FranchiseProviderWrapper>
+                  </TapSettingsSync>
+                </ESP32Provider>
+              </PaymentGatewayProvider>
+            </StoreProvider>
+          </AuthGate>
+        </AuthContextProvider>
       )}
     </LanguageProvider>
   );

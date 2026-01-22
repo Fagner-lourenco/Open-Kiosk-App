@@ -3,8 +3,9 @@
  * Apenas pisca LED e envia mensagem serial
  */
 
-// LED do XIAO ESP32S3 (tente diferentes pinos se não funcionar)
-#define LED_PIN 21  // D10 no XIAO
+// LED do XIAO ESP32S3
+// GPIO21 = USER_LED interno da placa (LED amarelo)
+#define LED_PIN 21  // USER_LED interno do XIAO ESP32S3
 
 void setup() {
   Serial.begin(115200);
@@ -15,7 +16,7 @@ void setup() {
   Serial.println("ESP32-S3 Iniciado!");
   
   pinMode(LED_PIN, OUTPUT);
-  Serial.println("LED configurado no GPIO 21");
+  Serial.println("LED configurado no GPIO21 (USER_LED interno)");
 }
 
 void loop() {

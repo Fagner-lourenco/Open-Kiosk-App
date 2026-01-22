@@ -5,9 +5,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Printer, Video, Store, MonitorPlay } from "lucide-react";
+import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Printer, Video, Store, MonitorPlay, Droplets, Lock, Unlock, Smartphone } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { useESP32 } from "@/context/ESP32Context";
 import { useLanguage, useTranslation } from "@/i18n";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
@@ -16,12 +17,18 @@ import type { ESP32ConnectionType, AttractVideoSettings } from "@/types/store";
 import { getFirebaseDb, getCurrentFranchiseId } from "@/services/firebase";
 import { isFranchiseMode } from "@/lib/pathResolver";
 import esp32Service from "@/services/esp32CommunicationService";
+import { getDefaultTapId, setDefaultTapId } from "@/components/TapSettingsSync";
+import { enterKioskMode, exitKioskMode, isInKioskMode } from "@/services/kioskModeService";
+import { Capacitor } from "@capacitor/core";
 
 export default function AdminSettings() {
   const { currentCurrency, currencies, updateCurrency, loading } = useSettings();
   const { settings, updateSettings, loading: settingsLoading } = useStoreSettings();
   const { language, setLanguage } = useLanguage();
   const { t } = useTranslation();
+  
+  // ESP32 context para obter número de torneiras
+  const { numTaps, status: esp32Status, setSelectedTapId } = useESP32();
 
   // ESP32 settings com defaults
   const esp32AutoConnect = settings?.esp32AutoConnect ?? true;
@@ -31,6 +38,14 @@ export default function AdminSettings() {
   // Drink Pickup settings com defaults
   const drinkPickupTimeoutSeconds = settings?.drinkPickupTimeoutSeconds ?? 90;
   const drinkPickupSoundEnabled = settings?.drinkPickupSoundEnabled ?? true;
+  
+  // Multi-Tap settings (localStorage - cada tablet gerencia sua própria torneira)
+  const [defaultTapId, setDefaultTapIdState] = useState<number>(getDefaultTapId());
+
+  // Estado para modo kiosk (Lock Task Android)
+  const [kioskModeEnabled, setKioskModeEnabled] = useState<boolean>(false);
+  const [kioskModeLoading, setKioskModeLoading] = useState<boolean>(false);
+  const isNativePlatform = Capacitor.isNativePlatform();
 
   // Estado para configurações de vídeo de fundo
   const [attractVideoSettings, setAttractVideoSettings] = useState<AttractVideoSettings>({
@@ -40,7 +55,45 @@ export default function AdminSettings() {
   });
   const [videoSaving, setVideoSaving] = useState(false);
 
-  
+  // Verificar estado do modo kiosk na inicialização
+  useEffect(() => {
+    const checkKioskMode = async () => {
+      if (isNativePlatform) {
+        const isKiosk = await isInKioskMode();
+        setKioskModeEnabled(isKiosk);
+      }
+    };
+    checkKioskMode();
+  }, [isNativePlatform]);
+
+  // Handler para toggle do modo kiosk
+  const handleKioskModeToggle = async (enabled: boolean) => {
+    setKioskModeLoading(true);
+    try {
+      if (enabled) {
+        const success = await enterKioskMode();
+        if (success) {
+          setKioskModeEnabled(true);
+          toast.success(t('settings.kioskModeEnabled') || 'Modo Kiosk ativado');
+        } else {
+          toast.error(t('settings.kioskModeError') || 'Erro ao ativar modo kiosk');
+        }
+      } else {
+        const success = await exitKioskMode();
+        if (success) {
+          setKioskModeEnabled(false);
+          toast.success(t('settings.kioskModeDisabled') || 'Modo Kiosk desativado');
+        } else {
+          toast.error(t('settings.kioskModeError') || 'Erro ao desativar modo kiosk');
+        }
+      }
+    } catch (error) {
+      console.error('[KioskMode] Erro:', error);
+      toast.error(t('settings.kioskModeError') || 'Erro ao alterar modo kiosk');
+    } finally {
+      setKioskModeLoading(false);
+    }
+  };
 
   // Carregar configurações de vídeo do Firestore
   useEffect(() => {
@@ -173,6 +226,16 @@ export default function AdminSettings() {
     }
   };
 
+  // Handler para mudança de torneira padrão (persiste no localStorage)
+  const handleDefaultTapChange = (tapId: number) => {
+    // Salvar no localStorage (persistência local por tablet)
+    setDefaultTapId(tapId);
+    setDefaultTapIdState(tapId);
+    // Atualizar também o contexto ESP32 para uso imediato
+    setSelectedTapId(tapId);
+    toast.success(t('settings.defaultTapUpdated', { tap: tapId + 1 }) || `Torneira padrão: ${tapId + 1}`);
+  };
+
   const moveConnectionOrder = (from: number, to: number) => {
     const newOrder = [...esp32ConnectionOrder];
     const [removed] = newOrder.splice(from, 1);
@@ -246,6 +309,57 @@ export default function AdminSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Modo Kiosk (Android Lock Task) */}
+      {isNativePlatform && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Smartphone className="h-5 w-5" />
+              {t('settings.kioskMode') || 'Modo Kiosk'}
+            </CardTitle>
+            <CardDescription>
+              {t('settings.kioskModeDescription') || 'Bloqueia o dispositivo neste aplicativo (Lock Task Mode)'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label htmlFor="kiosk-mode" className="flex items-center gap-2">
+                    {kioskModeEnabled ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                    {kioskModeEnabled 
+                      ? (t('settings.kioskModeLocked') || 'Bloqueado') 
+                      : (t('settings.kioskModeUnlocked') || 'Desbloqueado')
+                    }
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {kioskModeEnabled 
+                      ? (t('settings.kioskModeLockedDescription') || 'O dispositivo está bloqueado neste app. Botões de navegação desabilitados.')
+                      : (t('settings.kioskModeUnlockedDescription') || 'O usuário pode sair do app e acessar outras funções do dispositivo.')
+                    }
+                  </p>
+                </div>
+                <Switch
+                  id="kiosk-mode"
+                  checked={kioskModeEnabled}
+                  onCheckedChange={handleKioskModeToggle}
+                  disabled={kioskModeLoading}
+                />
+              </div>
+              
+              {kioskModeEnabled && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-md">
+                  <p className="text-sm text-amber-800 flex items-center gap-2">
+                    <Lock className="h-4 w-4" />
+                    {t('settings.kioskModeWarning') || 'Modo Kiosk ativo! O dispositivo só pode executar este aplicativo.'}
+                  </p>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Configurações ESP32 Auto-Connect */}
       <Card>
@@ -400,6 +514,46 @@ export default function AdminSettings() {
               onCheckedChange={handlePickupSoundChange}
             />
           </div>
+          
+          {/* Seleção de Torneira Padrão */}
+          {numTaps > 1 && (
+            <div className="space-y-2 pt-4 border-t">
+              <Label htmlFor="default-tap" className="flex items-center gap-2">
+                <Droplets className="h-4 w-4" />
+                {t('settings.defaultTap') || 'Torneira Padrão'}
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.defaultTapDescription') || 'Selecione qual torneira será usada para dispensação'}
+              </p>
+              <div className="flex gap-2">
+                {Array.from({ length: numTaps }, (_, i) => (
+                  <Button
+                    key={i}
+                    variant={defaultTapId === i ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => handleDefaultTapChange(i)}
+                    className="flex items-center gap-1"
+                  >
+                    <Beer className="h-4 w-4" />
+                    {i + 1}
+                  </Button>
+                ))}
+              </div>
+              {!esp32Status.connected && (
+                <p className="text-xs text-amber-600">
+                  ⚠️ {t('settings.esp32NotConnected') || 'ESP32 não conectado - número de torneiras pode estar desatualizado'}
+                </p>
+              )}
+            </div>
+          )}
+          
+          {numTaps <= 1 && esp32Status.connected && (
+            <div className="pt-4 border-t">
+              <p className="text-xs text-muted-foreground">
+                ℹ️ {t('settings.singleTapMode') || 'Modo torneira única detectado'}
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

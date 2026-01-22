@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { StoreSettings } from '@/types/store';
 import { getApps } from 'firebase/app';
-import { initializeFirebase, getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
+import { initializeFirebase, getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId, getFirebaseAuth } from '@/services/firebase';
 import { authService } from '@/services/authService';
 import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { cacheSet, cacheGet, ensureDBReady, STORES, CachedSettings } from '@/services/cacheService';
@@ -260,9 +260,20 @@ export const useStoreSettings = () => {
    * Escuta DOIS documentos:
    * 1. Documento principal da loja (dados gerenciados pelo Admin Web)
    * 2. Subcoleção settings/config (configs específicas do Kiosk)
+   * 
+   * 🔒 PROTEÇÃO: Só cria listeners se usuário estiver autenticado em modo franquia
    */
   useEffect(() => {
     if (!isInitialized || !settings?.storeId) return;
+
+    // 🔒 Em modo franquia, verificar se usuário está autenticado antes de criar listeners
+    if (isFranchiseMode()) {
+      const auth = getFirebaseAuth();
+      if (!auth?.currentUser) {
+        console.log('[useStoreSettings] ⚠️ Modo franquia sem autenticação - aguardando login para criar listeners');
+        return;
+      }
+    }
 
     const unsubscribers: (() => void)[] = [];
 

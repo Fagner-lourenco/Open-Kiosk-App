@@ -164,7 +164,6 @@ const DrinkPickupScreen = ({
             toast({
               title: `✅ ${t('drinkPickup.cupCompleteTitle', { cup: cupNum })}`,
               description: t('drinkPickup.cupCompleteDesc', { next: cupNum + 1, total: totalCups }),
-              duration: 3000,
             });
           }
         }
@@ -301,15 +300,26 @@ const DrinkPickupScreen = ({
                 : t('drinkPickup.drinkReady')}
             </div>
             
-            {/* Indicador de copo proeminente */}
-            {isMultipleCups && dispenseState !== 'completed' && (
-              <div className="flex items-center gap-2 bg-amber-100 text-amber-800 px-3 py-1.5 rounded-full">
-                <Beer className="w-5 h-5" />
-                <span className="font-bold text-base">
-                  {t('drinkPickup.cupIndicator', { current: displayCup, total: displayTotalCups })}
-                </span>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {/* 🆕 Multi-Tap: Indicador de torneira */}
+              {currentProgress?.tapId !== undefined && dispenseState !== 'completed' && (
+                <div className="flex items-center gap-1.5 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full">
+                  <span className="font-bold text-sm">
+                    🚰 {t('drinkPickup.tapIndicator', { tap: (currentProgress.tapId + 1) })}
+                  </span>
+                </div>
+              )}
+              
+              {/* Indicador de copo proeminente */}
+              {isMultipleCups && dispenseState !== 'completed' && (
+                <div className="flex items-center gap-2 bg-amber-100 text-amber-800 px-3 py-1.5 rounded-full">
+                  <Beer className="w-5 h-5" />
+                  <span className="font-bold text-base">
+                    {t('drinkPickup.cupIndicator', { current: displayCup, total: displayTotalCups })}
+                  </span>
+                </div>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
 

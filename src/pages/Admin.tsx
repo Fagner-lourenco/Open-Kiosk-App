@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/i18n";
 import AdminOverview from "@/components/AdminOverview";
 import AdminProducts from "@/components/AdminProducts";
-import AdminAddProduct from "@/components/AdminAddProduct";
 import AdminReports from "@/components/AdminReports";
 import AdminSettings from "@/components/AdminSettings";
 import AdminOrders from "@/components/AdminOrders";
@@ -16,13 +15,15 @@ import { ESP32DispenserPanel } from "@/components/ESP32DispenserPanel";
 import { useFirebaseProducts } from "@/hooks/useFirebaseProducts";
 import { Product } from "@/types/product";
 import { ProductWithInventory, InventoryLog } from "@/types/store";
-import { exitKioskMode } from "@/services/kioskModeService";
+import { useAuth } from "@/context/AuthContext";
 import { Store, LogOut } from "lucide-react";
 
 export default function Admin() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { logout } = useAuth();
   const [activeTab, setActiveTab] = useState("overview");
+
   const { products, addProduct, updateProduct, deleteProduct } = useFirebaseProducts();
 
   // Navegar para a loja
@@ -30,12 +31,13 @@ export default function Admin() {
     navigate('/shop');
   };
 
-  // Sair do modo kiosk (Lock Task) do Android
-  const handleExitKiosk = async () => {
-    const success = await exitKioskMode();
-    if (success) {
-      // Após sair do kiosk, ir para a loja
-      navigate('/shop');
+  // Fazer logout e ir para a página de login
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+    } catch (error) {
+      console.error('Erro ao fazer logout:', error);
     }
   };
 
@@ -103,11 +105,11 @@ export default function Admin() {
             </Button>
             <Button 
               variant="outline"
-              onClick={handleExitKiosk}
+              onClick={handleLogout}
               className="flex items-center gap-2 px-4 py-2 border-red-300 text-red-700 hover:bg-red-50 hover:border-red-400"
             >
               <LogOut className="w-4 h-4" />
-              <span>{t('admin.exitKiosk')}</span>
+              <span>{t('auth.logout') || 'Sair'}</span>
             </Button>
           </div>
         </div>
@@ -115,10 +117,9 @@ export default function Admin() {
       
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-5 md:grid-cols-9 mb-6 h-auto min-h-[48px] gap-1 p-1">
+          <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-6 h-auto min-h-[48px] gap-1 p-1">
             <TabsTrigger value="overview" className="text-xs sm:text-sm min-h-[40px] px-2">{t('admin.overview')}</TabsTrigger>
             <TabsTrigger value="products" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.products')}</TabsTrigger>
-            <TabsTrigger value="add-product" className="text-xs sm:text-sm min-h-[40px] px-2">{t('common.add')}</TabsTrigger>
             <TabsTrigger value="inventory" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.inventory')}</TabsTrigger>
             <TabsTrigger value="orders" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.orders')}</TabsTrigger>
             <TabsTrigger value="reports" className="text-xs sm:text-sm min-h-[40px] px-2">{t('nav.reports')}</TabsTrigger>
@@ -132,11 +133,7 @@ export default function Admin() {
           </TabsContent>
           
           <TabsContent value="products">
-            <AdminProducts onUpdate={handleUpdateProduct} onDelete={handleDeleteProduct} />
-          </TabsContent>
-          
-          <TabsContent value="add-product">
-            <AdminAddProduct onSubmit={handleAddProduct} />
+            <AdminProducts onUpdate={handleUpdateProduct} onDelete={handleDeleteProduct} onAdd={handleAddProduct} />
           </TabsContent>
           
           <TabsContent value="inventory">

@@ -11,8 +11,15 @@
  */
 
 import { doc, setDoc, onSnapshot, Unsubscribe, serverTimestamp } from 'firebase/firestore';
-import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
+import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId, getFirebaseAuth } from './firebase';
 import { isFranchiseMode } from '@/lib/pathResolver';
+
+export interface TapStatusReport {
+  id: number;
+  isDispensing: boolean;
+  orderId?: string;
+  progress?: number;
+}
 
 export interface HardwareStatus {
   // ESP32
@@ -26,6 +33,11 @@ export interface HardwareStatus {
   // Dispensers
   dispensersTotal: number;
   dispensersOnline: number;
+  
+  // 🆕 Multi-Tap Support
+  numTaps?: number;
+  taps?: TapStatusReport[];
+  hardwareId?: string;
   
   // Impressora
   printerConnected: boolean;
@@ -53,6 +65,7 @@ class HardwareStatusService {
 
   /**
    * Atualiza o status no Firestore (chamado pelo Kiosk)
+   * PROTEGIDO: Só escreve se usuário estiver autenticado
    */
   async updateStatus(status: Partial<HardwareStatus>): Promise<void> {
     console.log('[HardwareStatus] updateStatus chamado:', status);
@@ -60,6 +73,15 @@ class HardwareStatusService {
     if (!isFranchiseMode()) {
       // Em modo legado, não persiste no Firestore
       console.log('[HardwareStatus] Modo legado - não persiste no Firestore');
+      this.currentStatus = { ...this.currentStatus, ...status };
+      return;
+    }
+
+    // 🔒 PROTEÇÃO: Verificar autenticação antes de escrever no Firestore
+    const auth = getFirebaseAuth();
+    if (!auth?.currentUser) {
+      console.warn('[HardwareStatus] ⚠️ Usuário não autenticado - ignorando escrita no Firestore');
+      // Atualiza apenas estado local
       this.currentStatus = { ...this.currentStatus, ...status };
       return;
     }
@@ -89,14 +111,21 @@ class HardwareStatusService {
     try {
       const statusRef = doc(db, `franchises/${franchiseId}/stores/${storeId}/hardware/status`);
       
+      // Filtrar campos undefined para evitar erro do Firestore
+      const filteredStatus = Object.fromEntries(
+        Object.entries(status).filter(([_, v]) => v !== undefined)
+      );
+      
       this.currentStatus = { 
         ...this.currentStatus, 
-        ...status,
+        ...filteredStatus,
         updatedAt: new Date(),
       };
 
       await setDoc(statusRef, {
-        ...this.currentStatus,
+        ...Object.fromEntries(
+          Object.entries(this.currentStatus).filter(([_, v]) => v !== undefined)
+        ),
         updatedAt: serverTimestamp(),
         lastHeartbeat: serverTimestamp(),
         kioskVersion: import.meta.env.VITE_APP_VERSION || '1.0.0', // Versão do Kiosk

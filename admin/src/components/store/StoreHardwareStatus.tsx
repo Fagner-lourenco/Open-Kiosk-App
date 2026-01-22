@@ -29,6 +29,13 @@ import {
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
+interface TapStatusInfo {
+  id: number;
+  isDispensing: boolean;
+  orderId?: string;
+  progress?: number;
+}
+
 interface HardwareStatus {
   esp32Connected: boolean;
   esp32Type?: 'usb' | 'wifi' | 'bluetooth';
@@ -42,6 +49,10 @@ interface HardwareStatus {
   lastHeartbeat: Date | null;
   updatedAt: Date | null;
   kioskVersion?: string;
+  // 🆕 Multi-Tap Support
+  numTaps?: number;
+  taps?: TapStatusInfo[];
+  hardwareId?: string;
 }
 
 interface StoreHardwareStatusProps {
@@ -80,6 +91,10 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
           lastHeartbeat: data.lastHeartbeat?.toDate?.() || null,
           updatedAt: data.updatedAt?.toDate?.() || null,
           kioskVersion: data.kioskVersion,
+          // 🆕 Multi-Tap
+          numTaps: data.numTaps,
+          taps: data.taps,
+          hardwareId: data.hardwareId,
         };
         setStatus(hardwareStatus);
         
@@ -214,22 +229,41 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
           </div>
         </div>
 
-        {/* Dispensers Status */}
+        {/* Dispensers / Multi-Tap Status */}
         <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-full ${status.dispensersOnline > 0 ? 'bg-blue-100' : 'bg-gray-100'}`}>
-              <Droplets className={`h-5 w-5 ${status.dispensersOnline > 0 ? 'text-blue-600' : 'text-gray-400'}`} />
+            <div className={`p-2 rounded-full ${status.dispensersOnline > 0 || status.numTaps ? 'bg-blue-100' : 'bg-gray-100'}`}>
+              <Droplets className={`h-5 w-5 ${status.dispensersOnline > 0 || status.numTaps ? 'text-blue-600' : 'text-gray-400'}`} />
             </div>
             <div>
-              <p className="font-medium">Dispensadores</p>
+              <p className="font-medium">
+                {status.numTaps ? `Torneiras (${status.numTaps})` : 'Dispensadores'}
+              </p>
               <p className="text-sm text-gray-500">
-                {status.dispensersOnline} de {status.dispensersTotal} online
+                {status.numTaps 
+                  ? `${status.taps?.filter(t => t.isDispensing).length || 0} em uso`
+                  : `${status.dispensersOnline} de ${status.dispensersTotal} online`
+                }
               </p>
             </div>
           </div>
           <div className="text-right">
-            <span className="text-2xl font-bold text-blue-600">{status.dispensersOnline}</span>
-            <span className="text-gray-400">/{status.dispensersTotal}</span>
+            {status.numTaps ? (
+              <div className="flex items-center gap-1">
+                {status.taps?.map((tap) => (
+                  <div 
+                    key={tap.id}
+                    className={`w-3 h-3 rounded-full ${tap.isDispensing ? 'bg-amber-500 animate-pulse' : 'bg-green-500'}`}
+                    title={`Torneira ${tap.id + 1}${tap.isDispensing ? ` - Dispensando (${tap.progress}%)` : ' - Livre'}`}
+                  />
+                ))}
+              </div>
+            ) : (
+              <>
+                <span className="text-2xl font-bold text-blue-600">{status.dispensersOnline}</span>
+                <span className="text-gray-400">/{status.dispensersTotal}</span>
+              </>
+            )}
           </div>
         </div>
 
@@ -273,6 +307,9 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
           )}
           {status.kioskVersion && (
             <p>Kiosk: v{status.kioskVersion}</p>
+          )}
+          {status.hardwareId && (
+            <p className="font-mono text-xs">ID: {status.hardwareId}</p>
           )}
         </div>
       </CardContent>

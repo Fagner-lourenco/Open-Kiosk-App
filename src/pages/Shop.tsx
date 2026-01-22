@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, ArrowLeft } from "lucide-react";
+import { ShoppingCart, ArrowLeft, WifiOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
+import { useESP32 } from "@/context/ESP32Context";
+import { useToast } from "@/hooks/use-toast";
 import ProductGrid from "@/components/ProductGrid";
 import Cart from "@/components/Cart";
 import VoiceSearchButton from "@/components/VoiceSearchButton";
@@ -54,6 +56,10 @@ const Shop = () => {
   const [drinkPickupData, setDrinkPickupData] = useState<DrinkCheckoutResult | null>(null);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
+  // 🔒 PRODUÇÃO: Verificar conexão ESP32 antes de checkout de bebida
+  const { status: esp32Status, ping } = useESP32();
+  const { toast } = useToast();
+  
   // Kiosk idle overlay (suppressed when any modal/overlay is active)
   const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible || isCheckoutOpen;
   const attractTimeout = settings?.attractTimeoutSeconds ?? 15;
@@ -126,8 +132,22 @@ const Shop = () => {
   const hasMoreProducts = displayLimit < filteredProducts.length;
 
   const addToCart = async (product: Product) => {
-    // Bebida: abrir modal de seleção de tamanho
+    // Bebida: verificar conexão ESP32 antes de abrir checkout
     if (product.isDrink) {
+      // 🔒 PRODUÇÃO: Verificar se dispenser está online
+      if (!esp32Status.connected) {
+        // Tentar ping rápido para confirmar
+        const isOnline = await ping();
+        if (!isOnline) {
+          toast({
+            title: '⚠️ Máquina Offline',
+            description: 'O dispenser de bebidas não está disponível no momento. Por favor, tente novamente em alguns instantes.',
+            variant: 'destructive',
+          });
+          return;
+        }
+      }
+      
       setSelectedDrink(product);
       setIsDrinkCheckoutOpen(true);
       return;

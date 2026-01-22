@@ -34,7 +34,7 @@ const ESP32ConnectionPanel: React.FC = () => {
     connected: false,
     type: 'none',
   });
-  const [manualIp, setManualIp] = useState('192.168.1.100');
+  const [manualIp, setManualIp] = useState('192.168.4.1');
 
   // Atualizar status periodicamente
   useEffect(() => {
@@ -322,7 +322,7 @@ const ESP32ConnectionPanel: React.FC = () => {
               <Label>{t('esp32.manualWifi')}</Label>
               <div className="flex gap-2">
                 <Input
-                  placeholder="192.168.1.100"
+                  placeholder="192.168.4.1"
                   value={manualIp}
                   onChange={(e) => setManualIp(e.target.value)}
                 />

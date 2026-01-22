@@ -435,7 +435,7 @@ export default function AdminDispensers() {
                             hardware: { ...formData.hardware, lastKnownIp: e.target.value },
                           })
                         }
-                        placeholder="192.168.1.100"
+                        placeholder="192.168.4.1"
                       />
                     </div>
                   )}

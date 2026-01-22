@@ -21,9 +21,11 @@
  * - LED indicador (GPIO 19) - MUITO IMPORTANTE PARA DEBUG
  * 
  * CONEXÕES (XIAO ESP32S3):
+ * ⚠️ MAPEAMENTO: D3=GPIO4, D4=GPIO5, D5=GPIO6, D8=GPIO7, D10=GPIO10
+ * ⚠️ NÃO USAR: D6=TX(GPIO43), D7=RX(GPIO44) - são pinos Serial!
  * - GPIO 5 (D4):  Controle da válvula (via módulo relé)
  * - GPIO 6 (D5):  Sensor de fluxo (fio de sinal/amarelo)
- * - GPIO 21 (D10): LED indicador (ou use LED_BUILTIN)
+ * - GPIO 21:      LED indicador (USER_LED interno da placa)
  * 
  * 🔴 PADRÕES DE LED PARA DEBUG:
  * ────────────────────────────────────────────────────────
@@ -72,9 +74,13 @@ const char* WIFI_PASSWORD = "PMpr1994**";   // Senha do WiFi
 
 // ----- PINOS DO HARDWARE -----
 // XIAO ESP32S3: Use pinos disponíveis (evitar pinos USB/JTAG)
-const int VALVE_PIN = 5;        // GPIO para controle da válvula (relé) - D4 no XIAO
-const int FLOW_SENSOR_PIN = 6;  // GPIO para sensor de fluxo - D5 no XIAO (GPIO18 é USB no S3!)
-const int LED_PIN = 21;         // GPIO para LED indicador - LED_BUILTIN ou D10 no XIAO
+// ⚠️ MAPEAMENTO XIAO ESP32S3:
+//   D3=GPIO4, D4=GPIO5, D5=GPIO6, D8=GPIO7, D10=GPIO10
+//   D6=TX(GPIO43), D7=RX(GPIO44) - NÃO USAR como GPIO!
+//   USER_LED interno = GPIO21
+const int VALVE_PIN = 5;        // GPIO5 = D4 no XIAO (válvula)
+const int FLOW_SENSOR_PIN = 6;  // GPIO6 = D5 no XIAO (sensor)
+const int LED_PIN = 21;         // GPIO21 = USER_LED interno do XIAO
 
 // ----- CALIBRAÇÃO DO SENSOR DE FLUXO -----
 // O sensor YF-S201 tem aproximadamente 7.5 pulsos por litro

@@ -58,7 +58,15 @@ import {
 
 // Serviços
 import esp32Serial, { ESP32Response } from '@/services/esp32SerialService';
-import esp32Service, { ESP32Device, ConnectionStatus } from '@/services/esp32CommunicationService';
+import esp32Service, { 
+  ESP32Device, 
+  ConnectionStatus,
+  ESP32_DEVICE_NAME,
+  ESP32_BLE_PIN,
+  ESP32_DEFAULT_IP,
+} from '@/services/esp32CommunicationService';
+import { Capacitor } from '@capacitor/core';
+import { TapSelector, useTapSelection } from '@/components/TapSelector';
 
 // ============================================
 // TIPOS LOCAIS
@@ -97,24 +105,39 @@ export function ESP32DispenserPanel() {
     addLog,
     clearLogs,
     addResponseListener,
+    numTaps,
+    refreshConnectionStatus,
   } = useESP32();
+  
+  // 🆕 Multi-Tap: Seleção de torneira
+  const { selectedTapId, setSelectedTapId, showSelector: showTapSelector } = useTapSelection();
   
   // Configurações de autoconexão das settings
   const autoConnectEnabled = settings?.esp32AutoConnect ?? true;
   const connectionOrder = settings?.esp32ConnectionOrder ?? ['usb', 'wifi', 'bluetooth'];
   const heartbeatInterval = settings?.esp32HeartbeatIntervalMs ?? 15000;
   
+  // Detecção de plataforma (Android/iOS/Web)
+  const isNativePlatform = Capacitor.isNativePlatform();
+  const platformName = Capacitor.getPlatform();
+  
   // Estados de conexão (sincronizados com contexto)
-  const [protocol, setProtocol] = useState<ConnectionProtocol>('usb');
+  // No Android/iOS: Bluetooth como padrão (USB OTG e WiFi também disponíveis)
+  // Na Web: USB (Web Serial) como padrão
+  const [protocol, setProtocol] = useState<ConnectionProtocol>(
+    isNativePlatform ? 'bluetooth' : 'usb'
+  );
   const isConnected = contextStatus.connected;
   const [isConnecting, setIsConnecting] = useState(false);
-  const [isSupported, setIsSupported] = useState(true);
+  const [isAutoConnectingBluetooth, setIsAutoConnectingBluetooth] = useState(false);
+  // Web Serial só é suportado na web desktop (não em WebView Android)
+  const [isWebSerialSupported, setIsWebSerialSupported] = useState(!isNativePlatform && 'serial' in navigator);
   const connectionStatus = contextStatus;
   
   // Estados de scan (WiFi/BLE)
   const [devices, setDevices] = useState<ESP32Device[]>([]);
   const [scanning, setScanning] = useState(false);
-  const [manualIp, setManualIp] = useState(settings?.esp32LastWifiIp || '192.168.1.100');
+  const [manualIp, setManualIp] = useState(settings?.esp32LastWifiIp || '192.168.4.1');
   
   // Estados de operação
   const [isBusy, setIsBusy] = useState(false);
@@ -156,8 +179,8 @@ export function ESP32DispenserPanel() {
       else if (status.type === 'wifi') setProtocol('wifi');
       else if (status.type === 'bluetooth') setProtocol('bluetooth');
       
-      // Iniciar heartbeat
-      esp32Service.startHeartbeat(heartbeatInterval);
+      // 🔧 REMOVIDO: Heartbeat agora é controlado apenas pelo ESP32Context
+      // esp32Service.startHeartbeat(heartbeatInterval);
     },
     showToasts: true,
   });
@@ -167,7 +190,8 @@ export function ESP32DispenserPanel() {
     enabled: true,
     onReconnected: (status) => {
       // Estado já é atualizado pelo ESP32Context automaticamente
-      esp32Service.startHeartbeat(heartbeatInterval);
+      // 🔧 REMOVIDO: Heartbeat agora é controlado apenas pelo ESP32Context
+      // esp32Service.startHeartbeat(heartbeatInterval);
     },
     onReconnectFailed: () => {
       // Estado já é atualizado pelo ESP32Context automaticamente
@@ -194,10 +218,13 @@ export function ESP32DispenserPanel() {
   // EFEITOS
   // ============================================
 
-  // Verificar suporte ao Web Serial
+  // Verificar suporte ao Web Serial (apenas relevante para Web desktop)
   useEffect(() => {
-    setIsSupported('serial' in navigator);
-  }, []);
+    // No Android/iOS, Web Serial não existe, mas temos USB OTG nativo
+    if (!isNativePlatform) {
+      setIsWebSerialSupported('serial' in navigator);
+    }
+  }, [isNativePlatform]);
 
   // Registrar listener para atualizar protocolo quando conectar via USB
   // NOTA: O processamento de mensagens é feito pelo ESP32Context
@@ -223,20 +250,37 @@ export function ESP32DispenserPanel() {
     console.log('[ESP32DispenserPanel] Registrando listener de respostas');
     
     const unsubscribe = addResponseListener((response) => {
-      console.log('[ESP32DispenserPanel] Resposta recebida no listener:', response.type);
+      // 🆕 CORREÇÃO: Detectar tipo por campos quando 'type' está ausente
+      let responseType = response.type;
+      if (!responseType) {
+        if (response.percent !== undefined || response.flow_started !== undefined || 
+            (response.ml !== undefined && response.target !== undefined)) {
+          responseType = 'progress';
+        } else if (response.stage !== undefined) {
+          responseType = 'status';
+        } else if (response.pulses !== undefined && response.duration_ms !== undefined) {
+          responseType = response.ml_calculated !== undefined ? 'flow_test' : 'calibration';
+        } else if (response.timestamp !== undefined && Object.keys(response).length <= 2) {
+          responseType = 'pong';
+        } else if (response.message !== undefined) {
+          responseType = 'success';
+        }
+      }
+      
+      console.log('[ESP32DispenserPanel] Resposta recebida no listener:', responseType);
       
       // Tipos de resposta que indicam fim de operação
       const finishTypes = ['success', 'error', 'pong', 'info', 'flow_test', 'calibration', 'gpio_diagnostic', 'gpio_test', 'settings'];
       
       // Resetar estado de busy quando receber resposta de conclusão
-      if (finishTypes.includes(response.type)) {
-        console.log('[ESP32DispenserPanel] Resetando isBusy para', response.type);
+      if (responseType && finishTypes.includes(responseType)) {
+        console.log('[ESP32DispenserPanel] Resetando isBusy para', responseType);
         setIsBusy(false);
         setCurrentAction(null);
       }
       
       // Status também reseta busy
-      if (response.type === 'status') {
+      if (responseType === 'status') {
         setIsBusy(false);
         if (response.status === 'dispensing') {
           setDispensing({
@@ -252,7 +296,7 @@ export function ESP32DispenserPanel() {
       }
       
       // Atualizar progresso de dispensação
-      if (response.type === 'progress') {
+      if (responseType === 'progress') {
         setDispensing(prev => ({
           ...prev,
           active: true,
@@ -283,7 +327,7 @@ export function ESP32DispenserPanel() {
       }
       
       // Mostrar toasts para feedback
-      switch (response.type) {
+      switch (responseType) {
         case 'pong':
           toast({
             title: '🏓 Pong!',
@@ -370,6 +414,7 @@ export function ESP32DispenserPanel() {
   // AÇÕES DE CONEXÃO - USB
   // ============================================
 
+  // Conexão USB Web Serial (para navegador desktop)
   const handleConnectUSB = async () => {
     setIsConnecting(true);
     try {
@@ -393,6 +438,43 @@ export function ESP32DispenserPanel() {
         description: String(error),
         variant: 'destructive',
       });
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Conexão USB OTG Nativa (para Android via Capacitor plugin)
+  const handleConnectUSBNative = async () => {
+    setIsConnecting(true);
+    addLog('info', '🔌 Iniciando conexão USB OTG nativa...');
+    try {
+      const success = await esp32Service.connectUSBNative();
+      if (success) {
+        setProtocol('usb');
+        toast({
+          title: `✅ ${t('esp32.connected')}`,
+          description: t('esp32Dispenser.connectedUsbOtg'),
+        });
+        // 🔧 REMOVIDO: Heartbeat agora é controlado apenas pelo ESP32Context
+        // esp32Service.startHeartbeat(heartbeatInterval);
+        addLog('info', '✅ Conectado via USB OTG');
+        setTimeout(() => esp32Service.ping(), 500);
+      } else {
+        toast({
+          title: `❌ ${t('esp32.connectionFailed')}`,
+          description: t('esp32Dispenser.usbOtgNotFound'),
+          variant: 'destructive',
+        });
+        addLog('error', '❌ Falha na conexão USB OTG');
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      toast({
+        title: `❌ ${t('common.error')}`,
+        description: errorMsg,
+        variant: 'destructive',
+      });
+      addLog('error', `❌ Erro USB OTG: ${errorMsg}`);
     } finally {
       setIsConnecting(false);
     }
@@ -422,7 +504,8 @@ export function ESP32DispenserPanel() {
         }
         foundDevices = await esp32Service.scanWifiDevices();
       } else if (protocol === 'bluetooth') {
-        foundDevices = await esp32Service.scanBluetoothDevices();
+        // 🆕 Scan mais longo (8s) para dispositivos com PIN
+        foundDevices = await esp32Service.scanBluetoothDevices(8000);
       }
       
       setDevices(foundDevices);
@@ -452,6 +535,49 @@ export function ESP32DispenserPanel() {
     }
   };
 
+  // 🆕 Auto-conexão Bluetooth por nome do dispositivo
+  const handleAutoConnectBluetooth = async () => {
+    setIsAutoConnectingBluetooth(true);
+    addLog('info', `🔍 Procurando dispositivo "${ESP32_DEVICE_NAME}"...`);
+
+    try {
+      const success = await esp32Service.autoConnectBluetoothByName(ESP32_DEVICE_NAME, 10000);
+
+      if (success) {
+        addLog('info', `✅ Conectado automaticamente ao ${ESP32_DEVICE_NAME}!`);
+        toast({
+          title: t('common.success'),
+          description: `Conectado ao ${ESP32_DEVICE_NAME} via Bluetooth`,
+        });
+        // 🔧 REMOVIDO: Heartbeat agora é controlado apenas pelo ESP32Context
+        // esp32Service.startHeartbeat(heartbeatInterval);
+        
+        // 🆕 Forçar sincronização do estado de conexão
+        // Pequeno delay para garantir que o estado interno do serviço foi atualizado
+        setTimeout(() => {
+          refreshConnectionStatus();
+        }, 100);
+      } else {
+        addLog('info', `⚠️ Dispositivo "${ESP32_DEVICE_NAME}" não encontrado`);
+        toast({
+          title: t('common.info'),
+          description: `Dispositivo "${ESP32_DEVICE_NAME}" não encontrado. Verifique se o ESP32 está ligado e próximo.`,
+          variant: 'destructive',
+        });
+      }
+    } catch (error: any) {
+      console.error('[AutoConnect BLE] Erro:', error);
+      addLog('error', `❌ Erro: ${error.message}`);
+      toast({
+        title: t('common.error'),
+        description: error.message || String(error),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsAutoConnectingBluetooth(false);
+    }
+  };
+
   const handleConnectDevice = async (device: ESP32Device) => {
     setIsConnecting(true);
 
@@ -465,6 +591,11 @@ export function ESP32DispenserPanel() {
           title: t('common.success'),
           description: `${t('esp32.connected')}: ${device.name}`,
         });
+        
+        // 🆕 Forçar sincronização do estado de conexão
+        setTimeout(() => {
+          refreshConnectionStatus();
+        }, 100);
       } else {
         toast({
           title: t('common.error'),
@@ -508,6 +639,11 @@ export function ESP32DispenserPanel() {
           title: t('common.success'),
           description: `${t('esp32.connected')}: ${manualIp}`,
         });
+        
+        // 🆕 Forçar sincronização do estado de conexão
+        setTimeout(() => {
+          refreshConnectionStatus();
+        }, 100);
       } else {
         toast({
           title: t('common.error'),
@@ -553,21 +689,16 @@ export function ESP32DispenserPanel() {
 
   const sendCommand = async (action: string, params?: object): Promise<boolean> => {
     try {
-      if (protocol === 'usb') {
-        const command = { action, ...params } as any;
-        addLog('sent', JSON.stringify(command));
-        return await esp32Serial.sendCommand(command);
-      } else {
-        const payload = { action, ...params };
-        addLog('sent', JSON.stringify(payload));
-        const result = await esp32Service.sendCommand(action, payload);
-        
-        // Se falhou no WiFi, pode ser problema de CORS
-        if (!result && protocol === 'wifi' && esp32Service.isWeb()) {
-          addLog('error', t('esp32.corsWarning'));
-        }
-        return result;
+      // 🆕 CORREÇÃO: Usar sempre esp32Service.sendCommand que detecta automaticamente
+      // o tipo de conexão (USB Web Serial, USB OTG nativo, WiFi, Bluetooth)
+      addLog('sent', JSON.stringify({ action, ...params }));
+      const result = await esp32Service.sendCommand(action, params);
+      
+      // Se falhou no WiFi na web, pode ser problema de CORS
+      if (!result && protocol === 'wifi' && esp32Service.isWeb()) {
+        addLog('error', t('esp32.corsWarning'));
       }
+      return result;
     } catch (error: any) {
       addLog('error', error.message || String(error));
       setIsBusy(false);
@@ -593,7 +724,7 @@ export function ESP32DispenserPanel() {
     if (!isConnected) return;
     setIsBusy(true);
     setCurrentAction('test_valve');
-    await sendCommand('test_valve', { duration: valveDuration });
+    await sendCommand('test_valve', { duration: valveDuration, tapId: selectedTapId });
     
     // Timeout de segurança - resetar após duração + 3s se resposta não chegar
     setTimeout(() => {
@@ -612,7 +743,7 @@ export function ESP32DispenserPanel() {
     if (!isConnected) return;
     setIsBusy(true);
     setCurrentAction('test_flow');
-    await sendCommand('test_flow', { duration: flowDuration });
+    await sendCommand('test_flow', { duration: flowDuration, tapId: selectedTapId });
     
     // Timeout de segurança - resetar após duração + 3s se resposta não chegar
     setTimeout(() => {
@@ -646,12 +777,33 @@ export function ESP32DispenserPanel() {
       mlPerUnit: testMl,
       quantity: testQuantity,
       sizeLabel: `${t('esp32Dispenser.test')} ${testMl}ml`,
+      tapId: selectedTapId, // 🆕 Multi-Tap
+    });
+    
+    // 🆕 Timeout de segurança - parar dispensação após 5 minutos (300s)
+    // Isso evita loops infinitos se o sensor não funcionar
+    const safetyTimeout = setTimeout(() => {
+      console.warn('[ESP32DispenserPanel] ⚠️ Timeout de segurança - parando dispensação');
+      handleStop();
+      toast({
+        title: '⚠️ Timeout',
+        description: t('esp32Dispenser.dispensingTimeout') || 'Dispensação interrompida por timeout de segurança',
+        variant: 'destructive',
+      });
+    }, 300000); // 5 minutos
+    
+    // Registrar listener para limpar timeout quando completar
+    const unsubscribe = addResponseListener((response) => {
+      if (response.stage === 'completed' || response.stage === 'error' || response.type === 'error') {
+        clearTimeout(safetyTimeout);
+        unsubscribe();
+      }
     });
   };
 
   const handleStop = async () => {
     if (!isConnected) return;
-    await sendCommand('stop');
+    await sendCommand('stop', { tapId: selectedTapId }); // 🆕 Multi-Tap
     setDispensing({
       active: false,
       orderId: '',
@@ -702,7 +854,7 @@ export function ESP32DispenserPanel() {
     }, timeoutDuration);
     
     try {
-      await sendCommand('calibrate', { duration: flowDuration });
+      await sendCommand('calibrate', { duration: flowDuration, tapId: selectedTapId }); // 🆕 Multi-Tap
     } catch (error) {
       console.error('[ESP32DispenserPanel] Erro ao enviar comando calibrate:', error);
       setIsBusy(false);
@@ -733,7 +885,9 @@ export function ESP32DispenserPanel() {
   // RENDERIZAÇÃO
   // ============================================
 
-  if (!isSupported && protocol === 'usb') {
+  // Mostrar alerta apenas na WEB quando Web Serial não é suportado e usuário seleciona USB
+  // No Android/iOS, nunca bloquear - temos USB OTG, Bluetooth e WiFi nativos
+  if (!isNativePlatform && !isWebSerialSupported && protocol === 'usb') {
     return (
       <Card className="border-red-200 bg-red-50">
         <CardHeader>
@@ -780,100 +934,162 @@ export function ESP32DispenserPanel() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Tabs de Protocolo */}
+          {/* Indicador de plataforma para debug */}
+          {isNativePlatform && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-md">
+              <Zap className="w-3 h-3" />
+              <span>{t('esp32Dispenser.nativePlatform', { platform: platformName.toUpperCase() })}</span>
+            </div>
+          )}
+          
+          {/* Tabs de Protocolo - Todas as opções disponíveis */}
           <Tabs value={protocol} onValueChange={(v) => setProtocol(v as ConnectionProtocol)}>
             <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="usb" className="flex items-center gap-2">
-                <Usb className="w-4 h-4" />
-                USB
+              <TabsTrigger value="bluetooth" className="flex items-center gap-2">
+                <Bluetooth className="w-4 h-4" />
+                Bluetooth
               </TabsTrigger>
               <TabsTrigger value="wifi" className="flex items-center gap-2">
                 <Wifi className="w-4 h-4" />
                 WiFi
               </TabsTrigger>
-              <TabsTrigger value="bluetooth" className="flex items-center gap-2">
-                <Bluetooth className="w-4 h-4" />
-                Bluetooth
+              <TabsTrigger value="usb" className="flex items-center gap-2">
+                <Usb className="w-4 h-4" />
+                {isNativePlatform ? 'USB OTG' : 'USB'}
               </TabsTrigger>
             </TabsList>
 
-            {/* USB Serial */}
+            {/* USB Serial / USB OTG */}
             <TabsContent value="usb" className="space-y-4">
-              {!isConnected ? (
+              {/* Mostrar conteúdo diferente para Android (USB OTG) vs Web (Web Serial) */}
+              {isNativePlatform ? (
+                // === ANDROID/iOS: USB OTG Nativo ===
                 <div className="space-y-3">
-                  {/* Botão de Reconexão Automática (sem popup) */}
-                  <Button 
-                    onClick={async () => {
-                      setIsConnecting(true);
-                      addLog('info', '🔄 Tentando reconexão automática...');
-                      try {
-                        const success = await esp32Serial.tryAutoReconnect();
-                        if (success) {
-                          toast({
-                            title: '✅ Reconectado',
-                            description: 'ESP32 reconectado automaticamente',
-                          });
-                        } else {
-                          toast({
-                            title: '⚠️ Sem porta autorizada',
-                            description: 'Use "Conectar USB" para selecionar a porta',
-                            variant: 'destructive',
-                          });
-                        }
-                      } finally {
-                        setIsConnecting(false);
-                      }
-                    }} 
-                    disabled={isConnecting} 
-                    variant="outline"
-                    className="w-full"
-                  >
-                    {isConnecting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Reconectando...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4 mr-2" />
-                        Reconectar Automaticamente
-                      </>
-                    )}
-                  </Button>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                    <p className="text-sm text-blue-700">
+                      <Usb className="w-4 h-4 inline mr-1" />
+                      {t('esp32Dispenser.usbOtgDescription')}
+                    </p>
+                  </div>
                   
-                  {/* Botão de Conexão Manual (com popup de seleção) */}
-                  <Button onClick={handleConnectUSB} disabled={isConnecting} className="w-full">
-                    {isConnecting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        {t('esp32Dispenser.connecting')}
-                      </>
-                    ) : (
-                      <>
-                        <Plug className="w-4 h-4 mr-2" />
-                        {t('esp32Dispenser.connectUsb')}
-                      </>
-                    )}
-                  </Button>
-                  <p className="text-xs text-gray-500 text-center">
-                    {t('esp32Dispenser.usbHint')}
-                  </p>
+                  {!isConnected ? (
+                    <>
+                      <Button 
+                        onClick={handleConnectUSBNative} 
+                        disabled={isConnecting} 
+                        className="w-full"
+                      >
+                        {isConnecting ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            {t('esp32Dispenser.connecting')}
+                          </>
+                        ) : (
+                          <>
+                            <Plug className="w-4 h-4 mr-2" />
+                            {t('esp32Dispenser.connectUsbOtg')}
+                          </>
+                        )}
+                      </Button>
+                      <p className="text-xs text-gray-500 text-center">
+                        {t('esp32Dispenser.usbOtgHint')}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="flex gap-3">
+                      <Button onClick={handlePing} variant="outline" disabled={isBusy}>
+                        <Activity className="w-4 h-4 mr-2" />
+                        Ping
+                      </Button>
+                      <Button onClick={handleStatus} variant="outline" disabled={isBusy}>
+                        <Gauge className="w-4 h-4 mr-2" />
+                        Status
+                      </Button>
+                      <Button onClick={handleDisconnect} variant="destructive">
+                        <Unplug className="w-4 h-4 mr-2" />
+                        {t('esp32.disconnect')}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="flex gap-3">
-                  <Button onClick={handlePing} variant="outline" disabled={isBusy}>
-                    <Activity className="w-4 h-4 mr-2" />
-                    Ping
-                  </Button>
-                  <Button onClick={handleStatus} variant="outline" disabled={isBusy}>
-                    <Gauge className="w-4 h-4 mr-2" />
-                    Status
-                  </Button>
-                  <Button onClick={handleDisconnect} variant="destructive">
-                    <Unplug className="w-4 h-4 mr-2" />
-                    {t('esp32.disconnect')}
-                  </Button>
-                </div>
+                // === WEB: Web Serial API ===
+                !isConnected ? (
+                  <div className="space-y-3">
+                    {/* Botão de Reconexão Automática (sem popup) */}
+                    <Button 
+                      onClick={async () => {
+                        setIsConnecting(true);
+                        addLog('info', '🔄 Tentando reconexão automática...');
+                        try {
+                          const success = await esp32Serial.tryAutoReconnect();
+                          if (success) {
+                            toast({
+                              title: '✅ Reconectado',
+                              description: 'ESP32 reconectado automaticamente',
+                            });
+                          } else {
+                            toast({
+                              title: '⚠️ Sem porta autorizada',
+                              description: 'Use "Conectar USB" para selecionar a porta',
+                              variant: 'destructive',
+                            });
+                          }
+                        } finally {
+                          setIsConnecting(false);
+                        }
+                      }} 
+                      disabled={isConnecting} 
+                      variant="outline"
+                      className="w-full"
+                    >
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Reconectando...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Reconectar Automaticamente
+                        </>
+                      )}
+                    </Button>
+                    
+                    {/* Botão de Conexão Manual (com popup de seleção) */}
+                    <Button onClick={handleConnectUSB} disabled={isConnecting} className="w-full">
+                      {isConnecting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          {t('esp32Dispenser.connecting')}
+                        </>
+                      ) : (
+                        <>
+                          <Plug className="w-4 h-4 mr-2" />
+                          {t('esp32Dispenser.connectUsb')}
+                        </>
+                      )}
+                    </Button>
+                    <p className="text-xs text-gray-500 text-center">
+                      {t('esp32Dispenser.usbHint')}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex gap-3">
+                    <Button onClick={handlePing} variant="outline" disabled={isBusy}>
+                      <Activity className="w-4 h-4 mr-2" />
+                      Ping
+                    </Button>
+                    <Button onClick={handleStatus} variant="outline" disabled={isBusy}>
+                      <Gauge className="w-4 h-4 mr-2" />
+                      Status
+                    </Button>
+                    <Button onClick={handleDisconnect} variant="destructive">
+                      <Unplug className="w-4 h-4 mr-2" />
+                      {t('esp32.disconnect')}
+                    </Button>
+                  </div>
+                )
               )}
             </TabsContent>
 
@@ -922,7 +1138,7 @@ export function ESP32DispenserPanel() {
                   {/* Conexão manual IP */}
                   <div className="flex gap-2 pt-2 border-t">
                     <Input
-                      placeholder="192.168.1.100"
+                      placeholder="192.168.4.1"
                       value={manualIp}
                       onChange={(e) => setManualIp(e.target.value)}
                     />
@@ -930,7 +1146,20 @@ export function ESP32DispenserPanel() {
                       {isConnecting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
                     </Button>
                   </div>
-                  <p className="text-xs text-gray-500">{t('esp32.enterIp')}</p>
+                  
+                  {/* Instruções WiFi detalhadas */}
+                  <div className="text-xs text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                    <p className="font-medium mb-1">📶 Como conectar via WiFi:</p>
+                    <ol className="list-decimal list-inside space-y-1">
+                      <li>Vá nas <strong>Configurações → WiFi</strong> do Android</li>
+                      <li>Conecte à rede <strong>"Kiosk_Bier"</strong> (senha: <strong>bier2026</strong>)</li>
+                      <li><strong className="text-red-600">DESATIVE os dados móveis!</strong></li>
+                      <li>Volte aqui e clique em Conectar (IP: 192.168.4.1)</li>
+                    </ol>
+                    <p className="mt-2 text-red-600 font-medium">
+                      ⛔ Se dados móveis estiverem ligados, o Android ignora o WiFi sem internet!
+                    </p>
+                  </div>
                 </>
               ) : (
                 <div className="flex gap-3">
@@ -954,7 +1183,35 @@ export function ESP32DispenserPanel() {
             <TabsContent value="bluetooth" className="space-y-4">
               {!isConnected ? (
                 <>
-                  <Button onClick={handleScan} disabled={scanning} className="w-full">
+                  {/* 🆕 Botão de Auto-Conexão por Nome */}
+                  <Button 
+                    onClick={handleAutoConnectBluetooth} 
+                    disabled={isAutoConnectingBluetooth || scanning}
+                    className="w-full bg-blue-600 hover:bg-blue-700"
+                  >
+                    {isAutoConnectingBluetooth ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Procurando "{ESP32_DEVICE_NAME}"...
+                      </>
+                    ) : (
+                      <>
+                        <Bluetooth className="w-4 h-4 mr-2" />
+                        Conectar ao "{ESP32_DEVICE_NAME}"
+                      </>
+                    )}
+                  </Button>
+
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-white px-2 text-gray-500">ou procure manualmente</span>
+                    </div>
+                  </div>
+
+                  <Button onClick={handleScan} disabled={scanning || isAutoConnectingBluetooth} variant="outline" className="w-full">
                     {scanning ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -993,8 +1250,24 @@ export function ESP32DispenserPanel() {
                     </div>
                   )}
 
+                  {/* Dica se nenhum dispositivo encontrado */}
+                  {devices.length === 0 && !scanning && !isAutoConnectingBluetooth && (
+                    <div className="text-xs text-amber-600 bg-amber-50 p-3 rounded-lg border border-amber-200">
+                      <p className="font-medium mb-1">⚠️ Não encontrou o dispositivo?</p>
+                      <ol className="list-decimal list-inside space-y-1">
+                        <li>Vá nas <strong>Configurações → Bluetooth</strong> do Android</li>
+                        <li>Pareie o <strong>"{ESP32_DEVICE_NAME}"</strong> (PIN: <strong>{ESP32_BLE_PIN}</strong>)</li>
+                        <li><strong className="text-red-600">DESCONECTE</strong> (mas mantenha pareado!)</li>
+                        <li>Volte aqui e tente novamente</li>
+                      </ol>
+                      <p className="mt-2 text-red-600 font-medium">
+                        ⛔ Se o Bluetooth do sistema estiver conectado, o app não consegue escanear!
+                      </p>
+                    </div>
+                  )}
+
                   <p className="text-xs text-gray-500 text-center">
-                    {t('esp32.tipBluetooth')}
+                    PIN: {ESP32_BLE_PIN} • {t('esp32.tipBluetooth')}
                   </p>
                 </>
               ) : (
@@ -1126,6 +1399,24 @@ export function ESP32DispenserPanel() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* 🆕 Multi-Tap: Seleção de Torneira */}
+            {showTapSelector && (
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Torneira Alvo</Label>
+                <TapSelector
+                  selectedTapId={selectedTapId}
+                  onSelectTap={setSelectedTapId}
+                  mode="compact"
+                  className="bg-gray-50 p-3 rounded-lg"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {numTaps} torneira(s) detectada(s) - Testes serão aplicados na torneira selecionada
+                </p>
+              </div>
+            )}
+
+            <Separator />
+
             {/* Teste de Válvula */}
             <div className="space-y-2">
               <Label>{t('esp32Dispenser.valveTest')}</Label>

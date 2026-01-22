@@ -15,6 +15,7 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useESP32 } from "@/context/ESP32Context";
 import esp32Serial from "@/services/esp32SerialService";
 import { Beaker, Loader2, CheckCircle, XCircle, Wifi, WifiOff } from "lucide-react";
+import { TapSelector, useTapSelection } from "@/components/TapSelector";
 
 export function ESP32TestPanel() {
   const { toast } = useToast();
@@ -25,8 +26,11 @@ export function ESP32TestPanel() {
   const [lastResponse, setLastResponse] = useState<string>("");
   
   // Usar ESP32Context para status e comandos unificados
-  const { status, releaseDrink, isConnecting } = useESP32();
+  const { status, releaseDrink, isConnecting, numTaps } = useESP32();
   const isConnected = status.connected;
+  
+  // 🆕 Multi-Tap: Seleção de torneira para teste
+  const { selectedTapId, setSelectedTapId, showSelector: showTapSelector } = useTapSelection();
 
   const handleConnect = async () => {
     try {
@@ -79,7 +83,8 @@ export function ESP32TestPanel() {
         `TEST-${Date.now()}`,
         testMl,
         testQuantity,
-        `Teste ${testMl}ml`
+        `Teste ${testMl}ml`,
+        selectedTapId // 🆕 Multi-Tap: passar tapId selecionado
       );
 
       setLastResponse(JSON.stringify({ success, timestamp: new Date().toISOString() }, null, 2));
@@ -205,6 +210,22 @@ export function ESP32TestPanel() {
           />
         </div>
       </div>
+
+      {/* 🆕 Multi-Tap: Seleção de Torneira */}
+      {showTapSelector && (
+        <div className="space-y-2">
+          <Label className="text-sm font-medium">Torneira para Teste</Label>
+          <TapSelector
+            selectedTapId={selectedTapId}
+            onSelectTap={setSelectedTapId}
+            mode="compact"
+            className="bg-gray-50 p-3 rounded-lg"
+          />
+          <p className="text-xs text-muted-foreground">
+            {numTaps} torneira(s) detectada(s) no ESP32
+          </p>
+        </div>
+      )}
 
       {/* Botão de Teste */}
       <Button

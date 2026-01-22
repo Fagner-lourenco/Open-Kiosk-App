@@ -2,9 +2,83 @@
 
 ## Sistema Chopeira Automatizada - ESP32-S3 + MOSFET + Solenóide
 
-**Versão:** 2.0 - Validado após incidentes  
+**Versão:** 3.0 - Multi-Tap (2 Torneiras)  
 **Data:** Janeiro 2026  
 **Status:** CIRCUITO SEGURO COM PROTEÇÕES
+
+---
+
+## 🎯 MAPEAMENTO OFICIAL DE PINOS - XIAO ESP32S3
+
+### ⚠️ TABELA DEFINITIVA - USE ESTA REFERÊNCIA!
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    XIAO ESP32S3 - MAPEAMENTO OFICIAL v4.1                  │
+├──────────┬─────────┬────────────────────────────────────────────────────────┤
+│ Pino     │ GPIO    │ USO NO PROJETO                                         │
+├──────────┼─────────┼────────────────────────────────────────────────────────┤
+│ D3       │ GPIO4   │ 🟡 SENSOR FLUXO TAP 0 (INPUT) - Via divisor 5V→2.5V   │
+│ D4       │ GPIO5   │ 🔴 VÁLVULA TAP 0 (OUTPUT) - Gate MOSFET #1             │
+│ D5       │ GPIO6   │ 🔵 VÁLVULA TAP 1 (OUTPUT) - Gate MOSFET #2             │
+│ D8       │ GPIO7   │ 🟡 SENSOR FLUXO TAP 1 (INPUT) - Via divisor 5V→2.5V   │
+├──────────┼─────────┼────────────────────────────────────────────────────────┤
+│ D6       │ GPIO43  │ ❌ TX SERIAL - NÃO USAR! (fica HIGH = 3.3V idle)       │
+│ D7       │ GPIO44  │ ❌ RX SERIAL - NÃO USAR!                               │
+├──────────┼─────────┼────────────────────────────────────────────────────────┤
+│ USER_LED │ GPIO21  │ 💡 LED STATUS (interno da placa, amarelo)              │
+│ 5V       │ -       │ Alimentação do ESP32 (do LM2596)                       │
+│ GND      │ -       │ Terra comum                                            │
+└──────────┴─────────┴────────────────────────────────────────────────────────┘
+```
+
+### 🖼️ DIAGRAMA VISUAL DA PLACA
+
+```
+         ┌────────────────────────────────────────────┐
+         │              XIAO ESP32S3                  │
+         │                  [USB]                     │
+         ├────────────────────────────────────────────┤
+         │                                            │
+  D0 ────┤ GPIO1                            5V  ├──── +5V (LM2596)
+  D1 ────┤ GPIO2                           GND  ├──── GND Comum
+  D2 ────┤ GPIO3                           3V3  ├────
+  D3 ────┤ GPIO4  � SENSOR TAP 0          D10  ├──── GPIO10
+  D4 ────┤ GPIO5  🔴 VÁLVULA TAP 0          D9  ├──── GPIO8
+  D5 ────┤ GPIO6  🔵 VÁLVULA TAP 1          D8  ├──── GPIO7 🟡 SENSOR TAP 1
+  D6 ────┤ GPIO43 ❌ TX SERIAL             D7  ├──── GPIO44 ❌ RX SERIAL
+         │                                            │
+         │        💡 USER_LED = GPIO21                │
+         └────────────────────────────────────────────┘
+```
+
+### 🚨 POR QUE D6 e D7 NÃO PODEM SER USADOS?
+
+- **D6 (GPIO43)** = TX da Serial USB
+- **D7 (GPIO44)** = RX da Serial USB
+- Quando `Serial.begin(115200)` é chamado, **TX fica em HIGH (3.3V)** quando idle
+- Se conectar uma válvula no D6, ela **ACIONA AUTOMATICAMENTE**!
+
+---
+
+## 📋 LISTA DE MATERIAIS (MULTI-TAP - 2 TORNEIRAS)
+
+| # | Componente | Especificação | Qtd Tap 0 | Qtd Tap 1 | Total |
+|---|------------|---------------|-----------|-----------|-------|
+| 1 | ESP32 | Seeed XIAO ESP32-S3 | 1 | - | 1 |
+| 2 | MOSFET | IRLZ44N (Logic Level) | 1 | 1 | 2 |
+| 3 | Válvula Solenóide | 12V DC | 1 | 1 | 2 |
+| 4 | Sensor de Fluxo | YF-S401 ou YF-S402 (5V) | 1 | 1 | 2 |
+| 5 | Conversor DC-DC | LM2596 (ajustado 5V) | 1 | - | 1 |
+| 6 | Diodo Flyback | 1N4007 | 1 | 1 | 2 |
+| 7 | Cap Eletrolítico | 2200µF 25V | 1 | - | 1 |
+| 8 | Cap Cerâmico | 100nF | 1 | - | 1 |
+| 9 | Resistor Gate | 100Ω 1/4W | 1 | 1 | 2 |
+| 10 | Resistor Pull-down | 10KΩ 1/4W | 1 | 1 | 2 |
+| 11 | Resistor Divisor | 10KΩ 1/4W | 2 | 2 | 4 |
+| 12 | Protoboard | 30+ linhas | 1 | - | 1 |
+| 13 | Fonte | 12V 3A DC | 1 | - | 1 |
+| 14 | Jumpers | Diversos | - | - | ~20 |
 
 ---
 
@@ -14,6 +88,7 @@
 1. **ESP32 queimou** - Fio do sensor (5V) e fio do MOSFET (3.3V) na **mesma linha** da protoboard
 2. **Placa esquentou** - Curto entre linhas de alimentação
 3. **Válvula não acionou** - Polaridade errada do diodo flyback
+4. **Válvula acionou sozinha** - Fio conectado no D6 (TX Serial = HIGH idle)
 
 ### Causa Raiz:
 ```
@@ -26,27 +101,114 @@ Resultado: Corrente excessiva → GPIO queimou
 
 ---
 
-## 📋 LISTA DE MATERIAIS
+## 🔌 CONEXÕES RESUMIDAS (MULTI-TAP)
 
-| # | Componente | Especificação | Quantidade |
-|---|------------|---------------|------------|
-| 1 | ESP32 | Seeed XIAO ESP32-S3 | 1 |
-| 2 | MOSFET | IRLZ44N (Logic Level) | 1 |
-| 3 | Válvula Solenóide | 12V DC | 1 |
-| 4 | Sensor de Fluxo | YF-S401 (5V) | 1 |
-| 5 | Conversor DC-DC | LM2596 (ajustado 5V) | 1 |
-| 6 | Diodo | 1N4007 | 1 |
-| 7 | Capacitor Eletrolítico | 2200µF 25V | 1 |
-| 8 | Capacitor Cerâmico | 100nF | 1 |
-| 9 | Resistor | 100Ω 1/4W | 1 |
-| 10 | Resistor | 10KΩ 1/4W | 3 (1 pull-down + 2 divisor) |
-| 11 | Protoboard | 30 linhas (A-J + barramentos) | 1 |
-| 12 | Fonte | 12V 2A DC | 1 |
-| 13 | Jumpers | Diversos | ~10 |
+### 📌 ONDE CONECTAR CADA COMPONENTE
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        RESUMO DE CONEXÕES                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────┐                                                      │
+│  │  TORNEIRA 0      │                                                      │
+│  │  (TAP 0)         │                                                      │
+│  ├──────────────────┤                                                      │
+│  │  VÁLVULA:        │                                                      │
+│  │    Pino D4       │──► Resistor 100Ω ──► Gate MOSFET #1                  │
+│  │    (GPIO5)       │                      ↓                               │
+│  │                  │                   MOSFET Drain ──► Válvula ──► +12V  │
+│  │                  │                   MOSFET Source ──► GND              │
+│  │                  │                   Gate Pull-down 10K ──► GND         │
+│  │                  │                   Diodo flyback entre Drain e +12V   │
+│  ├──────────────────┤                                                      │
+│  │  SENSOR FLUXO:   │                                                      │
+│  │    Pino D3       │◄── Divisor de tensão (2x 10K)                        │
+│  │    (GPIO4)       │         ↑                                            │
+│  │                  │    Fio Amarelo do Sensor YF-S4xx                     │
+│  │                  │    VCC (Vermelho) ──► +5V                            │
+│  │                  │    GND (Preto) ──► GND                               │
+│  └──────────────────┘                                                      │
+│                                                                             │
+│  ┌──────────────────┐                                                      │
+│  │  TORNEIRA 1      │                                                      │
+│  │  (TAP 1)         │                                                      │
+│  ├──────────────────┤                                                      │
+│  │  VÁLVULA:        │                                                      │
+│  │    Pino D5       │──► Resistor 100Ω ──► Gate MOSFET #2                  │
+│  │    (GPIO6)       │                      ↓                               │
+│  │                  │                   MOSFET Drain ──► Válvula ──► +12V  │
+│  │                  │                   MOSFET Source ──► GND              │
+│  │                  │                   Gate Pull-down 10K ──► GND         │
+│  │                  │                   Diodo flyback entre Drain e +12V   │
+│  ├──────────────────┤                                                      │
+│  │  SENSOR FLUXO:   │                                                      │
+│  │    Pino D8       │◄── Divisor de tensão (2x 10K)                        │
+│  │    (GPIO7)       │         ↑                                            │
+│  │                  │    Fio Amarelo do Sensor YF-S4xx                     │
+│  │                  │    VCC (Vermelho) ──► +5V                            │
+│  │                  │    GND (Preto) ──► GND                               │
+│  └──────────────────┘                                                      │
+│                                                                             │
+│  ┌──────────────────┐                                                      │
+│  │  ALIMENTAÇÃO     │                                                      │
+│  ├──────────────────┤                                                      │
+│  │  ESP32 5V        │◄── LM2596 OUT+ (5V regulado)                        │
+│  │  ESP32 GND       │◄── GND Comum (12V e 5V compartilham GND)            │
+│  │  Fonte 12V+      │──► Válvulas (via MOSFET) + LM2596 IN+               │
+│  │  Fonte 12V-      │──► GND Comum                                        │
+│  └──────────────────┘                                                      │
+│                                                                             │
+│  ┌──────────────────┐                                                      │
+│  │  LED STATUS      │                                                      │
+│  ├──────────────────┤                                                      │
+│  │  GPIO21          │    LED amarelo interno da placa (USER_LED)           │
+│  │  (interno)       │    Não precisa conectar nada - já está na placa!     │
+│  └──────────────────┘                                                      │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 🔧 CIRCUITO DO MOSFET (PARA CADA TORNEIRA)
+
+```
+                                    ┌────────────────┐
+    ESP32 GPIO ──► [100Ω] ──────────┤ GATE           │
+                              │     │   IRLZ44N      │
+                             [10K]  │   (MOSFET)     │
+                              │     │                │
+                             GND    │                │
+                                    │ DRAIN ─────────┼───► Válvula ───► +12V
+                                    │                │           │
+                                    │                │        ──┤├── 1N4007
+                                    │                │           │    (Diodo)
+                                    │ SOURCE ────────┤          +12V
+                                    └────────────────┘
+                                          │
+                                         GND
+```
+
+### 🔧 CIRCUITO DO DIVISOR DE TENSÃO (PARA CADA SENSOR)
+
+```
+Sensor YF-S4xx (5V)
+       │
+    [Amarelo] ──────┬──────────────► Para GPIO do ESP32 (D5 ou D8)
+                    │                     │
+                   [10K]                  │
+                    │                     │
+                   ─┴─                   ─┴─
+                   [10K]                Tensão: ~2.5V
+                    │                   (Seguro para ESP32!)
+                   GND
+
+    [Vermelho] ──────► +5V
+    [Preto] ──────► GND
+```
 
 ---
 
-## 🗺️ MAPA DE LIGAÇÕES SEGURO
+## 🗺️ MAPA DE LIGAÇÕES SEGURO (PROTOBOARD)
 
 ### Referência da Protoboard
 
@@ -507,9 +669,14 @@ LINHA 6 (GPIO6/D5):
 
 | Pino | GPIO | Função no Projeto |
 |------|------|-------------------|
-| D4 | GPIO5 | Controle MOSFET (OUTPUT) |
-| D5 | GPIO6 | Sensor de Fluxo (INPUT) |
-| D10 | GPIO21 | LED Status (OUTPUT) |
+| D3 | GPIO4 | Válvula Tap 1 (OUTPUT) |
+| D4 | GPIO5 | Válvula Tap 0 / MOSFET (OUTPUT) |
+| D5 | GPIO6 | Sensor de Fluxo Tap 0 (INPUT) |
+| D6 | GPIO43 | ❌ TX Serial - NÃO USAR! |
+| D7 | GPIO44 | ❌ RX Serial - NÃO USAR! |
+| D8 | GPIO7 | Sensor de Fluxo Tap 1 (INPUT) |
+| D10 | GPIO10 | Pino SPI (MOSI) - disponível |
+| USER_LED | GPIO21 | LED Status interno (OUTPUT) |
 
 ### Tensões de Referência
 
@@ -554,29 +721,94 @@ ASSINATURA: _________________
 
 ## 📎 ANEXOS
 
-### Comandos JSON para Teste
+### Comandos JSON para Teste (MULTI-TAP)
 
 ```json
-// Teste de válvula (2 segundos)
-{"action":"test_valve","duration":2000}
+// ===== TORNEIRA 0 (TAP 0) =====
+
+// Teste de válvula Tap 0 (2 segundos)
+{"action":"test_valve","tapId":0,"duration":2000}
+
+// Teste de sensor de fluxo Tap 0 (5 segundos)
+{"action":"test_flow","tapId":0,"duration":5000}
+
+// Simular dispensação Tap 0
+{"action":"release_drink","orderId":"TEST-001","mlPerUnit":200,"quantity":1,"sizeLabel":"Teste","tapId":0}
+
+// ===== TORNEIRA 1 (TAP 1) =====
+
+// Teste de válvula Tap 1 (2 segundos)
+{"action":"test_valve","tapId":1,"duration":2000}
+
+// Teste de sensor de fluxo Tap 1 (5 segundos)
+{"action":"test_flow","tapId":1,"duration":5000}
+
+// Simular dispensação Tap 1
+{"action":"release_drink","orderId":"TEST-002","mlPerUnit":200,"quantity":1,"sizeLabel":"Teste","tapId":1}
+
+// ===== COMANDOS GERAIS =====
 
 // Ping (verificar conexão)
 {"action":"ping"}
 
-// Simular dispensação
-{"action":"release_drink","orderId":"TEST-001","mlPerUnit":200,"quantity":1,"sizeLabel":"Teste"}
-
-// Status do sistema
+// Status do sistema (mostra ambas torneiras)
 {"action":"status"}
+
+// Status das torneiras (detalhado)
+{"action":"get_taps"}
+
+// Diagnóstico completo de GPIO
+{"action":"diagnose_gpio"}
+
+// Parar todas as torneiras (emergência)
+{"action":"stop"}
 ```
+
+### Medições Esperadas com Multímetro
+
+| Ponto | Idle (sem comando) | Ativo (comando enviado) |
+|-------|-------------------|------------------------|
+| D4 (GPIO5) - Gate Tap 0 | ~0V (pull-down) | ~3.3V |
+| D3 (GPIO4) - Gate Tap 1 | ~0V (pull-down) | ~3.3V |
+| D5 (GPIO6) - Sensor Tap 0 | ~2.5V (divisor) | Pulsos durante fluxo |
+| D8 (GPIO7) - Sensor Tap 1 | ~2.5V (divisor) | Pulsos durante fluxo |
+| D6 (GPIO43) - TX Serial | **~3.3V (HIGH!)** | ❌ NÃO USAR! |
+| D7 (GPIO44) - RX Serial | ~0-3.3V | ❌ NÃO USAR! |
 
 ### Links Úteis
 
 - [Datasheet IRLZ44N](https://www.infineon.com/dgdl/irlz44n.pdf)
-- [Datasheet YF-S401](https://www.seeedstudio.com/blog/2020/05/11/how-to-use-water-flow-sensor-with-arduino/)
+- [Datasheet YF-S401/S402](https://www.seeedstudio.com/blog/2020/05/11/how-to-use-water-flow-sensor-with-arduino/)
 - [Pinout XIAO ESP32-S3](https://wiki.seeedstudio.com/XIAO_ESP32S3_Getting_Started/)
 
 ---
 
-**Documento criado após análise de falhas - Janeiro 2026**
+## 🎯 RESUMO RÁPIDO - ONDE CONECTAR CADA FIO
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     CONEXÕES RÁPIDAS                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│   TORNEIRA 0:                                                   │
+│   ├── Válvula (MOSFET Gate) ──► D4 (GPIO5)                     │
+│   └── Sensor Fluxo (via divisor) ──► D5 (GPIO6)                │
+│                                                                 │
+│   TORNEIRA 1:                                                   │
+│   ├── Válvula (MOSFET Gate) ──► D3 (GPIO4)                     │
+│   └── Sensor Fluxo (via divisor) ──► D8 (GPIO7)                │
+│                                                                 │
+│   NUNCA USAR:                                                   │
+│   ├── D6 (GPIO43) ──► TX Serial (HIGH = 3.3V quando idle!)     │
+│   └── D7 (GPIO44) ──► RX Serial                                │
+│                                                                 │
+│   LED: GPIO21 (interno, não precisa conectar)                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+**Documento atualizado para Multi-Tap - Janeiro 2026**
+**Versão 3.0 - Firmware v4.0.2**
 **Circuito validado e seguro para operação**

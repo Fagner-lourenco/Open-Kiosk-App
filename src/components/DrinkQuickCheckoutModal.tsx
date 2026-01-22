@@ -82,7 +82,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const { gatewayConfig, resolvedConfig, isConfigured, enabledMethods } = usePaymentGateway();
   
   // Hook unificado para comunicação ESP32
-  const { releaseDrink: esp32ReleaseDrink, status: esp32Status } = useESP32();
+  const { releaseDrink: esp32ReleaseDrink, status: esp32Status, selectedTapId } = useESP32();
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
@@ -442,12 +442,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         // Usar o serviço unificado via ESP32Context
         console.log('[DrinkMP] 🍺 Enviando comando de dispensação via ESP32Context...');
         console.log('[DrinkMP] Status ESP32:', esp32Status.connected ? 'Conectado' : 'Desconectado');
+        console.log('[DrinkMP] 🚰 Torneira selecionada:', selectedTapId);
         
         const releaseSuccess = await esp32ReleaseDrink(
           orderNumber,
           selectedSize.ml,
           quantity,
-          selectedSize.label
+          selectedSize.label,
+          selectedTapId // 🆕 Multi-Tap: passar tapId
         );
 
         if (!releaseSuccess) {

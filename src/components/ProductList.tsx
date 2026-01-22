@@ -103,7 +103,6 @@ const ProductList = ({ products, onUpdate, onDelete }: ProductListProps) => {
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold">{t('products.productInventory')}</h2>
           <Badge variant="outline">{t('products.productCount', { filtered: filteredProducts.length, total: products.length })}</Badge>
         </div>
         
