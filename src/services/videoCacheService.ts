@@ -31,6 +31,9 @@ interface DownloadState {
 const downloadStates: Map<string, DownloadState> = new Map();
 const downloadListeners: Map<string, Set<(state: DownloadState) => void>> = new Map();
 
+// 🔧 v4.0.7: Tracking de Object URLs para evitar memory leaks
+const activeObjectURLs: Map<string, string> = new Map(); // videoId -> objectURL
+
 /**
  * Gera ID único para vídeo baseado em URL
  */
@@ -301,7 +304,15 @@ export const downloadVideo = async (
     updateDownloadState(videoId, { isDownloading: false, progress: 100 });
     console.log('[VideoCacheService] Video cached successfully:', videoId, 'size:', videoBlob.size);
 
-    return URL.createObjectURL(videoBlob);
+    // 🔧 v4.0.7: Revogar URL anterior se existir (evita memory leak)
+    const previousUrl = activeObjectURLs.get(videoId);
+    if (previousUrl) {
+      URL.revokeObjectURL(previousUrl);
+    }
+    
+    const objectUrl = URL.createObjectURL(videoBlob);
+    activeObjectURLs.set(videoId, objectUrl);
+    return objectUrl;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[VideoCacheService] Download failed:', error);
@@ -329,7 +340,16 @@ export const getCachedVideoUrl = async (url: string): Promise<string> => {
       const response = await cache.match(url);
       if (response) {
         const blob = await response.blob();
-        return URL.createObjectURL(blob);
+        
+        // 🔧 v4.0.7: Revogar URL anterior se existir (evita memory leak)
+        const previousUrl = activeObjectURLs.get(videoId);
+        if (previousUrl) {
+          URL.revokeObjectURL(previousUrl);
+        }
+        
+        const objectUrl = URL.createObjectURL(blob);
+        activeObjectURLs.set(videoId, objectUrl);
+        return objectUrl;
       }
     }
 
@@ -473,6 +493,33 @@ export const getVideoCacheStats = async (): Promise<{
   };
 };
 
+/**
+ * 🔧 v4.0.7: Revoga um Object URL específico para liberar memória
+ * Chamar quando o vídeo não é mais necessário (ex: componente desmontando)
+ */
+export const revokeVideoObjectURL = (url: string): void => {
+  const videoId = generateVideoId(url);
+  const objectUrl = activeObjectURLs.get(videoId);
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+    activeObjectURLs.delete(videoId);
+    console.log('[VideoCacheService] Object URL revoked:', videoId);
+  }
+};
+
+/**
+ * 🔧 v4.0.7: Revoga todos os Object URLs ativos para liberar memória
+ * Útil ao sair da tela de atração ou resetar o app
+ */
+export const revokeAllVideoObjectURLs = (): void => {
+  activeObjectURLs.forEach((objectUrl, videoId) => {
+    URL.revokeObjectURL(objectUrl);
+    console.log('[VideoCacheService] Object URL revoked:', videoId);
+  });
+  activeObjectURLs.clear();
+  console.log('[VideoCacheService] All Object URLs revoked');
+};
+
 export default {
   download: downloadVideo,
   getCachedUrl: getCachedVideoUrl,
@@ -484,4 +531,6 @@ export default {
   addDownloadListener,
   getDownloadState,
   isAvailable: isCacheAPIAvailable,
+  revokeObjectURL: revokeVideoObjectURL,
+  revokeAllObjectURLs: revokeAllVideoObjectURLs,
 };

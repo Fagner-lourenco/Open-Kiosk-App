@@ -151,4 +151,21 @@ export default defineConfig(({ mode }) => ({
   build: {
     chunkSizeWarningLimit: 1600, // Suprimir aviso para chunks até 1.6MB
   },
+    test: {
+      globals: true,
+      environment: 'jsdom',
+      setupFiles: ['./src/__tests__/real/setup.ts'],
+      coverage: {
+        provider: 'v8',
+        reporter: ['text', 'json', 'html'],
+        exclude: [
+          'node_modules/**',
+          'src/__tests__/**',
+          '**/*.d.ts',
+          '**/*.config.*',
+          '**/mockData/**',
+          'dist/**',
+        ],
+      },
+    },
 }));

@@ -47,6 +47,10 @@ export interface HardwareStatus {
   lastHeartbeat: Date | null;
   updatedAt: Date | null;
   kioskVersion?: string;
+
+  // Contexto (para collectionGroup rules)
+  franchiseId?: string;
+  storeId?: string;
 }
 
 const DEFAULT_STATUS: HardwareStatus = {
@@ -119,6 +123,8 @@ class HardwareStatusService {
       this.currentStatus = { 
         ...this.currentStatus, 
         ...filteredStatus,
+        franchiseId,
+        storeId,
         updatedAt: new Date(),
       };
 

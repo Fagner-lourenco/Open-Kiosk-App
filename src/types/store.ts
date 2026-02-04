@@ -187,9 +187,13 @@ export interface PaymentGatewayConfig {
 export interface InventoryLog {
   id: string;
   productId: string;
+  productTitle?: string;
   type: 'ADD' | 'REMOVE' | 'ADJUST';
   quantity: number;
-  comment: string;
+  previousStock?: number;
+  newStock?: number;
+  userEmail?: string;
+  comment?: string;
   timestamp: Date;
   userId?: string;
 }

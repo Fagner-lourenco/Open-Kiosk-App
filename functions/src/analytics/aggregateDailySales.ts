@@ -11,14 +11,16 @@
  * 
  * Estrutura de saída:
  *   franchises/{franchiseId}/stores/{storeId}/dailyStats/{YYYY-MM-DD}
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
-
-const db = admin.firestore();
+import { db, admin } from '../lib';
 
 interface DailyStats {
+  franchiseId: string;
+  storeId: string;
   date: string;
   totalOrders: number;
   completedOrders: number;
@@ -65,10 +67,11 @@ export const aggregateDailySalesHTTP = functions
       throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
     }
 
-    // Verificar se é superAdmin
-    const userDoc = await db.collection('users').doc(context.auth.uid).get();
-    const userData = userDoc.data();
-    if (!userData?.isSuperAdmin) {
+    // Verificar se é superAdmin (claims ou coleção superadmins)
+    const isSuperAdmin =
+      context.auth.token?.role === 'superadmin' ||
+      (await db.collection('superadmins').doc(context.auth.uid).get()).exists;
+    if (!isSuperAdmin) {
       throw new functions.https.HttpsError('permission-denied', 'Only superAdmins can trigger manual aggregation');
     }
 
@@ -232,6 +235,8 @@ async function aggregateStoreDaily(
   
   // Montar estatísticas
   const stats: DailyStats = {
+    franchiseId,
+    storeId,
     date,
     totalOrders,
     completedOrders,

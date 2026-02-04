@@ -6,23 +6,19 @@
  * Funções administrativas para aplicar custom claims a usuários.
  * 
  * Claims suportados:
- * - role: 'superadmin' | 'admin' | 'owner' | 'manager' | 'operator' | 'technician'
+ * - role: 'superadmin' | 'admin' | 'owner' | 'manager' | 'operator' | 'employee' | 'technician'
  * - franchiseId: ID da franquia (para acesso multi-tenant)
  * - storeId: ID da loja (para acesso específico)
  * - storeAccess: '*' | string[] (lojas permitidas)
  * 
  * @author Open Kiosk Project
  * @version 1.0.0
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
+import { db, admin } from '../lib';
 
 // ============================================================================
 // TIPOS

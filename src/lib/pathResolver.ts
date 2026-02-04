@@ -112,6 +112,7 @@ export type StoreSubcollection =
   | 'sales' 
   | 'settings' 
   | 'dispensers' 
+  | 'inventoryLogs'
   | 'inventory_logs';
 
 /**
@@ -136,10 +137,13 @@ export function storeSubPath(
   storeId: string, 
   subcollection: StoreSubcollection
 ): string {
+  const normalizedSubcollection = subcollection === 'inventory_logs'
+    ? 'inventoryLogs'
+    : subcollection;
   if (isFranchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores/${storeId}/${subcollection}`;
+    return `franchises/${franchiseId}/stores/${storeId}/${normalizedSubcollection}`;
   }
-  return `stores/${storeId}/${subcollection}`;
+  return `stores/${storeId}/${normalizedSubcollection}`;
 }
 
 /**

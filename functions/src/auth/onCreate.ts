@@ -5,17 +5,22 @@
  * 
  * Dispara quando um novo usuário é criado no Firebase Auth.
  * Cria o documento base no Firestore.
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
+import { db, admin, serverTimestamp, setUserClaims } from '../lib';
+import type { UserClaims } from '../lib';
 
-// Inicializa o app apenas se não estiver inicializado
-if (!admin.apps.length) {
-  admin.initializeApp();
+function generateSlug(input: string): string {
+  return input
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
-
-const db = admin.firestore();
 
 export const onUserCreated = functions.auth.user().onCreate(async (user) => {
   const { uid, email, displayName, photoURL } = user;
@@ -28,12 +33,13 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     if (superAdminDoc.exists) {
       functions.logger.info(`Usuário ${email} é super admin pré-cadastrado`);
       
-      // Define claims de superadmin
-      await admin.auth().setCustomUserClaims(uid, {
+      // 🔧 v4.0.7: Usando helper centralizado
+      const claims: UserClaims = {
         role: 'superadmin',
         franchiseId: null,
         storeId: null,
-      });
+      };
+      await setUserClaims(uid, claims);
       
       // Cria documento do usuário
       await db.collection('users').doc(uid).set({
@@ -43,8 +49,9 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
         role: 'superadmin',
         franchiseId: null,
         storeId: null,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+        isActive: true,
+        createdAt: serverTimestamp(),
+        lastLoginAt: serverTimestamp(),
         status: 'active',
       });
       
@@ -67,19 +74,30 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     }
     
     // Novo usuário sem convite - cria como owner de nova franquia
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = serverTimestamp();
+    const trialEndsAt = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 dias trial
+    );
     
     // Cria a franquia
     const franchiseRef = db.collection('franchises').doc();
+    const baseSlug = generateSlug(displayName || email || 'franquia');
+    const slug = baseSlug ? `${baseSlug}-${franchiseRef.id.slice(0, 6)}` : franchiseRef.id;
     await franchiseRef.set({
       name: `Franquia de ${displayName || email}`,
+      slug,
       ownerId: uid,
       createdAt: now,
+      updatedAt: now,
       status: 'active',
       plan: 'trial',
-      planExpiresAt: admin.firestore.Timestamp.fromDate(
-        new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 dias trial
-      ),
+      planStatus: 'trial',
+      billingStatus: 'trial',
+      planExpiresAt: trialEndsAt,
+      trialEndsAt,
+      maxStores: 1,
+      maxUsersPerStore: 5,
+      features: ['basic'],
     });
     
     // Cria o documento do usuário
@@ -90,13 +108,14 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       role: 'owner',
       franchiseId: franchiseRef.id,
       storeId: null, // Owner tem acesso a todas as lojas
+      isActive: true,
       createdAt: now,
       lastLoginAt: now,
       status: 'active',
     });
     
-    // Define custom claims
-    await admin.auth().setCustomUserClaims(uid, {
+    // 🔧 v4.0.7: Usando helper centralizado
+    await setUserClaims(uid, {
       role: 'owner',
       franchiseId: franchiseRef.id,
       storeId: null,

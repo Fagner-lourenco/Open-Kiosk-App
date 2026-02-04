@@ -4,25 +4,14 @@
  * ============================================================================
  * 
  * HTTP endpoint para receber webhooks do Stripe.
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
-
-// Inicializa Stripe (em produção, usar functions.config().stripe.secret_key)
-const stripeSecretKey = functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY || '';
-const webhookSecret = functions.config().stripe?.webhook_secret || process.env.STRIPE_WEBHOOK_SECRET || '';
-
-const stripe = new Stripe(stripeSecretKey, {
-  apiVersion: '2023-10-16',
-});
+import { db, admin, serverTimestamp } from '../lib';
+import { verifyWebhookSignature, getPlanFromPriceId } from '../lib/stripe';
 
 export const stripeWebhook = functions.https.onRequest(async (req, res) => {
   if (req.method !== 'POST') {
@@ -40,11 +29,8 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
   let event: Stripe.Event;
   
   try {
-    event = stripe.webhooks.constructEvent(
-      req.rawBody,
-      sig,
-      webhookSecret
-    );
+    // 🔧 v4.0.7: Usando helper centralizado
+    event = verifyWebhookSignature(req.rawBody, sig as string);
   } catch (err) {
     functions.logger.error('Webhook signature verification failed:', err);
     res.status(400).send(`Webhook Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -97,13 +83,14 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
   
-  const now = admin.firestore.FieldValue.serverTimestamp();
+const now = serverTimestamp();
   
   await db.collection('franchises').doc(franchiseId).update({
     stripeCustomerId: session.customer as string,
     stripeSubscriptionId: session.subscription as string,
     plan,
     planStatus: 'active',
+    billingStatus: 'active',
     updatedAt: now,
   });
   
@@ -132,7 +119,7 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
   }
   
   const franchiseDoc = franchiseQuery.docs[0];
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = serverTimestamp();
   
   // Determina o plano pela price
   const priceId = subscription.items.data[0]?.price.id;
@@ -154,7 +141,11 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
     stripeSubscriptionId: subscription.id,
     plan,
     planStatus: statusMap[subscription.status] || subscription.status,
+    billingStatus: statusMap[subscription.status] || subscription.status,
     planExpiresAt: subscription.current_period_end 
+      ? admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000)
+      : null,
+    trialEndsAt: subscription.current_period_end 
       ? admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000)
       : null,
     updatedAt: now,
@@ -175,11 +166,12 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   }
   
   const franchiseDoc = franchiseQuery.docs[0];
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = serverTimestamp();
   
   await franchiseDoc.ref.update({
     plan: 'free',
     planStatus: 'canceled',
+    billingStatus: 'canceled',
     stripeSubscriptionId: null,
     updatedAt: now,
   });
@@ -206,7 +198,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   if (franchiseQuery.empty) return;
   
   const franchiseDoc = franchiseQuery.docs[0];
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = serverTimestamp();
   
   // Registra pagamento
   await franchiseDoc.ref.collection('billingEvents').add({
@@ -220,6 +212,7 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   // Atualiza status se necessário
   await franchiseDoc.ref.update({
     planStatus: 'active',
+    billingStatus: 'active',
     lastPaymentAt: now,
     updatedAt: now,
   });
@@ -237,7 +230,7 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   if (franchiseQuery.empty) return;
   
   const franchiseDoc = franchiseQuery.docs[0];
-  const now = admin.firestore.FieldValue.serverTimestamp();
+  const now = serverTimestamp();
   
   // Registra falha
   await franchiseDoc.ref.collection('billingEvents').add({
@@ -251,23 +244,9 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   // Atualiza status
   await franchiseDoc.ref.update({
     planStatus: 'past_due',
+    billingStatus: 'past_due',
     updatedAt: now,
   });
   
   functions.logger.warn(`Pagamento falhou para franquia ${franchiseDoc.id}`);
-}
-
-function getPlanFromPriceId(priceId: string): string {
-  // Mapear IDs de preço do Stripe para planos
-  // Em produção, buscar de configuração ou do produto no Stripe
-  const priceMap: Record<string, string> = {
-    'price_starter_monthly': 'starter',
-    'price_starter_yearly': 'starter',
-    'price_pro_monthly': 'pro',
-    'price_pro_yearly': 'pro',
-    'price_enterprise_monthly': 'enterprise',
-    'price_enterprise_yearly': 'enterprise',
-  };
-  
-  return priceMap[priceId] || 'starter';
 }

@@ -15,8 +15,8 @@ import {
 } from "@/components/ui/dialog";
 
 interface AdminProductsProps {
-  onUpdate: (id: string, updates: Partial<Product>) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  onUpdate: (product: Product) => void;
+  onDelete: (productId: string) => void;
   onAdd: (product: Omit<Product, 'id'>) => Promise<string>;
 }
 

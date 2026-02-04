@@ -22,7 +22,7 @@ import {
   STORES, 
   SyncQueueItem 
 } from './cacheService';
-import { getFirebaseDb, getCurrentStoreId } from './firebase';
+import { getFirebaseDb, getCurrentStoreId, getStoreDoc } from './firebase';
 import { doc, setDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 
 // Configurações de sync
@@ -130,7 +130,8 @@ const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
     
     let docRef;
     if (storeId) {
-      docRef = doc(db, 'stores', storeId, item.collection, item.docId);
+      // Usa resolver centralizado para suportar franchise mode e legado
+      docRef = getStoreDoc(storeId, item.collection, item.docId);
     } else {
       docRef = doc(db, item.collection, item.docId);
     }

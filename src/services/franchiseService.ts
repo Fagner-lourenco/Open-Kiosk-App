@@ -300,6 +300,7 @@ class FranchiseService {
 
       // Cria documento da franquia
       const franchiseRef = doc(collection(db(), franchisesPath()));
+      const trialEndsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000); // 14 dias
       const franchiseData = {
         name: data.name,
         slug,
@@ -309,8 +310,10 @@ class FranchiseService {
         plan: 'starter',
         maxStores: 1,
         maxUsersPerStore: 5,
-        billingStatus: 'trial',
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 dias
+        billingStatus: 'trial', // legado
+        planStatus: 'trial',
+        trialEndsAt,
+        planExpiresAt: Timestamp.fromDate(trialEndsAt),
         features: ['basic'],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -346,8 +349,10 @@ class FranchiseService {
         plan: 'starter',
         maxStores: 1,
         maxUsersPerStore: 5,
-        billingStatus: 'trial',
-        trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+        billingStatus: 'trial', // legado
+        planStatus: 'trial',
+        trialEndsAt,
+        planExpiresAt: trialEndsAt,
         features: ['basic'],
         createdAt: new Date(),
         updatedAt: new Date(),

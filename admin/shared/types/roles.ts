@@ -19,8 +19,9 @@
  * 2. admin - Administrador (quase tudo, exceto billing)
  * 3. manager - Gerente de loja (gestão operacional)
  * 4. operator - Operador de caixa/PDV
- * 5. technician - Técnico de hardware/ESP32
- * 6. viewer - Apenas visualização (relatórios)
+ * 5. employee - Funcionário (operação básica/PDV)
+ * 6. technician - Técnico de hardware/ESP32
+ * 7. viewer - Apenas visualização (relatórios)
  */
 export type UserRole = 
   | 'superadmin'
@@ -28,6 +29,7 @@ export type UserRole =
   | 'admin' 
   | 'manager' 
   | 'operator' 
+  | 'employee'
   | 'technician'
   | 'viewer';
 
@@ -41,6 +43,7 @@ export const ROLE_HIERARCHY: Record<UserRole, number> = {
   admin: 80,
   manager: 60,
   operator: 40,
+  employee: 40,
   technician: 30,
   viewer: 10,
 };
@@ -54,6 +57,7 @@ export const ROLE_LABELS: Record<UserRole, { pt: string; en: string }> = {
   admin: { pt: 'Administrador', en: 'Administrator' },
   manager: { pt: 'Gerente', en: 'Manager' },
   operator: { pt: 'Operador', en: 'Operator' },
+  employee: { pt: 'Funcionário', en: 'Employee' },
   technician: { pt: 'Técnico', en: 'Technician' },
   viewer: { pt: 'Visualizador', en: 'Viewer' },
 };
@@ -81,6 +85,10 @@ export const ROLE_DESCRIPTIONS: Record<UserRole, { pt: string; en: string }> = {
   operator: { 
     pt: 'Operação do PDV e processamento de vendas',
     en: 'POS operation and sales processing'
+  },
+  employee: { 
+    pt: 'Operação básica do PDV e atendimento',
+    en: 'Basic POS operation and attendance'
   },
   technician: { 
     pt: 'Configuração de hardware e dispensadores',
@@ -115,6 +123,7 @@ export const ALL_ROLES: UserRole[] = [
   'admin', 
   'manager',
   'operator',
+  'employee',
   'technician',
   'viewer',
 ];
@@ -128,6 +137,7 @@ export const SUPERADMIN_ASSIGNABLE_ROLES: UserRole[] = [
   'admin',
   'manager', 
   'operator',
+  'employee',
   'technician',
   'viewer',
 ];
@@ -139,6 +149,7 @@ export const OWNER_ASSIGNABLE_ROLES: UserRole[] = [
   'admin',
   'manager', 
   'operator',
+  'employee',
   'technician',
   'viewer',
 ];
@@ -149,6 +160,7 @@ export const OWNER_ASSIGNABLE_ROLES: UserRole[] = [
 export const ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
   'manager',
   'operator',
+  'employee',
   'technician',
   'viewer',
 ];
@@ -158,6 +170,7 @@ export const ADMIN_ASSIGNABLE_ROLES: UserRole[] = [
  */
 export const MANAGER_ASSIGNABLE_ROLES: UserRole[] = [
   'operator',
+  'employee',
   'viewer',
 ];
 

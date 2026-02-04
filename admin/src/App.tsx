@@ -223,6 +223,7 @@ export default function App() {
             }
           />
           <Route path="/invite" element={<InvitePage />} />
+          <Route path="/invite/:token" element={<InvitePage />} />
         </Route>
 
         {/* Rotas Protegidas */}

@@ -18,8 +18,16 @@ export interface User {
   phone?: string;
   defaultFranchiseId?: string;
   defaultStoreId?: string;
+  role?: UserRole;
+  franchiseId?: string | null;
+  storeId?: string | null;
+  storeAccess?: string[] | '*';
+  status?: string;
+  invitedBy?: string;
   createdAt: Timestamp | Date;
   lastLoginAt?: Timestamp | Date;
+  updatedAt?: Timestamp | Date;
+  claimsSyncedAt?: Timestamp | Date;
   isActive: boolean;
 }
 

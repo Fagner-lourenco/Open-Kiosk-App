@@ -342,3 +342,6 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
+
+// Alias para manter compatibilidade com componentes que importam AuthProvider
+export const AuthProvider = AuthContextProvider;

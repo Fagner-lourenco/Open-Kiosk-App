@@ -169,6 +169,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'stores:read',
     'franchise:read',
   ],
+
+  employee: [
+    // Employee: mesmas permissões do operator (compatibilidade com Admin)
+    'products:read',
+    'sales:read', 'sales:create',
+    'inventory:read',
+    'esp32:read', 'esp32:connect', 'esp32:dispense',
+    'dispensers:read',
+    'stores:read',
+    'franchise:read',
+  ],
   
   technician: [
     // Technician: foco em hardware e dispensers

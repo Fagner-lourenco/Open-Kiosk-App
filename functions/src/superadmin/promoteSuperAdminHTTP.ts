@@ -3,32 +3,76 @@
  * HTTP Endpoint temporário para promover Super Admin
  * ============================================================================
  * 
- * Este endpoint é temporário e deve ser removido após uso.
- * Acesse: https://us-central1-open-kiosk-22b2b.cloudfunctions.net/promoteSuperAdminHTTP?email=SEU_EMAIL&secret=open-kiosk-2024
+ * 🔧 v4.0.7: Correções de segurança aplicadas:
+ * - Secret movido para Firebase Functions Config (não hardcoded)
+ * - Secret enviado via POST body (não query string)
+ * - Endpoint desabilitado por padrão
+ * 
+ * Para habilitar:
+ * 1. firebase functions:config:set superadmin.secret="SUA_SENHA_SECRETA"
+ * 2. firebase functions:config:set superadmin.enabled="true"
+ * 3. firebase deploy --only functions:promoteSuperAdminHTTP
+ * 
+ * Uso:
+ * curl -X POST https://us-central1-open-kiosk-22b2b.cloudfunctions.net/promoteSuperAdminHTTP \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"email":"SEU_EMAIL","secret":"SUA_SENHA"}'
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
+import { db, auth, serverTimestamp } from '../lib';
 
-// Inicializa o app apenas se não estiver inicializado
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
+// 🔧 v4.0.7: Secret agora vem do Firebase Functions Config
+const getSecret = (): string | null => {
+  try {
+    return functions.config().superadmin?.secret || null;
+  } catch {
+    return null;
+  }
+};
 
-const db = admin.firestore();
-
-// Chave secreta temporária para proteção
-const TEMP_SECRET = 'open-kiosk-superadmin-2024';
+const isEnabled = (): boolean => {
+  try {
+    return functions.config().superadmin?.enabled === 'true';
+  } catch {
+    return false;
+  }
+};
 
 export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type');
   
-  const email = req.query.email as string;
-  const secret = req.query.secret as string;
+  // Handle preflight
+  if (req.method === 'OPTIONS') {
+    res.status(204).send('');
+    return;
+  }
   
-  // Validação básica
-  if (secret !== TEMP_SECRET) {
+  // 🔧 v4.0.7: Verificar se endpoint está habilitado
+  if (!isEnabled()) {
+    res.status(403).send('❌ Endpoint desabilitado. Configure superadmin.enabled=true');
+    return;
+  }
+  
+  // 🔧 v4.0.7: Apenas POST (secret no body, não na query string)
+  if (req.method !== 'POST') {
+    res.status(405).send('❌ Método não permitido. Use POST com body JSON.');
+    return;
+  }
+  
+  const { email, secret } = req.body || {};
+  const configSecret = getSecret();
+  
+  // Validação do secret
+  if (!configSecret) {
+    res.status(500).send('❌ Secret não configurado. Execute: firebase functions:config:set superadmin.secret="..."');
+    return;
+  }
+  
+  if (secret !== configSecret) {
     res.status(403).send('❌ Acesso negado: secret inválido');
     return;
   }
@@ -40,13 +84,13 @@ export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) 
   
   try {
     // Buscar usuário pelo email
-    const userRecord = await admin.auth().getUserByEmail(email);
+    const userRecord = await auth.getUserByEmail(email);
     const uid = userRecord.uid;
     
     functions.logger.info(`Promovendo ${email} (${uid}) a super admin via HTTP`);
     
     // Atualizar custom claims
-    await admin.auth().setCustomUserClaims(uid, {
+    await auth.setCustomUserClaims(uid, {
       role: 'superadmin',
       franchiseId: null,
       storeId: null,
@@ -57,7 +101,7 @@ export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) 
       email,
       displayName: userRecord.displayName || null,
       photoURL: userRecord.photoURL || null,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: serverTimestamp(),
       createdBy: 'http-endpoint',
       status: 'active',
     });
@@ -71,7 +115,7 @@ export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) 
         role: 'superadmin',
         franchiseId: null,
         storeId: null,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
     } else {
       await userDoc.set({
@@ -81,7 +125,7 @@ export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) 
         role: 'superadmin',
         franchiseId: null,
         storeId: null,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: serverTimestamp(),
         status: 'active',
       });
     }

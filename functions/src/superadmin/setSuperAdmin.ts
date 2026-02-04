@@ -9,14 +9,7 @@
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
-
-// Inicializa o app apenas se não estiver inicializado
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
+import { db, auth, serverTimestamp } from '../lib';
 
 interface SetSuperAdminData {
   email: string;
@@ -63,52 +56,65 @@ export const setSuperAdmin = functions.https.onCall(
 
     try {
       // Buscar usuário pelo email
-      const userRecord = await admin.auth().getUserByEmail(email);
+      const userRecord = await auth.getUserByEmail(email);
       const uid = userRecord.uid;
 
       functions.logger.info(`Promovendo ${email} (${uid}) a super admin`);
 
-      // Atualizar custom claims
-      await admin.auth().setCustomUserClaims(uid, {
+      // 🔧 v4.0.7: Usar transaction para garantir atomicidade
+      await db.runTransaction(async (transaction) => {
+        const userDoc = db.collection('users').doc(uid);
+        const superadminDoc = db.collection('superadmins').doc(uid);
+        const userSnapshot = await transaction.get(userDoc);
+        
+        // Verificar se já é superadmin para evitar duplicação
+        const superadminSnapshot = await transaction.get(superadminDoc);
+        if (superadminSnapshot.exists && superadminSnapshot.data()?.status === 'active') {
+          throw new functions.https.HttpsError(
+            'already-exists',
+            `${email} já é super admin`
+          );
+        }
+
+        // Criar/atualizar documento na coleção superadmins
+        transaction.set(superadminDoc, {
+          email,
+          displayName: userRecord.displayName || null,
+          photoURL: userRecord.photoURL || null,
+          createdAt: serverTimestamp(),
+          createdBy: context.auth!.uid,
+          status: 'active',
+        });
+
+        // Atualizar documento do usuário (se existir)
+        if (userSnapshot.exists) {
+          transaction.update(userDoc, {
+            role: 'superadmin',
+            franchiseId: null,
+            storeId: null,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          // Criar documento do usuário se não existir
+          transaction.set(userDoc, {
+            email,
+            displayName: userRecord.displayName || null,
+            photoURL: userRecord.photoURL || null,
+            role: 'superadmin',
+            franchiseId: null,
+            storeId: null,
+            createdAt: serverTimestamp(),
+            status: 'active',
+          });
+        }
+      });
+
+      // Atualizar custom claims (fora da transaction - Auth não suporta transactions)
+      await auth.setCustomUserClaims(uid, {
         role: 'superadmin',
         franchiseId: null,
         storeId: null,
       });
-
-      // Criar/atualizar documento na coleção superadmins
-      await db.collection('superadmins').doc(uid).set({
-        email,
-        displayName: userRecord.displayName || null,
-        photoURL: userRecord.photoURL || null,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        createdBy: context.auth.uid,
-        status: 'active',
-      });
-
-      // Atualizar documento do usuário (se existir)
-      const userDoc = db.collection('users').doc(uid);
-      const userSnapshot = await userDoc.get();
-      
-      if (userSnapshot.exists) {
-        await userDoc.update({
-          role: 'superadmin',
-          franchiseId: null,
-          storeId: null,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      } else {
-        // Criar documento do usuário se não existir
-        await userDoc.set({
-          email,
-          displayName: userRecord.displayName || null,
-          photoURL: userRecord.photoURL || null,
-          role: 'superadmin',
-          franchiseId: null,
-          storeId: null,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          status: 'active',
-        });
-      }
 
       functions.logger.info(`${email} promovido a super admin com sucesso`);
 
@@ -179,7 +185,7 @@ export const removeSuperAdmin = functions.https.onCall(
 
     try {
       // Remover custom claims
-      await admin.auth().setCustomUserClaims(uid, {
+      await auth.setCustomUserClaims(uid, {
         role: null,
         franchiseId: null,
         storeId: null,
@@ -191,7 +197,7 @@ export const removeSuperAdmin = functions.https.onCall(
       // Atualizar documento do usuário
       await db.collection('users').doc(uid).update({
         role: null,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
 
       functions.logger.info(`Super admin ${uid} removido com sucesso`);

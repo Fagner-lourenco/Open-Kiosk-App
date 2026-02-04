@@ -898,11 +898,14 @@
     "entering": "Entering store..."
   },
   "roles": {
+    "superadmin": "Super Admin",
     "owner": "Owner",
     "admin": "Administrator",
     "manager": "Manager",
     "operator": "Operator",
-    "technician": "Technician"
+    "employee": "Employee",
+    "technician": "Technician",
+    "viewer": "Viewer"
   },
   "invite": {
     "noToken": "Invite token not found",

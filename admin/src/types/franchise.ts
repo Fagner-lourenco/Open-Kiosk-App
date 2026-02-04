@@ -43,12 +43,12 @@ export {
 /**
  * Planos disponíveis para franquias
  */
-export type FranchisePlan = 'starter' | 'growth' | 'enterprise';
+export type FranchisePlan = 'free' | 'trial' | 'starter' | 'pro' | 'enterprise';
 
 /**
  * Status de billing da franquia
  */
-export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'trial';
+export type BillingStatus = 'active' | 'past_due' | 'unpaid' | 'canceled' | 'trial' | 'incomplete' | 'expired' | 'paused';
 
 // Import types for use in interfaces
 import type { UserRole, Permission } from '@shared/types';
@@ -62,17 +62,25 @@ export interface Franchise {
   slug: string;
   ownerId: string;
   ownerEmail?: string;
+  status?: string;
   logoUrl?: string;
   primaryColor?: string;
   plan: FranchisePlan;
   maxStores: number;
   maxUsersPerStore: number;
-  billingStatus: BillingStatus;
+  /** Legado */
+  billingStatus?: BillingStatus;
+  /** Status atual do plano (billing) */
+  planStatus?: BillingStatus;
+  /** Legado */
   trialEndsAt?: Timestamp | Date;
+  /** Atual */
+  planExpiresAt?: Timestamp | Date;
   stripeCustomerId?: string;
   features: string[];
   createdAt: Timestamp | Date;
   updatedAt: Timestamp | Date;
+  updatedBy?: string;
 }
 
 /**

@@ -21,6 +21,7 @@
  * - admin: Administrador (quase tudo, exceto billing)
  * - manager: Gerente de loja (apenas lojas atribuídas)
  * - operator: Operador de caixa (apenas PDV)
+ * - employee: Funcionário (operação básica/PDV)
  * - technician: Técnico (apenas hardware/ESP32)
  * 
  * @author Open Kiosk Project
@@ -311,6 +312,25 @@ service cloud.firestore {
           
           // Pedidos nunca podem ser deletados (audit trail)
           allow delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // INVENTORY LOGS (Movimentações de estoque)
+        // ────────────────────────────────────────────────────────────────────
+        
+        match /inventoryLogs/{logId} {
+          // Owner da franquia ou membros com acesso podem ler
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Owner/admin/manager podem registrar logs de inventário
+          allow create: if isSuperAdmin() || 
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+          
+          // Logs são imutáveis
+          allow update, delete: if false;
         }
         
         // ────────────────────────────────────────────────────────────────────
@@ -627,8 +647,8 @@ service cloud.firestore {
     
     match /audit_logs/{logId} {
       // Apenas owner e admin podem ler logs
-      allow read: if isAuthenticated() && 
-                   isOwnerOrAdmin(resource.data.franchiseId);
+      allow read: if isSuperAdmin() || 
+                   (isAuthenticated() && isOwnerOrAdmin(resource.data.franchiseId));
       
       // Qualquer usuário autenticado pode criar logs
       allow create: if isAuthenticated();

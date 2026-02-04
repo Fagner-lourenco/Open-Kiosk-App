@@ -5,16 +5,12 @@
  * 
  * Callable function para atualizar claims do usuário.
  * Apenas admins ou owners podem chamar esta função.
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
+import { db, admin, requireAuth, requireOwnerOrAdmin } from '../lib';
 
 interface SetClaimsData {
   userId: string;
@@ -24,18 +20,14 @@ interface SetClaimsData {
 }
 
 export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData, context) => {
-  // Verifica autenticação
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-      'unauthenticated',
-      'Usuário não autenticado'
-    );
-  }
+  // 🔧 v4.0.7: Usando helpers centralizados
+  requireAuth(context);
+  requireOwnerOrAdmin(context);
   
-  const callerUid = context.auth.uid;
-  const callerClaims = context.auth.token;
+  const callerUid = context.auth!.uid;
+  const callerClaims = context.auth!.token;
   
-  // Verifica se o caller é owner ou admin
+  // Hierarquia já verificada acima, mas mantemos check adicional
   if (!['owner', 'admin'].includes(callerClaims.role as string)) {
     throw new functions.https.HttpsError(
       'permission-denied',
@@ -79,6 +71,7 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
       admin: 80,
       manager: 60,
       operator: 40,
+      employee: 40,
       technician: 40,
       viewer: 20,
     };

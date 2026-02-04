@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { 
+import {
   collection, 
   doc, 
   updateDoc, 
@@ -24,6 +24,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { generateInvitationToken } from '@/lib/invitationToken';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -92,6 +93,7 @@ interface FranchiseMember {
 
 interface Invitation {
   id: string;
+  token?: string;
   email: string;
   role: string;
   status: 'pending' | 'accepted' | 'expired' | 'revoked';
@@ -131,7 +133,7 @@ export function TeamPage() {
       if (!currentFranchise) return [];
       
       const membersRef = collection(db, 'franchises', currentFranchise.id, 'members');
-      const snapshot = await getDocs(query(membersRef, orderBy('addedAt', 'desc')));
+      const snapshot = await getDocs(query(membersRef, orderBy('joinedAt', 'desc')));
       
       const fetchedMembers: FranchiseMember[] = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -183,6 +185,7 @@ export function TeamPage() {
         const data = doc.data();
         return {
           id: doc.id,
+          token: data.token,
           email: data.email,
           role: data.role,
           status: data.status,
@@ -251,6 +254,7 @@ export function TeamPage() {
         status: 'pending',
         invitedBy: user.uid,
         invitedByName: user.displayName || user.email,
+        token: generateInvitationToken(),
         createdAt: serverTimestamp(),
         expiresAt: Timestamp.fromDate(expiresAt),
       };
@@ -302,10 +306,12 @@ export function TeamPage() {
     createInviteMutation.mutate({ email: inviteEmail, role: inviteRole });
   };
 
-  const copyInviteLink = (inviteId: string) => {
-    const link = `${window.location.origin}/invite?id=${inviteId}`;
+  const copyInviteLink = (invite: Invitation) => {
+    const link = invite.token
+      ? `${window.location.origin}/invite/${invite.token}`
+      : `${window.location.origin}/invite?id=${invite.id}`;
     navigator.clipboard.writeText(link);
-    setCopiedLink(inviteId);
+    setCopiedLink(invite.id);
     setTimeout(() => setCopiedLink(null), 2000);
   };
 
@@ -698,7 +704,7 @@ export function TeamPage() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => copyInviteLink(invite.id)}
+                              onClick={() => copyInviteLink(invite)}
                               title="Copiar link"
                             >
                               {copiedLink === invite.id ? (

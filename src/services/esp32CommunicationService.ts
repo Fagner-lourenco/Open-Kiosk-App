@@ -37,8 +37,7 @@ const LAST_CONNECTION_KEY = 'esp32_last_connection';
 const DEFAULT_BAUDRATE = 115200;
 
 // Configuração de heartbeat (melhores práticas)
-// 🔧 CORREÇÃO: Aumentado para 30s para reduzir tráfego BLE e evitar poluição de logs
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 30000;  // 30 segundos (antes: 15s)
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;  // 15 segundos
 const HEARTBEAT_FAIL_THRESHOLD = 3;           // 3 falhas = desconexão
 
 // Interface para Web Serial API (compatibilidade)
@@ -112,6 +111,81 @@ class ESP32CommunicationService {
   // 🆕 Buffer para reconstruir mensagens BLE fragmentadas
   private bleReceiveBuffer: string = '';
   private usbReceiveBuffer: string = '';
+
+  // ============================================
+  // UTILITÁRIOS
+  // ============================================
+
+  /**
+   * 🔧 v4.0.7: Extrai JSONs completos de um buffer (suporta aninhamento + strings)
+   * A regex simples /\{[^{}]*\}/g não funciona com JSON aninhado.
+   * Esta função usa contagem de chaves para encontrar objetos completos,
+   * ignorando {} que estão dentro de strings JSON.
+   * 
+   * FIX: Adicionado tracking de estado de string e escape para evitar
+   * contar {} dentro de valores como {"msg":"Motor {tap0} falhou"}
+   */
+  private extractCompleteJsons(buffer: string): { jsons: string[]; remainder: string } {
+    const jsons: string[] = [];
+    let depth = 0;
+    let start = -1;
+    let lastEnd = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < buffer.length; i++) {
+      const char = buffer[i];
+      
+      // Tratamento de escape: se o char anterior era \, ignorar este char
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      
+      // Se estamos dentro de uma string e encontramos \, o próximo char é escaped
+      if (char === '\\' && inString) {
+        escape = true;
+        continue;
+      }
+      
+      // Toggle de estado de string ao encontrar " (não escaped)
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      
+      // Se estamos dentro de uma string, ignorar {} 
+      if (inString) continue;
+      
+      // Contagem de profundidade de objetos JSON
+      if (char === '{') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0 && start !== -1) {
+          const jsonStr = buffer.substring(start, i + 1);
+          // Verificar se é JSON válido antes de adicionar
+          try {
+            JSON.parse(jsonStr);
+            jsons.push(jsonStr);
+            lastEnd = i + 1;
+          } catch {
+            // Não é JSON válido, ignorar este bloco
+            console.warn('[BLE] Bloco JSON inválido ignorado:', jsonStr.substring(0, 30));
+          }
+          start = -1;
+        }
+      }
+    }
+
+    // Remainder é tudo após o último JSON completo encontrado
+    const remainder = buffer.substring(lastEnd);
+    
+    return { jsons, remainder };
+  }
 
   // ============================================
   // DETECÇÃO DE PLATAFORMA
@@ -225,12 +299,7 @@ class ESP32CommunicationService {
     intervalMs: number = DEFAULT_HEARTBEAT_INTERVAL_MS,
     onFail?: HeartbeatFailCallback
   ): void {
-    // 🔧 CORREÇÃO: Evitar múltiplos heartbeats simultâneos
-    if (this.heartbeatInterval) {
-      console.log('[Heartbeat] Já ativo, ignorando chamada duplicada');
-      return;
-    }
-    
+    this.stopHeartbeat(); // Limpar intervalo anterior
     this.heartbeatFailCount = 0;
     this.onHeartbeatFail = onFail || null;
 
@@ -687,8 +756,9 @@ class ESP32CommunicationService {
       // 🆕 CORREÇÃO: Solicitar MTU maior para evitar fragmentação de JSON
       // O MTU padrão do BLE é ~23 bytes, mas nossos JSONs podem ter 150+ bytes
       try {
-        if (typeof BleClient.requestMtu === 'function') {
-          const mtu = await BleClient.requestMtu(deviceId, 512);
+        const bleClientAny = BleClient as any;
+        if (typeof bleClientAny.requestMtu === 'function') {
+          const mtu = await bleClientAny.requestMtu(deviceId, 512);
           console.log('[BLE] MTU negociado:', mtu);
         } else {
           console.warn('[BLE] requestMtu não disponível nesta versão do plugin');
@@ -729,24 +799,23 @@ class ESP32CommunicationService {
               }
             }
             
-            // 🔧 CORREÇÃO: Se o buffer ficou muito grande, processar parcialmente
-            // ao invés de descartar silenciosamente
+            // 🔧 CORREÇÃO v4.0.6: Se o buffer ficou muito grande, processar parcialmente
+            // usando parser que suporta JSON aninhado
             if (this.bleReceiveBuffer.length > 4096) {
               console.warn('[BLE] Buffer muito grande (' + this.bleReceiveBuffer.length + '), tentando processar...');
               
-              // Tentar encontrar JSON completo no buffer
-              const jsonMatches = this.bleReceiveBuffer.match(/\{[^{}]*\}/g);
-              if (jsonMatches && jsonMatches.length > 0) {
-                for (const jsonStr of jsonMatches) {
+              // 🔧 v4.0.6: Extrair JSONs completos (suporta aninhamento)
+              const extractedJsons = this.extractCompleteJsons(this.bleReceiveBuffer);
+              
+              if (extractedJsons.jsons.length > 0) {
+                for (const jsonStr of extractedJsons.jsons) {
                   if (this.onBleDataReceived) {
                     console.log('[BLE] JSON extraído do buffer grande:', jsonStr.substring(0, 50));
                     this.onBleDataReceived(jsonStr);
                   }
                 }
-                // Manter apenas o que está após o último JSON processado
-                const lastJson = jsonMatches[jsonMatches.length - 1];
-                const lastIndex = this.bleReceiveBuffer.lastIndexOf(lastJson) + lastJson.length;
-                this.bleReceiveBuffer = this.bleReceiveBuffer.substring(lastIndex);
+                // Manter apenas o resto do buffer após os JSONs extraídos
+                this.bleReceiveBuffer = extractedJsons.remainder;
               } else {
                 // Se não encontrou JSON, manter apenas os últimos 1KB
                 console.warn('[BLE] Nenhum JSON encontrado, truncando buffer para 1KB');
@@ -786,36 +855,13 @@ class ESP32CommunicationService {
 
   /**
    * Envia comando via Bluetooth
-   * 🔧 CORREÇÃO v4.1: Tenta reconectar automaticamente se desconectado
    */
   async sendBluetoothCommand(command: string): Promise<boolean> {
-    // 🔧 FIX: Se não está conectado mas temos deviceId salvo, tentar reconectar
-    if (!this.connectionStatus.connected && this.connectionStatus.type === 'bluetooth') {
-      console.warn('[BLE] Conexão perdida, tentando reconectar...');
-      const lastConnection = this.getLastConnection();
-      if (lastConnection?.deviceId) {
-        try {
-          const reconnected = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
-          if (!reconnected) {
-            console.error('[BLE] Falha ao reconectar');
-            return false;
-          }
-          console.log('[BLE] Reconectado com sucesso!');
-        } catch (e) {
-          console.error('[BLE] Erro ao reconectar:', e);
-          return false;
-        }
-      } else {
-        console.error('[BLE] Não conectado e sem deviceId salvo');
-        return false;
-      }
-    }
-    
     if (
       !this.connectionStatus.connected ||
       this.connectionStatus.type !== 'bluetooth'
     ) {
-      console.error('[BLE] Não conectado (connected:', this.connectionStatus.connected, ', type:', this.connectionStatus.type, ')');
+      console.error('[BLE] Não conectado');
       return false;
     }
 
@@ -830,17 +876,10 @@ class ESP32CommunicationService {
         new DataView(data.buffer)
       );
 
-      console.log('[BLE] Comando enviado:', command.substring(0, 100) + (command.length > 100 ? '...' : ''));
+      console.log('[BLE] Comando enviado:', command);
       return true;
     } catch (error) {
       console.error('[BLE] Erro ao enviar comando:', error);
-      
-      // 🔧 FIX: Se erro de conexão, marcar como desconectado
-      if (error instanceof Error && (error.message.includes('disconnect') || error.message.includes('not connected'))) {
-        this.connectionStatus = { connected: false, type: 'none' };
-        this.notifyConnectionChange();
-      }
-      
       return false;
     }
   }
@@ -1563,63 +1602,19 @@ class ESP32CommunicationService {
    * Envia comando (auto-detecta tipo de conexão)
    * 🆕 CORRIGIDO: Agora formata JSON completo para todos os protocolos
    * 🔧 FIX: Verifica esp32Serial.isConnected() como fallback quando connectionStatus é 'none'
-   * 🔧 FIX v4.1: Tenta reconectar automaticamente para Bluetooth
    */
   async sendCommand(command: string, data?: object): Promise<boolean> {
     // Construir payload JSON completo com action + parâmetros
     const payload = data ? { action: command, ...data } : { action: command };
     const jsonString = JSON.stringify(payload);
     
-    console.log(`[SendCommand] Tipo: ${this.connectionStatus.type}, connected: ${this.connectionStatus.connected}, esp32Serial.isConnected: ${esp32Serial.isConnected()}, Payload: ${jsonString.substring(0, 80)}...`);
+    console.log(`[SendCommand] Tipo: ${this.connectionStatus.type}, esp32Serial.isConnected: ${esp32Serial.isConnected()}, Payload: ${jsonString}`);
     
     // 🔧 FIX: Se connectionStatus é 'none' mas esp32Serial está conectado (conexão feita externamente),
     // usar esp32Serial diretamente. Isso resolve o bug onde botões de UI não enviavam comandos.
     if (this.connectionStatus.type === 'none' && esp32Serial.isConnected()) {
       console.log('[SendCommand] Usando esp32Serial (Web Serial conectado externamente)');
       return esp32Serial.sendRaw(jsonString);
-    }
-    
-    // 🔧 FIX v4.1: Se era bluetooth mas está desconectado, tentar reconectar
-    if (this.connectionStatus.type === 'bluetooth' && !this.connectionStatus.connected) {
-      console.warn('[SendCommand] Bluetooth desconectado, tentando reconectar...');
-      const lastConnection = this.getLastConnection();
-      if (lastConnection?.type === 'bluetooth' && lastConnection.deviceId) {
-        try {
-          const reconnected = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
-          if (reconnected) {
-            console.log('[SendCommand] Reconectado com sucesso via Bluetooth!');
-          } else {
-            console.error('[SendCommand] Falha ao reconectar Bluetooth');
-            return false;
-          }
-        } catch (e) {
-          console.error('[SendCommand] Erro ao reconectar:', e);
-          return false;
-        }
-      } else {
-        console.error('[SendCommand] Sem informações de última conexão Bluetooth');
-        return false;
-      }
-    }
-    
-    // 🔧 FIX v4.1: Se tipo é 'none' mas temos última conexão salva, tentar reconectar
-    if (this.connectionStatus.type === 'none') {
-      const lastConnection = this.getLastConnection();
-      if (lastConnection?.type === 'bluetooth' && lastConnection.deviceId) {
-        console.log('[SendCommand] Tentando reconectar via Bluetooth (última conexão)...');
-        try {
-          const reconnected = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
-          if (reconnected) {
-            console.log('[SendCommand] Reconectado com sucesso!');
-          } else {
-            console.error('[SendCommand] Falha ao reconectar');
-            return false;
-          }
-        } catch (e) {
-          console.error('[SendCommand] Erro ao reconectar:', e);
-          return false;
-        }
-      }
     }
     
     switch (this.connectionStatus.type) {
@@ -1765,24 +1760,9 @@ class ESP32CommunicationService {
     return this.sendCommand('get_settings');
   }
 
-  /**
-   * Iniciar portal WiFi para configuração (BLOQUEANTE no ESP32)
-   */
-  async startWifiPortal(): Promise<boolean> {
-    // 🔧 CORREÇÃO: Usar sendCommand unificado
-    if (this.connectionStatus.type === 'wifi') {
-      console.warn('[ESP32] start_wifi_portal via WiFi irá desconectar o ESP32');
-    }
-    return this.sendCommand('start_wifi_portal');
-  }
-
-  /**
-   * Resetar configurações WiFi do ESP32
-   */
-  async resetWifi(): Promise<boolean> {
-    // 🔧 CORREÇÃO: Usar sendCommand unificado
-    return this.sendCommand('reset_wifi');
-  }
+  // 🔧 v4.0.6: startWifiPortal() e resetWifi() REMOVIDOS
+  // Essas funções foram removidas do firmware v3.0+ (Access Point fixo)
+  // Se precisar dessas funções, use firmware anterior ou reconfigure manualmente
 
   /**
    * Obter status do ESP32

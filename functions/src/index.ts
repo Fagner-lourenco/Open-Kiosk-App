@@ -32,6 +32,7 @@ export { promoteSuperAdminHTTP } from './superadmin/promoteSuperAdminHTTP';
 
 // Analytics functions
 export { aggregateDailySales, aggregateDailySalesHTTP } from './analytics/aggregateDailySales';
+export { getMetricsAdmin } from './analytics/getMetricsAdmin';
 
 // Order aggregation triggers (real-time metrics)
 export { 

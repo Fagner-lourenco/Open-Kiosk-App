@@ -20,6 +20,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { generateInvitationToken } from '@/lib/invitationToken';
 
 export interface FranchiseMember {
   id: string;
@@ -33,6 +34,7 @@ export interface FranchiseMember {
 
 export interface Invitation {
   id: string;
+  token?: string;
   franchiseId: string;
   franchiseName: string;
   storeId?: string;
@@ -233,6 +235,7 @@ export async function getInvitations(franchiseId: string): Promise<Invitation[]>
 
   return snapshot.docs.map((doc) => ({
     id: doc.id,
+    token: doc.data().token,
     ...doc.data(),
     createdAt: doc.data().createdAt?.toDate() || new Date(),
     expiresAt: doc.data().expiresAt?.toDate() || new Date(),
@@ -267,6 +270,7 @@ export async function createInvitation(data: CreateInvitationData): Promise<stri
     ...data,
     email: data.email.toLowerCase(),
     status: 'pending',
+    token: generateInvitationToken(),
     createdAt: serverTimestamp(),
     expiresAt: Timestamp.fromDate(expiresAt),
   };

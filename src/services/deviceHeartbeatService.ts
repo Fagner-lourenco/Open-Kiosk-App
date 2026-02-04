@@ -279,10 +279,11 @@ class DeviceHeartbeatService {
 
   /**
    * Limpa recursos
+   * 🔧 v4.0.7: Agora é async para garantir que markOffline complete antes do app fechar
    */
-  cleanup(): void {
+  async cleanup(): Promise<void> {
     this.stop();
-    this.markOffline();
+    await this.markOffline();
   }
 }
 

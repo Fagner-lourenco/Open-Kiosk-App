@@ -28,10 +28,11 @@
  * 2. admin - Administrador (quase tudo, exceto billing)
  * 3. manager - Gerente de loja (apenas lojas atribuídas)
  * 4. operator - Operador de caixa (apenas PDV)
- * 5. technician - Técnico (apenas hardware/ESP32)
- * 6. viewer - Apenas visualização
+ * 5. employee - Funcionário (operação básica/PDV)
+ * 6. technician - Técnico (apenas hardware/ESP32)
+ * 7. viewer - Apenas visualização
  */
-export type UserRole = 'superadmin' | 'owner' | 'admin' | 'manager' | 'operator' | 'technician' | 'viewer';
+export type UserRole = 'superadmin' | 'owner' | 'admin' | 'manager' | 'operator' | 'employee' | 'technician' | 'viewer';
 
 /**
  * Permissões granulares do sistema
@@ -166,6 +167,16 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'franchise:read',
   ],
   
+  employee: [
+    // Employee: mesmas permissões do operator (compatibilidade com Admin)
+    'products:read',
+    'sales:read', 'sales:create',
+    'esp32:connect', 'esp32:dispense',
+    'dispensers:read',
+    'stores:read',
+    'franchise:read',
+  ],
+  
   technician: [
     // Technician: apenas hardware
     'esp32:connect', 'esp32:configure', 'esp32:dispense',
@@ -203,6 +214,7 @@ export const ROLE_LABELS: Record<UserRole, { pt: string; en: string }> = {
   admin: { pt: 'Administrador', en: 'Administrator' },
   manager: { pt: 'Gerente', en: 'Manager' },
   operator: { pt: 'Operador', en: 'Operator' },
+  employee: { pt: 'Funcionário', en: 'Employee' },
   technician: { pt: 'Técnico', en: 'Technician' },
   viewer: { pt: 'Visualizador', en: 'Viewer' },
 };
@@ -217,7 +229,7 @@ export const ROLE_LABELS: Record<UserRole, { pt: string; en: string }> = {
 export interface User {
   id: string;
   email: string;
-  displayName: string;
+  displayName?: string;
   photoURL?: string;
   phone?: string;
   
@@ -226,13 +238,35 @@ export interface User {
   
   /** Última loja acessada */
   defaultStoreId?: string;
+
+  /** Role atual (pode vir de claims sincronizadas) */
+  role?: UserRole;
+  
+  /** Franquia associada (quando aplicável) */
+  franchiseId?: string | null;
+  
+  /** Loja associada (quando aplicável) */
+  storeId?: string | null;
+  
+  /** Lojas com acesso (claims) */
+  storeAccess?: string[] | '*';
+  
+  /** Status interno (ex: active) */
+  status?: string;
+
+  /** Quem convidou o usuário (quando originado de convite) */
+  invitedBy?: string;
   
   /** Usuário ativo/desativado */
   isActive: boolean;
   
   /** Metadados */
   createdAt: Date;
-  lastLoginAt: Date;
+  lastLoginAt?: Date;
+  updatedAt?: Date;
+  
+  /** Timestamp de sincronização de claims */
+  claimsSyncedAt?: Date;
 }
 
 /**
@@ -260,12 +294,12 @@ export interface AuthenticatedUser extends User {
 /**
  * Planos disponíveis
  */
-export type FranchisePlan = 'starter' | 'growth' | 'enterprise';
+export type FranchisePlan = 'free' | 'trial' | 'starter' | 'pro' | 'enterprise';
 
 /**
  * Status de cobrança
  */
-export type BillingStatus = 'active' | 'past_due' | 'canceled' | 'trial';
+export type BillingStatus = 'active' | 'past_due' | 'unpaid' | 'canceled' | 'trial' | 'incomplete' | 'expired' | 'paused';
 
 /**
  * Dados da franquia (collection: franchises)
@@ -281,6 +315,9 @@ export interface Franchise {
   
   /** ID do owner (ref users) */
   ownerId: string;
+
+  /** Status da franquia (ex: active) */
+  status?: string;
   
   /** Logo (URL) */
   logoUrl?: string;
@@ -295,11 +332,17 @@ export interface Franchise {
   maxStores: number;
   maxUsersPerStore: number;
   
-  /** Status de cobrança */
-  billingStatus: BillingStatus;
+  /** Status de cobrança (legado) */
+  billingStatus?: BillingStatus;
   
-  /** Data de fim do trial */
+  /** Status de plano (padrão atual) */
+  planStatus?: BillingStatus;
+  
+  /** Data de fim do trial (legado) */
   trialEndsAt?: Date;
+  
+  /** Data de fim do plano (padrão atual) */
+  planExpiresAt?: Date;
   
   /** ID do cliente no Stripe */
   stripeCustomerId?: string;
@@ -313,6 +356,7 @@ export interface Franchise {
   /** Metadados */
   createdAt: Date;
   updatedAt: Date;
+  updatedBy?: string;
 }
 
 /**

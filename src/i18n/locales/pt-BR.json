@@ -896,11 +896,14 @@
     "entering": "Entrando na loja..."
   },
   "roles": {
+    "superadmin": "Super Admin",
     "owner": "Proprietário",
     "admin": "Administrador",
     "manager": "Gerente",
     "operator": "Operador",
-    "technician": "Técnico"
+    "employee": "Funcionário",
+    "technician": "Técnico",
+    "viewer": "Visualizador"
   },
   "invite": {
     "noToken": "Token de convite não encontrado",

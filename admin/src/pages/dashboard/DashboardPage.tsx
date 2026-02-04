@@ -66,12 +66,14 @@ export function DashboardPage() {
       const storesData = storesSnapshot.docs.map(doc => doc.data());
       const activeStores = storesData.filter(s => s.isActive !== false).length;
 
-      // Get members count
-      const franchiseDoc = await getDocs(
-        query(collection(db, 'franchises'), where('__name__', '==', currentFranchise.id))
+      // Get members count (subcollection como fonte de verdade)
+      const membersSnapshot = await getDocs(
+        query(
+          collection(db, `franchises/${currentFranchise.id}/members`),
+          where('isActive', '==', true)
+        )
       );
-      const franchiseData = franchiseDoc.docs[0]?.data();
-      const totalUsers = franchiseData?.members?.length || 1;
+      const totalUsers = membersSnapshot.size || 1;
 
       // Get recent orders (mock for now - would come from actual orders collection)
       let totalRevenue = 0;

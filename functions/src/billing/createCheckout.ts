@@ -4,40 +4,14 @@
  * ============================================================================
  * 
  * Callable function para criar sessão de checkout do Stripe.
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
 import Stripe from 'stripe';
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
-
-const stripeSecretKey = functions.config().stripe?.secret_key || process.env.STRIPE_SECRET_KEY || '';
-
-const stripe = new Stripe(stripeSecretKey, {
-  apiVersion: '2023-10-16',
-});
-
-// Mapeamento de planos para Price IDs do Stripe
-// Em produção, estes valores devem estar em uma configuração
-const PLAN_PRICES: Record<string, { monthly: string; yearly: string }> = {
-  starter: {
-    monthly: functions.config().stripe?.price_starter_monthly || 'price_starter_monthly',
-    yearly: functions.config().stripe?.price_starter_yearly || 'price_starter_yearly',
-  },
-  pro: {
-    monthly: functions.config().stripe?.price_pro_monthly || 'price_pro_monthly',
-    yearly: functions.config().stripe?.price_pro_yearly || 'price_pro_yearly',
-  },
-  enterprise: {
-    monthly: functions.config().stripe?.price_enterprise_monthly || 'price_enterprise_monthly',
-    yearly: functions.config().stripe?.price_enterprise_yearly || 'price_enterprise_yearly',
-  },
-};
+import { db, serverTimestamp } from '../lib';
+import { stripe, PLAN_PRICES } from '../lib/stripe';
 
 interface CreateCheckoutData {
   plan: 'starter' | 'pro' | 'enterprise';
@@ -71,6 +45,14 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
     throw new functions.https.HttpsError(
       'invalid-argument',
       'plan e interval são obrigatórios'
+    );
+  }
+  
+  // 🔧 v4.0.7: Validação explícita de interval (proteção runtime além do TypeScript)
+  if (!['monthly', 'yearly'].includes(interval)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'interval deve ser "monthly" ou "yearly"'
     );
   }
   
@@ -109,7 +91,7 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
       // Salva o customerId
       await franchiseDoc.ref.update({
         stripeCustomerId: customerId,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: serverTimestamp(),
       });
     }
     

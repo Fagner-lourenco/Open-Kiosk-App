@@ -73,7 +73,7 @@ export function UsersPage() {
       if (!currentFranchise) return [];
       
       const membersRef = collection(db, 'franchises', currentFranchise.id, 'members');
-      const snapshot = await getDocs(query(membersRef, orderBy('addedAt', 'desc')));
+      const snapshot = await getDocs(query(membersRef, orderBy('joinedAt', 'desc')));
       
       const fetchedMembers: FranchiseMember[] = snapshot.docs.map(doc => ({
         id: doc.id,

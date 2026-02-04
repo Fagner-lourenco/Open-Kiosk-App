@@ -108,13 +108,13 @@ export function FranchiseOverview({ compact = false }: FranchiseOverviewProps) {
       const activeStores = storesList.filter(s => s.isActive !== false);
       const inactiveStores = storesList.filter(s => s.isActive === false);
       
-      // Busca usuários
-      const usersSnapshot = await getDocs(
-        query(collection(db, 'users'), where('franchiseId', '==', franchiseId))
+      // Busca usuários via subcollection members (compatível com rules)
+      const membersSnapshot = await getDocs(
+        collection(db, `franchises/${franchiseId}/members`)
       );
       
       const usersByRole: Record<string, number> = {};
-      usersSnapshot.docs.forEach(doc => {
+      membersSnapshot.docs.forEach(doc => {
         const role = doc.data().role || 'viewer';
         usersByRole[role] = (usersByRole[role] || 0) + 1;
       });
@@ -225,7 +225,7 @@ export function FranchiseOverview({ compact = false }: FranchiseOverviewProps) {
         totalStores: storesList.length,
         activeStores: activeStores.length,
         inactiveStores: inactiveStores.length,
-        totalUsers: usersSnapshot.size,
+        totalUsers: membersSnapshot.size,
         usersByRole,
         todayRevenue,
         todayOrders,

@@ -802,7 +802,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       percent: 0,
       flowStarted: false,
       elapsedSeconds: 0,
-      remainingSeconds: 300, // 5 minutos padrão
+      remainingSeconds: 120, // 🔧 v4.0.6: Reduzido para 2 minutos (consistente com firmware)
       tapId,
     });
     

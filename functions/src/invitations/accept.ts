@@ -4,61 +4,75 @@
  * ============================================================================
  * 
  * Callable function para aceitar um convite.
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
+import { db, admin, requireAuth } from '../lib';
 
 interface AcceptInvitationData {
-  token: string;
+  token?: string;
+  invitationId?: string;
 }
 
 export const acceptInvitation = functions.https.onCall(async (data: AcceptInvitationData, context) => {
-  // Verifica autenticação
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-      'unauthenticated',
-      'Você precisa estar logado para aceitar o convite'
-    );
-  }
+  // 🔧 v4.0.7: Usando helper centralizado
+  requireAuth(context);
   
-  const { token } = data;
+  const { token, invitationId } = data;
   
-  if (!token) {
+  if (!token && !invitationId) {
     throw new functions.https.HttpsError(
       'invalid-argument',
-      'Token do convite é obrigatório'
+      'Token ou ID do convite é obrigatório'
     );
   }
   
-  const uid = context.auth.uid;
-  const userEmail = context.auth.token.email;
+  const uid = context.auth!.uid;
+  const userEmail = context.auth!.token.email;
   
   try {
-    // Busca o convite pelo token
-    const inviteQuery = await db
-      .collection('invitations')
-      .where('token', '==', token)
-      .where('status', '==', 'pending')
-      .limit(1)
-      .get();
-    
-    if (inviteQuery.empty) {
-      throw new functions.https.HttpsError(
-        'not-found',
-        'Convite não encontrado ou já foi utilizado'
-      );
+    let inviteDoc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot;
+    let invitation: FirebaseFirestore.DocumentData;
+
+    if (token) {
+      // Busca o convite pelo token
+      const inviteQuery = await db
+        .collection('invitations')
+        .where('token', '==', token)
+        .where('status', '==', 'pending')
+        .limit(1)
+        .get();
+      
+      if (inviteQuery.empty) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Convite não encontrado ou já foi utilizado'
+        );
+      }
+      
+      inviteDoc = inviteQuery.docs[0];
+      invitation = inviteDoc.data();
+    } else {
+      // Fallback: convite por ID (legacy)
+      inviteDoc = await db.collection('invitations').doc(invitationId!).get();
+      if (!inviteDoc.exists) {
+        throw new functions.https.HttpsError(
+          'not-found',
+          'Convite não encontrado'
+        );
+      }
+      invitation = inviteDoc.data() || {};
+      
+      if (invitation.status !== 'pending') {
+        throw new functions.https.HttpsError(
+          'failed-precondition',
+          'Convite não está pendente'
+        );
+      }
     }
-    
-    const inviteDoc = inviteQuery.docs[0];
-    const invitation = inviteDoc.data();
-    
+
     // Verifica se o email corresponde
     if (invitation.email.toLowerCase() !== userEmail?.toLowerCase()) {
       throw new functions.https.HttpsError(

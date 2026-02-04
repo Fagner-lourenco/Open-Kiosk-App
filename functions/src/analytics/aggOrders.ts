@@ -13,17 +13,12 @@
  * 
  * @author Open Kiosk Project
  * @version 1.0.0
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
-
-// Inicializar app se necessário
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
+import { db, admin } from '../lib';
 
 // ============================================================================
 // TIPOS
@@ -54,7 +49,10 @@ interface MetricsUpdate {
   cancelledOrders?: admin.firestore.FieldValue;
   pendingOrders?: admin.firestore.FieldValue;
   lastUpdate: admin.firestore.FieldValue;
-  [key: string]: admin.firestore.FieldValue | undefined;
+  updatedAt?: admin.firestore.FieldValue;
+  franchiseId?: string;
+  storeId?: string;
+  [key: string]: admin.firestore.FieldValue | string | undefined;
 }
 
 // ============================================================================
@@ -96,7 +94,8 @@ async function updateMetrics(
   docRef: admin.firestore.DocumentReference,
   order: OrderData,
   isNew: boolean,
-  previousOrder?: OrderData
+  previousOrder?: OrderData,
+  context?: { franchiseId?: string; storeId?: string }
 ): Promise<void> {
   const increment = admin.firestore.FieldValue.increment;
   const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
@@ -105,7 +104,15 @@ async function updateMetrics(
     revenue: increment(0),
     orders: increment(0),
     lastUpdate: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   };
+  
+  if (context?.franchiseId) {
+    updates.franchiseId = context.franchiseId;
+  }
+  if (context?.storeId) {
+    updates.storeId = context.storeId;
+  }
   
   if (isNew) {
     // Novo pedido
@@ -195,13 +202,13 @@ export const onOrderCreated = functions
       const storeMetricsRef = db.doc(
         `franchises/${franchiseId}/stores/${storeId}/metrics/current`
       );
-      await updateMetrics(storeMetricsRef, order, true);
+      await updateMetrics(storeMetricsRef, order, true, undefined, { franchiseId, storeId });
       
       // 4. Atualizar métricas da franquia
       const franchiseMetricsRef = db.doc(
         `franchises/${franchiseId}/metrics/current`
       );
-      await updateMetrics(franchiseMetricsRef, order, true);
+      await updateMetrics(franchiseMetricsRef, order, true, undefined, { franchiseId });
       
       console.log(`[aggOrders] ✅ Metrics updated for order ${orderId}`);
     } catch (error) {
@@ -259,13 +266,13 @@ export const onOrderUpdated = functions
       const storeMetricsRef = db.doc(
         `franchises/${franchiseId}/stores/${storeId}/metrics/current`
       );
-      await updateMetrics(storeMetricsRef, after, false, before);
+      await updateMetrics(storeMetricsRef, after, false, before, { franchiseId, storeId });
       
       // 4. Atualizar métricas da franquia
       const franchiseMetricsRef = db.doc(
         `franchises/${franchiseId}/metrics/current`
       );
-      await updateMetrics(franchiseMetricsRef, after, false, before);
+      await updateMetrics(franchiseMetricsRef, after, false, before, { franchiseId });
       
       console.log(`[aggOrders] ✅ Metrics updated for order update ${orderId}`);
     } catch (error) {
@@ -305,7 +312,7 @@ export const onLegacyOrderCreated = functions
       
       // Atualizar métricas da loja legada
       const storeMetricsRef = db.doc(`stores/${storeId}/metrics/current`);
-      await updateMetrics(storeMetricsRef, order, true);
+      await updateMetrics(storeMetricsRef, order, true, undefined, { storeId });
       
       console.log(`[aggOrders] ✅ Legacy metrics updated for order ${orderId}`);
     } catch (error) {
@@ -351,7 +358,7 @@ export const onLegacyOrderUpdated = functions
       await updateMetrics(hourlyRef, after, false, before);
       
       const storeMetricsRef = db.doc(`stores/${storeId}/metrics/current`);
-      await updateMetrics(storeMetricsRef, after, false, before);
+      await updateMetrics(storeMetricsRef, after, false, before, { storeId });
       
       console.log(`[aggOrders] ✅ Legacy metrics updated for order update ${orderId}`);
     } catch (error) {

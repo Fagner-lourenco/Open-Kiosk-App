@@ -5,8 +5,9 @@
  */
 
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { doc, getDoc, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import { useSearchParams, useNavigate, Link, useParams } from 'react-router-dom';
+import { collection, query, where, limit, getDocs, doc, getDoc } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db, auth } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -26,24 +27,32 @@ import {
 } from 'lucide-react';
 
 interface InviteData {
-  id: string;
-  franchiseId: string;
-  franchiseName: string;
+  id?: string;
+  token?: string;
+  franchiseId?: string;
+  franchiseName?: string;
   storeId?: string;
   storeName?: string;
   email: string;
   role: string;
-  invitedBy: string;
-  status: 'pending' | 'accepted' | 'expired' | 'revoked';
+  invitedBy?: string;
+  status?: 'pending' | 'accepted' | 'expired' | 'revoked';
   expiresAt: Date;
 }
 
 export function InvitePage() {
   const [searchParams] = useSearchParams();
+  const { token: tokenParam } = useParams();
   const navigate = useNavigate();
   const { user, register } = useAuth();
   
   const inviteId = searchParams.get('id');
+  const inviteToken = tokenParam || searchParams.get('token');
+  const invitePath = inviteToken
+    ? `/invite/${inviteToken}`
+    : inviteId
+      ? `/invite?id=${inviteId}`
+      : '/invite';
   
   const [invite, setInvite] = useState<InviteData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -57,46 +66,138 @@ export function InvitePage() {
   const [confirmPassword, setConfirmPassword] = useState('');
 
   useEffect(() => {
-    if (!inviteId) {
+    if (!inviteId && !inviteToken) {
       setError('Link de convite inválido');
       setIsLoading(false);
       return;
     }
 
     loadInvite();
-  }, [inviteId]);
+  }, [inviteId, inviteToken, user]);
 
   const loadInvite = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    const setInviteFromPayload = (payload: { email: string; role: string; franchiseName?: string; expiresAt?: string }) => {
+      const expiresAt = payload.expiresAt ? new Date(payload.expiresAt) : new Date();
+      setInvite({
+        token: inviteToken || undefined,
+        email: payload.email,
+        role: payload.role,
+        franchiseName: payload.franchiseName || 'Franquia',
+        expiresAt,
+        status: 'pending',
+      });
+    };
+
+    const loadViaPublicValidation = async () => {
+      if (!inviteToken) return;
+      const projectId = import.meta.env.VITE_FIREBASE_PROJECT_ID;
+      const region = 'southamerica-east1';
+      const url = `https://${region}-${projectId}.cloudfunctions.net/validateInvitationToken?token=${encodeURIComponent(inviteToken)}`;
+      const response = await fetch(url);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.valid === false) {
+        setError(payload.error || 'Convite inválido');
+        return;
+      }
+      setInviteFromPayload(payload);
+    };
+
     try {
-      const inviteDoc = await getDoc(doc(db, 'invitations', inviteId!));
-      
+      if (inviteToken) {
+        if (!user) {
+          await loadViaPublicValidation();
+          return;
+        }
+
+        try {
+          const snapshot = await getDocs(
+            query(
+              collection(db, 'invitations'),
+              where('token', '==', inviteToken),
+              limit(1)
+            )
+          );
+
+          if (snapshot.empty) {
+            setError('Convite não encontrado');
+            return;
+          }
+
+          const inviteDoc = snapshot.docs[0];
+          const data = inviteDoc.data();
+          const expiresAt = data.expiresAt?.toDate?.() || new Date();
+
+          if (data.status !== 'pending') {
+            setError(
+              data.status === 'accepted'
+                ? 'Este convite já foi aceito'
+                : 'Este convite foi revogado ou expirou'
+            );
+            return;
+          }
+
+          if (expiresAt < new Date()) {
+            setError('Este convite expirou');
+            return;
+          }
+
+          setInvite({
+            id: inviteDoc.id,
+            token: data.token || inviteToken,
+            franchiseId: data.franchiseId,
+            franchiseName: data.franchiseName || 'Franquia',
+            storeId: data.storeId,
+            storeName: data.storeName,
+            email: data.email,
+            role: data.role,
+            invitedBy: data.invitedByName || data.invitedBy,
+            status: data.status,
+            expiresAt,
+          });
+          return;
+        } catch (err: any) {
+          if (err?.code === 'permission-denied') {
+            await loadViaPublicValidation();
+            return;
+          }
+          throw err;
+        }
+      }
+
+      if (!inviteId) {
+        setError('Link de convite inválido');
+        return;
+      }
+
+      const inviteDoc = await getDoc(doc(db, 'invitations', inviteId));
       if (!inviteDoc.exists()) {
         setError('Convite não encontrado');
-        setIsLoading(false);
         return;
       }
 
       const data = inviteDoc.data();
-      const expiresAt = data.expiresAt?.toDate() || new Date();
+      const expiresAt = data.expiresAt?.toDate?.() || new Date();
 
       if (data.status !== 'pending') {
         setError(
-          data.status === 'accepted' 
-            ? 'Este convite já foi aceito' 
+          data.status === 'accepted'
+            ? 'Este convite já foi aceito'
             : 'Este convite foi revogado ou expirou'
         );
-        setIsLoading(false);
         return;
       }
 
       if (expiresAt < new Date()) {
         setError('Este convite expirou');
-        setIsLoading(false);
         return;
       }
 
       setInvite({
         id: inviteDoc.id,
+        token: data.token,
         franchiseId: data.franchiseId,
         franchiseName: data.franchiseName || 'Franquia',
         storeId: data.storeId,
@@ -110,9 +211,9 @@ export function InvitePage() {
     } catch (err) {
       console.error('Error loading invite:', err);
       setError('Erro ao carregar convite');
+    } finally {
+      setIsLoading(false);
     }
-    
-    setIsLoading(false);
   };
 
   const acceptInvite = async () => {
@@ -145,35 +246,16 @@ export function InvitePage() {
         return;
       }
 
-      // Update invitation status
-      await updateDoc(doc(db, 'invitations', invite.id), {
-        status: 'accepted',
-        acceptedAt: serverTimestamp(),
-        acceptedBy: currentUser.uid,
-      });
+      const functions = getFunctions(undefined, 'southamerica-east1');
+      const acceptInvitation = httpsCallable<
+        { token?: string; invitationId?: string },
+        { success: boolean }
+      >(functions, 'acceptInvitation');
 
-      // Add user to franchise
-      await updateDoc(doc(db, 'franchises', invite.franchiseId), {
-        members: arrayUnion({
-          id: currentUser.uid,
-          email: currentUser.email,
-          displayName: currentUser.displayName || displayName,
-          role: invite.role,
-          addedAt: new Date().toISOString(),
-        }),
-      });
+      const token = invite.token || inviteToken || undefined;
+      const invitationId = invite.id || inviteId || undefined;
 
-      // If store-specific invitation, add to store as well
-      if (invite.storeId) {
-        await updateDoc(doc(db, `franchises/${invite.franchiseId}/stores/${invite.storeId}`), {
-          members: arrayUnion({
-            id: currentUser.uid,
-            email: currentUser.email,
-            role: invite.role,
-            addedAt: new Date().toISOString(),
-          }),
-        });
-      }
+      await acceptInvitation({ token, invitationId });
 
       setSuccess(true);
     } catch (err) {
@@ -187,8 +269,11 @@ export function InvitePage() {
   const getRoleLabel = (role: string) => {
     const labels: Record<string, string> = {
       owner: 'Proprietário',
+      admin: 'Administrador',
       manager: 'Gerente',
       employee: 'Funcionário',
+      operator: 'Operador',
+      technician: 'Técnico',
       viewer: 'Visualizador',
     };
     return labels[role] || role;
@@ -405,7 +490,7 @@ export function InvitePage() {
       <div className="text-center">
         <p className="text-sm text-gray-500">
           Já tem uma conta?{' '}
-          <Link to={`/login?redirect=/invite?id=${inviteId}`} className="text-blue-600 hover:underline font-medium">
+          <Link to={`/login?redirect=${invitePath}`} className="text-blue-600 hover:underline font-medium">
             Fazer login
           </Link>
         </p>

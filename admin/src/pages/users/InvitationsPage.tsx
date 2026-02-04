@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { generateInvitationToken } from '@/lib/invitationToken';
 import { 
   Plus, 
   Mail, 
@@ -56,6 +57,7 @@ import {
 
 interface Invitation {
   id: string;
+  token?: string;
   email: string;
   role: string;
   status: 'pending' | 'accepted' | 'expired' | 'revoked';
@@ -92,6 +94,7 @@ export function InvitationsPage() {
         const data = doc.data();
         return {
           id: doc.id,
+          token: data.token,
           email: data.email,
           role: data.role,
           status: data.status,
@@ -120,6 +123,7 @@ export function InvitationsPage() {
         status: 'pending',
         invitedBy: user.uid,
         invitedByName: user.displayName || user.email,
+        token: generateInvitationToken(),
         createdAt: serverTimestamp(),
         expiresAt: Timestamp.fromDate(expiresAt),
       };
@@ -160,10 +164,12 @@ export function InvitationsPage() {
     createInviteMutation.mutate({ email: inviteEmail, role: inviteRole });
   };
 
-  const copyInviteLink = (inviteId: string) => {
-    const link = `${window.location.origin}/invite?id=${inviteId}`;
+  const copyInviteLink = (invite: Invitation) => {
+    const link = invite.token
+      ? `${window.location.origin}/invite/${invite.token}`
+      : `${window.location.origin}/invite?id=${invite.id}`;
     navigator.clipboard.writeText(link);
-    setCopiedLink(inviteId);
+    setCopiedLink(invite.id);
     setTimeout(() => setCopiedLink(null), 2000);
   };
 
@@ -333,7 +339,7 @@ export function InvitationsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => copyInviteLink(invite.id)}
+                          onClick={() => copyInviteLink(invite)}
                         >
                           {copiedLink === invite.id ? (
                             <CheckCircle className="h-4 w-4 text-green-600" />

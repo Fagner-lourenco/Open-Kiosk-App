@@ -69,7 +69,8 @@ export interface ESP32Response {
 }
 
 export interface ESP32Command {
-  action: 'ping' | 'status' | 'release_drink' | 'stop' | 'test_valve' | 'test_flow' | 'calibrate' | 'beep' | 'save_calibration' | 'get_settings' | 'start_wifi_portal' | 'reset_wifi' | 'diagnose_gpio' | 'get_taps';
+  // 🔧 v4.0.6: Removidas ações start_wifi_portal e reset_wifi (obsoletas desde firmware v3.0)
+  action: 'ping' | 'status' | 'release_drink' | 'stop' | 'test_valve' | 'test_flow' | 'calibrate' | 'beep' | 'save_calibration' | 'get_settings' | 'diagnose_gpio' | 'get_taps';
   orderId?: string;
   mlPerUnit?: number;
   quantity?: number;

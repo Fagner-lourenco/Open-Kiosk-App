@@ -267,14 +267,15 @@ export async function getProductReport(
         items.forEach((item: any) => {
           // Product tracking
           const productId = item.productId || item.id;
+          const productName = item.title || item.name || 'Produto';
           const existing = productMap.get(productId) || {
-            name: item.name || 'Produto',
+            name: productName,
             quantity: 0,
             revenue: 0,
           };
           
           productMap.set(productId, {
-            name: item.name || existing.name,
+            name: productName || existing.name,
             quantity: existing.quantity + (item.quantity || 1),
             revenue: existing.revenue + (item.price || 0) * (item.quantity || 1),
           });
@@ -370,8 +371,8 @@ export async function getStoreReport(
         
         if (metricsSnap.exists()) {
           const metrics = metricsSnap.data();
-          orders = metrics.totalOrders || 0;
-          revenue = metrics.totalRevenue || 0;
+          orders = metrics.orders || 0;
+          revenue = metrics.revenue || 0;
           usedMaterialized = true;
         }
       } catch (err) {

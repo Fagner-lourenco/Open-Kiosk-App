@@ -4,17 +4,13 @@
  * ============================================================================
  * 
  * Callable function para enviar email de convite.
+ * 
+ * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
 import * as functions from 'firebase-functions';
-import * as admin from 'firebase-admin';
 import * as nodemailer from 'nodemailer';
-
-if (!admin.apps.length) {
-  admin.initializeApp();
-}
-
-const db = admin.firestore();
+import { db, admin, requireAuth, requireManager, serverTimestamp } from '../lib';
 
 interface SendInvitationData {
   email: string;
@@ -24,15 +20,11 @@ interface SendInvitationData {
 }
 
 export const sendInvitationEmail = functions.https.onCall(async (data: SendInvitationData, context) => {
-  // Verifica autenticação
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-      'unauthenticated',
-      'Usuário não autenticado'
-    );
-  }
+  // 🔧 v4.0.7: Usando helpers centralizados
+  requireAuth(context);
+  requireManager(context);
   
-  const callerClaims = context.auth.token;
+  const callerClaims = context.auth!.token;
   
   // Verifica permissão (owner, admin ou manager podem convidar)
   if (!['owner', 'admin', 'manager'].includes(callerClaims.role as string)) {
@@ -48,6 +40,24 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
     throw new functions.https.HttpsError(
       'invalid-argument',
       'email e role são obrigatórios'
+    );
+  }
+  
+  // 🔧 v4.0.7: Validação de formato de email
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'Formato de email inválido'
+    );
+  }
+  
+  // 🔧 v4.0.7: Validação de role permitida
+  const validRoles = ['admin', 'manager', 'operator', 'employee', 'technician', 'viewer'];
+  if (!validRoles.includes(role)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      `Role inválida. Permitidas: ${validRoles.join(', ')}`
     );
   }
   
@@ -107,10 +117,10 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
         role,
         franchiseId,
         storeId: storeId || null,
-        invitedBy: context.auth.uid,
+        invitedBy: context.auth!.uid,
         status: 'pending',
         token,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: serverTimestamp(),
         expiresAt: admin.firestore.Timestamp.fromDate(
           new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dias
         ),
@@ -174,7 +184,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
     
     // Atualiza status do convite
     await inviteRef.update({
-      emailSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      emailSentAt: serverTimestamp(),
     });
     
     functions.logger.info(`Convite enviado para ${email}`);
@@ -193,13 +203,14 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
   }
 });
 
+/**
+ * 🔧 v4.0.7: Gera token criptograficamente seguro
+ * Usando crypto.randomBytes em vez de Math.random() para segurança
+ */
 function generateToken(): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let token = '';
-  for (let i = 0; i < 32; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return token;
+  // Usar crypto.randomBytes para segurança criptográfica
+  const { randomBytes } = require('crypto');
+  return randomBytes(24).toString('base64url'); // 32 chars, URL-safe
 }
 
 function getRoleLabel(role: string): string {
@@ -207,6 +218,7 @@ function getRoleLabel(role: string): string {
     owner: 'Proprietário',
     admin: 'Administrador',
     manager: 'Gerente',
+    employee: 'Funcionário',
     operator: 'Operador',
     technician: 'Técnico',
     viewer: 'Visualizador',
