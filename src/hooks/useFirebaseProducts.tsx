@@ -12,6 +12,7 @@ import {
   removeProductFromCache,
   isCacheStale,
 } from '@/services/productCacheService';
+import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 // Shared subscription to avoid duplicate listeners when multiple components mount
 let productsGlobal: Product[] = [];
@@ -43,12 +44,10 @@ const getProductsCollection = (storeId: string | null): CollectionReference => {
  * (Firestore nao aceita undefined e nao devemos sobrescrever createdAt/id)
  */
 const sanitizeProductUpdates = (updates: Partial<Product>): Partial<Product> => {
-  const sanitized: Record<string, unknown> = {};
-  Object.entries(updates).forEach(([key, value]) => {
-    if (value === undefined) return;
-    if (key === 'id' || key === 'createdAt' || key === 'updatedAt') return;
-    sanitized[key] = value;
-  });
+  const sanitized = sanitizeFirestoreData(updates) as Record<string, unknown>;
+  delete sanitized.id;
+  delete sanitized.createdAt;
+  delete sanitized.updatedAt;
   return sanitized as Partial<Product>;
 };
 
@@ -267,9 +266,10 @@ export const useFirebaseProducts = () => {
       }
       const productsCollection = getProductsCollection(storeId);
       
+      const sanitizedProduct = sanitizeFirestoreData(product) as Omit<Product, 'id'>;
       const docRef = await addDoc(productsCollection, {
-        ...product,
-        storeId: storeId || undefined, // Adicionar storeId se disponivel
+        ...sanitizedProduct,
+        storeId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });

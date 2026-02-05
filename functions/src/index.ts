@@ -39,3 +39,9 @@ export {
   onOrderCreated, 
   onOrderUpdated 
 } from './analytics/aggOrders';
+
+// Payments (PagBank + generic)
+export { createPayment, pagbankWebhook, syncPendingPayments } from './payments';
+
+// Migrations
+export { consolidatePaymentGatewayConfig, rollbackPaymentGatewayConfig } from './migrations/consolidatePaymentGatewayConfig';

@@ -308,6 +308,17 @@ service cloud.firestore {
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // PAYMENTS
+        match /payments/{paymentId} {
+          // Owner da franquia ou membros com acesso podem ler pagamentos
+          allow read: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+          
+          // Escrita somente via Cloud Functions (admin SDK)
+          allow write: if false;
+        }
+
         // INVENTORY LOGS (Movimentações de estoque)
         // ────────────────────────────────────────────────────────────────────
         

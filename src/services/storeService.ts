@@ -35,8 +35,16 @@ class StoreService {
       return undefined;
     };
 
+    // Runtime validation for required Store fields
+    const requiredFields = ['storeId', 'name', 'slug', 'isActive', 'taxId', 'currency', 'taxPercentage'] as const;
+    for (const field of requiredFields) {
+      if (data[field] === undefined) {
+        console.warn(`[StoreService] normalizeStoreData: missing required field '${field}'`);
+      }
+    }
+
     return {
-      ...(data as Store),
+      ...(data as unknown as Store),
       createdAt: normalizeTimestamp((data as { createdAt?: unknown }).createdAt),
       updatedAt: normalizeTimestamp((data as { updatedAt?: unknown }).updatedAt),
     };
@@ -164,20 +172,20 @@ class StoreService {
       const exists = await getDoc(storeRef);
       if (exists.exists()) {
         console.log(`[StoreService] Store ${store.storeId} already exists, updating...`);
-          const sanitizedStore = sanitizeFirestoreData(store) as Store;
-          await updateDoc(storeRef, {
-            ...sanitizedStore,
-            updatedAt: serverTimestamp(),
-          });
-          return store.storeId;
-        }
-
         const sanitizedStore = sanitizeFirestoreData(store) as Store;
-        await setDoc(storeRef, {
+        await updateDoc(storeRef, {
           ...sanitizedStore,
-          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
+        return store.storeId;
+      }
+
+      const sanitizedStore = sanitizeFirestoreData(store) as Store;
+      await setDoc(storeRef, {
+        ...sanitizedStore,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
 
       const settingsRef = doc(db, storePath(franchiseId, store.storeId), 'settings', 'general');
       await setDoc(settingsRef, {
@@ -203,11 +211,11 @@ class StoreService {
       const franchiseId = this.requireFranchiseId();
       const storeRef = doc(db, storePath(franchiseId, storeId));
 
-        const sanitizedUpdates = sanitizeFirestoreData(updates) as typeof updates;
-        await updateDoc(storeRef, {
-          ...sanitizedUpdates,
-          updatedAt: serverTimestamp(),
-        });
+      const sanitizedUpdates = sanitizeFirestoreData(updates) as typeof updates;
+      await updateDoc(storeRef, {
+        ...sanitizedUpdates,
+        updatedAt: serverTimestamp(),
+      });
 
       console.log('[StoreService] Store updated:', storeId);
     } catch (error) {

@@ -11,7 +11,7 @@
 import * as functions from 'firebase-functions';
 import Stripe from 'stripe';
 import { db, serverTimestamp } from '../lib';
-import { stripe, PLAN_PRICES } from '../lib/stripe';
+import { getStripeClient, PLAN_PRICES } from '../lib/stripe';
 
 interface CreateCheckoutData {
   plan: 'starter' | 'pro' | 'enterprise';
@@ -79,7 +79,7 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
     let customerId = franchise.stripeCustomerId;
     
     if (!customerId) {
-      const customer = await stripe.customers.create({
+      const customer = await getStripeClient().customers.create({
         email: userEmail,
         name: franchise.name,
         metadata: {
@@ -101,7 +101,7 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
     const defaultCancelUrl = `${baseUrl}/billing?canceled=true`;
     
     // Cria sessão de checkout
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripeClient().checkout.sessions.create({
       customer: customerId,
       mode: 'subscription',
       payment_method_types: ['card'],
@@ -189,7 +189,7 @@ export const createBillingPortalSession = functions.https.onCall(async (data, co
     
     const baseUrl = functions.config().app?.url || 'https://admin.openkiosk.app';
     
-    const session = await stripe.billingPortal.sessions.create({
+    const session = await getStripeClient().billingPortal.sessions.create({
       customer: franchise.stripeCustomerId,
       return_url: `${baseUrl}/billing`,
     });

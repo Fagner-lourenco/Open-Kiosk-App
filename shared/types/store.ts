@@ -68,19 +68,74 @@ export interface ESP32Config {
 // ============================================================================
 
 /**
- * Provedor de pagamento
+ * Provedor de pagamento (canônico + legado)
  */
-export type PaymentProvider = 'mercadopago' | 'stripe' | 'pix';
+export type PaymentProvider = 'none' | 'mercado_pago' | 'mercadopago' | 'pagbank';
 
 /**
- * Configuração de gateway de pagamento
+ * Ambiente de pagamento
+ */
+export type PaymentEnvironment = 'sandbox' | 'production';
+
+/**
+ * Métodos de pagamento habilitados
+ */
+export interface EnabledPaymentMethods {
+  cash: boolean;
+  pix: boolean;
+  credit: boolean;
+  debit: boolean;
+}
+
+/**
+ * Configuração específica do PagBank (sem segredos)
+ */
+export interface PagBankProviderConfig {
+  clientId?: string;
+  merchantId?: string;
+  publicKey?: string;
+}
+
+/**
+ * Configuração específica do Mercado Pago (sem segredos)
+ */
+export interface MercadoPagoProviderConfig {
+  userId?: string;
+  storeId?: string;
+  externalPosId?: string;
+  terminalId?: string;
+}
+
+/**
+ * Configuração de gateway de pagamento (canônico)
  */
 export interface PaymentGatewayConfig {
   provider: PaymentProvider;
+  environment: PaymentEnvironment;
+  enabledMethods: EnabledPaymentMethods;
+  pixKey?: string;
+  providers?: {
+    pagbank?: PagBankProviderConfig;
+    mercadopago?: MercadoPagoProviderConfig;
+  };
+
+  // -------------------------------
+  // Legacy fields (read-compat only)
+  // -------------------------------
   accessToken?: string;
-  publicKey?: string;
-  webhookSecret?: string;
-  sandbox: boolean;
+  mode?: PaymentEnvironment;
+  userId?: string;
+  storeId?: string;
+  externalPosId?: string;
+  terminalId?: string;
+  pollingIntervalMs?: number;
+  pollingMaxAttempts?: number;
+  pointExpirationTime?: string;
+  qrExpirationMinutes?: number;
+  configuredAt?: string;
+  configuredBy?: string;
+  lastValidatedAt?: string;
+  lastValidationResult?: 'success' | 'error';
 }
 
 // ============================================================================

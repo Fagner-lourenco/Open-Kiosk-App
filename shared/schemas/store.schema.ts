@@ -52,14 +52,67 @@ export const ESP32ConfigSchema = z.object({
 });
 
 /**
- * Schema de configuração de pagamento
+ * Schema de métodos de pagamento habilitados
+ */
+const EnabledPaymentMethodsSchema = z.object({
+  cash: z.boolean().default(true),
+  pix: z.boolean().default(true),
+  credit: z.boolean().default(true),
+  debit: z.boolean().default(true),
+});
+
+/**
+ * Schema de configuração de provedor PagBank (sem segredos)
+ */
+const PagBankProviderConfigSchema = z.object({
+  clientId: z.string().optional(),
+  merchantId: z.string().optional(),
+  publicKey: z.string().optional(),
+});
+
+/**
+ * Schema de configuração de provedor Mercado Pago (sem segredos)
+ */
+const MercadoPagoProviderConfigSchema = z.object({
+  userId: z.string().optional(),
+  storeId: z.string().optional(),
+  externalPosId: z.string().optional(),
+  terminalId: z.string().optional(),
+});
+
+/**
+ * Schema de configuração de pagamento (canônico + legado)
  */
 export const PaymentGatewayConfigSchema = z.object({
-  provider: z.enum(['mercadopago', 'stripe', 'pix']),
+  provider: z.enum(['none', 'mercado_pago', 'mercadopago', 'pagbank']),
+  environment: z.enum(['sandbox', 'production']).default('sandbox'),
+  enabledMethods: EnabledPaymentMethodsSchema.default({
+    cash: true,
+    pix: true,
+    credit: true,
+    debit: true,
+  }),
+  pixKey: z.string().optional(),
+  providers: z.object({
+    pagbank: PagBankProviderConfigSchema.optional(),
+    mercadopago: MercadoPagoProviderConfigSchema.optional(),
+  }).optional(),
+
+  // Legacy fields (read-compat only)
   accessToken: z.string().optional(),
-  publicKey: z.string().optional(),
-  webhookSecret: z.string().optional(),
-  sandbox: z.boolean().default(true),
+  mode: z.enum(['sandbox', 'production']).optional(),
+  userId: z.string().optional(),
+  storeId: z.string().optional(),
+  externalPosId: z.string().optional(),
+  terminalId: z.string().optional(),
+  pollingIntervalMs: z.number().optional(),
+  pollingMaxAttempts: z.number().optional(),
+  pointExpirationTime: z.string().optional(),
+  qrExpirationMinutes: z.number().optional(),
+  configuredAt: z.string().optional(),
+  configuredBy: z.string().optional(),
+  lastValidatedAt: z.string().optional(),
+  lastValidationResult: z.enum(['success', 'error']).optional(),
 });
 
 // ============================================================================

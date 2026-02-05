@@ -8,10 +8,11 @@
 import { createContext, useContext, useMemo, type ReactNode } from 'react';
 import { useStoreSettings } from '@/hooks/useStoreSettings';
 import type { PaymentGatewayConfig, EnabledPaymentMethods } from '@/types/store';
-import { getPaymentConfig, type ResolvedPaymentConfig } from '@/config/paymentGateway';
+import { getPaymentConfig, type ResolvedPaymentConfig, isPaymentConfigured } from '@/config/paymentGateway';
 
 /** Métodos de pagamento habilitados com defaults */
 const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
+  cash: true,
   pix: true,
   credit: true,
   debit: true,
@@ -36,7 +37,7 @@ interface PaymentGatewayContextValue {
   /** Se está carregando configurações */
   isLoading: boolean;
   
-  /** Métodos de pagamento habilitados (pix, credit, debit) */
+  /** Métodos de pagamento habilitados (cash, pix, credit, debit) */
   enabledMethods: EnabledPaymentMethods;
 }
 
@@ -64,7 +65,7 @@ export function PaymentGatewayProvider({ children }: PaymentGatewayProviderProps
     const resolvedConfig = getPaymentConfig(gatewayConfig);
     
     // Determinar fonte e se está configurado
-    const hasFirestoreConfig = !!gatewayConfig?.accessToken;
+    const hasFirestoreConfig = !!gatewayConfig?.provider;
     const hasEnvConfig = !!import.meta.env.VITE_MP_ACCESS_TOKEN || 
                          !!import.meta.env.VITE_MP_ACCESS_TOKEN_SANDBOX ||
                          !!import.meta.env.VITE_MP_ACCESS_TOKEN_PRODUCTION;
@@ -76,12 +77,11 @@ export function PaymentGatewayProvider({ children }: PaymentGatewayProviderProps
       source = 'env';
     }
     
-    const isConfigured = !!resolvedConfig.accessToken && 
-                         !!resolvedConfig.externalPosId && 
-                         !!resolvedConfig.userId;
+    const isConfigured = isPaymentConfigured(gatewayConfig);
     
     // Métodos de pagamento habilitados (default: todos true)
     const enabledMethods: EnabledPaymentMethods = {
+      cash: gatewayConfig?.enabledMethods?.cash ?? true,
       pix: gatewayConfig?.enabledMethods?.pix ?? true,
       credit: gatewayConfig?.enabledMethods?.credit ?? true,
       debit: gatewayConfig?.enabledMethods?.debit ?? true,

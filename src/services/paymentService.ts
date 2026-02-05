@@ -9,8 +9,12 @@
 import { createMercadoPagoAPI } from './mercadopagoAPI';
 import { MERCADO_PAGO_CONFIG } from '@/config/mercadopago';
 import { getPaymentConfig, type ResolvedPaymentConfig } from '@/config/paymentGateway';
+import { getFirebaseApp, getFirebaseDb, getCurrentFranchiseId, getCurrentStoreId } from '@/services/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import { doc, onSnapshot } from 'firebase/firestore';
 import type { Order } from '@/types/mercadopago';
 import type { PaymentGatewayConfig } from '@/types/store';
+import type { CreatePaymentInput, CreatePaymentResponse, PaymentRecord } from '@/types/payments';
 
 // Chave para armazenar último orderId do terminal (para limpar antes de nova ordem)
 const LAST_TERMINAL_ORDER_KEY = 'mp_last_terminal_order';
@@ -679,6 +683,56 @@ class PaymentService {
       console.error('[PaymentService] Erro ao cancelar ordem:', error);
       throw error;
     }
+  }
+
+  // ===== GENERIC PAYMENT (Cloud Functions) =====
+
+  /**
+   * Criar pagamento via Cloud Function (gateway selecionado no backend)
+   */
+  async createPayment(input: CreatePaymentInput): Promise<CreatePaymentResponse> {
+    const app = getFirebaseApp();
+    const functions = getFunctions(app, 'southamerica-east1');
+    const createPaymentFn = httpsCallable<CreatePaymentInput, CreatePaymentResponse>(functions, 'createPayment');
+
+    const response = await createPaymentFn(input);
+    return response.data;
+  }
+
+  /**
+   * Escuta atualizações de status de pagamento no Firestore
+   */
+  watchPaymentStatus(
+    paymentId: string,
+    onUpdate: (payment: PaymentRecord) => void,
+    options?: {
+      storeId?: string;
+      franchiseId?: string;
+      onError?: (error: Error) => void;
+    }
+  ): () => void {
+    const storeId = options?.storeId || getCurrentStoreId();
+    const franchiseId = options?.franchiseId || getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId) {
+      throw new PaymentError('PAYMENT_CONTEXT', 'storeId/franchiseId ausente para acompanhar pagamento');
+    }
+
+    const db = getFirebaseDb();
+    const paymentRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'payments', paymentId);
+
+    return onSnapshot(
+      paymentRef,
+      (snapshot) => {
+        if (!snapshot.exists()) return;
+        const data = snapshot.data() as Omit<PaymentRecord, 'id'>;
+        onUpdate({ id: snapshot.id, ...data });
+      },
+      (error) => {
+        console.error('[PaymentService] Erro ao escutar pagamento:', error);
+        options?.onError?.(error as Error);
+      }
+    );
   }
 
   /**

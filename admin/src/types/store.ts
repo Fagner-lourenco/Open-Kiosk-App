@@ -21,14 +21,56 @@ export interface StoreAddress {
 }
 
 /**
- * Configuração de gateway de pagamento
+ * Configuração de gateway de pagamento (canônico + legado)
  */
-export interface PaymentGatewayConfig {
-  provider: 'mercadopago' | 'stripe' | 'pix';
-  accessToken?: string;
+export type PaymentProvider = 'none' | 'mercado_pago' | 'mercadopago' | 'pagbank';
+export type PaymentEnvironment = 'sandbox' | 'production';
+
+export interface EnabledPaymentMethods {
+  cash: boolean;
+  pix: boolean;
+  credit: boolean;
+  debit: boolean;
+}
+
+export interface PagBankProviderConfig {
+  clientId?: string;
+  merchantId?: string;
   publicKey?: string;
-  webhookSecret?: string;
-  sandbox: boolean;
+}
+
+export interface MercadoPagoProviderConfig {
+  userId?: string;
+  storeId?: string;
+  externalPosId?: string;
+  terminalId?: string;
+}
+
+export interface PaymentGatewayConfig {
+  provider: PaymentProvider;
+  environment: PaymentEnvironment;
+  enabledMethods: EnabledPaymentMethods;
+  pixKey?: string;
+  providers?: {
+    pagbank?: PagBankProviderConfig;
+    mercadopago?: MercadoPagoProviderConfig;
+  };
+
+  // Legacy fields (read-compat only)
+  accessToken?: string;
+  mode?: PaymentEnvironment;
+  userId?: string;
+  storeId?: string;
+  externalPosId?: string;
+  terminalId?: string;
+  pollingIntervalMs?: number;
+  pollingMaxAttempts?: number;
+  pointExpirationTime?: string;
+  qrExpirationMinutes?: number;
+  configuredAt?: string;
+  configuredBy?: string;
+  lastValidatedAt?: string;
+  lastValidationResult?: 'success' | 'error';
 }
 
 /**

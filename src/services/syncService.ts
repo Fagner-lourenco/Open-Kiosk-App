@@ -168,8 +168,8 @@ const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
       if (!franchiseId) {
         throw new Error('[SyncService] franchiseId obrigatorio para sincronizacao de loja');
       }
-      const path = storeSubPath(franchiseId, storeId, item.collection as StoreSubcollection);
-      docRef = doc(db, ...path.split('/'), item.docId);
+      const collectionPath = storeSubPath(franchiseId, storeId, item.collection as StoreSubcollection);
+      docRef = doc(db, `${collectionPath}/${item.docId}`);
     } else {
       docRef = doc(db, item.collection, item.docId);
     }
@@ -458,8 +458,8 @@ export const syncFromFirebase = async (
       console.warn('[SyncService] Missing storeId/franchiseId for syncFromFirebase');
       return null;
     }
-    const path = storeSubPath(franchiseId, storeId, collection as StoreSubcollection);
-    const docRef = doc(getFirebaseDb(), ...path.split('/'), docId);
+    const collectionPath = storeSubPath(franchiseId, storeId, collection as StoreSubcollection);
+    const docRef = doc(getFirebaseDb(), `${collectionPath}/${docId}`);
 
     const snapshot = await getDoc(docRef);
 

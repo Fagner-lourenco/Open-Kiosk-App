@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -14,7 +16,7 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { esp32Printer } from "@/services/esp32PrinterService";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
-import { getCurrentStoreId } from "@/services/firebase";
+import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
 import UartPortSelector from "./UartPortSelector";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { paymentService } from "@/services/paymentService";
@@ -22,6 +24,7 @@ import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig } from "@/config/mercado
 import { usePaymentGateway } from "@/context/PaymentGatewayContext";
 import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
+import type { CreatePaymentInput, PaymentMethod as GatewayPaymentMethod, PaymentRecord, PaymentStatus as GatewayPaymentStatus } from "@/types/payments";
 import QRCode from "react-qr-code";
 
 interface CheckoutProps {
@@ -46,6 +49,24 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   
   // Configuração do gateway de pagamento (Firestore > env vars)
   const { gatewayConfig, resolvedConfig, isConfigured, enabledMethods } = usePaymentGateway();
+  const provider = gatewayConfig?.provider || resolvedConfig.provider || 'none';
+  const isPagBank = provider === 'pagbank';
+
+  // PagBank (estado local)
+  const [pagbankPaymentId, setPagbankPaymentId] = useState<string | null>(null);
+  const [pagbankStatus, setPagbankStatus] = useState<GatewayPaymentStatus | null>(null);
+  const [pagbankQrCodeText, setPagbankQrCodeText] = useState<string | null>(null);
+  const [pagbankError, setPagbankError] = useState<string | null>(null);
+  const pagbankUnsubscribeRef = useRef<(() => void) | null>(null);
+
+  // PagBank (dados do pagador e cartão)
+  const [payerName, setPayerName] = useState('');
+  const [payerTaxId, setPayerTaxId] = useState('');
+  const [payerEmail, setPayerEmail] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpMonth, setCardExpMonth] = useState('');
+  const [cardExpYear, setCardExpYear] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
 
   // Estados para Mercado Pago QR e Point
   // Determinar método de pagamento inicial baseado nos métodos habilitados
@@ -189,6 +210,27 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     return getTotalPrice() + getTaxAmount();
   };
 
+  const buildGatewayItems = () => {
+    return cartItems.map((item) => ({
+      name: item.product.title,
+      quantity: item.quantity,
+      unitAmount: item.unitPrice,
+    }));
+  };
+
+  const mapGatewayMethod = (method: 'pix_qr' | 'credit_card' | 'debit_card'): GatewayPaymentMethod => {
+    if (method === 'pix_qr') return 'pix';
+    if (method === 'credit_card') return 'credit';
+    return 'debit';
+  };
+
+  const cleanupPagBankListener = useCallback(() => {
+    if (pagbankUnsubscribeRef.current) {
+      pagbankUnsubscribeRef.current();
+      pagbankUnsubscribeRef.current = null;
+    }
+  }, []);
+
   const handleProceedToPayment = () => {
     setShowPayment(true);
   };
@@ -321,6 +363,152 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
         title: t('checkout.terminalError'),
         description: errorMsg,
         variant: "destructive"
+      });
+    }
+  };
+
+  const handleStartPagBankPayment = async () => {
+    if (paymentProcessed) {
+      console.log('[Checkout] Pagamento já em andamento, ignorando clique duplicado');
+      return;
+    }
+
+    setPagbankError(null);
+    setPaymentProcessed(true);
+
+    const storeId = getCurrentStoreId();
+    const franchiseId = getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId) {
+      toast({
+        title: t('checkout.paymentError') || 'Erro no Pagamento',
+        description: 'storeId/franchiseId ausente para criar pagamento.',
+        variant: 'destructive',
+      });
+      setPaymentProcessed(false);
+      return;
+    }
+
+    const customerName = payerName.trim();
+    const customerTaxId = payerTaxId.trim();
+    const customerEmail = payerEmail.trim();
+
+    if (!customerName || !customerTaxId) {
+      toast({
+        title: 'Dados obrigatórios',
+        description: 'Informe nome e CPF/CNPJ do pagador.',
+        variant: 'destructive',
+      });
+      setPaymentProcessed(false);
+      return;
+    }
+
+    const customer = {
+      name: customerName,
+      taxId: customerTaxId,
+      email: customerEmail || undefined,
+    };
+
+    let card: CreatePaymentInput['card'] | undefined;
+    if (paymentMethod !== 'pix_qr') {
+      const cleanCardNumber = cardNumber.replace(/\D/g, '');
+      const cleanExpMonth = cardExpMonth.replace(/\D/g, '');
+      const cleanExpYear = cardExpYear.replace(/\D/g, '');
+      const cleanCvv = cardCvv.replace(/\D/g, '');
+
+      if (!cleanCardNumber || !cleanExpMonth || !cleanExpYear || !cleanCvv) {
+        toast({
+          title: 'Dados do cartão',
+          description: 'Preencha número, validade e CVV.',
+          variant: 'destructive',
+        });
+        setPaymentProcessed(false);
+        return;
+      }
+
+      card = {
+        number: cleanCardNumber,
+        expMonth: cleanExpMonth,
+        expYear: cleanExpYear,
+        securityCode: cleanCvv,
+        holderName: customerName,
+        holderTaxId: customerTaxId,
+      };
+    }
+
+    try {
+      const input: CreatePaymentInput = {
+        franchiseId,
+        storeId,
+        orderId: orderNumber || undefined,
+        amount: getFinalTotal(),
+        currency: currentCurrency.code,
+        method: mapGatewayMethod(paymentMethod),
+        items: buildGatewayItems(),
+        customer,
+        card,
+      };
+
+      const response = await paymentService.createPayment(input);
+
+      setPagbankPaymentId(response.paymentId);
+      setPagbankStatus(response.status);
+      setPagbankQrCodeText(response.pix?.qrCodeText || null);
+
+      if (response.status === 'paid') {
+        await handlePaymentComplete();
+        return;
+      }
+
+      cleanupPagBankListener();
+      pagbankUnsubscribeRef.current = paymentService.watchPaymentStatus(
+        response.paymentId,
+        async (payment: PaymentRecord) => {
+          setPagbankStatus(payment.status);
+          if (payment.pix?.qrCodeText) {
+            setPagbankQrCodeText(payment.pix.qrCodeText);
+          }
+
+          if (payment.status === 'paid') {
+            toast({
+              title: t('checkout.paymentApprovedToast'),
+              description: t('checkout.paymentConfirmedSuccess'),
+            });
+            cleanupPagBankListener();
+            await handlePaymentComplete();
+          }
+
+          if (payment.status === 'failed' || payment.status === 'canceled' || payment.status === 'expired') {
+            const statusMessage = payment.status === 'failed'
+              ? 'Pagamento recusado'
+              : payment.status === 'canceled'
+                ? 'Pagamento cancelado'
+                : 'Pagamento expirado';
+
+            setPagbankError(statusMessage);
+            setPaymentProcessed(false);
+            cleanupPagBankListener();
+          }
+        },
+        {
+          storeId,
+          franchiseId,
+          onError: (error) => {
+            console.error('[Checkout] Erro ao escutar PagBank:', error);
+            setPagbankError('Erro ao acompanhar pagamento.');
+            setPaymentProcessed(false);
+          },
+        }
+      );
+    } catch (error: unknown) {
+      console.error('[Checkout] Erro ao criar pagamento PagBank:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Erro ao criar pagamento.';
+      setPagbankError(errorMsg);
+      setPaymentProcessed(false);
+      toast({
+        title: t('checkout.paymentError'),
+        description: errorMsg,
+        variant: 'destructive',
       });
     }
   };
@@ -458,11 +646,23 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     setMpOrderId(null);
     setMpQrData(null);
     setMpError(null);
+    cleanupPagBankListener();
+    setPagbankPaymentId(null);
+    setPagbankStatus(null);
+    setPagbankQrCodeText(null);
+    setPagbankError(null);
+    setPayerName('');
+    setPayerTaxId('');
+    setPayerEmail('');
+    setCardNumber('');
+    setCardExpMonth('');
+    setCardExpYear('');
+    setCardCvv('');
     // Reset sale guard
     setSaleRecorded(false);
     saleRecordedRef.current = false;
     paymentInProgressRef.current = null;
-  }, []);
+  }, [cleanupPagBankListener]);
 
   const handleClose = () => {
     onClose();
@@ -478,8 +678,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       // Cleanup garantido ao desmontar
       stopPolling();
       clearPersistedState();
+      cleanupPagBankListener();
     };
-  }, [stopPolling, clearPersistedState]);
+  }, [stopPolling, clearPersistedState, cleanupPagBankListener]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -490,6 +691,19 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
   }, [isOpen, stopPolling, clearPersistedState, resetCheckout]);
 
   const handleCancelPayment = async () => {
+    if (isPagBank) {
+      cleanupPagBankListener();
+      setPagbankStatus('canceled');
+      setPagbankError('Pagamento cancelado localmente');
+      setPaymentProcessed(false);
+      toast({
+        title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
+        description: 'O pagamento foi cancelado no kiosk. O gateway continuará aguardando até expirar.',
+        variant: 'default',
+      });
+      return;
+    }
+
     // Capturar orderId ANTES de qualquer operação (evita race condition)
     const orderIdToCancel = mpOrderId;
     
@@ -619,9 +833,9 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
             <>
               {/* Seleção de método de pagamento (se QR ainda não foi iniciado) */}
               {!mpQrData && !mpOrderId && pointStatus === 'idle' && (
-                <Card>
-                  <CardContent className="p-4">
-                    <h3 className="font-medium mb-4">{t('checkout.paymentMethod')}</h3>
+              <Card>
+                <CardContent className="p-4">
+                  <h3 className="font-medium mb-4">{t('checkout.paymentMethod')}</h3>
                     
                     {/* Alerta se nenhum método está habilitado */}
                     {!enabledMethods.pix && !enabledMethods.credit && !enabledMethods.debit && (
@@ -699,8 +913,29 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 </Card>
               )}
 
+              {/* Seção de QR Code PagBank */}
+              {isPagBank && paymentMethod === 'pix_qr' && pagbankQrCodeText && (
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-center space-y-4">
+                      <h3 className="font-medium">QR Code PagBank</h3>
+                      <div className="bg-white p-4 rounded-lg border">
+                        <QRCode value={pagbankQrCodeText} size={200} />
+                      </div>
+                      <p className="text-sm text-gray-600">Aguardando pagamento...</p>
+                      {pagbankError && (
+                        <Alert className="border-red-200 bg-red-50">
+                          <AlertTriangle className="h-4 w-4 text-red-500" />
+                          <AlertDescription className="text-red-700">{pagbankError}</AlertDescription>
+                        </Alert>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Seção de QR Code Mercado Pago - só exibe após clicar em Gerar */}
-              {paymentMethod === 'pix_qr' && qrFlowStarted && (
+              {paymentMethod === 'pix_qr' && qrFlowStarted && !isPagBank && (
                 <Card>
                   <CardContent className="p-4">
                     <div className="text-center space-y-4">
@@ -766,8 +1001,36 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 </Card>
               )}
 
+              {/* Seção de Cartão (PagBank) */}
+              {isPagBank && (paymentMethod === 'credit_card' || paymentMethod === 'debit_card') && pagbankPaymentId && (
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="text-center space-y-4">
+                      <h3 className="font-medium">
+                        {paymentMethod === 'credit_card' ? t('checkout.paymentWithCredit') : t('checkout.paymentWithDebit')}
+                      </h3>
+                      <div className="py-4">
+                        <CreditCard className={`w-20 h-20 mx-auto animate-pulse mb-4 ${
+                          paymentMethod === 'credit_card' ? 'text-blue-500' : 'text-orange-500'
+                        }`} />
+                        <p className="text-gray-600">Processando pagamento no PagBank...</p>
+                        {pagbankStatus && (
+                          <p className="text-sm text-gray-500 mt-2">Status: {pagbankStatus}</p>
+                        )}
+                      </div>
+                      {pagbankError && (
+                        <Alert className="border-red-200 bg-red-50">
+                          <AlertTriangle className="h-4 w-4 text-red-500" />
+                          <AlertDescription className="text-red-700">{pagbankError}</AlertDescription>
+                        </Alert>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Seção de Cartão (Crédito/Débito) via Point */}
-              {(paymentMethod === 'credit_card' || paymentMethod === 'debit_card') && (mpOrderId || pointStatus !== 'idle') && (
+              {!isPagBank && (paymentMethod === 'credit_card' || paymentMethod === 'debit_card') && (mpOrderId || pointStatus !== 'idle') && (
                 <Card>
                   <CardContent className="p-4">
                     <div className="text-center space-y-4">
@@ -873,6 +1136,82 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                   )}
                 </CardContent>
               </Card>
+
+              {isPagBank && (
+                <Card>
+                  <CardContent className="p-4 space-y-4">
+                    <h3 className="font-medium">Dados do pagador</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label>Nome</Label>
+                        <Input
+                          value={payerName}
+                          onChange={(e) => setPayerName(e.target.value)}
+                          placeholder="Nome completo"
+                        />
+                      </div>
+                      <div>
+                        <Label>CPF/CNPJ</Label>
+                        <Input
+                          value={payerTaxId}
+                          onChange={(e) => setPayerTaxId(e.target.value)}
+                          placeholder="Somente números"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Label>Email (opcional)</Label>
+                        <Input
+                          type="email"
+                          value={payerEmail}
+                          onChange={(e) => setPayerEmail(e.target.value)}
+                          placeholder="email@exemplo.com"
+                        />
+                      </div>
+                    </div>
+
+                    {paymentMethod !== 'pix_qr' && (
+                      <>
+                        <Separator />
+                        <h3 className="font-medium">Dados do cartão</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="md:col-span-2">
+                            <Label>Número do cartão</Label>
+                            <Input
+                              value={cardNumber}
+                              onChange={(e) => setCardNumber(e.target.value)}
+                              placeholder="0000 0000 0000 0000"
+                            />
+                          </div>
+                          <div>
+                            <Label>Mês</Label>
+                            <Input
+                              value={cardExpMonth}
+                              onChange={(e) => setCardExpMonth(e.target.value)}
+                              placeholder="MM"
+                            />
+                          </div>
+                          <div>
+                            <Label>Ano</Label>
+                            <Input
+                              value={cardExpYear}
+                              onChange={(e) => setCardExpYear(e.target.value)}
+                              placeholder="AAAA"
+                            />
+                          </div>
+                          <div>
+                            <Label>CVV</Label>
+                            <Input
+                              value={cardCvv}
+                              onChange={(e) => setCardCvv(e.target.value)}
+                              placeholder="CVV"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
             </>
           )}
         </div>
@@ -887,7 +1226,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
           ) : (
             <>
               {/* Botão para PIX/QR */}
-              {paymentMethod === 'pix_qr' && !mpQrData && !isPolling && (
+              {paymentMethod === 'pix_qr' && !isPagBank && !mpQrData && !isPolling && (
                 <Button
                   onClick={handleStartMercadoPagoQR}
                   className="w-full bg-green-600 hover:bg-green-700"
@@ -899,15 +1238,33 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 </Button>
               )}
 
-              {paymentMethod === 'pix_qr' && (mpQrData || isPolling) && (
+              {paymentMethod === 'pix_qr' && isPagBank && !pagbankPaymentId && (
+                <Button
+                  onClick={handleStartPagBankPayment}
+                  className="w-full bg-green-600 hover:bg-green-700"
+                  size="lg"
+                  disabled={paymentProcessed}
+                >
+                  <QrCode className="w-4 h-4 mr-2" />
+                  {paymentProcessed ? t('checkout.generatingQr') : t('checkout.generateQr')}
+                </Button>
+              )}
+
+              {paymentMethod === 'pix_qr' && !isPagBank && (mpQrData || isPolling) && (
                 <div className="text-center py-3 text-sm text-gray-600">
                   <p>{t('checkout.awaitingPix')}</p>
                   <p className="text-xs mt-1">{t('checkout.willRedirect')}</p>
                 </div>
               )}
 
-              {/* Botão para Crédito */}
-              {paymentMethod === 'credit_card' && pointStatus === 'idle' && !isPolling && (
+              {paymentMethod === 'pix_qr' && isPagBank && (pagbankPaymentId || pagbankStatus) && (
+                <div className="text-center py-3 text-sm text-gray-600">
+                  <p>{t('checkout.awaitingPix')}</p>
+                </div>
+              )}
+
+              {/* Botao para Credito (Mercado Pago) */}
+              {paymentMethod === 'credit_card' && !isPagBank && pointStatus === 'idle' && !isPolling && (
                 <Button
                   onClick={handleStartMercadoPagoPoint}
                   className="w-full bg-blue-600 hover:bg-blue-700"
@@ -919,8 +1276,21 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 </Button>
               )}
 
-              {/* Botão para Débito */}
-              {paymentMethod === 'debit_card' && pointStatus === 'idle' && !isPolling && (
+              {/* Botao para Credito (PagBank) */}
+              {paymentMethod === 'credit_card' && isPagBank && !pagbankPaymentId && (
+                <Button
+                  onClick={handleStartPagBankPayment}
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  size="lg"
+                  disabled={paymentProcessed}
+                >
+                  <CreditCard className="w-4 h-4 mr-2" />
+                  {paymentProcessed ? t('checkout.sending') : t('checkout.payWithCredit')}
+                </Button>
+              )}
+
+              {/* Botao para Debito (Mercado Pago) */}
+              {paymentMethod === 'debit_card' && !isPagBank && pointStatus === 'idle' && !isPolling && (
                 <Button
                   onClick={handleStartMercadoPagoPoint}
                   className="w-full bg-orange-600 hover:bg-orange-700"
@@ -932,8 +1302,21 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 </Button>
               )}
 
+              {/* Botao para Debito (PagBank) */}
+              {paymentMethod === 'debit_card' && isPagBank && !pagbankPaymentId && (
+                <Button
+                  onClick={handleStartPagBankPayment}
+                  className="w-full bg-orange-600 hover:bg-orange-700"
+                  size="lg"
+                  disabled={paymentProcessed}
+                >
+                  <CreditCard className="w-4 h-4 mr-2" />
+                  {paymentProcessed ? t('checkout.sending') : t('checkout.payWithDebit')}
+                </Button>
+              )}
+
               {/* Mensagem de aguardando para Point */}
-              {(paymentMethod === 'credit_card' || paymentMethod === 'debit_card') && (pointStatus !== 'idle' || isPolling) && (
+              {!isPagBank && (paymentMethod === 'credit_card' || paymentMethod === 'debit_card') && (pointStatus !== 'idle' || isPolling) && (
                 <div className="text-center py-3 text-sm text-gray-600">
                   <p>{t('checkout.awaitingTerminalPayment')}</p>
                   <p className="text-xs mt-1">{t('checkout.completeOnCardMachine')}</p>
@@ -946,7 +1329,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
               )}
 
               {/* Cancelar pagamento via QR */}
-              {paymentMethod === 'pix_qr' && (mpOrderId || mpQrData || isPolling) && (
+              {paymentMethod === 'pix_qr' && ((!isPagBank && (mpOrderId || mpQrData || isPolling)) || (isPagBank && (pagbankPaymentId || pagbankStatus))) && (
                 <div className="mt-3">
                   <Button variant="destructive" onClick={handleCancelPayment} className="w-full">
                     {t('checkout.cancelPayment')}
@@ -954,13 +1337,18 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                 </div>
               )}
 
-              <Button
+<Button
                 onClick={() => {
                   setShowPayment(false);
                   setPaymentMethod('pix_qr');
                   setQrFlowStarted(false);
                   setMpOrderId(null);
                   setMpQrData(null);
+                  cleanupPagBankListener();
+                  setPagbankPaymentId(null);
+                  setPagbankStatus(null);
+                  setPagbankQrCodeText(null);
+                  setPagbankError(null);
                   // Reset polling state via hook controls
                   stopPolling();
                   clearPersistedState();

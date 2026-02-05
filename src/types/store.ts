@@ -142,48 +142,85 @@ export interface StoreSettings {
 // Payment Gateway Configuration
 // ============================================
 
-/** Provedores de pagamento suportados */
-export type PaymentProvider = 'mercadopago' | 'stone' | 'pagseguro' | 'cielo' | 'stripe';
+/** Provedores de pagamento suportados (canônico + legado) */
+export type PaymentProvider = 'none' | 'mercado_pago' | 'mercadopago' | 'pagbank';
+
+/** Ambiente de pagamento */
+export type PaymentEnvironment = 'sandbox' | 'production';
 
 /** Métodos de pagamento habilitados */
 export interface EnabledPaymentMethods {
+  cash: boolean;
   pix: boolean;
   credit: boolean;
   debit: boolean;
 }
 
-/** Configuração do gateway de pagamento */
-export interface PaymentGatewayConfig {
-  // Identificação do provedor
-  provider: PaymentProvider;
-  
-  // Modo de operação
-  mode: 'sandbox' | 'production';
-  
-  // Métodos de pagamento habilitados (default: todos true)
-  enabledMethods?: EnabledPaymentMethods;
-  
-  // Credenciais (Mercado Pago)
-  accessToken: string;
-  
-  // Identificadores do integrador/loja
+/** Configuração específica do PagBank (sem segredos) */
+export interface PagBankProviderConfig {
+  clientId?: string;
+  merchantId?: string;
+  publicKey?: string;
+}
+
+/** Configuração específica do Mercado Pago (sem segredos) */
+export interface MercadoPagoProviderConfig {
   userId?: string;
   storeId?: string;
   externalPosId?: string;
-  
-  // Terminal Point (cartão físico)
   terminalId?: string;
-  
-  // Timeouts customizáveis
-  pollingIntervalMs?: number;      // default: 3000
-  pollingMaxAttempts?: number;     // default: 45
-  pointExpirationTime?: string;    // default: 'PT2M' (ISO 8601)
-  qrExpirationMinutes?: number;    // default: 2
-  
-  // Metadados de auditoria
+}
+
+/** Configuração do gateway de pagamento */
+export interface PaymentGatewayConfig {
+  // Identificação do provedor (canônico)
+  provider: PaymentProvider;
+
+  // Ambiente (canônico)
+  environment: PaymentEnvironment;
+
+  // Métodos de pagamento habilitados
+  enabledMethods: EnabledPaymentMethods;
+
+  // Chave PIX (quando habilitado)
+  pixKey?: string;
+
+  // Configurações por provedor (sem segredos)
+  providers?: {
+    pagbank?: PagBankProviderConfig;
+    mercadopago?: MercadoPagoProviderConfig;
+  };
+
+  // -------------------------------
+  // Legacy fields (read-compat only)
+  // -------------------------------
+  /** @deprecated Evitar persistir tokens no Firestore */
+  accessToken?: string;
+  /** @deprecated Usar environment */
+  mode?: PaymentEnvironment;
+  /** @deprecated Mover para providers.mercadopago */
+  userId?: string;
+  /** @deprecated Mover para providers.mercadopago */
+  storeId?: string;
+  /** @deprecated Mover para providers.mercadopago */
+  externalPosId?: string;
+  /** @deprecated Mover para providers.mercadopago */
+  terminalId?: string;
+  /** @deprecated */
+  pollingIntervalMs?: number;
+  /** @deprecated */
+  pollingMaxAttempts?: number;
+  /** @deprecated */
+  pointExpirationTime?: string;
+  /** @deprecated */
+  qrExpirationMinutes?: number;
+  /** @deprecated */
   configuredAt?: string;
+  /** @deprecated */
   configuredBy?: string;
+  /** @deprecated */
   lastValidatedAt?: string;
+  /** @deprecated */
   lastValidationResult?: 'success' | 'error';
 }
 

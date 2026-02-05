@@ -26,9 +26,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Eye, EyeOff, Zap, Trash2, Droplets, Printer, Plus, X, Activity, Clock } from 'lucide-react';
+import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Trash2, Droplets, Printer, Plus, X, Activity, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
+import type { PaymentGatewayConfig, PaymentProvider, PaymentEnvironment, EnabledPaymentMethods } from '@/types/store';
 
 // Interface para status de hardware em tempo real (do Firestore)
 interface HardwareStatus {
@@ -89,31 +90,8 @@ interface StoreSettings {
   timezone: string;
   language: string;
   
-  // Payments
-  acceptCash?: boolean;
-  acceptCard?: boolean;
-  acceptPix?: boolean;
-  pixKey?: string;
-  
-  // Payment Gateway (espelhando Kiosk)
-  paymentGateway?: {
-    provider?: string;
-    mode?: 'sandbox' | 'production';
-    accessToken?: string;
-    userId?: string;           // ID do usuário no gateway
-    externalPosId?: string;    // ID do POS/Terminal
-    terminalId?: string;       // ID do terminal físico
-    storeId?: string;          // ID da loja no gateway
-    enabledMethods?: {         // Métodos habilitados
-      pix?: boolean;
-      credit?: boolean;
-      debit?: boolean;
-    };
-    pollingIntervalMs?: number;    // Intervalo de polling (ms)
-    pollingMaxAttempts?: number;   // Máximo de tentativas
-    configuredAt?: string;         // Data de configuração
-    lastValidatedAt?: string;      // Última validação
-  };
+  // Payment Gateway (canônico)
+  paymentGatewayConfig?: PaymentGatewayConfig;
   
   // ESP32 / Hardware
   esp32?: {
@@ -144,13 +122,98 @@ interface StoreSettingsTabProps {
   storeId: string;
 }
 
+const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
+  cash: true,
+  pix: true,
+  credit: true,
+  debit: true,
+};
+
+const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
+  if (!provider) return 'none';
+  if (provider === 'mercadopago') return 'mercado_pago';
+  return provider as PaymentProvider;
+};
+
+const normalizePaymentGatewayConfig = (data?: Partial<StoreSettings> | null): PaymentGatewayConfig => {
+  const legacy = (data as unknown as Record<string, any>) || {};
+  const legacyGateway = legacy.paymentGateway || {};
+  const current = data?.paymentGatewayConfig;
+  const provider = normalizeProvider(current?.provider || legacyGateway.provider);
+  const environment: PaymentEnvironment = current?.environment || legacyGateway.environment || legacyGateway.mode || 'sandbox';
+
+  const enabledMethods: EnabledPaymentMethods = {
+    cash: current?.enabledMethods?.cash ?? legacy.acceptCash ?? DEFAULT_ENABLED_METHODS.cash,
+    pix: current?.enabledMethods?.pix ?? legacy.acceptPix ?? DEFAULT_ENABLED_METHODS.pix,
+    credit: current?.enabledMethods?.credit ?? legacy.acceptCard ?? DEFAULT_ENABLED_METHODS.credit,
+    debit: current?.enabledMethods?.debit ?? legacyGateway?.enabledMethods?.debit ?? DEFAULT_ENABLED_METHODS.debit,
+  };
+
+  const pixKey = current?.pixKey ?? legacy.pixKey;
+
+  return {
+    provider,
+    environment,
+    enabledMethods,
+    pixKey,
+    providers: {
+      pagbank: {
+        ...(current?.providers?.pagbank || {}),
+        clientId: current?.providers?.pagbank?.clientId || legacyGateway?.clientId,
+        merchantId: current?.providers?.pagbank?.merchantId || legacyGateway?.merchantId,
+        publicKey: current?.providers?.pagbank?.publicKey || legacyGateway?.publicKey,
+      },
+      mercadopago: {
+        ...(current?.providers?.mercadopago || {}),
+        userId: current?.providers?.mercadopago?.userId || legacyGateway?.userId,
+        storeId: current?.providers?.mercadopago?.storeId || legacyGateway?.storeId,
+        externalPosId: current?.providers?.mercadopago?.externalPosId || legacyGateway?.externalPosId,
+        terminalId: current?.providers?.mercadopago?.terminalId || legacyGateway?.terminalId,
+      },
+    },
+    configuredAt: current?.configuredAt || legacyGateway?.configuredAt,
+    lastValidatedAt: current?.lastValidatedAt || legacyGateway?.lastValidatedAt,
+    lastValidationResult: current?.lastValidationResult || legacyGateway?.lastValidationResult,
+  };
+};
+
+const sanitizePaymentGatewayConfigForSave = (config: PaymentGatewayConfig): PaymentGatewayConfig => {
+  const sanitized = sanitizeFirestoreData(config) as PaymentGatewayConfig;
+  // Remove segredos e campos legados do payload de escrita
+  delete (sanitized as any).accessToken;
+  delete (sanitized as any).mode;
+  delete (sanitized as any).userId;
+  delete (sanitized as any).storeId;
+  delete (sanitized as any).externalPosId;
+  delete (sanitized as any).terminalId;
+  return sanitized;
+};
+
+const validatePaymentGatewayConfig = (config: PaymentGatewayConfig): string[] => {
+  const errors: string[] = [];
+
+  if (config.provider === 'pagbank') {
+    const clientId = config.providers?.pagbank?.clientId;
+    const publicKey = config.providers?.pagbank?.publicKey;
+    const needsPix = config.enabledMethods?.pix;
+    const needsCard = config.enabledMethods?.credit || config.enabledMethods?.debit;
+
+    if ((needsPix || needsCard) && !clientId) {
+      errors.push('PagBank: Client ID é obrigatório.');
+    }
+    if (needsCard && !publicKey) {
+      errors.push('PagBank: Public Key é obrigatório para cartão.');
+    }
+  }
+
+  return errors;
+};
+
 export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
-  const [showAccessToken, setShowAccessToken] = useState(false);
-  const [testingConnection, setTestingConnection] = useState(false);
   
   // Estado para hardware em tempo real
   const [hardwareStatus, setHardwareStatus] = useState<HardwareStatus | null>(null);
@@ -217,7 +280,11 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
   // Initialize settings state when data loads
   useEffect(() => {
     if (storeData) {
-      setSettings(storeData);
+      const normalizedConfig = normalizePaymentGatewayConfig(storeData);
+      setSettings({
+        ...storeData,
+        paymentGatewayConfig: normalizedConfig,
+      });
     }
   }, [storeData]);
 
@@ -226,8 +293,21 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
     mutationFn: async (newSettings: Partial<StoreSettings>) => {
       const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
         const sanitizedSettings = sanitizeFirestoreData(newSettings) as typeof newSettings;
+        const legacy = sanitizedSettings as unknown as Record<string, unknown>;
+        // Remove legacy fields to evitar duplicação
+        delete legacy.acceptCash;
+        delete legacy.acceptCard;
+        delete legacy.acceptPix;
+        delete legacy.pixKey;
+        delete legacy.paymentGateway;
+
+        const paymentGatewayConfig = sanitizePaymentGatewayConfigForSave(
+          (sanitizedSettings.paymentGatewayConfig || normalizePaymentGatewayConfig(sanitizedSettings)) as PaymentGatewayConfig
+        );
+
         await updateDoc(storeRef, {
           ...sanitizedSettings,
+          paymentGatewayConfig,
           updatedAt: new Date(),
         });
     },
@@ -250,67 +330,58 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
 
   const handleSave = () => {
     if (settings) {
+      if (settings.paymentGatewayConfig) {
+        const paymentErrors = validatePaymentGatewayConfig(settings.paymentGatewayConfig);
+        if (paymentErrors.length > 0) {
+          paymentErrors.forEach((error) => toast.error(error));
+          return;
+        }
+      }
       updateSettingsMutation.mutate(settings);
     }
   };
 
-  const handleTestConnection = async () => {
-    if (!settings?.paymentGateway?.accessToken) {
-      toast.error('Configure o Access Token primeiro');
-      return;
-    }
+  type PaymentGatewayConfigUpdate = Omit<Partial<PaymentGatewayConfig>, 'enabledMethods' | 'providers'> & {
+    enabledMethods?: Partial<EnabledPaymentMethods>;
+    providers?: {
+      pagbank?: Partial<NonNullable<PaymentGatewayConfig['providers']>['pagbank']>;
+      mercadopago?: Partial<NonNullable<PaymentGatewayConfig['providers']>['mercadopago']>;
+    };
+  };
 
-    setTestingConnection(true);
-    try {
-      // Test based on provider
-      const provider = settings.paymentGateway.provider;
-      const token = settings.paymentGateway.accessToken;
-      
-      if (provider === 'mercadopago') {
-        // Test Mercado Pago connection
-        const response = await fetch('https://api.mercadopago.com/users/me', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-          },
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          toast.success(`Conexão OK! Conta: ${data.email || data.nickname}`);
-          // Update last validated
-          handleChange('paymentGateway', {
-            ...settings.paymentGateway,
-            lastValidatedAt: new Date().toISOString(),
-          });
-        } else {
-          toast.error('Token inválido ou expirado');
-        }
-      } else {
-        // Generic test - just check if token is not empty
-        toast.success('Credenciais configuradas (validação manual necessária)');
-      }
-    } catch (error) {
-      toast.error('Erro ao testar conexão. Verifique sua rede.');
-    }
-    setTestingConnection(false);
+  const updatePaymentGatewayConfig = (partial: PaymentGatewayConfigUpdate) => {
+    if (!settings) return;
+    const current = settings.paymentGatewayConfig || normalizePaymentGatewayConfig(settings);
+    const next: PaymentGatewayConfig = {
+      ...current,
+      ...partial,
+      enabledMethods: {
+        ...current.enabledMethods,
+        ...(partial.enabledMethods || {}),
+      },
+      providers: {
+        ...current.providers,
+        ...partial.providers,
+        pagbank: {
+          ...current.providers?.pagbank,
+          ...partial.providers?.pagbank,
+        },
+        mercadopago: {
+          ...current.providers?.mercadopago,
+          ...partial.providers?.mercadopago,
+        },
+      },
+    };
+    handleChange('paymentGatewayConfig', next);
   };
 
   const handleClearGatewayConfig = () => {
     if (!settings) return;
-    handleChange('paymentGateway', {
-      provider: undefined,
-      mode: 'sandbox',
-      accessToken: undefined,
-      userId: undefined,
-      externalPosId: undefined,
-      terminalId: undefined,
-      storeId: undefined,
-      enabledMethods: undefined,
-      pollingIntervalMs: undefined,
-      pollingMaxAttempts: undefined,
-      configuredAt: undefined,
-      lastValidatedAt: undefined,
-    });
+    handleChange('paymentGatewayConfig', {
+      provider: 'none',
+      environment: 'sandbox',
+      enabledMethods: { ...DEFAULT_ENABLED_METHODS },
+    } as PaymentGatewayConfig);
     toast.success('Configuração do gateway limpa');
   };
 
@@ -321,6 +392,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
       </div>
     );
   }
+
+  const gatewayConfig = settings.paymentGatewayConfig || normalizePaymentGatewayConfig(settings);
 
   return (
     <div className="space-y-6">
@@ -473,88 +546,34 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         </CardContent>
       </Card>
 
-      {/* Payment Methods */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center">
-            <CreditCard className="h-5 w-5 mr-2" />
-            Métodos de Pagamento
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Aceitar Dinheiro</Label>
-              <p className="text-sm text-gray-500">Permitir pagamento em dinheiro</p>
-            </div>
-            <Switch
-              checked={settings.acceptCash ?? true}
-              onCheckedChange={(v) => handleChange('acceptCash', v)}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Aceitar Cartão</Label>
-              <p className="text-sm text-gray-500">Crédito e débito</p>
-            </div>
-            <Switch
-              checked={settings.acceptCard ?? true}
-              onCheckedChange={(v) => handleChange('acceptCard', v)}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Aceitar PIX</Label>
-              <p className="text-sm text-gray-500">Pagamento instantâneo</p>
-            </div>
-            <Switch
-              checked={settings.acceptPix ?? true}
-              onCheckedChange={(v) => handleChange('acceptPix', v)}
-            />
-          </div>
-          {settings.acceptPix && (
-            <div>
-              <Label>Chave PIX</Label>
-              <Input
-                value={settings.pixKey || ''}
-                onChange={(e) => handleChange('pixKey', e.target.value)}
-                placeholder="CPF, CNPJ, e-mail ou chave aleatória"
-              />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Payment Gateway */}
+      {/* Pagamentos (Modelo Canônico) */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center">
                 <CreditCard className="h-5 w-5 mr-2" />
-                Gateway de Pagamento
+                Pagamentos
               </CardTitle>
               <CardDescription>
-                Configure a integração com processador de pagamentos
+                Configure o provedor e os métodos habilitados
               </CardDescription>
             </div>
-            {settings.paymentGateway?.provider && settings.paymentGateway.provider !== 'none' && (
-              <Badge variant={settings.paymentGateway?.configuredAt ? 'default' : 'secondary'}>
-                {settings.paymentGateway?.configuredAt ? 'Configurado' : 'Pendente'}
+            {gatewayConfig.provider !== 'none' && (
+              <Badge variant={gatewayConfig.configuredAt ? 'default' : 'secondary'}>
+                {gatewayConfig.configuredAt ? 'Configurado' : 'Pendente'}
               </Badge>
             )}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Provider and Mode */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>Provedor</Label>
               <Select
-                value={settings.paymentGateway?.provider || 'none'}
-                onValueChange={(v) => handleChange('paymentGateway', { 
-                  ...settings.paymentGateway, 
-                  provider: v === 'none' ? undefined : v 
+                value={gatewayConfig.provider || 'none'}
+                onValueChange={(value) => updatePaymentGatewayConfig({
+                  provider: normalizeProvider(value as PaymentProvider),
                 })}
               >
                 <SelectTrigger>
@@ -562,21 +581,17 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Nenhum</SelectItem>
-                  <SelectItem value="mercadopago">Mercado Pago</SelectItem>
-                  <SelectItem value="stone">Stone</SelectItem>
-                  <SelectItem value="cielo">Cielo</SelectItem>
-                  <SelectItem value="pagseguro">PagSeguro</SelectItem>
-                  <SelectItem value="stripe">Stripe</SelectItem>
+                  <SelectItem value="mercado_pago">Mercado Pago</SelectItem>
+                  <SelectItem value="pagbank">PagBank</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Ambiente</Label>
               <Select
-                value={settings.paymentGateway?.mode || 'sandbox'}
-                onValueChange={(v) => handleChange('paymentGateway', { 
-                  ...settings.paymentGateway, 
-                  mode: v as 'sandbox' | 'production' 
+                value={gatewayConfig.environment || 'sandbox'}
+                onValueChange={(value) => updatePaymentGatewayConfig({
+                  environment: value as PaymentEnvironment,
                 })}
               >
                 <SelectTrigger>
@@ -590,7 +605,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             </div>
           </div>
 
-          {settings.paymentGateway?.mode === 'production' && (
+          {gatewayConfig.environment === 'production' && (
             <Alert className="border-yellow-500 bg-yellow-50">
               <AlertTriangle className="h-4 w-4 text-yellow-600" />
               <AlertDescription className="text-yellow-800">
@@ -599,22 +614,32 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             </Alert>
           )}
 
-          {settings.paymentGateway?.provider && settings.paymentGateway.provider !== 'none' && (
+          {gatewayConfig.provider !== 'none' && (
             <>
-              {/* Payment Methods (Switches) */}
               <div className="space-y-3">
                 <Label className="text-base font-medium">Métodos de Pagamento</Label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between p-3 border rounded-lg">
+                    <div>
+                      <Label>Dinheiro</Label>
+                      <p className="text-xs text-gray-500">Pagamento em espécie</p>
+                    </div>
+                    <Switch
+                      checked={gatewayConfig.enabledMethods.cash}
+                      onCheckedChange={(v) => updatePaymentGatewayConfig({
+                        enabledMethods: { cash: !!v },
+                      })}
+                    />
+                  </div>
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
                       <Label>PIX</Label>
                       <p className="text-xs text-gray-500">QR Code instantâneo</p>
                     </div>
                     <Switch
-                      checked={settings.paymentGateway?.enabledMethods?.pix ?? true}
-                      onCheckedChange={(v) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        enabledMethods: { ...settings.paymentGateway?.enabledMethods, pix: v }
+                      checked={gatewayConfig.enabledMethods.pix}
+                      onCheckedChange={(v) => updatePaymentGatewayConfig({
+                        enabledMethods: { pix: !!v },
                       })}
                     />
                   </div>
@@ -624,10 +649,9 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                       <p className="text-xs text-gray-500">Cartão de crédito</p>
                     </div>
                     <Switch
-                      checked={settings.paymentGateway?.enabledMethods?.credit ?? true}
-                      onCheckedChange={(v) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        enabledMethods: { ...settings.paymentGateway?.enabledMethods, credit: v }
+                      checked={gatewayConfig.enabledMethods.credit}
+                      onCheckedChange={(v) => updatePaymentGatewayConfig({
+                        enabledMethods: { credit: !!v },
                       })}
                     />
                   </div>
@@ -637,160 +661,118 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                       <p className="text-xs text-gray-500">Cartão de débito</p>
                     </div>
                     <Switch
-                      checked={settings.paymentGateway?.enabledMethods?.debit ?? true}
-                      onCheckedChange={(v) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        enabledMethods: { ...settings.paymentGateway?.enabledMethods, debit: v }
+                      checked={gatewayConfig.enabledMethods.debit}
+                      onCheckedChange={(v) => updatePaymentGatewayConfig({
+                        enabledMethods: { debit: !!v },
                       })}
                     />
                   </div>
                 </div>
               </div>
 
-              {/* Credentials */}
-              <div className="space-y-3">
-                <Label className="text-base font-medium">Credenciais</Label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label>Access Token</Label>
-                    <div className="relative">
-                      <Input
-                        type={showAccessToken ? 'text' : 'password'}
-                        value={settings.paymentGateway?.accessToken || ''}
-                        onChange={(e) => handleChange('paymentGateway', { 
-                          ...settings.paymentGateway, 
-                          accessToken: e.target.value 
-                        })}
-                        placeholder="APP_USR-..."
-                        className="pr-10"
-                      />
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="absolute right-0 top-0 h-full px-3"
-                        onClick={() => setShowAccessToken(!showAccessToken)}
-                      >
-                        {showAccessToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </Button>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {settings.paymentGateway.mode === 'production' 
-                        ? '⚠️ Ambiente de produção - transações reais'
-                        : '🧪 Ambiente de testes - sem transações reais'}
-                    </p>
-                  </div>
-                  <div>
-                    <Label>User ID</Label>
-                    <Input
-                      value={settings.paymentGateway?.userId || ''}
-                      onChange={(e) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        userId: e.target.value 
-                      })}
-                      placeholder="ID do usuário no gateway"
-                    />
-                  </div>
-                  <div>
-                    <Label>External POS ID</Label>
-                    <Input
-                      value={settings.paymentGateway?.externalPosId || ''}
-                      onChange={(e) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        externalPosId: e.target.value 
-                      })}
-                      placeholder="Ex: KIOSK-001"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Identificador único do terminal</p>
-                  </div>
-                  <div>
-                    <Label>Store ID (Gateway)</Label>
-                    <Input
-                      value={settings.paymentGateway?.storeId || ''}
-                      onChange={(e) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        storeId: e.target.value 
-                      })}
-                      placeholder="ID da loja no gateway"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Terminal ID (for physical card readers) */}
-              <div>
-                <Label>Terminal ID</Label>
-                <Input
-                  value={settings.paymentGateway?.terminalId || ''}
-                  onChange={(e) => handleChange('paymentGateway', { 
-                    ...settings.paymentGateway, 
-                    terminalId: e.target.value 
-                  })}
-                  placeholder="Ex: GERTEC_MP35P__12345"
-                />
-                <p className="text-xs text-gray-500 mt-1">ID do terminal físico para pagamentos com cartão</p>
-              </div>
-
-              {/* Advanced Settings - Collapsible */}
-              <details className="border rounded-lg p-4">
-                <summary className="cursor-pointer font-medium">Configurações Avançadas</summary>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <Label>Polling Interval (ms)</Label>
-                    <Input
-                      type="number"
-                      value={settings.paymentGateway?.pollingIntervalMs || 3000}
-                      onChange={(e) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        pollingIntervalMs: Number(e.target.value) 
-                      })}
-                      min={1000}
-                      max={10000}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Intervalo para verificar status do pagamento</p>
-                  </div>
-                  <div>
-                    <Label>Máximo de Tentativas</Label>
-                    <Input
-                      type="number"
-                      value={settings.paymentGateway?.pollingMaxAttempts || 45}
-                      onChange={(e) => handleChange('paymentGateway', { 
-                        ...settings.paymentGateway, 
-                        pollingMaxAttempts: Number(e.target.value) 
-                      })}
-                      min={10}
-                      max={120}
-                    />
-                    <p className="text-xs text-gray-500 mt-1">Número máximo de verificações</p>
-                  </div>
-                </div>
-              </details>
-
-              {/* Configuration Metadata */}
-              {settings.paymentGateway?.configuredAt && (
-                <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-600">
-                  <p>Configurado em: {new Date(settings.paymentGateway.configuredAt).toLocaleString('pt-BR')}</p>
-                  {settings.paymentGateway.lastValidatedAt && (
-                    <p>Última validação: {new Date(settings.paymentGateway.lastValidatedAt).toLocaleString('pt-BR')}</p>
-                  )}
+              {gatewayConfig.enabledMethods.pix && (
+                <div>
+                  <Label>Chave PIX</Label>
+                  <Input
+                    value={gatewayConfig.pixKey || ''}
+                    onChange={(e) => updatePaymentGatewayConfig({ pixKey: e.target.value })}
+                    placeholder="CPF, CNPJ, e-mail ou chave aleatória"
+                  />
                 </div>
               )}
 
-              {/* Action Buttons */}
+              {gatewayConfig.provider === 'pagbank' && (
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">PagBank</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label>Client ID</Label>
+                      <Input
+                        value={gatewayConfig.providers?.pagbank?.clientId || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { pagbank: { clientId: e.target.value } },
+                        })}
+                        placeholder="Client ID (PagBank)"
+                      />
+                    </div>
+                    <div>
+                      <Label>Merchant ID</Label>
+                      <Input
+                        value={gatewayConfig.providers?.pagbank?.merchantId || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { pagbank: { merchantId: e.target.value } },
+                        })}
+                        placeholder="Merchant ID (opcional)"
+                      />
+                    </div>
+                    <div>
+                      <Label>Public Key</Label>
+                      <Input
+                        value={gatewayConfig.providers?.pagbank?.publicKey || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { pagbank: { publicKey: e.target.value } },
+                        })}
+                        placeholder="Public Key (opcional)"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Segredos (client secret / tokens) não são salvos no Firestore. Configure via env vars nas Functions.
+                  </p>
+                </div>
+              )}
+
+              {gatewayConfig.provider === 'mercado_pago' && (
+                <div className="space-y-3">
+                  <Label className="text-base font-medium">Mercado Pago</Label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label>User ID</Label>
+                      <Input
+                        value={gatewayConfig.providers?.mercadopago?.userId || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { mercadopago: { userId: e.target.value } },
+                        })}
+                        placeholder="ID do usuário no gateway"
+                      />
+                    </div>
+                    <div>
+                      <Label>External POS ID</Label>
+                      <Input
+                        value={gatewayConfig.providers?.mercadopago?.externalPosId || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { mercadopago: { externalPosId: e.target.value } },
+                        })}
+                        placeholder="Ex: KIOSK-001"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Identificador único do terminal</p>
+                    </div>
+                    <div>
+                      <Label>Store ID (Gateway)</Label>
+                      <Input
+                        value={gatewayConfig.providers?.mercadopago?.storeId || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { mercadopago: { storeId: e.target.value } },
+                        })}
+                        placeholder="ID da loja no gateway"
+                      />
+                    </div>
+                    <div>
+                      <Label>Terminal ID</Label>
+                      <Input
+                        value={gatewayConfig.providers?.mercadopago?.terminalId || ''}
+                        onChange={(e) => updatePaymentGatewayConfig({
+                          providers: { mercadopago: { terminalId: e.target.value } },
+                        })}
+                        placeholder="Ex: GERTEC_MP35P__12345"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">ID do terminal físico para pagamentos com cartão</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3 pt-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleTestConnection}
-                  disabled={testingConnection || !settings.paymentGateway?.accessToken}
-                >
-                  {testingConnection ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Zap className="h-4 w-4 mr-2" />
-                  )}
-                  Testar Conexão
-                </Button>
                 <Button
                   type="button"
                   variant="outline"

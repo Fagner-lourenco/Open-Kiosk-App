@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -21,7 +22,8 @@ import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
-import { getCurrentStoreId } from "@/services/firebase";
+import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
+import type { CreatePaymentInput, PaymentMethod as GatewayPaymentMethod, PaymentRecord, PaymentStatus as GatewayPaymentStatus } from "@/types/payments";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -80,6 +82,24 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   
   // Configuração do gateway de pagamento (Firestore > env vars)
   const { gatewayConfig, resolvedConfig, isConfigured, enabledMethods } = usePaymentGateway();
+  const provider = gatewayConfig?.provider || resolvedConfig.provider || 'none';
+  const isPagBank = provider === 'pagbank';
+
+  // PagBank (estado local)
+  const [pagbankPaymentId, setPagbankPaymentId] = useState<string | null>(null);
+  const [pagbankStatus, setPagbankStatus] = useState<GatewayPaymentStatus | null>(null);
+  const [pagbankQrCodeText, setPagbankQrCodeText] = useState<string | null>(null);
+  const [pagbankError, setPagbankError] = useState<string | null>(null);
+  const pagbankUnsubscribeRef = useRef<(() => void) | null>(null);
+
+  // PagBank (dados do pagador e cartão)
+  const [payerName, setPayerName] = useState('');
+  const [payerTaxId, setPayerTaxId] = useState('');
+  const [payerEmail, setPayerEmail] = useState('');
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpMonth, setCardExpMonth] = useState('');
+  const [cardExpYear, setCardExpYear] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
   
   // Hook unificado para comunicação ESP32
   const { releaseDrink: esp32ReleaseDrink, status: esp32Status, selectedTapId } = useESP32();
@@ -188,6 +208,27 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     },
   });
   const emergencyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const cleanupPagBankListener = useCallback(() => {
+    if (pagbankUnsubscribeRef.current) {
+      pagbankUnsubscribeRef.current();
+      pagbankUnsubscribeRef.current = null;
+    }
+  }, []);
+
+  const buildGatewayItems = () => {
+    if (!product || !selectedSize) return [];
+    return [{
+      name: `${product.title} - ${selectedSize.label}`,
+      quantity,
+      unitAmount: selectedSize.price,
+    }];
+  };
+
+  const mapGatewayMethod = (method: "pix_qr" | "credit_card" | "debit_card"): GatewayPaymentMethod => {
+    if (method === "pix_qr") return "pix";
+    if (method === "credit_card") return "credit";
+    return "debit";
+  };
 
   useEffect(() => {
     processingStageRef.current = flowState.processingStage;
@@ -199,8 +240,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         clearTimeout(emergencyTimeoutRef.current);
         emergencyTimeoutRef.current = null;
       }
+      cleanupPagBankListener();
     };
-  }, []);
+  }, [cleanupPagBankListener]);
 
   const selectedSize = useMemo(() => {
     return product?.sizes?.find((s) => s.key === selectedSizeKey);
@@ -281,16 +323,28 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setMpOrderId(null);
       setMpQrData(null);
       setMpError(null);
+      cleanupPagBankListener();
+      setPagbankPaymentId(null);
+      setPagbankStatus(null);
+      setPagbankQrCodeText(null);
+      setPagbankError(null);
+      setPayerName('');
+      setPayerTaxId('');
+      setPayerEmail('');
+      setCardNumber('');
+      setCardExpMonth('');
+      setCardExpYear('');
+      setCardCvv('');
       // Reset sale guard
       saleRecordedRef.current = false;
       // Reset verificação de idade
       setAgeVerified(false);
       // Cleanup: cancelar pagamentos pendentes
-      if (currentTransactionId) {
+      if (currentTransactionId && !isPagBank) {
         paymentService.cancelPayment(currentTransactionId).catch(console.error);
       }
     }
-  }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage, stopPolling, clearPersistedState]);
+  }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage, stopPolling, clearPersistedState, cleanupPagBankListener, isPagBank]);
 
   // Ajustar método de pagamento se o atual estiver desabilitado
   useEffect(() => {
@@ -349,6 +403,25 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
       emergencyTimeoutRef.current = null;
+    }
+
+    if (isPagBank) {
+      cleanupPagBankListener();
+      setPagbankPaymentId(null);
+      setPagbankStatus('canceled');
+      setPagbankQrCodeText(null);
+      setPagbankError('Pagamento cancelado localmente');
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      setMaxInactivityTime(60);
+      resetInactivityTimer();
+      moveToStep(2);
+      toast({
+        title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
+        description: 'O pagamento foi cancelado no kiosk. O gateway continuará aguardando até expirar.',
+        variant: 'default',
+      });
+      return;
     }
     
     // Capturar orderId ANTES de limpar estado (evita race condition)
@@ -514,6 +587,162 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
   };
 
+  const handleStartPagBankPayment = async (orderNumber: string, totalAmount: number) => {
+    setPagbankError(null);
+
+    const storeId = getCurrentStoreId();
+    const franchiseId = getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId) {
+      toast({
+        title: t('checkout.paymentError') || 'Erro no Pagamento',
+        description: 'storeId/franchiseId ausente para criar pagamento.',
+        variant: 'destructive',
+      });
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      moveToStep(2);
+      return;
+    }
+
+    const customerName = payerName.trim();
+    const customerTaxId = payerTaxId.trim();
+    const customerEmail = payerEmail.trim();
+
+    if (!customerName || !customerTaxId) {
+      toast({
+        title: 'Dados obrigatórios',
+        description: 'Informe nome e CPF/CNPJ do pagador.',
+        variant: 'destructive',
+      });
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      moveToStep(2);
+      return;
+    }
+
+    const customer = {
+      name: customerName,
+      taxId: customerTaxId,
+      email: customerEmail || undefined,
+    };
+
+    let card: CreatePaymentInput['card'] | undefined;
+    if (selectedPayment !== "pix_qr") {
+      const cleanCardNumber = cardNumber.replace(/\D/g, '');
+      const cleanExpMonth = cardExpMonth.replace(/\D/g, '');
+      const cleanExpYear = cardExpYear.replace(/\D/g, '');
+      const cleanCvv = cardCvv.replace(/\D/g, '');
+
+      if (!cleanCardNumber || !cleanExpMonth || !cleanExpYear || !cleanCvv) {
+        toast({
+          title: 'Dados do cartão',
+          description: 'Preencha número, validade e CVV.',
+          variant: 'destructive',
+        });
+        setIsProcessing(false);
+        updateProcessingStage("idle");
+        moveToStep(2);
+        return;
+      }
+
+      card = {
+        number: cleanCardNumber,
+        expMonth: cleanExpMonth,
+        expYear: cleanExpYear,
+        securityCode: cleanCvv,
+        holderName: customerName,
+        holderTaxId: customerTaxId,
+      };
+    }
+
+    try {
+      const input: CreatePaymentInput = {
+        franchiseId,
+        storeId,
+        orderId: orderNumber,
+        amount: totalAmount,
+        currency: currentCurrency.code,
+        method: mapGatewayMethod(selectedPayment),
+        items: buildGatewayItems(),
+        customer,
+        card,
+      };
+
+      const response = await paymentService.createPayment(input);
+
+      setPagbankPaymentId(response.paymentId);
+      setPagbankStatus(response.status);
+      setPagbankQrCodeText(response.pix?.qrCodeText || null);
+
+      orderNumberRef.current = orderNumber;
+
+      if (response.status === 'paid') {
+        updateProcessingStage("payment_approved");
+        await finishPaymentFlow(orderNumber);
+        return;
+      }
+
+      cleanupPagBankListener();
+      pagbankUnsubscribeRef.current = paymentService.watchPaymentStatus(
+        response.paymentId,
+        async (payment: PaymentRecord) => {
+          setPagbankStatus(payment.status);
+          if (payment.pix?.qrCodeText) {
+            setPagbankQrCodeText(payment.pix.qrCodeText);
+          }
+
+          if (payment.status === 'paid') {
+            toast({
+              title: t('checkout.paymentApprovedToast'),
+              description: t('checkout.paymentConfirmedSuccess'),
+            });
+            cleanupPagBankListener();
+            updateProcessingStage("payment_approved");
+            await finishPaymentFlow(orderNumberRef.current);
+          }
+
+          if (payment.status === 'failed' || payment.status === 'canceled' || payment.status === 'expired') {
+            const statusMessage = payment.status === 'failed'
+              ? 'Pagamento recusado'
+              : payment.status === 'canceled'
+                ? 'Pagamento cancelado'
+                : 'Pagamento expirado';
+
+            setPagbankError(statusMessage);
+            setIsProcessing(false);
+            updateProcessingStage("idle");
+            moveToStep(2);
+            cleanupPagBankListener();
+          }
+        },
+        {
+          storeId,
+          franchiseId,
+          onError: (error) => {
+            console.error('[DrinkPagBank] Erro ao escutar PagBank:', error);
+            setPagbankError('Erro ao acompanhar pagamento.');
+            setIsProcessing(false);
+            updateProcessingStage("idle");
+            moveToStep(2);
+          },
+        }
+      );
+    } catch (error: unknown) {
+      console.error('[DrinkPagBank] Erro ao criar pagamento PagBank:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Erro ao criar pagamento.';
+      setPagbankError(errorMsg);
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      moveToStep(2);
+      toast({
+        title: t('checkout.paymentError'),
+        description: errorMsg,
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handlePaymentComplete = async () => {
     setIsProcessing(true);
     setMaxInactivityTime(300);
@@ -555,6 +784,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       const totalAmount = subtotal + taxAmount;
 
       // STEP 1: Processar pagamento
+      if (isPagBank) {
+        await handleStartPagBankPayment(newOrderNumber, totalAmount);
+        return;
+      }
+
       if (selectedPayment === "pix_qr") {
         // Usar Mercado Pago QR real
         try {
@@ -1020,6 +1254,82 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 )}
               </div>
 
+              {isPagBank && (
+                <Card className="border border-gray-200">
+                  <div className="p-4 space-y-4">
+                    <h3 className="font-medium">Dados do pagador</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label>Nome</Label>
+                        <Input
+                          value={payerName}
+                          onChange={(e) => setPayerName(e.target.value)}
+                          placeholder="Nome completo"
+                        />
+                      </div>
+                      <div>
+                        <Label>CPF/CNPJ</Label>
+                        <Input
+                          value={payerTaxId}
+                          onChange={(e) => setPayerTaxId(e.target.value)}
+                          placeholder="Somente números"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <Label>Email (opcional)</Label>
+                        <Input
+                          type="email"
+                          value={payerEmail}
+                          onChange={(e) => setPayerEmail(e.target.value)}
+                          placeholder="email@exemplo.com"
+                        />
+                      </div>
+                    </div>
+
+                    {selectedPayment !== "pix_qr" && (
+                      <>
+                        <Separator />
+                        <h3 className="font-medium">Dados do cartão</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="md:col-span-2">
+                            <Label>Número do cartão</Label>
+                            <Input
+                              value={cardNumber}
+                              onChange={(e) => setCardNumber(e.target.value)}
+                              placeholder="0000 0000 0000 0000"
+                            />
+                          </div>
+                          <div>
+                            <Label>Mês</Label>
+                            <Input
+                              value={cardExpMonth}
+                              onChange={(e) => setCardExpMonth(e.target.value)}
+                              placeholder="MM"
+                            />
+                          </div>
+                          <div>
+                            <Label>Ano</Label>
+                            <Input
+                              value={cardExpYear}
+                              onChange={(e) => setCardExpYear(e.target.value)}
+                              placeholder="AAAA"
+                            />
+                          </div>
+                          <div>
+                            <Label>CVV</Label>
+                            <Input
+                              value={cardCvv}
+                              onChange={(e) => setCardCvv(e.target.value)}
+                              placeholder="CVV"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </Card>
+              )}
+
               {/* Botões de Ação */}
               <div className="flex gap-3 pt-4">
                 <Button 
@@ -1047,146 +1357,237 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               {flowState.processingStage === "awaiting_payment" && (
                 <>
                   {selectedPayment === "pix_qr" && (
-                    <div className="text-center space-y-4">
-                      {/* Erro do Mercado Pago */}
-                      {mpError && (
-                        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
-                          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                          <p className="text-red-700 font-medium">{t('checkout.paymentErrorGeneric')}</p>
-                          <p className="text-red-600 text-sm mt-1">{mpError}</p>
-                          <Button 
-                            variant="outline" 
-                            onClick={handleCancelPayment}
-                            className="mt-4"
-                          >
-                            {t('checkout.tryAgain')}
-                          </Button>
-                        </div>
-                      )}
-
-                      {/* QR Code real do Mercado Pago */}
-                      {mpQrData && !mpError && (
-                        <>
-                          <div className="bg-white p-4 rounded-xl border-2 border-green-400 shadow-lg inline-block">
-                            <QRCode value={mpQrData} size={180} level="M" />
+                    isPagBank ? (
+                      <div className="text-center space-y-4">
+                        {pagbankError && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                            <p className="text-red-700 font-medium">{t('checkout.paymentErrorGeneric')}</p>
+                            <p className="text-red-600 text-sm mt-1">{pagbankError}</p>
+                            <Button
+                              variant="outline"
+                              onClick={handleCancelPayment}
+                              className="mt-4"
+                            >
+                              {t('checkout.tryAgain')}
+                            </Button>
                           </div>
-                          <p className="font-semibold text-base text-gray-800">{t('checkout.scanQrCode')}</p>
-                          <p className="text-xs text-gray-500">{t('checkout.payWithQrCode')}</p>
-                          
-                          {isPolling && (
-                            <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-3 py-1.5">
-                              <Loader className="w-3 h-3 animate-spin" />
-                              <span className="text-xs font-medium">
-                                {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
-                              </span>
+                        )}
+
+                        {pagbankQrCodeText && !pagbankError && (
+                          <>
+                            <div className="bg-white p-4 rounded-xl border-2 border-green-400 shadow-lg inline-block">
+                              <QRCode value={pagbankQrCodeText} size={180} level="M" />
                             </div>
-                          )}
+                            <p className="font-semibold text-base text-gray-800">{t('checkout.scanQrCode')}</p>
+                            <p className="text-xs text-gray-500">{t('checkout.payWithQrCode')}</p>
 
-                          <Button 
-                            variant="ghost" 
-                            onClick={handleCancelPayment}
-                            className="mt-2 text-gray-500 hover:text-gray-700 text-sm"
-                          >
-                            {t('checkout.cancelPayment')}
-                          </Button>
-                        </>
-                      )}
+                            {pagbankStatus && (
+                              <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-3 py-1.5">
+                                <Loader className="w-3 h-3 animate-spin" />
+                                <span className="text-xs font-medium">
+                                  Status: {pagbankStatus}
+                                </span>
+                              </div>
+                            )}
 
-                      {/* Carregando QR Code */}
-                      {!mpQrData && !mpError && (
-                        <>
-                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                          <p className="text-gray-600">{t('checkout.generatingQr')}</p>
-                        </>
-                      )}
-                    </div>
+                            <Button
+                              variant="ghost"
+                              onClick={handleCancelPayment}
+                              className="mt-2 text-gray-500 hover:text-gray-700 text-sm"
+                            >
+                              {t('checkout.cancelPayment')}
+                            </Button>
+                          </>
+                        )}
+
+                        {!pagbankQrCodeText && !pagbankError && (
+                          <>
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                            <p className="text-gray-600">{t('checkout.generatingQr')}</p>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center space-y-4">
+                        {/* Erro do Mercado Pago */}
+                        {mpError && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                            <p className="text-red-700 font-medium">{t('checkout.paymentErrorGeneric')}</p>
+                            <p className="text-red-600 text-sm mt-1">{mpError}</p>
+                            <Button 
+                              variant="outline" 
+                              onClick={handleCancelPayment}
+                              className="mt-4"
+                            >
+                              {t('checkout.tryAgain')}
+                            </Button>
+                          </div>
+                        )}
+
+                        {/* QR Code real do Mercado Pago */}
+                        {mpQrData && !mpError && (
+                          <>
+                            <div className="bg-white p-4 rounded-xl border-2 border-green-400 shadow-lg inline-block">
+                              <QRCode value={mpQrData} size={180} level="M" />
+                            </div>
+                            <p className="font-semibold text-base text-gray-800">{t('checkout.scanQrCode')}</p>
+                            <p className="text-xs text-gray-500">{t('checkout.payWithQrCode')}</p>
+                            
+                            {isPolling && (
+                              <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-3 py-1.5">
+                                <Loader className="w-3 h-3 animate-spin" />
+                                <span className="text-xs font-medium">
+                                  {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
+                                </span>
+                              </div>
+                            )}
+
+                            <Button 
+                              variant="ghost" 
+                              onClick={handleCancelPayment}
+                              className="mt-2 text-gray-500 hover:text-gray-700 text-sm"
+                            >
+                              {t('checkout.cancelPayment')}
+                            </Button>
+                          </>
+                        )}
+
+                        {/* Carregando QR Code */}
+                        {!mpQrData && !mpError && (
+                          <>
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                            <p className="text-gray-600">{t('checkout.generatingQr')}</p>
+                          </>
+                        )}
+                      </div>
+                    )
                   )}
 
                   {(selectedPayment === "credit_card" || selectedPayment === "debit_card") && (
-                    <div className="text-center space-y-4">
-                      {/* Erro no terminal */}
-                      {(pointStatus === 'error' || mpError) && (
-                        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
-                          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                          <p className="text-red-700 font-medium">{t('checkout.terminalErrorMsg')}</p>
-                          <p className="text-red-600 text-sm mt-1">{mpError || t('checkout.terminalCommError')}</p>
-                          <Button 
-                            variant="outline" 
-                            onClick={handleCancelPayment}
-                            className="mt-4"
-                          >
-                            {t('checkout.tryAgain')}
-                          </Button>
-                        </div>
-                      )}
+                    isPagBank ? (
+                      <div className="text-center space-y-4">
+                        {pagbankError && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                            <p className="text-red-700 font-medium">{t('checkout.paymentErrorGeneric')}</p>
+                            <p className="text-red-600 text-sm mt-1">{pagbankError}</p>
+                            <Button
+                              variant="outline"
+                              onClick={handleCancelPayment}
+                              className="mt-4"
+                            >
+                              {t('checkout.tryAgain')}
+                            </Button>
+                          </div>
+                        )}
 
-                      {/* Enviando para o terminal */}
-                      {pointStatus === 'sending' && !mpError && (
-                        <>
-                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                          <p className="text-gray-600">{t('checkout.sendingToTerminal')}</p>
-                          <p className="text-sm text-gray-500">
-                            {selectedPayment === "credit_card" ? t('checkout.creditPayment') : t('checkout.debitPayment')}
-                          </p>
-                        </>
-                      )}
+                        {!pagbankError && (
+                          <>
+                            <CreditCard className={`w-20 h-20 mx-auto animate-pulse ${
+                              selectedPayment === "credit_card" ? "text-blue-500" : "text-orange-500"
+                            }`} />
+                            <p className="font-medium text-gray-700">Processando pagamento no PagBank...</p>
+                            {pagbankStatus && (
+                              <p className="text-sm text-gray-500">Status: {pagbankStatus}</p>
+                            )}
+                            <Button
+                              variant="ghost"
+                              onClick={handleCancelPayment}
+                              className="mt-4"
+                            >
+                              {t('common.cancel')}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center space-y-4">
+                        {/* Erro no terminal */}
+                        {(pointStatus === 'error' || mpError) && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                            <p className="text-red-700 font-medium">{t('checkout.terminalErrorMsg')}</p>
+                            <p className="text-red-600 text-sm mt-1">{mpError || t('checkout.terminalCommError')}</p>
+                            <Button 
+                              variant="outline" 
+                              onClick={handleCancelPayment}
+                              className="mt-4"
+                            >
+                              {t('checkout.tryAgain')}
+                            </Button>
+                          </div>
+                        )}
 
-                      {/* Aguardando no terminal */}
-                      {pointStatus === 'at_terminal' && !mpError && (
-                        <>
-                          <CreditCard className={`w-20 h-20 mx-auto animate-pulse ${
-                            selectedPayment === "credit_card" ? "text-blue-500" : "text-orange-500"
-                          }`} />
-                          <p className="font-medium text-gray-700">
-                            {selectedPayment === "credit_card" 
-                              ? t('checkout.insertCreditCard') 
-                              : t('checkout.insertDebitCard')
-                            }
-                          </p>
-                          <p className="text-sm text-gray-500">{t('checkout.awaitingTerminal')}</p>
-                          
-                          {isPolling && (
-                            <div className={`flex items-center justify-center gap-2 ${
-                              selectedPayment === "credit_card" ? "text-blue-600" : "text-orange-600"
-                            }`}>
-                              <Clock className="w-4 h-4 animate-pulse" />
-                              <span className="text-sm">
-                                {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
-                              </span>
-                            </div>
-                          )}
+                        {/* Enviando para o terminal */}
+                        {pointStatus === 'sending' && !mpError && (
+                          <>
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                            <p className="text-gray-600">{t('checkout.sendingToTerminal')}</p>
+                            <p className="text-sm text-gray-500">
+                              {selectedPayment === "credit_card" ? t('checkout.creditPayment') : t('checkout.debitPayment')}
+                            </p>
+                          </>
+                        )}
 
-                          <div className={`animate-spin rounded-full h-10 w-10 border-b-2 mx-auto mt-4 ${
-                            selectedPayment === "credit_card" ? "border-blue-600" : "border-orange-600"
-                          }`}></div>
+                        {/* Aguardando no terminal */}
+                        {pointStatus === 'at_terminal' && !mpError && (
+                          <>
+                            <CreditCard className={`w-20 h-20 mx-auto animate-pulse ${
+                              selectedPayment === "credit_card" ? "text-blue-500" : "text-orange-500"
+                            }`} />
+                            <p className="font-medium text-gray-700">
+                              {selectedPayment === "credit_card" 
+                                ? t('checkout.insertCreditCard') 
+                                : t('checkout.insertDebitCard')
+                              }
+                            </p>
+                            <p className="text-sm text-gray-500">{t('checkout.awaitingTerminal')}</p>
+                            
+                            {isPolling && (
+                              <div className={`flex items-center justify-center gap-2 ${
+                                selectedPayment === "credit_card" ? "text-blue-600" : "text-orange-600"
+                              }`}>
+                                <Clock className="w-4 h-4 animate-pulse" />
+                                <span className="text-sm">
+                                  {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
+                                </span>
+                              </div>
+                            )}
 
-                          <Button 
-                            variant="ghost" 
-                            onClick={handleCancelPayment}
-                            className="mt-4"
-                          >
-                            {t('common.cancel')}
-                          </Button>
-                        </>
-                      )}
+                            <div className={`animate-spin rounded-full h-10 w-10 border-b-2 mx-auto mt-4 ${
+                              selectedPayment === "credit_card" ? "border-blue-600" : "border-orange-600"
+                            }`}></div>
 
-                      {/* Processando pagamento */}
-                      {pointStatus === 'processing' && !mpError && (
-                        <>
-                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
-                          <p className="text-gray-600 font-medium">{t('checkout.processing')}</p>
-                          <p className="text-sm text-gray-500">{t('checkout.verifyingPayment')}</p>
-                        </>
-                      )}
+                            <Button 
+                              variant="ghost" 
+                              onClick={handleCancelPayment}
+                              className="mt-4"
+                            >
+                              {t('common.cancel')}
+                            </Button>
+                          </>
+                        )}
 
-                      {/* Estado inicial/idle - fallback */}
-                      {pointStatus === 'idle' && !mpError && (
-                        <>
-                          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-                          <p className="text-gray-600">{t('checkout.processing')}</p>
-                        </>
-                      )}
-                    </div>
+                        {/* Processando pagamento */}
+                        {pointStatus === 'processing' && !mpError && (
+                          <>
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+                            <p className="text-gray-600 font-medium">{t('checkout.processing')}</p>
+                            <p className="text-sm text-gray-500">{t('checkout.verifyingPayment')}</p>
+                          </>
+                        )}
+
+                        {/* Estado inicial/idle - fallback */}
+                        {pointStatus === 'idle' && !mpError && (
+                          <>
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+                            <p className="text-gray-600">{t('checkout.processing')}</p>
+                          </>
+                        )}
+                      </div>
+                    )
                   )}
                 </>
               )}

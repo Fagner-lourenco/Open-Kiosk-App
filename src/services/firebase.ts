@@ -1,11 +1,11 @@
 
 import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
-import { 
-  getFirestore, 
-  Firestore, 
-  collection, 
-  doc, 
-  CollectionReference, 
+import {
+  getFirestore,
+  Firestore,
+  collection,
+  doc,
+  CollectionReference,
   DocumentReference,
   initializeFirestore,
   persistentLocalCache,
@@ -20,6 +20,20 @@ let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 let auth: Auth | null = null;
 let persistenceEnabled = false;
+
+/**
+ * Verifica se o firebaseConfig possui campos mÃ­nimos vÃ¡lidos
+ */
+export const hasValidFirebaseConfig = (config?: StoreSettings['firebaseConfig']): boolean => {
+  return !!config?.apiKey && !!config?.projectId;
+};
+
+/**
+ * Verifica se o Firebase jÃ¡ foi inicializado
+ */
+export const isFirebaseInitialized = (): boolean => {
+  return getApps().length > 0;
+};
 
 /**
  * Inicializa Firebase a partir das variáveis de ambiente (.env)
@@ -96,12 +110,12 @@ export const initializeFirebase = (settings: StoreSettings) => {
       console.log('Firebase already initialized, reusing existing instance');
       return { app, db, auth, persistenceEnabled };
     }
-    
+
     app = initializeApp(settings.firebaseConfig);
-    
+
     // Inicializa Auth
     auth = getAuth(app);
-    
+
     // Inicializa Firestore com cache persistente offline
     try {
       db = initializeFirestore(app, {
@@ -119,7 +133,7 @@ export const initializeFirebase = (settings: StoreSettings) => {
       db = getFirestore(app);
       persistenceEnabled = false;
     }
-    
+
     console.log('Firebase initialized successfully, persistence:', persistenceEnabled);
     return { app, db, auth, persistenceEnabled };
   } catch (error) {
@@ -175,7 +189,7 @@ export const getCurrentFranchiseId = (): string | null => {
         console.warn('[getCurrentFranchiseId] Error parsing storeSettings:', parseError);
       }
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error getting current franchise ID:', error);
@@ -196,16 +210,16 @@ export const getStoreCollection = (
   if (!storeId) {
     throw new Error(`[getStoreCollection] storeId obrigatório para coleção ${collectionName}`);
   }
-  
+
   // Usar pathResolver para determinar o path correto
   const franchiseId = franchiseIdOverride || getCurrentFranchiseId();
   if (!franchiseId) {
     throw new Error('[getStoreCollection] franchiseId obrigatório para coleções de loja');
   }
   const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
-  
+
   console.log(`[getStoreCollection] Using path: ${path}`);
-  return collection(database, ...path.split('/'));
+  return collection(database, path);
 };
 
 /**
@@ -222,16 +236,16 @@ export const getStoreDoc = (
   if (!storeId) {
     throw new Error(`[getStoreDoc] storeId obrigatório para documento ${collectionName}/${docId}`);
   }
-  
+
   // Usar pathResolver para determinar o path correto
   const franchiseId = franchiseIdOverride || getCurrentFranchiseId();
   if (!franchiseId) {
     throw new Error('[getStoreDoc] franchiseId obrigatório para documentos de loja');
   }
   const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
-  
+
   console.log(`[getStoreDoc] Using path: ${path}/${docId}`);
-  return doc(database, ...path.split('/'), docId);
+  return doc(database, `${path}/${docId}`);
 };
 
 /**
@@ -243,14 +257,14 @@ export const getCurrentStoreId = (): string | null => {
     // 1. Chave nova padronizada com Admin (modo franquia)
     const newStoreId = localStorage.getItem('open-kiosk-admin:selectedStore');
     if (newStoreId) return newStoreId;
-    
+
     // 2. Formato via storeSettings
     const settings = localStorage.getItem('storeSettings');
     if (settings) {
       const parsed = JSON.parse(settings);
       if (parsed.storeId) return parsed.storeId;
     }
-    
+
     return null;
   } catch (error) {
     console.error('Error getting current store ID:', error);

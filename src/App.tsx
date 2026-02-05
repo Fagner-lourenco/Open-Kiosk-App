@@ -39,11 +39,11 @@ const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
  * - Se não autenticado: mostra apenas rotas públicas (login)
  * - Se autenticado: monta providers que dependem de sessão (Store, ESP32, etc)
  */
-const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+const AuthGate: React.FC<{ children: React.ReactNode; isStoreLoading?: boolean }> = ({ children, isStoreLoading }) => {
   const { isLoading, user } = useAuth();
 
   // Enquanto valida sessão, mostra loading
-  if (isLoading) {
+  if (isLoading || isStoreLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -118,62 +118,55 @@ const AppContent = () => {
 
   return (
     <LanguageProvider initialLanguage={initialLanguage}>
-      {loading ? (
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          <p className="ml-4 text-gray-600">Loading...</p>
-        </div>
-      ) : (
-        <AuthContextProvider>
-          <AuthGate>
-            <StoreProvider initialStoreId={storeId}>
-              <PaymentGatewayProvider>
-                <ESP32Provider>
-                  <TapSettingsSync>
-                    <FranchiseProvider>
-                      <PermissionProvider>
-                        <HashRouter>
-                          <AdminSecretAccess>
-                            <Routes>
-                              {/* Rotas públicas */}
-                              <Route path="/login" element={<LoginPage />} />
-                              <Route path="/invite" element={<AcceptInvitePage />} />
-                          
-                          {/* Rotas protegidas em modo franchise */}
-                          <Route path="/" element={
-                            <FranchiseGuard kioskMode={true}>
-                              <Index />
-                            </FranchiseGuard>
-                          } />
-                          <Route path="/admin" element={
-                            <FranchiseGuard>
-                              <Admin />
-                            </FranchiseGuard>
-                          } />
-                          <Route path="/shop" element={
-                            <FranchiseGuard>
-                              <Shop />
-                            </FranchiseGuard>
-                          } />
-                          <Route path="/store-select" element={
-                            <FranchiseGuard requireStore={false}>
-                              <StoreSelectPage />
-                            </FranchiseGuard>
-                          } />
-                          
-                          <Route path="*" element={<NotFound />} />
-                            </Routes>
-                          </AdminSecretAccess>
-                        </HashRouter>
-                      </PermissionProvider>
-                    </FranchiseProvider>
-                  </TapSettingsSync>
-                </ESP32Provider>
-              </PaymentGatewayProvider>
-            </StoreProvider>
-          </AuthGate>
-        </AuthContextProvider>
-      )}
+      <AuthContextProvider>
+        <AuthGate isStoreLoading={loading}>
+          <StoreProvider initialStoreId={storeId}>
+            <PaymentGatewayProvider>
+              <ESP32Provider>
+                <TapSettingsSync>
+                  <FranchiseProvider>
+                    <PermissionProvider>
+                      <HashRouter>
+                        <AdminSecretAccess>
+                          <Routes>
+                            {/* Rotas públicas */}
+                            <Route path="/login" element={<LoginPage />} />
+                            <Route path="/invite" element={<AcceptInvitePage />} />
+                        
+                        {/* Rotas protegidas em modo franchise */}
+                        <Route path="/" element={
+                          <FranchiseGuard kioskMode={true}>
+                            <Index />
+                          </FranchiseGuard>
+                        } />
+                        <Route path="/admin" element={
+                          <FranchiseGuard>
+                            <Admin />
+                          </FranchiseGuard>
+                        } />
+                        <Route path="/shop" element={
+                          <FranchiseGuard>
+                            <Shop />
+                          </FranchiseGuard>
+                        } />
+                        <Route path="/store-select" element={
+                          <FranchiseGuard requireStore={false}>
+                            <StoreSelectPage />
+                          </FranchiseGuard>
+                        } />
+                        
+                        <Route path="*" element={<NotFound />} />
+                          </Routes>
+                        </AdminSecretAccess>
+                      </HashRouter>
+                    </PermissionProvider>
+                  </FranchiseProvider>
+                </TapSettingsSync>
+              </ESP32Provider>
+            </PaymentGatewayProvider>
+          </StoreProvider>
+        </AuthGate>
+      </AuthContextProvider>
     </LanguageProvider>
   );
 };
