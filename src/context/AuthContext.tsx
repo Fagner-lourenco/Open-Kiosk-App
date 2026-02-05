@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode, useRef } from 'react';
 import { authService } from '../services/authService';
 import { AuthenticatedUser } from '../types/franchise';
-import { isFranchiseMode } from '../lib/pathResolver';
 
 /**
  * ============================================================================
@@ -11,15 +10,9 @@ import { isFranchiseMode } from '../lib/pathResolver';
  * Gerencia autenticação do painel administrativo.
  * 
  * Modos de operação:
- * 1. Modo Legado (isFranchiseMode = false):
- *    - Usa apenas PIN local (comportamento original)
- *    - isAuthenticated controlado manualmente
+ * - Firebase Auth + fallback PIN offline
  * 
- * 2. Modo Franquia (isFranchiseMode = true):
- *    - Usa Firebase Auth + fallback PIN offline
- *    - Integra com authService
- * 
- * Em ambos os modos:
+ * Em todos os casos:
  * - Timeout de sessão automático
  * - Detecção de inatividade
  * - PIN como fallback offline
@@ -33,7 +26,7 @@ import { isFranchiseMode } from '../lib/pathResolver';
 // ============================================================================
 
 export interface AuthContextType {
-  /** Usuário autenticado (Firebase) - null em modo legado */
+  /** Usuário autenticado (Firebase) */
   user: AuthenticatedUser | null;
   
   /** Se está autenticado (PIN ou Firebase) */
@@ -51,13 +44,12 @@ export interface AuthContextType {
   /** Erro de autenticação */
   authError: string | null;
   
-  // === Ações (Legado - mantidas para compatibilidade) ===
-  setIsAuthenticated: (value: boolean) => void;
+  // === Ações ===
   setSessionTimeout: (minutes: number) => void;
   logout: () => void;
   resetInactivityTimer: () => void;
   
-  // === Ações (Novas - Firebase) ===
+  // === Ações (Firebase) ===
   loginWithEmail: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   loginWithPin: (pin: string) => Promise<{ success: boolean; error?: string }>;
   clearAuthError: () => void;
@@ -84,10 +76,10 @@ interface AuthContextProviderProps {
 export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ children }) => {
   // Estado Firebase
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
-  const [isLoading, setIsLoading] = useState(isFranchiseMode());
+  const [isLoading, setIsLoading] = useState(true);
   const [authError, setAuthError] = useState<string | null>(null);
   
-  // Estado Legado (PIN)
+  // Estado PIN (offline)
   const [isPinAuthenticated, setIsPinAuthenticated] = useState(false);
   
   // Configurações
@@ -98,27 +90,16 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
   // COMPUTED
   // ==========================================================================
 
-  // Em modo franquia: autenticado se tem user OU PIN válido
-  // Em modo legado: apenas PIN
-  const isAuthenticated = isFranchiseMode()
-    ? (user !== null || isPinAuthenticated)
-    : isPinAuthenticated;
+  // Autenticado se tem user OU PIN válido
+  const isAuthenticated = user !== null || isPinAuthenticated;
 
-  const isOfflineMode = isFranchiseMode()
-    ? (user === null && isPinAuthenticated) || authService.isOfflineMode()
-    : false;
+  const isOfflineMode = (user === null && isPinAuthenticated) || authService.isOfflineMode();
 
   // ==========================================================================
   // FIREBASE AUTH LISTENER
   // ==========================================================================
 
   useEffect(() => {
-    // Se não estiver em modo franquia, não precisa do listener
-    if (!isFranchiseMode()) {
-      setIsLoading(false);
-      return;
-    }
-
     // Inicializa authService em modo franchise (Firebase já inicializado via firebase.ts)
     if (!authService.isInitialized()) {
       console.log('[AuthContext] Inicializando authService para modo franchise...');
@@ -155,10 +136,8 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
     inactivityTimerRef.current = setTimeout(() => {
       console.log('[Auth] Sessão admin expirada por inatividade');
       
-      // Em modo franquia, faz logout completo
-      if (isFranchiseMode()) {
-        authService.logout();
-      }
+      // Logout completo (Firebase + offline)
+      authService.logout();
       
       setIsPinAuthenticated(false);
       setUser(null);
@@ -203,23 +182,8 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
   }, [isAuthenticated, sessionTimeout, resetInactivityTimer]);
 
   // ==========================================================================
-  // ACTIONS - LEGADO (Compatibilidade)
+  // ACTIONS
   // ==========================================================================
-
-  /**
-   * Setter direto para isAuthenticated (modo legado PIN)
-   */
-  const setIsAuthenticated = useCallback((value: boolean) => {
-    setIsPinAuthenticated(value);
-    
-    if (!value) {
-      // Logout
-      if (isFranchiseMode()) {
-        authService.logout();
-      }
-      setUser(null);
-    }
-  }, []);
 
   /**
    * Função de logout explícito
@@ -232,10 +196,8 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
       clearTimeout(inactivityTimerRef.current);
     }
     
-    // Logout do Firebase
-    if (isFranchiseMode()) {
-      await authService.logout();
-    }
+    // Logout completo (Firebase + offline)
+    await authService.logout();
     
     // Limpa estados
     setIsPinAuthenticated(false);
@@ -244,7 +206,7 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
   }, []);
 
   // ==========================================================================
-  // ACTIONS - NOVAS (Firebase + PIN)
+  // ACTIONS - Firebase + PIN
   // ==========================================================================
 
   /**
@@ -281,27 +243,19 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
     setAuthError(null);
 
     try {
-      // Em modo franquia, usa authService
-      if (isFranchiseMode()) {
-        const result = await authService.loginWithPin(pin);
-        
-        if (result.success) {
-          setIsPinAuthenticated(true);
-          if (result.user) {
-            setUser(result.user);
-          }
-          return { success: true };
+      const result = await authService.loginWithPin(pin);
+
+      if (result.success) {
+        setIsPinAuthenticated(true);
+        if (result.user) {
+          setUser(result.user);
         }
-        
-        const error = result.error || 'PIN incorreto';
-        setAuthError(error);
-        return { success: false, error };
+        return { success: true };
       }
-      
-      // Modo legado: apenas marca como autenticado
-      // (validação do PIN é feita externamente pelo useAdminPin)
-      setIsPinAuthenticated(true);
-      return { success: true };
+
+      const error = result.error || 'PIN incorreto';
+      setAuthError(error);
+      return { success: false, error };
     } catch (err) {
       const error = err instanceof Error ? err.message : 'Erro ao validar PIN';
       setAuthError(error);
@@ -328,8 +282,6 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
     sessionTimeout,
     authError,
     
-    // Legado
-    setIsAuthenticated,
     setSessionTimeout,
     logout,
     resetInactivityTimer,

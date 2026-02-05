@@ -1,6 +1,5 @@
 import { doc, getDoc, onSnapshot, DocumentData } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentFranchiseId } from '@/services/firebase';
-import { isFranchiseMode } from '@/lib/pathResolver';
 
 /**
  * Obtém os dados principais da loja (dados visíveis no Admin Web)
@@ -8,18 +7,11 @@ import { isFranchiseMode } from '@/lib/pathResolver';
 export async function getStoreSettings(storeId: string): Promise<DocumentData | null> {
   try {
     const db = getFirebaseDb();
-
-    let storeDocRef;
-    if (isFranchiseMode()) {
-      const franchiseId = getCurrentFranchiseId();
-      if (franchiseId) {
-        storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-      } else {
-        storeDocRef = doc(db, 'stores', storeId);
-      }
-    } else {
-      storeDocRef = doc(db, 'stores', storeId);
+    const franchiseId = getCurrentFranchiseId();
+    if (!franchiseId) {
+      throw new Error('[storeSettingsService] franchiseId obrigatório');
     }
+    const storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
 
     const snap = await getDoc(storeDocRef);
     if (!snap.exists()) return null;
@@ -39,18 +31,11 @@ export function subscribeStoreSettings(
   onError?: (err: any) => void
 ): () => void {
   const db = getFirebaseDb();
-
-  let storeDocRef;
-  if (isFranchiseMode()) {
-    const franchiseId = getCurrentFranchiseId();
-    if (franchiseId) {
-      storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-    } else {
-      storeDocRef = doc(db, 'stores', storeId);
-    }
-  } else {
-    storeDocRef = doc(db, 'stores', storeId);
+  const franchiseId = getCurrentFranchiseId();
+  if (!franchiseId) {
+    throw new Error('[storeSettingsService] franchiseId obrigatório');
   }
+  const storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
 
   const unsubscribe = onSnapshot(storeDocRef, (snapshot) => {
     if (snapshot.exists()) {

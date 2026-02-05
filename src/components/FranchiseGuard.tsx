@@ -7,8 +7,6 @@
  * 1. Autenticação (Firebase Auth)
  * 2. Seleção de franquia/loja
  * 
- * Em modo legado (isFranchiseMode = false), passa direto sem verificação.
- * 
  * Features:
  * - Auto-seleção de loja única
  * - Persistência em localStorage
@@ -22,7 +20,7 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { useFranchiseSafe } from '@/context/FranchiseContext';import { isFranchiseMode } from '@/lib/pathResolver';
+import { useFranchiseSafe } from '@/context/FranchiseContext';
 import { Loader2, Store } from 'lucide-react';
 
 // ============================================================================
@@ -90,7 +88,6 @@ export function FranchiseGuard({
   const franchiseContext = useFranchiseSafe();
   
   const [autoSelectAttempted, setAutoSelectAttempted] = useState(false);
-  const isFranchise = isFranchiseMode();
 
   const {
     currentStore = null,
@@ -100,16 +97,13 @@ export function FranchiseGuard({
   } = franchiseContext || {};
 
   // Considera loading se auth OU franchise (se existir) ainda estão carregando
-  const isLoading = authLoading || (isFranchise && franchiseLoading);
+  const isLoading = authLoading || franchiseLoading;
 
   // ==========================================================================
   // AUTO-SELECT SINGLE STORE
   // ==========================================================================
 
   useEffect(() => {
-    // Se não está em modo franchise, ignora
-    if (!isFranchise) return;
-
     // Se já tentou auto-selecionar, não tenta de novo
     if (autoSelectAttempted) return;
 
@@ -132,16 +126,11 @@ export function FranchiseGuard({
     } else if (userStores && userStores.length > 1) {
       setAutoSelectAttempted(true);
     }
-  }, [user, currentStore, userStores, isLoading, autoSelectAttempted, selectStore, isFranchise]);
+  }, [user, currentStore, userStores, isLoading, autoSelectAttempted, selectStore]);
 
   // ==========================================================================
   // RENDER
   // ==========================================================================
-
-  // Se não está em modo franchise, passa direto
-  if (!isFranchise) {
-    return <>{children}</>;
-  }
 
   // Se o contexto de franquia não está disponível, mostra loading
   // Isso pode acontecer durante a inicialização

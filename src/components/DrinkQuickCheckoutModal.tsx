@@ -261,7 +261,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
     setMaxQty(max);
     // quantity é usado apenas para leitura aqui, não precisa estar nas deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentCartItems, product, selectedSizeKey]);
 
   useEffect(() => {
@@ -433,23 +432,23 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         getCurrentStoreId()
       );
       
-      console.log('[DrinkMP] ✅ Venda registrada com sucesso, estoque atualizado no Firebase');
+      console.log('[DrinkMP] Venda registrada com sucesso, estoque atualizado no Firebase');
 
       // STEP 3: Dispensar bebida (ESP32)
       updateProcessingStage("dispensing");
 
       try {
-        // Usar o serviço unificado via ESP32Context
-        console.log('[DrinkMP] 🍺 Enviando comando de dispensação via ESP32Context...');
+        // Usar o servico unificado via ESP32Context
+        console.log('[DrinkMP] Enviando comando de dispensacao via ESP32Context...');
         console.log('[DrinkMP] Status ESP32:', esp32Status.connected ? 'Conectado' : 'Desconectado');
-        console.log('[DrinkMP] 🚰 Torneira selecionada:', selectedTapId);
+        console.log('[DrinkMP] Torneira selecionada:', selectedTapId);
         
         const releaseSuccess = await esp32ReleaseDrink(
           orderNumber,
           selectedSize.ml,
           quantity,
           selectedSize.label,
-          selectedTapId // 🆕 Multi-Tap: passar tapId
+          selectedTapId // Multi-Tap: passar tapId
         );
 
         if (!releaseSuccess) {
@@ -461,7 +460,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             variant: "destructive" 
           });
         } else {
-          console.log('[DrinkMP] ✅ Comando de dispensação enviado com sucesso');
+          console.log('[DrinkMP] Comando de dispensacao enviado com sucesso');
         }
       } catch (esp32Error) {
         console.warn("[DrinkMP] ESP32 release failed (non-blocking):", esp32Error);

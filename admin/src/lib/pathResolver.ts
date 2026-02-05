@@ -3,56 +3,30 @@
  * Path Resolver
  * ============================================================================
  * 
- * Resolve paths do Firestore com suporte a feature flag para modo franquia.
+ * Resolve paths do Firestore no modo canônico (franquia).
  * 
- * Quando franchiseMode está ativo:
- *   - stores/{storeId} → franchises/{franchiseId}/stores/{storeId}
- *   - produtos ficam sob a loja dentro da franquia
- * 
- * Quando franchiseMode está desativado:
- *   - Mantém estrutura legada: stores/{storeId}
+ * - franchises/{franchiseId}/stores/{storeId}
+ * - produtos ficam sob a loja dentro da franquia
  */
-
-/**
- * Verifica se o modo franquia está ativo
- * Default: true para compatibilidade com Kiosk
- */
-export function franchiseMode(): boolean {
-  // Verificar localStorage primeiro (para toggle dinâmico)
-  const localValue = localStorage.getItem('franchiseMode');
-  if (localValue !== null) {
-    return localValue === 'true';
-  }
-
-  // Verificar variável de ambiente (default true)
-  return import.meta.env.VITE_FRANCHISE_MODE !== 'false';
-}
-
-/**
- * Ativar/desativar modo franquia dinamicamente
- */
-export function setFranchiseMode(enabled: boolean): void {
-  localStorage.setItem('franchiseMode', enabled.toString());
-}
 
 /**
  * Retorna o path de uma coleção de lojas
  */
-export function storesPath(franchiseId?: string): string {
-  if (franchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores`;
+export function storesPath(franchiseId: string): string {
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para storesPath');
   }
-  return 'stores';
+  return `franchises/${franchiseId}/stores`;
 }
 
 /**
  * Retorna o path de uma loja específica
  */
-export function storePath(franchiseId: string | undefined, storeId: string): string {
-  if (franchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores/${storeId}`;
+export function storePath(franchiseId: string, storeId: string): string {
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para storePath');
   }
-  return `stores/${storeId}`;
+  return `franchises/${franchiseId}/stores/${storeId}`;
 }
 
 /**
@@ -61,11 +35,9 @@ export function storePath(franchiseId: string | undefined, storeId: string): str
 export type StoreSubcollection =
   | 'products'
   | 'orders'
-  | 'sales'
   | 'settings'
   | 'dispensers'
   | 'inventoryLogs'
-  | 'inventory_logs'
   | 'dailyStats'
   | 'metrics';
 
@@ -73,24 +45,21 @@ export type StoreSubcollection =
  * Retorna o path de uma subcollection da loja
  */
 export function storeSubPath(
-  franchiseId: string | undefined,
+  franchiseId: string,
   storeId: string,
   subcollection: StoreSubcollection
 ): string {
-  const normalizedSubcollection = subcollection === 'inventory_logs'
-    ? 'inventoryLogs'
-    : subcollection;
-  if (franchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores/${storeId}/${normalizedSubcollection}`;
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para storeSubPath');
   }
-  return `stores/${storeId}/${normalizedSubcollection}`;
+  return `franchises/${franchiseId}/stores/${storeId}/${subcollection}`;
 }
 
 /**
  * Retorna o path de um documento específico dentro de uma subcollection da loja
  */
 export function storeDocPath(
-  franchiseId: string | undefined,
+  franchiseId: string,
   storeId: string,
   subcollection: StoreSubcollection,
   docId: string
@@ -145,7 +114,7 @@ export function userPath(userId: string): string {
  * Retorna o path da coleção de pedidos de uma loja
  * Usa 'orders' como nome padrão (compatível com Kiosk App)
  */
-export function ordersPath(franchiseId: string | undefined, storeId: string): string {
+export function ordersPath(franchiseId: string, storeId: string): string {
   return storeSubPath(franchiseId, storeId, 'orders');
 }
 
@@ -167,8 +136,6 @@ export function billingEventsPath(franchiseId: string): string {
  * Helpers para migração de dados
  */
 export const pathResolver = {
-  franchiseMode,
-  setFranchiseMode,
   storesPath,
   storePath,
   storeSubPath,

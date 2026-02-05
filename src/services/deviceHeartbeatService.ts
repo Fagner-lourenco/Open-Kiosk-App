@@ -8,7 +8,6 @@
  * 
  * Estrutura:
  *   franchises/{franchiseId}/stores/{storeId}/devices/{deviceId}
- *   stores/{storeId}/devices/{deviceId} (modo legado)
  * 
  * Campos:
  *   - deviceId: ID único do dispositivo
@@ -29,7 +28,6 @@
 
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { isFranchiseMode } from '@/lib/pathResolver';
 import { Device } from '@capacitor/device';
 
 // ============================================================================
@@ -154,35 +152,28 @@ class DeviceHeartbeatService {
     const deviceType = options.deviceType || 'kiosk';
 
     try {
-      let deviceRef;
-
-      if (isFranchiseMode()) {
-        const franchiseId = getCurrentFranchiseId();
-        if (!franchiseId) {
-          console.warn('[DeviceHeartbeat] franchiseId não disponível');
-          return;
-        }
-        
-        deviceRef = doc(
-          db, 
-          `franchises/${franchiseId}/stores/${storeId}/devices/${deviceId}`
-        );
-      } else {
-        // Modo legado
-        deviceRef = doc(db, `stores/${storeId}/devices/${deviceId}`);
+      const franchiseId = getCurrentFranchiseId();
+      if (!franchiseId) {
+        console.warn('[DeviceHeartbeat] franchiseId n??o dispon??vel');
+        return;
       }
+      
+      const deviceRef = doc(
+        db, 
+        `franchises/${franchiseId}/stores/${storeId}/devices/${deviceId}`
+      );
 
-      const heartbeatData: Record<string, unknown> = {
-        deviceId,
-        deviceType,
-        storeId,
-        franchiseId: getCurrentFranchiseId() || null,
-        isOnline: true,
-        lastSeen: serverTimestamp(),
-        lastSync: serverTimestamp(),
-        uptime: this.getUptime(),
-        appVersion: import.meta.env.VITE_APP_VERSION || '1.0.0',
-      };
+        const heartbeatData: Record<string, unknown> = {
+          deviceId,
+          deviceType,
+          storeId,
+          isOnline: true,
+          lastSeen: serverTimestamp(),
+          lastSync: serverTimestamp(),
+          uptime: this.getUptime(),
+          appVersion: import.meta.env.VITE_APP_VERSION || '1.0.0',
+        };
+        if (franchiseId) heartbeatData.franchiseId = franchiseId;
 
       // Adicionar campos opcionais
       if (options.ip) heartbeatData.ip = options.ip;
@@ -191,14 +182,15 @@ class DeviceHeartbeatService {
       if (options.metadata) heartbeatData.metadata = options.metadata;
 
       // Mesclar com info do ESP32 se disponível
-      if (deviceType === 'kiosk' && this.esp32Info) {
-        heartbeatData.esp32 = {
-          connected: this.esp32Info.isOnline || false,
-          ip: this.esp32Info.ip,
-          mac: this.esp32Info.mac,
-          firmwareVersion: this.esp32Info.firmwareVersion,
-        };
-      }
+        if (deviceType === 'kiosk' && this.esp32Info) {
+          const esp32Data: Record<string, unknown> = {
+            connected: this.esp32Info.isOnline || false,
+          };
+          if (this.esp32Info.ip) esp32Data.ip = this.esp32Info.ip;
+          if (this.esp32Info.mac) esp32Data.mac = this.esp32Info.mac;
+          if (this.esp32Info.firmwareVersion) esp32Data.firmwareVersion = this.esp32Info.firmwareVersion;
+          heartbeatData.esp32 = esp32Data;
+        }
 
       await setDoc(deviceRef, heartbeatData, { merge: true });
       
@@ -252,19 +244,13 @@ class DeviceHeartbeatService {
     const deviceId = await this.getDeviceId();
 
     try {
-      let deviceRef;
-
-      if (isFranchiseMode()) {
-        const franchiseId = getCurrentFranchiseId();
-        if (!franchiseId) return;
-        
-        deviceRef = doc(
-          db, 
-          `franchises/${franchiseId}/stores/${storeId}/devices/${deviceId}`
-        );
-      } else {
-        deviceRef = doc(db, `stores/${storeId}/devices/${deviceId}`);
-      }
+      const franchiseId = getCurrentFranchiseId();
+      if (!franchiseId) return;
+      
+      const deviceRef = doc(
+        db, 
+        `franchises/${franchiseId}/stores/${storeId}/devices/${deviceId}`
+      );
 
       await setDoc(deviceRef, {
         isOnline: false,

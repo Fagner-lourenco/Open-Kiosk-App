@@ -3,7 +3,6 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { usePermissions } from '@/context/PermissionContext';
 import { Permission } from '@/types/franchise';
-import { isFranchiseMode } from '@/lib/pathResolver';
 
 /**
  * ============================================================================
@@ -47,9 +46,10 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   unauthorizedRedirect = '/',
 }) => {
   const { isAuthenticated, isLoading } = useAuth();
+  const { can, canAll, canAny } = usePermissions();
   
   // Aguarda carregamento do estado de auth (em modo franquia)
-  if (isFranchiseMode() && isLoading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -63,26 +63,19 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to={redirectTo} replace />;
   }
 
-  // Em modo franquia, verifica permissões
-  if (isFranchiseMode()) {
-    // Obtém funções de verificação de permissões
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    const { can, canAll, canAny } = usePermissions();
-    
-    if (requiredPermission && !can(requiredPermission)) {
-      console.log('[ProtectedRoute] Acesso negado - sem permissão:', requiredPermission);
-      return <Navigate to={unauthorizedRedirect} replace />;
-    }
-    
-    if (requiredPermissions && !canAll(...requiredPermissions)) {
-      console.log('[ProtectedRoute] Acesso negado - faltam permissões');
-      return <Navigate to={unauthorizedRedirect} replace />;
-    }
-    
-    if (anyPermission && !canAny(...anyPermission)) {
-      console.log('[ProtectedRoute] Acesso negado - nenhuma permissão válida');
-      return <Navigate to={unauthorizedRedirect} replace />;
-    }
+  if (requiredPermission && !can(requiredPermission)) {
+    console.log('[ProtectedRoute] Acesso negado - sem permissão:', requiredPermission);
+    return <Navigate to={unauthorizedRedirect} replace />;
+  }
+  
+  if (requiredPermissions && !canAll(...requiredPermissions)) {
+    console.log('[ProtectedRoute] Acesso negado - faltam permissões');
+    return <Navigate to={unauthorizedRedirect} replace />;
+  }
+  
+  if (anyPermission && !canAny(...anyPermission)) {
+    console.log('[ProtectedRoute] Acesso negado - nenhuma permissão válida');
+    return <Navigate to={unauthorizedRedirect} replace />;
   }
 
   return element;

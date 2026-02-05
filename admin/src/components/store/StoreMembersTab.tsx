@@ -116,7 +116,8 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
   });
 
   // Parse store members from store data
-  const storeMembers: StoreMember[] = storeData?.operators?.map((op: { 
+  const operatorsRaw = storeData?.operators ?? storeData?.members ?? [];
+  const storeMembers: StoreMember[] = operatorsRaw.map((op: { 
     id: string; 
     email: string; 
     displayName?: string; 

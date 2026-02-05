@@ -143,7 +143,6 @@ export function TeamPage() {
       // Always include owner if not in members list
       const hasOwner = fetchedMembers.some(m => m.role === 'owner' || m.id === currentFranchise.ownerId);
       if (!hasOwner && currentFranchise.ownerId) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const createdAt = currentFranchise.createdAt as any;
         let addedAtStr = new Date().toISOString();
         if (createdAt instanceof Date) {

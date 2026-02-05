@@ -108,6 +108,7 @@ export default defineConfig({
       '.idea',
       '.git',
       '.cache',
+      'src/__tests__/real/**',
     ],
   },
 

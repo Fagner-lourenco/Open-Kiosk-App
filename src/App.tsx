@@ -16,10 +16,8 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { LanguageProvider } from "@/i18n";
 import type { Language } from "@/i18n";
 import { StoreProvider } from "@/context/StoreContext";
-import StoreInitialization from "@/components/StoreInitialization";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Capacitor } from "@capacitor/core";
-import { isFranchiseMode } from "@/lib/pathResolver";
 import Index from "./pages/Index";
 import Admin from "./pages/Admin";
 import Shop from "./pages/Shop";
@@ -45,7 +43,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isLoading, user } = useAuth();
 
   // Enquanto valida sessão, mostra loading
-  if (isLoading && isFranchiseMode()) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
@@ -56,7 +54,7 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   // Em modo franquia sem user: mostra apenas rotas públicas
   // Os providers dependentes NÃO são montados
-  if (isFranchiseMode() && !user) {
+  if (!user) {
     return (
       <HashRouter>
         <Routes>
@@ -74,39 +72,12 @@ const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
 const queryClient = new QueryClient();
 
-/**
- * Wrapper para FranchiseProvider - só ativa em modo franquia
- * Em modo legado, apenas passa os children diretamente
- */
-const FranchiseProviderWrapper = ({ children }: { children: React.ReactNode }) => {
-  if (isFranchiseMode()) {
-    return <FranchiseProvider>{children}</FranchiseProvider>;
-  }
-  return <>{children}</>;
-};
-
-/**
- * Wrapper para PermissionProvider - só ativa em modo franquia
- * Em modo legado, apenas passa os children diretamente
- */
-const PermissionProviderWrapper = ({ children }: { children: React.ReactNode }) => {
-  if (isFranchiseMode()) {
-    return <PermissionProvider>{children}</PermissionProvider>;
-  }
-  return <>{children}</>;
-};
-
-
 const AppContent = () => {
-  const { isInitialized, loading, updateSettings, settings } = useStoreSettings();
+  const { loading, settings } = useStoreSettings();
   // Usar idioma salvo nas configurações da loja (Firebase) ou fallback para 'en'
   const initialLanguage: Language = (settings?.language as Language) || 'en';
-  // Obter storeId das configurações salvas
-  const storeId = settings?.storeId || localStorage.getItem('currentStoreId') || undefined;
-  
-  // Em modo franchise, não requer StoreInitialization - vai direto para login/seleção
-  const franchiseMode = isFranchiseMode();
-  const needsInitialization = !franchiseMode && !isInitialized;
+  // Obter storeId da seleção atual (admin selector) ou das configurações salvas
+  const storeId = localStorage.getItem('open-kiosk-admin:selectedStore') || settings?.storeId || undefined;
 
   // Bloquear back button em plataformas nativas (Android/iOS)
   useEffect(() => {
@@ -147,13 +118,11 @@ const AppContent = () => {
 
   return (
     <LanguageProvider initialLanguage={initialLanguage}>
-      {loading && !franchiseMode ? (
+      {loading ? (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
           <p className="ml-4 text-gray-600">Loading...</p>
         </div>
-      ) : needsInitialization ? (
-        <StoreInitialization onComplete={updateSettings} />
       ) : (
         <AuthContextProvider>
           <AuthGate>
@@ -161,8 +130,8 @@ const AppContent = () => {
               <PaymentGatewayProvider>
                 <ESP32Provider>
                   <TapSettingsSync>
-                    <FranchiseProviderWrapper>
-                      <PermissionProviderWrapper>
+                    <FranchiseProvider>
+                      <PermissionProvider>
                         <HashRouter>
                           <AdminSecretAccess>
                             <Routes>
@@ -196,8 +165,8 @@ const AppContent = () => {
                             </Routes>
                           </AdminSecretAccess>
                         </HashRouter>
-                      </PermissionProviderWrapper>
-                    </FranchiseProviderWrapper>
+                      </PermissionProvider>
+                    </FranchiseProvider>
                   </TapSettingsSync>
                 </ESP32Provider>
               </PaymentGatewayProvider>

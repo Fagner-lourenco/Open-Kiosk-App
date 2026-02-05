@@ -27,7 +27,6 @@ import {
   ROLE_PERMISSIONS,
 } from '../types/franchise';
 import { useFranchiseSafe } from './FranchiseContext';
-import { isFranchiseMode } from '../lib/pathResolver';
 
 // ============================================================================
 // TIPOS
@@ -74,14 +73,6 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
   // ==========================================================================
 
   const { role, permissions, storeAccess } = useMemo(() => {
-    // Se não estiver em modo franquia, concede todas as permissões (compatibilidade)
-    if (!isFranchiseMode()) {
-      return {
-        role: 'owner' as UserRole,
-        permissions: ROLE_PERMISSIONS.owner,
-        storeAccess: ['*'] as string[],
-      };
-    }
 
     // Se não tiver membership, sem permissões
     if (!currentMembership || !currentMembership.isActive) {

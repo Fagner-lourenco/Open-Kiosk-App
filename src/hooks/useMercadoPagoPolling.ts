@@ -63,7 +63,7 @@ const logPolling = (level: 'info' | 'warn' | 'error' | 'success', message: strin
   
   const timestamp = new Date().toISOString();
   const prefix = `[MercadoPago Polling][${timestamp}]`;
-  const emoji = { info: 'ℹ️', warn: '⚠️', error: '❌', success: '✅' }[level];
+  const emoji = { info: '[INFO]', warn: '[WARN]', error: '[ERROR]', success: '[OK]' }[level];
   
   const logFn = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
   logFn(`${prefix} ${emoji} ${message}`, data ? JSON.stringify(data, null, 2) : '');
@@ -388,7 +388,6 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
       isMountedRef.current = false;
       cleanup();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return {

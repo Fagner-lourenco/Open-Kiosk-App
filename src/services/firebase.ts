@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth, Auth } from 'firebase/auth';
 import { StoreSettings } from '@/types/store';
-import { isFranchiseMode, storeSubPath, StoreSubcollection } from '@/lib/pathResolver';
+import { storeSubPath, StoreSubcollection } from '@/lib/pathResolver';
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
@@ -57,6 +57,7 @@ export const initializeFirebaseFromEnv = () => {
     // Inicializa Firestore com cache persistente
     try {
       db = initializeFirestore(app, {
+        ignoreUndefinedProperties: true,
         localCache: persistentLocalCache({
           tabManager: persistentMultipleTabManager(),
           cacheSizeBytes: CACHE_SIZE_UNLIMITED,
@@ -76,9 +77,9 @@ export const initializeFirebaseFromEnv = () => {
   }
 };
 
-// Auto-inicializa em modo franchise (se variáveis existem)
-if (import.meta.env.VITE_FRANCHISE_MODE === 'true' && import.meta.env.VITE_FIREBASE_API_KEY) {
-  console.log('[Firebase] Auto-initializing for franchise mode...');
+// Auto-inicializa quando variáveis de ambiente estão disponíveis
+if (import.meta.env.VITE_FIREBASE_API_KEY) {
+  console.log('[Firebase] Auto-initializing from env config...');
   initializeFirebaseFromEnv();
 }
 
@@ -104,6 +105,7 @@ export const initializeFirebase = (settings: StoreSettings) => {
     // Inicializa Firestore com cache persistente offline
     try {
       db = initializeFirestore(app, {
+        ignoreUndefinedProperties: true,
         localCache: persistentLocalCache({
           tabManager: persistentMultipleTabManager(),
           cacheSizeBytes: CACHE_SIZE_UNLIMITED,
@@ -158,12 +160,8 @@ export const getCurrentFranchiseId = (): string | null => {
     // 1. Chave padronizada com Admin (preferida)
     const franchiseId = localStorage.getItem('open-kiosk-admin:selectedFranchise');
     if (franchiseId) return franchiseId;
-    
-    // 2. Fallback para chave legada
-    const legacyId = localStorage.getItem('selectedFranchiseId');
-    if (legacyId) return legacyId;
-    
-    // 3. Tentar extrair de storeSettings (Kiosk)
+
+    // 2. Tentar extrair de storeSettings (Kiosk)
     const storeSettingsStr = localStorage.getItem('storeSettings');
     if (storeSettingsStr) {
       try {
@@ -187,21 +185,24 @@ export const getCurrentFranchiseId = (): string | null => {
 
 /**
  * Obter referência para uma subcollection de uma loja
- * Usa pathResolver para determinar o path correto baseado no modo (franchise vs legacy)
- * Ex (franchise mode): franchises/{franchiseId}/stores/{storeId}/products
- * Ex (legacy mode): stores/{storeId}/products
- * Fallback: se storeId for null, retorna collection raiz para compatibilidade
+ * Ex: franchises/{franchiseId}/stores/{storeId}/products
  */
-export const getStoreCollection = (storeId: string | null, collectionName: string): CollectionReference => {
+export const getStoreCollection = (
+  storeId: string | null,
+  collectionName: string,
+  franchiseIdOverride?: string
+): CollectionReference => {
   const database = getFirebaseDb();
   if (!storeId) {
-    console.warn(`[getStoreCollection] No storeId provided, using root collection: ${collectionName}`);
-    return collection(database, collectionName);
+    throw new Error(`[getStoreCollection] storeId obrigatório para coleção ${collectionName}`);
   }
   
   // Usar pathResolver para determinar o path correto
-  const franchiseId = getCurrentFranchiseId();
-  const path = storeSubPath(franchiseId || undefined, storeId, collectionName as StoreSubcollection);
+  const franchiseId = franchiseIdOverride || getCurrentFranchiseId();
+  if (!franchiseId) {
+    throw new Error('[getStoreCollection] franchiseId obrigatório para coleções de loja');
+  }
+  const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
   
   console.log(`[getStoreCollection] Using path: ${path}`);
   return collection(database, ...path.split('/'));
@@ -209,31 +210,28 @@ export const getStoreCollection = (storeId: string | null, collectionName: strin
 
 /**
  * Obter referência para um documento dentro de uma subcollection de loja
- * Usa pathResolver para determinar o path correto baseado no modo (franchise vs legacy)
- * Ex (franchise mode): franchises/{franchiseId}/stores/{storeId}/products/{productId}
- * Ex (legacy mode): stores/{storeId}/products/{productId}
- * Fallback: se storeId for null, retorna doc da collection raiz para compatibilidade
+ * Ex: franchises/{franchiseId}/stores/{storeId}/products/{productId}
  */
-export const getStoreDoc = (storeId: string | null, collectionName: string, docId: string): DocumentReference => {
+export const getStoreDoc = (
+  storeId: string | null,
+  collectionName: string,
+  docId: string,
+  franchiseIdOverride?: string
+): DocumentReference => {
   const database = getFirebaseDb();
   if (!storeId) {
-    console.warn(`[getStoreDoc] No storeId provided, using root collection: ${collectionName}/${docId}`);
-    return doc(database, collectionName, docId);
+    throw new Error(`[getStoreDoc] storeId obrigatório para documento ${collectionName}/${docId}`);
   }
   
   // Usar pathResolver para determinar o path correto
-  const franchiseId = getCurrentFranchiseId();
-  const path = storeSubPath(franchiseId || undefined, storeId, collectionName as StoreSubcollection);
+  const franchiseId = franchiseIdOverride || getCurrentFranchiseId();
+  if (!franchiseId) {
+    throw new Error('[getStoreDoc] franchiseId obrigatório para documentos de loja');
+  }
+  const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
   
   console.log(`[getStoreDoc] Using path: ${path}/${docId}`);
   return doc(database, ...path.split('/'), docId);
-};
-
-/**
- * Construir path para subcollection de loja (para logs/debug)
- */
-export const getStoreCollectionPath = (storeId: string, collectionName: string): string => {
-  return `stores/${storeId}/${collectionName}`;
 };
 
 /**
@@ -246,16 +244,12 @@ export const getCurrentStoreId = (): string | null => {
     const newStoreId = localStorage.getItem('open-kiosk-admin:selectedStore');
     if (newStoreId) return newStoreId;
     
-    // 2. Formato legado via storeSettings
+    // 2. Formato via storeSettings
     const settings = localStorage.getItem('storeSettings');
     if (settings) {
       const parsed = JSON.parse(settings);
       if (parsed.storeId) return parsed.storeId;
     }
-    
-    // 3. Fallback para chave legada simples
-    const legacyStoreId = localStorage.getItem('currentStoreId');
-    if (legacyStoreId) return legacyStoreId;
     
     return null;
   } catch (error) {

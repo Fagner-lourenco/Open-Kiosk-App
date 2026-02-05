@@ -63,6 +63,7 @@ export interface SyncQueueItem {
   createdAt: number;
   retryCount: number;
   storeId: string;
+  franchiseId?: string;
 }
 
 export interface CachedSettings {

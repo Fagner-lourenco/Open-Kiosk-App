@@ -8,14 +8,46 @@ import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { cacheSet, cacheGet, ensureDBReady, STORES, CachedSettings } from '@/services/cacheService';
 import { initNetworkListeners, startBackgroundSync, enqueueSync } from '@/services/syncService';
 import { startAutoCleanup } from '@/services/cleanupService';
-import { isFranchiseMode } from '@/lib/pathResolver';
 
-const SETTINGS_CACHE_KEY = 'storeSettings';
 const SETTINGS_DOC_ID = 'store_settings';
 
 // Singleton flags para evitar múltiplas inicializações
 let servicesInitialized = false;
 let initializationPromise: Promise<void> | null = null;
+
+/**
+ * Remove campos undefined recursivamente (Firestore nao aceita undefined)
+ */
+const sanitizeFirestoreData = (input: unknown): unknown => {
+  if (input === undefined) return undefined;
+  if (input === null) return null;
+  if (input instanceof Date) return input;
+
+  if (Array.isArray(input)) {
+    return input
+      .map((item) => sanitizeFirestoreData(item))
+      .filter((item) => item !== undefined);
+  }
+
+  if (typeof input === 'object') {
+    // Preserva objetos tipo Timestamp (toDate + seconds)
+    const maybeTimestamp = input as { toDate?: () => Date; seconds?: number };
+    if (typeof maybeTimestamp.toDate === 'function' && typeof maybeTimestamp.seconds === 'number') {
+      return input;
+    }
+
+    const result: Record<string, unknown> = {};
+    Object.entries(input as Record<string, unknown>).forEach(([key, value]) => {
+      const sanitized = sanitizeFirestoreData(value);
+      if (sanitized !== undefined) {
+        result[key] = sanitized;
+      }
+    });
+    return result;
+  }
+
+  return input;
+};
 
 export const useStoreSettings = () => {
   const [settings, setSettings] = useState<StoreSettings | null>(null);
@@ -53,7 +85,6 @@ export const useStoreSettings = () => {
         }
       }
       localStorage.setItem('storeSettings', JSON.stringify(enrichedSettings));
-      localStorage.setItem('storeInitialized', 'true');
     } catch (error) {
       console.error('[useStoreSettings] Error saving to localStorage:', error);
     }
@@ -97,8 +128,9 @@ export const useStoreSettings = () => {
     if (!navigator.onLine) {
       console.log('[useStoreSettings] Offline, sync queued');
       try {
+        const sanitizedSettings = sanitizeFirestoreData(newSettings) as StoreSettings;
         await enqueueSync('update', 'settings', 'config', {
-          ...newSettings,
+          ...sanitizedSettings,
           updatedAt: new Date(),
         });
       } catch (queueError) {
@@ -111,28 +143,29 @@ export const useStoreSettings = () => {
     try {
       const db = getFirebaseDb();
       const storeId = newSettings.storeId || getCurrentStoreId();
-      
-      if (storeId) {
-        // Determinar path correto baseado no modo
-        let settingsDocRef;
-        if (isFranchiseMode()) {
-          const franchiseId = getCurrentFranchiseId();
-          if (franchiseId) {
-            settingsDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'settings', 'config');
-          } else {
-            console.warn('[useStoreSettings] Franchise mode but no franchiseId, using legacy path');
-            settingsDocRef = doc(db, 'stores', storeId, 'settings', 'config');
-          }
-        } else {
-          settingsDocRef = doc(db, 'stores', storeId, 'settings', 'config');
-        }
-        
-        await setDoc(settingsDocRef, {
-          ...newSettings,
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
-        console.log('[useStoreSettings] Synced to Firebase');
+      const franchiseId = newSettings.franchiseId || getCurrentFranchiseId();
+
+      if (!storeId || !franchiseId) {
+        console.warn('[useStoreSettings] storeId/franchiseId ausente para sync');
+        return;
       }
+      const settingsDocRef = doc(
+        db,
+        'franchises',
+        franchiseId,
+        'stores',
+        storeId,
+        'settings',
+        'config'
+      );
+
+      const sanitizedSettings = sanitizeFirestoreData(newSettings) as StoreSettings;
+
+      await setDoc(settingsDocRef, {
+        ...sanitizedSettings,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      console.log('[useStoreSettings] Synced to Firebase');
     } catch (error) {
       console.error('[useStoreSettings] Error syncing to Firebase:', error);
     } finally {
@@ -141,7 +174,7 @@ export const useStoreSettings = () => {
   }, []);
 
   /**
-   * Inicializa serviços apenas uma vez (singleton)
+   * Inicializa servicos apenas uma vez (singleton)
    * Protegido contra HMR verificando getApps()
    */
   const initializeServicesOnce = useCallback(async (settingsData: StoreSettings) => {
@@ -197,7 +230,7 @@ export const useStoreSettings = () => {
         setSettings(localSettings);
         setIsInitialized(true);
         
-        // Inicializa serviços (singleton - só executa uma vez)
+        // Inicializa servicos (singleton - so executa uma vez)
         await initializeServicesOnce(localSettings);
       } else {
         // 3. Fallback: tenta IndexedDB
@@ -208,40 +241,43 @@ export const useStoreSettings = () => {
           setIsInitialized(true);
           saveToLocalStorage(idbSettings);
           
-          // Inicializa serviços (singleton - só executa uma vez)
+          // Inicializa servicos (singleton - so executa uma vez)
           await initializeServicesOnce(idbSettings);
         } else {
           console.log('[useStoreSettings] No saved settings found');
           
-          // 4. Em franchise mode, criar settings mínimos para ativar listeners Firebase
-          if (isFranchiseMode()) {
-            const storeId = getCurrentStoreId();
-            const franchiseId = getCurrentFranchiseId();
-            
-            console.log('[useStoreSettings] Franchise mode detected, creating minimal settings:', { storeId, franchiseId });
-            
-            if (storeId) {
-              // Criar settings mínimos para ativar os listeners do Firebase
-              const minimalSettings: StoreSettings = {
-                storeId,
-                franchiseId: franchiseId || undefined,
-                name: '',
-                currency: 'BRL',
-                taxId: '',
-                taxPercentage: 0,
-                firebaseConfig: {
-                  apiKey: '',
-                  authDomain: '',
-                  projectId: '',
-                  storageBucket: '',
-                  messagingSenderId: '',
-                  appId: '',
-                },
-              };
-              setSettings(minimalSettings);
-              setIsInitialized(true);
-              console.log('[useStoreSettings] Minimal settings created, Firebase listeners will fetch real data');
-            }
+          // 4. Criar settings minimos para ativar listeners Firebase (se possivel)
+          const storeId = getCurrentStoreId();
+          const franchiseId = getCurrentFranchiseId();
+
+          console.log('[useStoreSettings] Criando settings minimos:', { storeId, franchiseId });
+
+          if (storeId && franchiseId) {
+            const minimalSettings: StoreSettings = {
+              storeId,
+              franchiseId,
+              name: '',
+              currency: 'BRL',
+              taxId: '',
+              taxPercentage: 0,
+              firebaseConfig: {
+                apiKey: '',
+                authDomain: '',
+                projectId: '',
+                storageBucket: '',
+                messagingSenderId: '',
+                appId: '',
+              },
+            };
+
+            setSettings(minimalSettings);
+            setIsInitialized(true);
+            saveToLocalStorage(minimalSettings);
+
+            // Inicializa servicos (singleton - so executa uma vez)
+            await initializeServicesOnce(minimalSettings);
+          } else {
+            console.warn('[useStoreSettings] storeId/franchiseId ausente para settings minimos');
           }
         }
       }
@@ -256,7 +292,6 @@ export const useStoreSettings = () => {
     });
   }, [loadFromLocalStorage, loadFromIndexedDB, saveToLocalStorage, initializeServicesOnce]);
 
-  // Memoizar firebaseConfig key para evitar re-execuções do useEffect
   // (objetos mudam de referência a cada render mesmo com conteúdo igual)
   const firebaseConfigKey = useMemo(
     () => settings?.firebaseConfig ? JSON.stringify(settings.firebaseConfig) : null,
@@ -269,19 +304,17 @@ export const useStoreSettings = () => {
    * 1. Documento principal da loja (dados gerenciados pelo Admin Web)
    * 2. Subcoleção settings/config (configs específicas do Kiosk)
    * 
-   * ?? PROTEÇÃO: Só cria listeners se usuário estiver autenticado em modo franquia
+   * Protecao: so cria listeners se usuario estiver autenticado
    */
   useEffect(() => {
     if (!isInitialized || !settings?.storeId) return;
 
-    // ?? Em modo franquia, verificar se usuário está autenticado antes de criar listeners
-    if (isFranchiseMode()) {
-      const auth = getFirebaseAuth();
-      if (!auth?.currentUser) {
-        console.log('[useStoreSettings] ?? Modo franquia sem autenticação - aguardando login para criar listeners');
-        return;
-      }
+    const auth = getFirebaseAuth();
+    if (!auth?.currentUser) {
+      console.log('[useStoreSettings] Sem autenticacao - aguardando login para criar listeners');
+      return;
     }
+
 
     const unsubscribers: (() => void)[] = [];
 
@@ -295,32 +328,17 @@ export const useStoreSettings = () => {
           return;
         }
 
-        // Determinar paths corretos baseado no modo
-        let storeDocRef;
-        let kioskConfigRef;
-        
-        // Tentar obter franchiseId de múltiplas fontes (settings tem prioridade)
+        // Determinar paths canonicos (franchise)
         const franchiseId = settings.franchiseId || getCurrentFranchiseId();
-        const isInFranchiseMode = isFranchiseMode();
-        
-        console.log('[useStoreSettings] Setting up Firebase listeners:', {
-          storeId,
-          franchiseId,
-          isInFranchiseMode,
-        });
-        
-        // Usar franchise path se franchiseId existir (independente do mode flag)
-        if (franchiseId) {
-          // Documento principal da loja (dados do Admin Web)
-          storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-          // Configs específicas do Kiosk
-          kioskConfigRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'settings', 'config');
-          console.log('[useStoreSettings] Using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
-        } else {
-          storeDocRef = doc(db, 'stores', storeId);
-          kioskConfigRef = doc(db, 'stores', storeId, 'settings', 'config');
-          console.log('[useStoreSettings] Using legacy path:', `stores/${storeId}`);
+
+        if (!franchiseId) {
+          console.warn('[useStoreSettings] franchiseId ausente para listeners');
+          return;
         }
+
+        const storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
+        const kioskConfigRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'settings', 'config');
+        console.log('[useStoreSettings] Using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
 
         // Listener 1: Documento principal da loja (nome, taxId, taxPercentage, email, etc.)
         const unsubStore = onSnapshot(storeDocRef, (snapshot) => {
@@ -419,10 +437,7 @@ export const useStoreSettings = () => {
     return () => {
       unsubscribers.forEach(unsub => unsub());
     };
-  // ?? FIX: Removido saveToLocalStorage e saveToIndexedDB das dependências
-  // Esses callbacks são estáveis (useCallback sem deps mutáveis), mas causavam
-  // re-execução desnecessária. O storeId é a única dependência que importa.
-  }, [isInitialized, settings?.storeId, firebaseConfigKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isInitialized, settings?.storeId, firebaseConfigKey]);
 
   /**
    * Atualiza settings (salva em todos os caches + sync)
@@ -441,7 +456,7 @@ export const useStoreSettings = () => {
     // 3. Salva no IndexedDB (backup)
     saveToIndexedDB(newSettings);
     
-    // 4. Inicializa serviços se ainda não foram (singleton)
+    // Inicializa servicos (singleton - so executa uma vez)
     if (!servicesInitialized) {
       try {
         initializeFirebase(newSettings);
@@ -463,7 +478,6 @@ export const useStoreSettings = () => {
    * Reset completo da loja
    */
   const resetStore = useCallback(() => {
-    localStorage.removeItem('storeInitialized');
     localStorage.removeItem('storeSettings');
     localStorage.removeItem('settingsUpdatedAt');
     setSettings(null);
@@ -480,5 +494,6 @@ export const useStoreSettings = () => {
     resetStore,
   };
 };
+
 
 

@@ -15,7 +15,6 @@ import { toast } from "sonner";
 import type { Language } from "@/i18n";
 import type { ESP32ConnectionType, AttractVideoSettings } from "@/types/store";
 import { getFirebaseDb, getCurrentFranchiseId } from "@/services/firebase";
-import { isFranchiseMode } from "@/lib/pathResolver";
 import esp32Service from "@/services/esp32CommunicationService";
 import { getDefaultTapId, setDefaultTapId } from "@/components/TapSettingsSync";
 import { enterKioskMode, exitKioskMode, isInKioskMode } from "@/services/kioskModeService";
@@ -103,17 +102,21 @@ export default function AdminSettings() {
 
         const db = getFirebaseDb();
         
-        let videoDocRef;
-        if (isFranchiseMode()) {
-          const franchiseId = getCurrentFranchiseId();
-          if (franchiseId) {
-            videoDocRef = doc(db, 'franchises', franchiseId, 'stores', settings.storeId, 'settings', 'attract_video');
-          } else {
-            videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
-          }
-        } else {
-          videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+        const franchiseId = getCurrentFranchiseId();
+        if (!franchiseId) {
+          console.warn('[AdminSettings] franchiseId ausente para carregar attract_video');
+          return;
         }
+
+        const videoDocRef = doc(
+          db,
+          'franchises',
+          franchiseId,
+          'stores',
+          settings.storeId,
+          'settings',
+          'attract_video'
+        );
         
         const videoSnap = await getDoc(videoDocRef);
 
@@ -142,17 +145,21 @@ export default function AdminSettings() {
     try {
       const db = getFirebaseDb();
       
-      let videoDocRef;
-      if (isFranchiseMode()) {
-        const franchiseId = getCurrentFranchiseId();
-        if (franchiseId) {
-          videoDocRef = doc(db, 'franchises', franchiseId, 'stores', settings.storeId, 'settings', 'attract_video');
-        } else {
-          videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
-        }
-      } else {
-        videoDocRef = doc(db, 'stores', settings.storeId, 'settings', 'attract_video');
+      const franchiseId = getCurrentFranchiseId();
+      if (!franchiseId) {
+        console.warn('[AdminSettings] franchiseId ausente para salvar attract_video');
+        return;
       }
+
+      const videoDocRef = doc(
+        db,
+        'franchises',
+        franchiseId,
+        'stores',
+        settings.storeId,
+        'settings',
+        'attract_video'
+      );
 
       await setDoc(videoDocRef, attractVideoSettings, { merge: true });
       toast.success(t('settings.attractVideoSaved') || 'Configurações de vídeo salvas!');

@@ -32,7 +32,6 @@ import {
 } from '../types/franchise';
 import { franchiseService } from '../services/franchiseService';
 import { authService } from '../services/authService';
-import { isFranchiseMode } from '../lib/pathResolver';
 
 // ============================================================================
 // CONSTANTES
@@ -101,11 +100,6 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
   // ==========================================================================
 
   useEffect(() => {
-    // Se não estiver em modo franquia, não carrega nada
-    if (!isFranchiseMode()) {
-      setLoading(false);
-      return;
-    }
 
     // Escuta mudanças de autenticação
     const unsubscribe = authService.onAuthStateChange(async (user) => {
@@ -443,5 +437,5 @@ export function useCurrentMembership(): FranchiseMember | null {
  */
 export function useIsFranchiseActive(): boolean {
   const { currentFranchise } = useFranchise();
-  return isFranchiseMode() && currentFranchise !== null;
+  return currentFranchise !== null;
 }

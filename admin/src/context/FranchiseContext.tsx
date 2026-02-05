@@ -63,7 +63,7 @@ export interface Store {
   phone?: string;
   email?: string;
   isActive?: boolean;
-  members?: any[];
+  operators?: any[];
   settings?: Record<string, any>;
 }
 
@@ -130,10 +130,14 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
       const q = query(storesRef, orderBy('name'));
       const snapshot = await getDocs(q);
       
-      const storesList = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Store[];
+      const storesList = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data,
+          operators: data.operators ?? data.members ?? [],
+        };
+      }) as Store[];
       
       setStores(storesList);
     } catch (error) {

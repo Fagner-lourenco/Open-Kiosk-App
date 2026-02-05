@@ -1,7 +1,7 @@
-# Relatorio Tecnico — Arquitetura de Dados (Producao)
+# Relatorio Tecnico - Arquitetura de Dados (Producao, Canonica)
 
 Data do levantamento: 2026-02-05
-Escopo: apenas codigo de runtime (producao). Foram excluidos testes, mocks, dist, coverage e auditorias antigas.
+Escopo: apenas codigo de runtime (producao). Foram excluidos: __tests__, mocks, dist, coverage, node_modules e auditorias antigas.
 
 ## 1. Visao Geral
 
@@ -24,28 +24,24 @@ Bancos remotos em producao:
 - Firebase Firestore (principal)
 - Firebase Auth (usuarios + custom claims)
 
-Bancos remotos NAO encontrados:
-
-- Firebase Realtime Database
-- Firebase Storage
+Bancos remotos NAO encontrados no codigo de producao: Realtime Database e Storage (NAO CONFIRMADO - nao ha referencias explicitas em `src/`, `admin/src` ou `functions/src`).
 
 Bancos locais (por app) detalhados nas secoes 3 e 4.
 
-## 2. Bancos Remotos — Firebase Firestore + Functions + Regras
+## 2. Bancos Remotos - Firestore + Functions + Regras
 
 Projeto Firebase:
 
-- ID: `open-kiosk-22b2b` (arquivo `.firebaserc`)
+- ID: `open-kiosk-22b2b` (arquivo `.firebaserc` linha 3)
 - Rules: `firestore.rules`
 - Indexes: `firestore.indexes.json`
 - Funcoes: `functions/src`
 
-### 2.1 Mapa de Colecoes e Subcolecoes (inclui legado)
+### 2.1 Mapa de Colecoes e Subcolecoes (canonico)
 
 ```
 users/{userId}
 superadmins/{userId}
-roles/{roleId}
 settings/{settingId}
 
 invitations/{inviteId}
@@ -56,58 +52,39 @@ franchises/{franchiseId}
   stores/{storeId}
     products/{productId}
     orders/{orderId}
-    sales/{saleId}                         (previsto nas regras; uso em codigo e limitado)
-    settings/{settingId}                   (ex: config, default_currency, attract_video)
+    settings/{settingId}
     dispensers/{dispenserId}
     inventoryLogs/{logId}
-    hardware/{docId}                       (ex: status)
+    hardware/{docId}
     devices/{deviceId}
     dailyStats/{YYYY-MM-DD}
-    metrics/{metricId}                     (ex: current)
-  metrics/{metricId}                       (franchise-level, ex: current)
+    metrics/{metricId}
+  metrics/{metricId}
   notifications/{notificationId}
   billingEvents/{eventId}
   auditLogs/{logId}
-  settings/{settingId}
 
 analytics/daily/{YYYY-MM-DD}
 analytics/hourly/{YYYY-MM-DD-HH}
-
-stores/{storeId}                            (LEGADO)
-  products/{productId}
-  orders/{orderId}
-  sales/{saleId}
-  settings/{settingId}
-  dispensers/{dispenserId}
-  inventoryLogs/{logId}
-  devices/{deviceId}
 ```
 
-Evidencias (paths nos rules): `firestore.rules` linhas 139 (superadmins), 151 (users), 171 (franchises), 232 (franchises/*/stores), 321 (inventoryLogs), 340 (store settings), 379 (hardware), 401 (devices), 422 (dailyStats), 436 (metrics), 451 (notifications), 480 (billingEvents), 499 (auditLogs), 518 (franchises/*/settings), 557 (stores legacy), 611 (invitations), 636 (settings global), 648 (audit_logs), 664 (roles), 683 (analytics).
-### 2.1.1 Mapa Canonical (canonical vs legacy vs nao usado)
+Evidencias (paths nos rules):
+- `firestore.rules`: `superadmins` linha 137, `users` linha 149, `franchises` linha 169, `members` linha 194, `stores` linha 230, `products` linha 251, `orders` linha 286, `inventoryLogs` linha 314, `settings` (store) linha 333, `dispensers` linha 351, `hardware` linha 372, `devices` linha 394, `dailyStats` linha 415, `metrics` (store) linha 429, `metrics` (franchise) linha 442, `notifications` linha 455, `billingEvents` linha 484, `auditLogs` linha 503, `invitations` linha 524, `settings` (global) linha 549, `audit_logs` linha 561, `analytics` linha 585.
 
-Canonical (multi-tenant, padrao):
-- `franchises/{franchiseId}`
-- `franchises/{franchiseId}/stores/{storeId}`
-- `franchises/{franchiseId}/stores/{storeId}/{subcollection}`
+### 2.1.1 Mapa Canonico (status)
 
-Legacy (compatibilidade):
-- `stores/{storeId}`
-- `stores/{storeId}/{subcollection}`
-
-Nao usado em codigo de producao (apenas rules/infra):
-- `franchises/{franchiseId}/settings`
-- `roles`
-- `sales` (subcolecoes sob stores)
+- Canonico (multi-tenant): `franchises/{franchiseId}/stores/{storeId}/...`
+- Canonico global: `users`, `superadmins`, `settings`, `invitations`, `audit_logs`, `analytics/*`
+- Legacy: NAO existe em codigo de producao (resolvers e rules sao exclusivamente canonicos)
 
 Evidencias:
-- `src/lib/pathResolver.ts` linhas 77-145 (paths canonical/legacy).
-- `firestore.rules` linhas 283-289 (sales), 527-534 (franchises/*/settings), 673-678 (roles).
+- `src/lib/pathResolver.ts` linhas 30-88 (paths canonicos para `stores` e subcollections).
+- `admin/src/lib/pathResolver.ts` linhas 15-55 (paths canonicos para `stores` e subcollections).
+- `firestore.rules` linha 169 (match `/franchises/{franchiseId}`) e linha 230 (match `/franchises/{franchiseId}/stores/{storeId}`).
 
-### 2.2 Firestore — Detalhamento por Colecao
+### 2.2 Firestore - Detalhamento por Colecao
 
-Formato padrao abaixo:
-
+Formato padrao:
 - Path
 - Campos e tipos observados
 - Quem escreve
@@ -117,181 +94,138 @@ Formato padrao abaixo:
 
 #### 2.2.1 `users/{userId}`
 
-Campos e tipos observados (tipos em `src/types/franchise.ts` e `admin/src/types/user.ts`):
+Campos e tipos observados:
 
 | Campo | Tipo | Observacao |
 | --- | --- | --- |
-| id | string | normalmente igual ao docId |
+| id | string | docId (quando mapeado) |
 | email | string |  |
-| displayName | string | opcional em admin |
+| displayName | string | opcional |
 | photoURL | string | opcional |
 | phone | string | opcional |
-| defaultFranchiseId | string | ultima franquia acessada |
-| defaultStoreId | string | ultima loja acessada |
-| role | string | `UserRole` (claims) |
-| franchiseId | string | pode ser null |
-| storeId | string | pode ser null |
-| storeAccess | string[] | `'*'` ou lista de lojas |
-| status | string | ex: `active` |
-| isActive | boolean |  |
+| defaultFranchiseId | string | opcional |
+| defaultStoreId | string | opcional |
+| role | string | `UserRole` |
+| franchiseId | string | opcional |
+| storeId | string | opcional |
+| storeAccess | string[] | `['*']` ou lista de lojas |
+| status | string | ex: active |
 | invitedBy | string | opcional |
+| isActive | boolean |  |
 | createdAt | Timestamp |  |
 | lastLoginAt | Timestamp | opcional |
 | updatedAt | Timestamp | opcional |
 | claimsSyncedAt | Timestamp | opcional |
 
 Quem escreve:
-
-- Cloud Functions em `functions/src/auth/onCreate.ts` e `functions/src/auth/setCustomClaims.ts`
-- Admin App pode atualizar flags e defaults
+- Cloud Functions (`functions/src/auth/onCreate.ts` cria usuario)
+- Admin App (AuthContext atualiza `lastLoginAt` e cria em registro local)
+- Functions (`functions/src/auth/claims.ts` atualiza claims em `users`)
 
 Quem le:
-
 - Kiosk App (authService e contextos)
-- Admin App (user management)
+- Admin App (AuthContext e paginas de usuario)
 - Cloud Functions (claims e convites)
 
-Fluxo de atualizacao:
-
-- Cria no evento de Auth onCreate.
-- Atualiza em login e mudancas de claims.
+Fluxo:
+- Criacao via Auth onCreate (functions) e/ou registro no Admin.
+- Atualizacoes em login e sincronizacao de claims.
 
 Relacionamentos:
-
-- `franchises/{franchiseId}` via `defaultFranchiseId`
+- `franchises/{franchiseId}` via `franchiseId`/`defaultFranchiseId`
 - `franchises/{franchiseId}/members/{userId}`
 
 Evidencias:
-- `src/types/franchise.ts` linhas 229-266 (schema `User`).
-- `admin/src/types/user.ts` linhas 13-30 (schema `User` no Admin).
-- `functions/src/auth/onCreate.ts` linhas 61-82 e 123-142 (create de `users`).
-- `functions/src/invitations/accept.ts` linhas 118-133 (create user com `role`, `franchiseId`, `storeId`, `invitedBy`).
+- `src/types/franchise.ts` linhas 229-269 (schema `User`).
+- `admin/src/types/user.ts` linhas 13-33 (schema `User` no Admin).
+- `functions/src/auth/onCreate.ts` linhas 45-79 e 104-132 (create `users`).
+- `functions/src/auth/claims.ts` linhas 196-205 (update `users` com claims).
+- `admin/src/context/AuthContext.tsx` linhas 121-133 e 175-192 (setDoc `users`/`lastLoginAt`).
 
 #### 2.2.2 `superadmins/{userId}`
 
 Campos observados:
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| email | string |  |
-| displayName | string | opcional |
-| photoURL | string | opcional |
-| createdAt | Timestamp |  |
-| createdBy | string | uid de quem promoveu |
-| status | string | active |
+- email, displayName, photoURL, createdAt, createdBy, status
 
 Quem escreve:
-
-- Cloud Functions (`functions/src/superadmin`)
+- Cloud Functions (`functions/src/superadmin/setSuperAdmin.ts`)
 
 Quem le:
-
-- Functions (autorizacao de superadmin)
-- Admin App (controle de permissao)
+- Cloud Functions (autorizacao) e Admin App
 
 Evidencias:
-- `functions/src/superadmin/setSuperAdmin.ts` linhas 55-85 (schema do doc `superadmins`).
+- `functions/src/superadmin/setSuperAdmin.ts` linhas 55-85 (schema `superadmins`).
 
-#### 2.2.3 `roles/{roleId}` (global)
-
-Observacao:
-
-- Colecao prevista nas regras. Nao ha uso direto em producao no codigo atual.
-
-Evidencias:
-- `firestore.rules` linha 664 (match `/roles/{roleId}`).
-- `src/lib/pathResolver.ts` linha 230 (`rolesPath`).
-
-#### 2.2.4 `settings/{settingId}` (global)
+#### 2.2.3 `settings/{settingId}` (global)
 
 Campos observados:
-
 - `default_currency` (documento com `value`)
 
 Quem escreve:
-
-- Admin App (quando configura global default currency)
+- Admin App (configuracao global)
 
 Quem le:
-
 - Kiosk App (`useSettings`)
 
 Evidencias:
-- `src/hooks/useSettings.tsx` linhas 71-83 (leitura de `settings/default_currency`).
+- `src/hooks/useSettings.tsx` linhas 71-83 (leitura `settings/default_currency`).
 
-#### 2.2.5 `invitations/{inviteId}`
+#### 2.2.4 `invitations/{inviteId}`
 
-Campos e tipos observados (em `src/types/franchise.ts`, `admin/src/types/user.ts`, functions):
+Campos e tipos observados:
 
 | Campo | Tipo | Observacao |
 | --- | --- | --- |
 | id | string | docId |
 | email | string |  |
 | franchiseId | string |  |
-| storeAccess | string[] | canonico: `['*']` ou lista de lojas |
-| storeId | string | opcional (convite para loja especifica) |
+| storeAccess | string[] | `['*']` ou lista de lojas |
+| storeId | string | opcional |
 | role | string | `UserRole` |
 | invitedBy | string | userId |
-| invitedByName | string | opcional (admin) |
+| invitedByName | string | opcional |
 | status | string | pending, accepted, expired, revoked |
 | token | string | link unico |
 | expiresAt | Timestamp |  |
 | createdAt | Timestamp |  |
-| acceptedAt | Timestamp | opcional (admin) |
+| acceptedAt | Timestamp | opcional |
+| acceptedBy | string | opcional |
 
 Quem escreve:
-
-- Admin App (cria convite com `storeAccess` padrao `['*']`)
-- Functions (`functions/src/invitations/sendEmail.ts` cria convites e injeta `storeAccess` derivado de `storeId`)
-- Kiosk App (createInvitation usa `storeAccess`)
+- Admin App (`admin/src/services/userService.ts` e paginas Team/Invitations)
+- Functions (`functions/src/invitations/sendEmail.ts` cria convites)
+- Kiosk App (`src/services/franchiseService.ts` cria/atualiza convites)
 
 Quem le:
-
 - Admin App (painel de convites)
-- Functions (aceite e validacao)
-- Kiosk App (aceite de convite; normaliza `storeAccess` se ausente)
-
-Observacao:
-
-- Quando `storeAccess` nao existe no documento, o Kiosk normaliza usando `storeId` ou `['*']`.
+- Kiosk App (aceite/validacao)
+- Functions (aceite/validacao)
 
 Evidencias:
-- `admin/src/pages/team/TeamPage.tsx` linhas 248-259 (convite com `storeAccess: ['*']`).
-- `admin/src/pages/users/InvitationsPage.tsx` linhas 118-129 (convite com `storeAccess: ['*']`).
-- `admin/src/services/userService.ts` linhas 270-276 (convite com `storeAccess` derivado de `storeId`).
-- `functions/src/invitations/sendEmail.ts` linhas 111-124 (convite com `storeAccess`).
-- `src/services/franchiseService.ts` linhas 65-72 e 621-626 (normalizacao de `storeAccess`).
-#### 2.2.6 `audit_logs/{logId}` (global)
+- `src/types/franchise.ts` linhas 403-432 (schema `Invitation`).
+- `admin/src/types/user.ts` linhas 35-51 (schema `Invitation`).
+- `admin/src/services/userService.ts` linhas 160-209 (create/list com `franchiseId`, `email`, `status`, `createdAt`).
+- `functions/src/invitations/sendEmail.ts` linhas 99-124 (cria convites com `storeAccess`).
+- `functions/src/invitations/accept.ts` linhas 42-93 (busca por `token`/`status`).
+- `src/services/franchiseService.ts` linhas 604-617 e 642-649 (queries por `token` e `franchiseId/email/status`).
 
-Campos observados (escrita atual via `functions/src/auth/claims.ts`):
+#### 2.2.5 `audit_logs/{logId}` (global)
 
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| action | string | ex: `set_admin_claims` |
-| targetUserId | string | userId alvo |
-| performedBy | string | uid de quem executou |
-| claims | map | claims aplicadas |
-| timestamp | Timestamp |  |
-
-Campos previstos em tipo (`src/types/franchise.ts`) mas NAO CONFIRMADOS em writes atuais:
-
-`userId`, `userEmail`, `franchiseId`, `storeId`, `resource`, `resourceId`, `changes`, `ip`, `userAgent`
+Campos observados (write atual em `functions/src/auth/claims.ts`):
+- action, targetUserId, performedBy, claims, timestamp, franchiseId?, storeId?
 
 Quem escreve:
-
-- Functions (`functions/src/auth/claims.ts` apenas, no estado atual)
-- Admin App pode registrar auditoria especifica (tambem usa `franchises/{fid}/auditLogs`)
+- Cloud Functions (`functions/src/auth/claims.ts`)
 
 Quem le:
-
-- NAO CONFIRMADO (nao ha leitura de `audit_logs` no codigo de producao; rules permitem superadmin/owner/admin)
+- NAO CONFIRMADO (nao ha leitura direta em `src/`/`admin/src`)
 
 Evidencias:
-- `functions/src/auth/claims.ts` linhas 108-115 (schema real escrito em `audit_logs`).
+- `functions/src/auth/claims.ts` linhas 120-139 (schema escrito em `audit_logs`).
 
-#### 2.2.7 `franchises/{franchiseId}`
+#### 2.2.6 `franchises/{franchiseId}`
 
-Campos observados (em `src/types/franchise.ts` e `admin/src/types/franchise.ts`):
+Campos observados:
 
 | Campo | Tipo | Observacao |
 | --- | --- | --- |
@@ -305,11 +239,9 @@ Campos observados (em `src/types/franchise.ts` e `admin/src/types/franchise.ts`)
 | primaryColor | string | opcional |
 | plan | string | free, trial, starter, pro, enterprise |
 | planStatus | string | active, past_due, unpaid, canceled, trial, incomplete, expired, paused |
-| maxStores | number |  |
-| maxUsersPerStore | number |  |
-| billingStatus | string | legado (mesmos valores do planStatus) |
+| billingStatus | string | legado (mesmo dominio de `planStatus`) |
 | planExpiresAt | Timestamp | opcional |
-| trialEndsAt | Timestamp | opcional (legado) |
+| trialEndsAt | Timestamp | opcional |
 | stripeCustomerId | string | opcional |
 | stripeSubscriptionId | string | opcional |
 | features | string[] |  |
@@ -318,651 +250,315 @@ Campos observados (em `src/types/franchise.ts` e `admin/src/types/franchise.ts`)
 | updatedBy | string | opcional |
 
 Quem escreve:
-
-- Functions (`auth/onCreate` cria franquia, `billing` atualiza billing)
-- Admin App (edicao de dados e limites)
+- Functions (`functions/src/auth/onCreate.ts` cria franquia)
+- Functions billing (`functions/src/billing/stripeWebhook.ts` atualiza plano)
+- Admin App (edicao de dados)
 
 Quem le:
-
 - Admin App (painel)
-- Kiosk App (carrega franquia para modo multi-tenant)
+- Kiosk App (contexto multi-franquia)
 
 Relacionamentos:
-
 - `franchises/{fid}/members`
 - `franchises/{fid}/stores`
 - `franchises/{fid}/billingEvents`
 - `franchises/{fid}/notifications`
 - `franchises/{fid}/auditLogs`
+- `franchises/{fid}/metrics`
 
 Evidencias:
 - `src/types/franchise.ts` linhas 307-345 (schema `Franchise`).
-- `functions/src/auth/onCreate.ts` linhas 86-101 (create inicial com `planStatus`/`billingStatus`).
-- `functions/src/billing/stripeWebhook.ts` linhas 33-118 (update `planStatus`/`billingStatus`/`planExpiresAt`).
-- `admin/src/pages/settings/SettingsPage.tsx` linhas 116-124 (update `updatedAt`/`updatedBy`).
+- `admin/src/types/franchise.ts` linhas 59-86 (schema `Franchise`).
+- `functions/src/auth/onCreate.ts` linhas 86-109 (create `franchises`).
+- `functions/src/billing/stripeWebhook.ts` linhas 92-145 (update `planStatus`/`billingStatus`).
 
-#### 2.2.8 `franchises/{franchiseId}/members/{userId}`
+#### 2.2.7 `franchises/{franchiseId}/members/{userId}`
 
-Campos observados (em `src/types/franchise.ts` e `admin/src/types/franchise.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| userId | string | id do usuario |
-| email | string | admin apenas |
-| displayName | string | admin apenas |
-| photoURL | string | opcional |
-| role | string | `UserRole` |
-| storeAccess | string[] | ['*'] ou lista de lojas |
-| customPermissions | string[] | opcional (kiosk) |
-| permissions | string[] | opcional (admin) |
-| invitedBy | string | userId |
-| invitedAt | Timestamp |  |
-| joinedAt | Timestamp | opcional |
-| addedAt | Timestamp | opcional |
-| isActive | boolean | opcional |
-| orderId | string | opcional (admin) |
-| updatedAt | Timestamp | opcional |
+Campos observados:
+- userId, email, displayName, photoURL, role, storeAccess, permissions/customPermissions, invitedBy, invitedAt, joinedAt, addedAt, isActive, updatedAt
 
 Quem escreve:
-
 - Functions (aceite de convite)
 - Admin App (gestao de membros)
 - Functions (sync de claims)
 
 Quem le:
-
 - Admin App (listagem e RBAC)
 - Kiosk App (franchise context e permissions)
 
-Relacionamentos:
-
-- `users/{userId}`
-- `franchises/{franchiseId}`
-
 Evidencias:
-- `src/types/franchise.ts` linhas 356-382 (schema base de membership).
-- `functions/src/invitations/accept.ts` linhas 151-177 (create/update de member com `storeAccess`/`isActive`).
+- `src/types/franchise.ts` linhas 365-389 (schema base).
+- `admin/src/types/franchise.ts` linhas 89-119 (schema `FranchiseMember`).
+- `functions/src/invitations/accept.ts` linhas 151-177 (create/update de member).
 
-#### 2.2.9 `franchises/{franchiseId}/stores/{storeId}`
+#### 2.2.8 `franchises/{franchiseId}/stores/{storeId}`
 
-Campos observados (em `src/types/store.ts` e `admin/src/types/franchise.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| storeId | string | slug/identificador unico |
-| name | string |  |
-| slug | string |  |
-| isActive | boolean |  |
-| address | object | StoreAddress ou string (admin) |
-| contact | object | StoreContact (kiosk) |
-| city | string | admin |
-| state | string | admin |
-| phone | string | admin |
-| taxId | string |  |
-| currency | string |  |
-| taxPercentage | number |  |
-| comPort | string | opcional |
-| useThermalPrinter | boolean | opcional |
-| attractTimeoutSeconds | number | opcional |
-| language | 'en' | 'pt-BR' | opcional |
-| created_at | string | legado (snake_case) |
-| updated_at | string | legado (snake_case) |
-| createdAt | Timestamp | can\u00f4nico (camelCase) |
-| updatedAt | Timestamp | can\u00f4nico (camelCase) |
+Campos observados (canonico):
+- id, storeId, name, slug, isActive, address, contact, city, state, phone, taxId, currency, taxPercentage, comPort, useThermalPrinter, attractTimeoutSeconds, language, createdAt, updatedAt
 
 Quem escreve:
-
-- Admin App (cadastro e edicao de lojas)
-- Kiosk App (fallback de recuperacao local, modo legado)
+- Admin App (cadastro/edicao de lojas)
 
 Quem le:
-
 - Kiosk App (settings e inicializacao)
-- Admin App (listagem e configuracao)
-
-Relacionamentos:
-
-- Subcolecoes listadas abaixo
+- Admin App (listagem/configuracao)
 
 Evidencias:
-- `src/types/store.ts` linhas 24-48 (schema legado Kiosk).
-- `admin/src/types/franchise.ts` linhas 123-135 (schema Store no Admin).
-- `admin/src/services/storeService.ts` linhas 101-115 (create com `franchiseId`, `members`, `settings`, `createdBy`).
+- `src/types/store.ts` linhas 24-48 (schema `Store`).
+- `admin/src/types/franchise.ts` linhas 123-135 (schema `Store` no Admin).
+- `admin/src/services/storeService.ts` linhas 101-121 (create store e settings associados).
 
-#### 2.2.10 `franchises/{franchiseId}/stores/{storeId}/products/{productId}`
+#### 2.2.9 `franchises/{franchiseId}/stores/{storeId}/products/{productId}`
 
-Campos observados (em `src/types/product.ts` e writes em `useFirebaseProducts.tsx` e `salesService.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| title | string |  |
-| price | number |  |
-| description | string |  |
-| image | string | opcional |
-| tags | string[] |  |
-| inStock | boolean |  |
-| category | string |  |
-| stock | number |  |
-| minStock | number | opcional |
-| isDrink | boolean | opcional |
-| sizes | array | ProductSize[] |
-| defaultSizeKey | string | opcional |
-| totalMlAvailable | number | opcional |
-| storeId | string | opcional |
-| createdAt | Timestamp | canonico (camelCase) |
-| updatedAt | Timestamp | canonico (camelCase) |
-| created_at | string | legado (snake_case) |
-| updated_at | string | legado (snake_case) |
+Campos observados:
+- id, title, price, description, image, tags, inStock, category, stock, minStock, isDrink, sizes, defaultSizeKey, totalMlAvailable, storeId, createdAt, updatedAt
 
 Quem escreve:
-
 - Admin App (catalogo)
-- Kiosk App (ajustes de estoque via vendas; atualiza stock/inStock/totalMlAvailable + updatedAt)
+- Kiosk App (ajustes de estoque via vendas)
 
 Quem le:
-
 - Kiosk App (catalogo e estoque)
 - Admin App (catalogo)
 
-Relacionamentos:
-
-- Usado por `orders` e `inventoryLogs`
-
 Evidencias:
-- `src/types/product.ts` linhas 9-27 (schema do produto).
-- `admin/src/components/store/StoreProductsTab.tsx` linhas 108-133 (create/update em `.../products`).
-- `src/services/salesService.ts` linhas 150-211 (leitura/uso de `productId`, `title`, `price`, `quantity` em `orders`).
-- `src/services/salesService.ts` linhas 140-152 (update de estoque inclui `updatedAt`).
+- `src/types/product.ts` linhas 9-27 (schema `Product`).
+- `admin/src/components/store/StoreProductsTab.tsx` linhas 108-133 (create/update produtos).
+- `src/services/salesService.ts` linhas 212-257 (update de estoque com `updatedAt`).
 
-#### 2.2.11 `franchises/{franchiseId}/stores/{storeId}/orders/{orderId}`
+#### 2.2.10 `franchises/{franchiseId}/stores/{storeId}/orders/{orderId}`
 
-Campos observados (em `src/services/salesService.ts` e `admin/src/services/reportService.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| orderNumber | string | gerado pelo Kiosk |
-| storeId | string | opcional (inclusao explicita) |
-| franchiseId | string | opcional |
-| deviceId | string | rastreio do dispositivo |
-| paymentMethod | string | `PaymentMethod` |
-| timestamp | Date | SaleTimingData.timestamp |
-| date | string | YYYY-MM-DD |
-| hourOfDay | number | 0-23 |
-| dayOfWeek | number | 0-6 |
-| timeSlot | string | morning/afternoon/evening/night |
-| isWeekend | boolean |  |
-| isHoliday | boolean | opcional |
-| status | string | completed (Kiosk) |
-| paymentStatus | string | paid (Kiosk) |
-| createdAt | Timestamp | serverTimestamp |
-| paidAt | Timestamp | serverTimestamp |
-| completedAt | Timestamp | serverTimestamp |
-| lastSync | Timestamp | serverTimestamp |
-| notes | string | vazio por padrao |
-| items | array | detalhes por item |
-| subtotal | number |  |
-| tax | number |  |
-| total | number |  |
-| currency | string |  |
+Campos observados:
+- orderNumber (docId), storeId, franchiseId, deviceId, paymentMethod, timestamp, date, hourOfDay, dayOfWeek, timeSlot, isWeekend, isHoliday, status, paymentStatus, createdAt, paidAt, completedAt, lastSync, notes, items[], subtotal, tax, total, currency
 
 Campos de `items`:
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| productId | string |  |
-| title | string |  |
-| price | number |  |
-| quantity | number |  |
-| total | number |  |
-| sizeKey | string | opcional (bebidas) |
-| sizeLabel | string | opcional |
-| mlPerUnit | number | opcional |
+- productId, title, price, quantity, total, sizeKey?, sizeLabel?, mlPerUnit?
 
 Quem escreve:
-
 - Kiosk App (cria e atualiza status)
 
 Quem le:
-
 - Admin App (relatorios e dashboards)
 - Cloud Functions (analytics)
 
 Relacionamentos:
-
 - `products` (items.productId)
 - `devices` (deviceId)
 
 Evidencias:
-- `src/services/salesService.ts` linhas 20-28 (timing data: `timestamp`, `date`, `hourOfDay`, `dayOfWeek`, `timeSlot`, `isWeekend`).
-- `src/services/salesService.ts` linhas 166-212 (schema do `order`: `paymentMethod`, status, timestamps, `items`, `subtotal`, `tax`, `total`, `currency`).
-- `src/services/salesService.ts` linhas 214-219 (docId = `orderNumber` via `doc(salesRef, orderNumber)`).
+- `src/services/salesService.ts` linhas 114-156 e 300-366 (schema do order, timestamps e itens).
+- `src/services/salesService.ts` linhas 356-360 (docId = `orderNumber`).
 
-#### 2.2.12 `franchises/{franchiseId}/stores/{storeId}/sales/{saleId}`
-
-Observacao:
-
-- Subcolecao prevista nas regras, mas o fluxo atual grava em `orders`.
-- Manter como legado/compatibilidade.
-
-#### 2.2.13 `franchises/{franchiseId}/stores/{storeId}/settings/{settingId}`
+#### 2.2.11 `franchises/{franchiseId}/stores/{storeId}/settings/{settingId}`
 
 Documentos observados:
-
 - `config` (configuracoes completas da loja)
 - `default_currency`
 - `attract_video`
 
-Campos observados em `config` (baseado em `StoreSettings`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| name | string |  |
-| storeId | string |  |
-| franchiseId | string | opcional |
-| currency | string |  |
-| taxId | string |  |
-| taxPercentage | number |  |
-| firebaseConfig | map | apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId |
-| email | string | opcional |
-| phone | string | opcional |
-| address | string | opcional |
-| description | string | opcional |
-| timezone | string | opcional |
-| comPort | string | opcional |
-| useThermalPrinter | boolean | opcional |
-| attractTimeoutSeconds | number | opcional |
-| language | 'en' | 'pt-BR' | opcional |
-| esp32AutoConnect | boolean | opcional |
-| esp32ConnectionOrder | string[] | opcional |
-| esp32HeartbeatIntervalMs | number | opcional |
-| esp32LastWifiIp | string | opcional |
-| drinkPickupTimeoutSeconds | number | opcional |
-| drinkPickupSoundEnabled | boolean | opcional |
-| paymentGatewayConfig | map | ver abaixo |
+Campos observados em `config` (StoreSettings):
+- name, storeId, franchiseId, currency, taxId, taxPercentage, firebaseConfig, email, phone, address, description, timezone, comPort, useThermalPrinter, attractTimeoutSeconds, language, esp32AutoConnect, esp32ConnectionOrder, esp32HeartbeatIntervalMs, esp32LastWifiIp, drinkPickupTimeoutSeconds, drinkPickupSoundEnabled, paymentGatewayConfig, updatedAt
 
 Campos observados em `paymentGatewayConfig`:
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| provider | string | mercadopago, stone, pagseguro, cielo, stripe |
-| mode | string | sandbox, production |
-| enabledMethods | map | pix, credit, debit |
-| accessToken | string |  |
-| userId | string | opcional |
-| storeId | string | opcional |
-| externalPosId | string | opcional |
-| terminalId | string | opcional |
-| pollingIntervalMs | number | opcional |
-| pollingMaxAttempts | number | opcional |
-| pointExpirationTime | string | opcional |
-| qrExpirationMinutes | number | opcional |
-| configuredAt | string | opcional |
-| configuredBy | string | opcional |
-| lastValidatedAt | string | opcional |
-| lastValidationResult | string | opcional |
+- provider, mode, enabledMethods, accessToken, userId, storeId, externalPosId, terminalId, pollingIntervalMs, pollingMaxAttempts, pointExpirationTime, qrExpirationMinutes, configuredAt, configuredBy, lastValidatedAt, lastValidationResult
 
 Quem escreve:
-
 - Admin App (painel de configuracao)
 - Kiosk App (sync local e fallback)
 
 Quem le:
-
 - Kiosk App (bootstrap e runtime)
 - Admin App (visualizacao)
 
 Evidencias:
-- `src/types/store.ts` linhas 58-185 (schema `StoreSettings` + `PaymentGatewayConfig`).
+- `src/types/store.ts` linhas 58-185 (schema `StoreSettings` e `PaymentGatewayConfig`).
+- `src/hooks/useStoreSettings.tsx` linhas 95-109 (enqueue `settings/config` em offline sync).
 
-#### 2.2.14 `franchises/{franchiseId}/stores/{storeId}/dispensers/{dispenserId}`
+#### 2.2.12 `franchises/{franchiseId}/stores/{storeId}/dispensers/{dispenserId}`
 
-Campos observados (em `src/types/franchise.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| name | string |  |
-| icon | string |  |
-| color | string |  |
-| isActive | boolean |  |
-| hardware | map | deviceId, connectionType, valvePin, flowSensorPin, lastKnownIp |
-| calibration | map | pulsesPerLiter, mlPerSecond |
-| allowedProductIds | string[] |  |
-| lastStatus | map | connected, lastSeen, firmwareVersion |
-| createdAt | Timestamp |  |
-| updatedAt | Timestamp |  |
+Campos observados (StoreDispenser):
+- id, name, icon, color, isActive, hardware (deviceId, connectionType, valvePin, flowSensorPin, lastKnownIp), calibration (pulsesPerLiter, mlPerSecond), allowedProductIds, lastStatus (connected, lastSeen, firmwareVersion), createdAt, updatedAt
 
 Quem escreve:
-
-- Admin App (cadastro e configuracao de torneiras)
-- Kiosk App (atualiza status) 
+- Admin App (cadastro/configuracao)
+- Kiosk App (status)
 
 Quem le:
-
 - Kiosk App (operacao/dispense)
 - Admin App (monitoramento)
 
 Evidencias:
-- `src/types/franchise.ts` linhas 575-600 (schema `StoreDispenser`).
+- `src/types/franchise.ts` linhas 580-613 (schema `StoreDispenser`).
+- `src/services/dispenserService.ts` linhas 116-147 e 195-214 (CRUD + timestamps).
 
-#### 2.2.15 `franchises/{franchiseId}/stores/{storeId}/inventoryLogs/{logId}`
+#### 2.2.13 `franchises/{franchiseId}/stores/{storeId}/inventoryLogs/{logId}`
 
-Campos observados (em `src/types/store.ts` e admin components):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| productId | string |  |
-| productTitle | string |  |
-| type | string | ADD, REMOVE, ADJUST |
-| quantity | number |  |
-| previousStock | number |  |
-| newStock | number |  |
-| userEmail | string | opcional |
-| comment | string | opcional |
-| timestamp | Timestamp |  |
-| userId | string | opcional |
+Campos observados:
+- id, productId, productTitle?, type (ADD/REMOVE/ADJUST), quantity, previousStock?, newStock?, userEmail?, comment?, timestamp, userId?
 
 Quem escreve:
-
 - Admin App (ajustes de estoque)
 
 Quem le:
-
 - Admin App (historico)
 
 Evidencias:
-- `admin/src/components/store/StoreInventoryTab.tsx` linhas 74-94 (schema completo do log).
-- `admin/src/components/store/StoreInventoryTab.tsx` linhas 138-170 (write em `inventoryLogs` + `timestamp`).
+- `src/types/store.ts` linhas 190-201 (schema `InventoryLog`).
+- `admin/src/components/store/StoreInventoryTab.tsx` linhas 127-148 (query por `timestamp`).
 
-#### 2.2.16 `franchises/{franchiseId}/stores/{storeId}/hardware/{docId}`
+#### 2.2.14 `franchises/{franchiseId}/stores/{storeId}/hardware/{docId}`
 
 Documento observado:
-
 - `status`
 
-Campos observados (em `src/services/hardwareStatusService.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| franchiseId | string | gravado pelo Kiosk |
-| storeId | string | gravado pelo Kiosk |
-| esp32Connected | boolean |  |
-| esp32Type | string | usb, wifi, bluetooth |
-| esp32Port | string | opcional |
-| esp32Ip | string | opcional |
-| macAddress | string | opcional |
-| firmwareVersion | string | opcional |
-| dispensersTotal | number |  |
-| dispensersOnline | number |  |
-| numTaps | number | opcional |
-| taps | array | TapStatusReport[] |
-| hardwareId | string | opcional |
-| printerConnected | boolean |  |
-| printerPort | string | opcional |
-| lastHeartbeat | Timestamp |  |
-| updatedAt | Timestamp |  |
-| kioskVersion | string | opcional |
+Campos observados:
+- esp32Connected, esp32Type, esp32Port, esp32Ip, macAddress, firmwareVersion, dispensersTotal, dispensersOnline, numTaps, taps, hardwareId, printerConnected, printerPort, lastHeartbeat, updatedAt, kioskVersion, franchiseId, storeId
 
 Quem escreve:
-
 - Kiosk App (heartbeat)
 
 Quem le:
-
 - Admin App (monitoramento)
 
 Evidencias:
-- `src/services/deviceHeartbeatService.ts` linhas 39-52 (schema de `DeviceInfo`).
-- `src/services/deviceHeartbeatService.ts` linhas 175-203 (write de heartbeat com `franchiseId`/`storeId`).
+- `src/services/hardwareStatusService.ts` linhas 18-52 e 83-128 (schema + write com `franchiseId`/`storeId`).
 
-Evidencias:
-- `src/services/hardwareStatusService.ts` linhas 24-53 (schema `HardwareStatus`, inclui `franchiseId`/`storeId`).
-- `src/services/hardwareStatusService.ts` linhas 115-137 (write em `hardware/status`).
+#### 2.2.15 `franchises/{franchiseId}/stores/{storeId}/devices/{deviceId}`
 
-#### 2.2.17 `franchises/{franchiseId}/stores/{storeId}/devices/{deviceId}`
-
-Campos observados (em `src/services/deviceHeartbeatService.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| deviceId | string |  |
-| deviceType | string | esp32, kiosk, tablet, unknown |
-| storeId | string |  |
-| franchiseId | string | opcional |
-| isOnline | boolean |  |
-| lastSeen | Timestamp |  |
-| lastSync | Timestamp |  |
-| uptime | number | segundos |
-| appVersion | string |  |
-| ip | string | opcional |
-| mac | string | opcional |
-| firmwareVersion | string | opcional |
-| metadata | map | opcional |
-| esp32 | map | connected, ip, mac, firmwareVersion |
+Campos observados:
+- deviceId, deviceType, storeId, franchiseId, isOnline, lastSeen, lastSync, uptime, appVersion, ip, mac, firmwareVersion, metadata, esp32 (connected/ip/mac/firmwareVersion)
 
 Quem escreve:
-
 - Kiosk App (heartbeat periodico)
 
 Quem le:
-
 - Admin App (monitoramento)
 
-#### 2.2.18 `franchises/{franchiseId}/stores/{storeId}/dailyStats/{YYYY-MM-DD}`
+Evidencias:
+- `src/services/deviceHeartbeatService.ts` linhas 37-52 e 145-189 (schema + write com `franchiseId`).
 
-Campos observados (em `functions/src/analytics/aggregateDailySales.ts` e `admin/src/services/reportService.ts`):
+#### 2.2.16 `franchises/{franchiseId}/stores/{storeId}/dailyStats/{YYYY-MM-DD}`
 
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| date | string | YYYY-MM-DD |
-| franchiseId | string |  |
-| storeId | string |  |
-| totalOrders | number |  |
-| completedOrders | number |  |
-| cancelledOrders | number |  |
-| pendingOrders | number |  |
-| totalRevenue | number |  |
-| avgTicket | number |  |
-| paymentMethods | map | agregados por método |
-| hourlyDistribution | map | agregados por hora |
-| topProducts | array | top 10 por receita |
-| processedAt | Timestamp |  |
+Campos observados (aggregated):
+- franchiseId, storeId, date, totalOrders, completedOrders, cancelledOrders, pendingOrders, totalRevenue, avgTicket, paymentMethods, hourlyDistribution, topProducts, processedAt
 
 Quem escreve:
-
-- Cloud Functions (aggregateDailySales)
+- Cloud Functions (`aggregateDailySales`)
 
 Quem le:
-
-- Admin App (reports)
+- Admin App (`reportService` via dailyStats)
 
 Evidencias:
-- `functions/src/analytics/aggregateDailySales.ts` linhas 21-34 (schema de `DailyStats`).
+- `functions/src/analytics/aggregateDailySales.ts` linhas 21-41 e 241-255 (schema escrito em dailyStats).
+- `admin/src/services/reportService.ts` linhas 130-157 (query dailyStats por data).
 
-#### 2.2.19 `franchises/{franchiseId}/stores/{storeId}/metrics/{metricId}`
+#### 2.2.17 `franchises/{franchiseId}/stores/{storeId}/metrics/{metricId}`
 
 Documento observado:
-
 - `current`
 
-Campos observados (em `functions/src/analytics/aggOrders.ts` e `admin/src/services/metricsService.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| franchiseId | string |  |
-| storeId | string |  |
-| orders | number | contador agregado |
-| revenue | number | receita agregada |
-| paidOrders | number | opcional |
-| cancelledOrders | number | opcional |
-| pendingOrders | number | opcional |
-| lastUpdate | Timestamp |  |
-| updatedAt | Timestamp |  |
+Campos observados:
+- revenue, orders, paidOrders, cancelledOrders, pendingOrders, paymentMethods.*, lastUpdate, updatedAt, franchiseId, storeId
 
 Quem escreve:
-
-- Cloud Functions (aggOrders)
+- Cloud Functions (`aggOrders`)
 
 Quem le:
-
-- Admin App (dashboards)
+- Admin App (dashboards e reports)
 
 Evidencias:
-- `functions/src/analytics/aggOrders.ts` linhas 45-55 (schema de `MetricsUpdate`).
-- `functions/src/analytics/aggOrders.ts` linhas 103-115 (grava `franchiseId`/`storeId` em metrics).
+- `functions/src/analytics/aggOrders.ts` linhas 55-116 e 197-215 (update metrics com `franchiseId`/`storeId`).
+- `admin/src/services/reportService.ts` linhas 351-377 (fallback `metrics/current`).
 
-#### 2.2.20 `franchises/{franchiseId}/notifications/{notificationId}`
+#### 2.2.18 `franchises/{franchiseId}/metrics/{metricId}`
 
-Campos observados (em `admin/src/services/notificationService.ts`):
+Documento observado:
+- `current`
 
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| userId | string |  |
-| priority | string | low, normal, high, critical |
-| title | string |  |
-| message | string |  |
-| type | string |  |
-| isRead | boolean |  |
-| isDismissed | boolean |  |
-| createdAt | Timestamp |  |
-| readAt | Timestamp | opcional |
-| storeId | string | opcional |
-| storeName | string | opcional |
-| orderId | string | opcional |
-| productId | string | opcional |
-| actionUrl | string | opcional |
-| actionLabel | string | opcional |
-| metadata | map | opcional |
+Campos observados:
+- revenue, orders, paidOrders, cancelledOrders, pendingOrders, paymentMethods.*, lastUpdate, updatedAt, franchiseId
 
 Quem escreve:
-
-- Admin App (cria notificacoes)
-- Functions (eventos automaticos, se habilitado no futuro)
+- Cloud Functions (`aggOrders`)
 
 Quem le:
+- Admin App (fallback via callable `getMetricsAdmin`)
 
+Evidencias:
+- `functions/src/analytics/aggOrders.ts` linhas 209-215 (update metrics de franquia).
+- `functions/src/analytics/getMetricsAdmin.ts` linhas 176-213 (leitura de metrics franquia).
+
+#### 2.2.19 `franchises/{franchiseId}/notifications/{notificationId}`
+
+Campos observados:
+- id, userId, title, message, type, isRead, isDismissed, createdAt, readAt, actionUrl, metadata
+
+Quem escreve:
+- Admin App (cria notificacoes)
+
+Quem le:
 - Admin App (notifications UI)
 
 Evidencias:
-- `admin/src/services/notificationService.ts` linhas 29-66 (schema de `Notification`).
-- `admin/src/services/notificationService.ts` linhas 92-121 (query por `userId`/`isDismissed` + `orderBy createdAt`).
+- `admin/src/services/notificationService.ts` linhas 118-135 e 160-177 (create/list).
 
-#### 2.2.21 `franchises/{franchiseId}/billingEvents/{eventId}`
+#### 2.2.20 `franchises/{franchiseId}/billingEvents/{eventId}`
 
-Campos observados (em `admin/src/types/billing.ts` e `functions/src/billing/stripeWebhook.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| type | string | checkout_completed, subscription_updated, invoice_paid, etc |
-| plan | string | opcional |
-| amount | number | opcional |
-| currency | string | opcional |
-| invoiceId | string | opcional |
-| subscriptionId | string | opcional |
-| sessionId | string | opcional |
-| timestamp | Timestamp |  |
+Campos observados:
+- id, type, plan, amount, currency, invoiceId, subscriptionId, sessionId, timestamp
 
 Quem escreve:
-
-- Cloud Functions (stripe webhook)
+- Cloud Functions (Stripe webhook)
 
 Quem le:
-
 - Admin App (billing history)
 
 Evidencias:
-- `functions/src/billing/stripeWebhook.ts` linhas 88-112 e 170-209 (writes em `billingEvents`).
-- `admin/src/types/billing.ts` linhas 10-40 (schema `BillingEvent`).
+- `admin/src/types/billing.ts` linhas 76-86 (schema `BillingEvent`).
+- `functions/src/billing/stripeWebhook.ts` linhas 98-110 e 178-187 (create `billingEvents`).
 
-#### 2.2.22 `franchises/{franchiseId}/auditLogs/{logId}`
+#### 2.2.21 `franchises/{franchiseId}/auditLogs/{logId}`
 
-Campos observados (em `admin/src/types/audit.ts`):
-
-| Campo | Tipo | Observacao |
-| --- | --- | --- |
-| id | string | docId |
-| action | string |  |
-| actor | map | id, email, name |
-| target | map | type, id, name |
-| details | map | opcional |
-| changes | map | before/after |
-| franchiseId | string |  |
-| storeId | string | opcional |
-| ip | string | opcional |
-| userAgent | string | opcional |
-| timestamp | Timestamp |  |
+Campos observados:
+- id, action, actor, target, details, changes, franchiseId, storeId, ip, userAgent, timestamp
 
 Quem escreve:
-
 - Admin App (auditoria de acoes)
 
 Quem le:
-
 - Admin App (auditoria)
 
 Evidencias:
-- `admin/src/types/audit.ts` linhas 10-40 (schema de `AuditLog`).
-- `admin/src/services/auditService.ts` linhas 66-98 (query com `orderBy timestamp` e filtros).
+- `admin/src/types/audit.ts` linhas 89-104 (schema `AuditLog`).
+- `admin/src/services/auditService.ts` linhas 104-133 (query `auditLogs`).
 
-#### 2.2.23 `franchises/{franchiseId}/settings/{settingId}`
+#### 2.2.22 `analytics/daily/{YYYY-MM-DD}`
 
-Observacao:
-
-- Colecao prevista nas regras. Nao ha uso direto em producao no codigo atual.
-
-#### 2.2.24 `analytics/daily/{YYYY-MM-DD}`
-
-Campos observados (em `functions/src/analytics/aggOrders.ts`):
-
-- `revenue`, `orders`, `paidOrders`, `cancelledOrders`, `pendingOrders`, `paymentMethods.*`, `lastUpdate`, `updatedAt`
-- DocId = `YYYY-MM-DD` (nao ha campo `date` gravado no documento)
+Campos observados (aggOrders):
+- revenue, orders, paidOrders, cancelledOrders, pendingOrders, paymentMethods.*, lastUpdate, updatedAt
 
 Quem escreve:
-
-- Cloud Functions (trigger em orders)
+- Cloud Functions (`aggOrders`)
 
 Quem le:
-
-- NAO CONFIRMADO: leitura permitida apenas a superadmins pelas rules (uso no Admin nao aparece no codigo).
+- NAO CONFIRMADO (rules permitem apenas superadmin; Admin usa callable `getMetricsAdmin`)
 
 Evidencias:
-- `functions/src/analytics/aggOrders.ts` linhas 64-104 (incrementos de `revenue`, `orders`, `paymentMethods.*`, `lastUpdate`).
+- `functions/src/analytics/aggOrders.ts` linhas 118-170 (update em `analytics/daily`).
+- `firestore.rules` linha 585 (analytics read apenas superadmin).
 
-#### 2.2.25 `analytics/hourly/{YYYY-MM-DD-HH}`
+#### 2.2.23 `analytics/hourly/{YYYY-MM-DD-HH}`
 
-Campos observados:
-
-- `revenue`, `orders`, `paidOrders`, `cancelledOrders`, `pendingOrders`, `paymentMethods.*`, `lastUpdate`, `updatedAt`
-- DocId = `YYYY-MM-DD-HH` (nao ha campo `hour` gravado no documento)
+Campos observados (aggOrders):
+- revenue, orders, paidOrders, cancelledOrders, pendingOrders, paymentMethods.*, lastUpdate, updatedAt
 
 Quem escreve:
-
-- Cloud Functions (trigger em orders)
-
-Evidencias:
-- `functions/src/analytics/aggOrders.ts` linhas 91-104 (atualizacoes em `analytics/hourly`).
-
-#### 2.2.26 `stores/{storeId}` (LEGADO)
-
-Colecao legado usada quando `franchiseMode` esta desabilitado. Estruturas espelham `franchises/{fid}/stores/{sid}` com subcolecoes equivalentes.
-
-- `products`, `orders`, `sales`, `settings`, `dispensers`, `inventoryLogs`, `devices`, `metrics/current`
-
-Uso atual:
-
-- Kiosk App ainda tem caminhos legado em `useFirebaseProducts.tsx`, `useStoreSettings.tsx`, `storeService.ts`, `deviceHeartbeatService.ts`.
-- Admin App opera principalmente no modo franquia.
+- Cloud Functions (`aggOrders`)
 
 Evidencias:
-- `firestore.rules` linha 557 (match `/stores/{storeId}` legado).
-- `src/lib/pathResolver.ts` linhas 87-120 (paths legado quando `franchiseMode` desabilitado).
+- `functions/src/analytics/aggOrders.ts` linhas 118-170 (update em `analytics/hourly`).
 
-### 2.3 Cloud Functions — Mapa de Mutacoes
+### 2.3 Cloud Functions - Mapa de Mutacoes
 
 | Funcao | Trigger | Colecoes afetadas | Impacto |
 | --- | --- | --- | --- |
@@ -971,78 +567,61 @@ Evidencias:
 | `auth/setCustomClaims.ts` | callable | `users` | atualiza claims e flags de usuario |
 | `invitations/sendEmail.ts` | callable | `invitations` | cria convites e envia email |
 | `invitations/accept.ts` | callable | `invitations`, `users`, `franchises/{fid}/members` | aceita convite e ativa membro |
-| `invitations/validateInvitationToken` | HTTP | `invitations`, `franchises` | valida token publico (leitura) |
+| `invitations/validateInvitationToken` | HTTP | `invitations`, `franchises` | valida token publico |
 | `billing/createCheckout.ts` | callable | `franchises` | inicia checkout stripe |
-| `billing/createBillingPortalSession` | callable | `franchises` | cria portal Stripe (leitura) |
+| `billing/createBillingPortalSession` | callable | `franchises` | cria portal Stripe |
 | `billing/stripeWebhook.ts` | webhook HTTP | `franchises`, `franchises/{fid}/billingEvents` | atualiza plano e registra eventos |
 | `analytics/aggregateDailySales.ts` | scheduled/callable | `franchises/{fid}/stores/{sid}/dailyStats` | agrega vendas por dia |
 | `analytics/aggregateDailySalesHTTP` | callable | `franchises/{fid}/stores/{sid}/dailyStats` | agregacao manual por data |
-| `analytics/aggOrders.ts` | firestore trigger | `analytics/daily`, `analytics/hourly`, `franchises/{fid}/stores/{sid}/metrics`, `franchises/{fid}/metrics`, `stores/{sid}/metrics` | agregacoes em tempo real |
-| `analytics/getMetricsAdmin.ts` | callable | `analytics/daily` | fallback de metrics por function |
+| `analytics/aggOrders.ts` | firestore trigger | `analytics/*`, `franchises/{fid}/stores/{sid}/metrics`, `franchises/{fid}/metrics` | agregacoes em tempo real |
+| `analytics/getMetricsAdmin.ts` | callable | `dailyStats`, `metrics` | fallback de metrics por funcao |
 | `superadmin/setSuperAdmin.ts` | callable | `superadmins`, `users` | promove superadmin |
 | `superadmin/promoteSuperAdminHTTP.ts` | HTTP | `superadmins`, `users` | promocao via endpoint |
 
 Evidencias:
-- `functions/src/index.ts` linhas 9-35 (exports das funcoes listadas).
+- `functions/src/index.ts` linhas 9-35 (exports das funcoes).
 
-### 2.4 Regras de Seguranca — Resumo Tecnico
+### 2.4 Regras de Seguranca - Resumo Tecnico
 
 Principios principais (extraido de `firestore.rules`):
 
-- `superadmins` somente superadmins podem ler/escrever.
-- `users` leitura/escrita permitida ao proprio usuario, admins da franquia e superadmins.
+- `superadmins` somente superadmins podem ler.
+- `users` leitura/escrita permitida ao proprio usuario e superadmins.
 - `franchises/{fid}` leitura permitida a membros da franquia; escrita limitada a admin/owner/superadmin.
 - Subcolecoes sensiveis (`billingEvents`, `settings`) exigem role apropriada.
-- `inventoryLogs` permite `create/read` para owner/admin/manager (e legado via claims).
 - CollectionGroup rules para `members`, `orders`, `devices`, `dailyStats`, `metrics`, `hardware` com checks por franquia.
 - `analytics/*` leitura permitida apenas a superadmins; escrita apenas via Functions.
-- Colecoes globais `audit_logs`, `roles`, `settings` com regras mais restritas (audit_logs: leitura por superadmin/owner/admin).
+- `audit_logs` global: leitura por superadmin/owner/admin; escrita apenas create.
 
 Evidencias:
-- `firestore.rules` linhas 321-329 (regras de `inventoryLogs`).
-- `firestore.rules` linhas 648-656 (regras de leitura em `audit_logs`).
-- `firestore.rules` linhas 726-777 (collectionGroup `devices`, `dailyStats`, `metrics`, `hardware`).
-- `firestore.rules` linha 683 (`analytics/*` somente superadmin).
-
-Observacao:
-
-- Regras contemplam colecoes legacy `stores/{storeId}` e `sales`.
+- `firestore.rules` linhas 230-333 (stores e settings).
+- `firestore.rules` linhas 455-503 (notifications/billingEvents/auditLogs).
+- `firestore.rules` linhas 585-667 (analytics e audit_logs).
+- `firestore.rules` linhas 699-777 (collectionGroup rules).
 
 ### 2.5 Indices (firestore.indexes.json)
 
-Indices definidos (collectionGroup):
+Indices definidos:
 
-| CollectionGroup | Campos | Ordem |
-| --- | --- | --- |
-| `members` | `userId`, `isActive` | ASC, ASC |
-| `members` | `isActive`, `joinedAt` | ASC, DESC |
-| `notifications` | `userId`, `isDismissed`, `createdAt` | ASC, ASC, DESC |
-| `notifications` | `userId`, `createdAt` | ASC, ASC |
-| `invitations` | `franchiseId`, `createdAt` | ASC, DESC |
-| `invitations` | `franchiseId`, `status`, `createdAt` | ASC, ASC, DESC |
-| `invitations` | `token`, `status` | ASC, ASC |
-| `auditLogs` | `action`, `timestamp` | ASC, DESC |
-| `auditLogs` | `actor.id`, `timestamp` | ASC, DESC |
-| `auditLogs` | `target.type`, `timestamp` | ASC, DESC |
-| `orders` | `status`, `timestamp` | ASC, DESC |
-| `orders` | `date`, `timestamp` | ASC, DESC |
-| `orders` | `storeId`, `timestamp` | ASC, DESC |
-| `orders` | `paymentStatus`, `timestamp` | ASC, DESC |
-| `orders` | `status`, `paymentStatus`, `timestamp` | ASC, ASC, DESC |
-| `orders` | `paymentMethod`, `timestamp` | ASC, DESC |
-| `orders` | `paymentStatus`, `createdAt` | ASC, DESC |
-| `orders` | `franchiseId`, `createdAt` | ASC, DESC |
-| `orders` | `storeId`, `createdAt` | ASC, DESC |
-| `dailyStats` | `franchiseId`, `date` | ASC, DESC |
-| `dailyStats` | `storeId`, `date` | ASC, DESC |
-| `devices` | `franchiseId`, `lastSeen` | ASC, DESC |
-| `devices` | `storeId`, `lastSeen` | ASC, DESC |
-| `metrics` | `franchiseId`, `updatedAt` | ASC, DESC |
+| CollectionGroup | QueryScope | Campos | Ordem |
+| --- | --- | --- | --- |
+| `members` | COLLECTION_GROUP | `userId`, `isActive` | ASC, ASC |
+| `members` | COLLECTION | `isActive`, `joinedAt` | ASC, DESC |
+| `notifications` | COLLECTION | `userId`, `isDismissed`, `createdAt` | ASC, ASC, DESC |
+| `notifications` | COLLECTION | `userId`, `createdAt` | ASC, ASC |
+| `invitations` | COLLECTION | `franchiseId`, `createdAt` | ASC, DESC |
+| `invitations` | COLLECTION | `franchiseId`, `status`, `createdAt` | ASC, ASC, DESC |
+| `invitations` | COLLECTION | `token`, `status` | ASC, ASC |
+| `invitations` | COLLECTION | `franchiseId`, `email`, `status` | ASC, ASC, ASC |
+| `auditLogs` | COLLECTION | `action`, `timestamp` | ASC, DESC |
+| `auditLogs` | COLLECTION | `actor.id`, `timestamp` | ASC, DESC |
+| `auditLogs` | COLLECTION | `target.type`, `timestamp` | ASC, DESC |
+| `orders` | COLLECTION | `status`, `timestamp` | ASC, DESC |
 
 Evidencias:
-- `firestore.indexes.json` linhas 1-90 (indices `members`, `notifications`, `invitations`, `auditLogs`, `orders`).
+- `firestore.indexes.json` linhas 4-174 (lista completa de indices).
 
-## 3. Bancos Locais — Kiosk App
+## 3. Bancos Locais - Kiosk App
 
 ### 3.1 IndexedDB (`kiosk_cache`)
 
@@ -1058,20 +637,19 @@ Object stores e indices:
 | `syncQueue` | `id` | `createdAt`, `collection` |
 
 Estruturas:
-
-- `SyncQueueItem`: `id`, `operation`, `collection`, `docId`, `data`, `createdAt`, `retryCount`, `storeId`.
+- `SyncQueueItem`: `id`, `operation`, `collection`, `docId`, `data`, `createdAt`, `retryCount`, `storeId`, `franchiseId`.
 - Usado por `syncService.ts` para offline-first e replays.
 
 Evidencias:
-- `src/services/cacheService.ts` linhas 16-63 (DB `kiosk_cache`, stores e tipos).
-- `src/services/cacheService.ts` linhas 70-106 (criação de object stores e índices).
+- `src/services/cacheService.ts` linhas 21-63 (DB `kiosk_cache`, stores e tipos).
+- `src/services/cacheService.ts` linhas 111-132 (criacao de object stores e indices).
 
 ### 3.2 Cache API
 
 Arquivo base: `src/services/videoCacheService.ts`
 
 - Cache: `kiosk-video-cache-v1`
-- Armazena videos de tela de atracao (attract screen).
+- Armazena videos de tela de atracao.
 
 Evidencias:
 - `src/services/videoCacheService.ts` linha 19 (nome do cache).
@@ -1081,11 +659,9 @@ Evidencias:
 Chaves observadas em producao:
 
 - `storeSettings`
-- `storeInitialized`
 - `settingsUpdatedAt`
 - `open-kiosk-admin:selectedFranchise`
 - `open-kiosk-admin:selectedStore`
-- `selectedFranchiseId` (legado)
 - `openKiosk_pinHash`
 - `openKiosk_offlineSession`
 - `openKiosk_offlineSession_cached`
@@ -1095,36 +671,25 @@ Chaves observadas em producao:
 - `esp32_last_connection`
 - `mp_last_terminal_order`
 - `mp_polling_state`
-- `adminPin_{storeId}`
 - `rememberEmail`
-- `franchiseMode`
-- `setupCompleted`
-- `currentStoreId`
 - `kiosk_default_tap_id`
 - `kiosk_language`
 
-Observacoes:
-
-- `storeSettings` e `settingsUpdatedAt` sao usados como hot cache e fallback.
-- `openKiosk_offlineSession` habilita login offline via PIN.
-- `kiosk_default_tap_id` e local por tablet.
-
 Evidencias (chaves localStorage):
-- `storeSettings`, `storeInitialized`, `settingsUpdatedAt`: `src/hooks/useStoreSettings.tsx` linhas 13, 55-56, 431.
-- `open-kiosk-admin:selectedFranchise`, `selectedFranchiseId`: `src/services/firebase.ts` linhas 156-164.
-- `open-kiosk-admin:selectedStore`, `currentStoreId`: `src/services/firebase.ts` linhas 243-258 e `src/components/StoreInitialization.tsx` linhas 178-181.
-- `openKiosk_pinHash`, `openKiosk_offlineSession`, `openKiosk_offlineSession_cached`: `src/services/authService.ts` linhas 45-48 e 629.
+- `storeSettings`, `settingsUpdatedAt`: `src/hooks/useStoreSettings.tsx` linhas 29, 53, 417.
+- `open-kiosk-admin:selectedFranchise`: `src/services/firebase.ts` linhas 159-169.
+- `open-kiosk-admin:selectedStore`: `src/context/StoreContext.tsx` linhas 59-94.
+- `openKiosk_pinHash`: `src/services/authService.ts` linha 45.
+- `openKiosk_offlineSession`: `src/services/authService.ts` linha 48.
+- `openKiosk_offlineSession_cached`: `src/services/authService.ts` linha 625.
 - `cached_products`, `products_cache_version`: `src/services/productCacheService.ts` linhas 22-23.
-- `open-kiosk:deviceId`: `src/services/deviceHeartbeatService.ts` linha 69.
+- `open-kiosk:deviceId`: `src/services/deviceHeartbeatService.ts` linha 67.
 - `esp32_last_connection`: `src/services/esp32CommunicationService.ts` linha 34.
 - `mp_last_terminal_order`: `src/services/paymentService.ts` linha 16.
-- `mp_polling_state`: `src/hooks/useMercadoPagoPolling.ts` linha 18.
-- `adminPin_{storeId}`: `src/hooks/useAdminPin.ts` linha 126.
+- `mp_polling_state`: `src/hooks/useMercadoPagoPolling.ts` linha 16.
 - `rememberEmail`: `src/components/auth/LoginForm.tsx` linha 55.
-- `franchiseMode`: `src/lib/pathResolver.ts` linha 39.
-- `setupCompleted`: `src/services/setupKioskController.ts` linha 23.
 - `kiosk_default_tap_id`: `src/components/TapSettingsSync.tsx` linha 10.
-- `kiosk_language`: `src/i18n/LanguageContext.tsx` linha 20.
+- `kiosk_language`: `src/i18n/LanguageContext.tsx` linha 22.
 
 ### 3.4 Firestore Offline Cache
 
@@ -1134,7 +699,7 @@ Arquivo base: `src/services/firebase.ts`
 - `CACHE_SIZE_UNLIMITED`
 
 Evidencias:
-- `src/services/firebase.ts` linhas 59-62 e 106-109 (init com `persistentLocalCache` + `CACHE_SIZE_UNLIMITED`).
+- `src/services/firebase.ts` linhas 60-62 e 107-109.
 
 ### 3.5 Arquivos JSON locais
 
@@ -1142,27 +707,23 @@ Fonte: `src/services/environmentConfigLoader.ts`
 
 Arquivos carregados em runtime:
 
-- `public/config/.env.local.json`
-- `public/assets/config/.env.local.json`
-- `public/.env.local.json`
-
-Esses arquivos incluem `storeId`, `franchiseId` e config Firebase.
+- `/config/.env.local.json`
+- `/assets/config/.env.local.json`
+- `/.env.local.json`
 
 Evidencias:
-- `src/services/environmentConfigLoader.ts` linhas 77-84 (lista de arquivos `.env.local.json`).
+- `src/services/environmentConfigLoader.ts` linhas 77-84.
 
-## 4. Bancos Locais — Admin App
+## 4. Bancos Locais - Admin App
 
 ### 4.1 localStorage (Admin)
 
 Chaves observadas:
 
 - `open-kiosk-admin:selectedFranchise`
-- `franchiseMode`
 
 Evidencias:
-- `admin/src/context/FranchiseContext.tsx` linha 107 (`open-kiosk-admin:selectedFranchise`).
-- `admin/src/lib/pathResolver.ts` linha 22 (`franchiseMode`).
+- `admin/src/context/FranchiseContext.tsx` linha 107.
 
 ### 4.2 Offline Cache
 
@@ -1170,17 +731,17 @@ Evidencias:
 
 ### 4.3 Outros storages
 
-- Nao ha uso de IndexedDB/SQLite/Room/Realm/DataStore em producao no Admin.
+- Nao ha uso de IndexedDB/SQLite/Room/Realm/DataStore em producao no Admin (NAO CONFIRMADO - nao ha referencias explicitas no repo).
 
 ## 5. App Android (Wrapper Capacitor)
 
-- NAO CONFIRMADO: nos arquivos Java inspecionados nao ha uso de Room/SQLite/SharedPreferences/DataStore.
-- O armazenamento segue o WebView do Kiosk (localStorage, IndexedDB, Cache API).
+- Nao ha persistencia nativa detectada (Room/SQLite/SharedPreferences/DataStore) nos arquivos Java inspecionados.
+- O armazenamento local segue o WebView do Kiosk (localStorage, IndexedDB, Cache API).
 - Configuracao do wrapper: `capacitor.config.ts`.
 
 Evidencias:
-- `android/app/src/main/java/com/openkiosk/app/MainActivity.java` (sem uso de SharedPreferences/Room/SQLite no arquivo).
-- `android/app/src/main/java/com/openkiosk/app/KioskModePlugin.java` (plugin apenas de kiosk mode, sem storage).
+- `android/app/src/main/java/com/openkiosk/app/MainActivity.java` (sem uso de SharedPreferences/Room/SQLite).
+- `capacitor.config.ts` linhas 1-42.
 
 ## 6. Fluxo de Dados Entre Apps
 
@@ -1189,7 +750,7 @@ Evidencias:
 - Cria `orders` em `franchises/{fid}/stores/{sid}/orders`.
 - Atualiza estoque em `products`.
 - Atualiza `hardware/status` e `devices` (heartbeat).
-- Atualiza `settings/config` em casos de bootstrap ou sync.
+- Atualiza `settings/config` em casos de bootstrap/sync.
 
 ### 6.2 Admin -> Firestore
 
@@ -1212,16 +773,16 @@ Evidencias:
 
 - Kiosk usa IndexedDB + fila de sync (`syncQueue`) com retry exponencial.
 - Firestore offline cache habilitado com persistencia local.
-- Conflitos resolvidos por timestamp e ultimo write wins (observado em syncService).
+- Conflitos resolvidos por timestamp e ultimo write wins (observado em `syncService`).
 
 Evidencias:
-- `src/services/salesService.ts` linhas 166-221 (Kiosk grava `orders`).
-- `src/services/hardwareStatusService.ts` linhas 115-137 (Kiosk grava `hardware/status`).
-- `src/services/deviceHeartbeatService.ts` linhas 175-203 (Kiosk grava `devices`).
+- `src/services/salesService.ts` linhas 300-366 (Kiosk grava `orders`).
+- `src/services/hardwareStatusService.ts` linhas 83-128 (Kiosk grava `hardware/status`).
+- `src/services/deviceHeartbeatService.ts` linhas 145-189 (Kiosk grava `devices`).
 - `admin/src/components/store/StoreProductsTab.tsx` linhas 108-133 (Admin grava `products`).
-- `admin/src/components/store/StoreInventoryTab.tsx` linhas 138-170 (Admin grava `inventoryLogs`).
-- `functions/src/analytics/aggOrders.ts` linhas 91-115 (Functions agregam `analytics/*` e `metrics`).
-- `src/hooks/useStoreSettings.tsx` linhas 95-103 (offline enqueue para `settings/config`).
+- `admin/src/components/store/StoreInventoryTab.tsx` linhas 127-148 (Admin grava `inventoryLogs`).
+- `functions/src/analytics/aggOrders.ts` linhas 118-170 (Functions agregam `analytics/*` e `metrics`).
+- `src/hooks/useStoreSettings.tsx` linhas 95-109 (offline enqueue `settings/config`).
 
 ## 7. Tabela-Resumo de Entidades
 
@@ -1230,7 +791,7 @@ Evidencias:
 | User | `users` | localStorage (offline session) | n/a | Claims em Auth e Functions |
 | Franchise | `franchises` | cache Firestore | cache Firestore |  |
 | FranchiseMember | `franchises/{fid}/members` | cache Firestore | cache Firestore | RBAC |
-| Store | `franchises/{fid}/stores` | localStorage `storeSettings` + IndexedDB | cache Firestore | modo legado suporta `stores/{sid}` |
+| Store | `franchises/{fid}/stores` | localStorage `storeSettings` + IndexedDB | cache Firestore |  |
 | Product | `.../products` | IndexedDB + localStorage | cache Firestore | estoque atualizado pelo Kiosk |
 | Order | `.../orders` | n/a | cache Firestore | agregacao via Functions |
 | Dispenser | `.../dispensers` | cache Firestore | cache Firestore | hardware config |
@@ -1242,58 +803,30 @@ Evidencias:
 | Notification | `franchises/{fid}/notifications` | n/a | cache Firestore |  |
 | BillingEvent | `franchises/{fid}/billingEvents` | n/a | cache Firestore | stripe webhook |
 | AuditLog | `audit_logs` e `franchises/{fid}/auditLogs` | n/a | cache Firestore | dois locais diferentes |
-| Invitation | `invitations` | n/a | cache Firestore | usado em onboarding |
+| Invitation | `invitations` | n/a | cache Firestore | onboarding |
 
 ## 8. Problemas e Melhorias Recomendadas
 
-1. Convites sem `storeAccess` (corrigido)
+1. `audit_logs` global sem leitura em apps (NAO CONFIRMADO)
+- Apenas Functions escrevem, nao ha leitura em `src/`/`admin/src`.
+- Avaliar se deve haver UI de auditoria global ou remover/arquivar dados.
+- Evidencia: `functions/src/auth/claims.ts` linhas 120-139 (write).
 
-- Convites criados pelo Admin/Functions nao gravavam `storeAccess`, mas o Kiosk usava este campo para membership.
-- Correcao: `storeAccess` padrao `['*']` no Admin/Functions e normalizacao no Kiosk.
+2. Campo legado `billingStatus` duplicado com `planStatus`
+- `billingStatus` ainda eh escrito por Functions e existe nos tipos.
+- Recomendacao: migrar consumo para `planStatus` e remover `billingStatus` apos migracao.
+- Evidencias: `functions/src/auth/onCreate.ts` linhas 95-103; `functions/src/billing/stripeWebhook.ts` linhas 92-145; `src/types/franchise.ts` linhas 323-336.
 
-2. Idempotencia de pedidos (corrigido)
+3. Campos sensiveis em `settings/config`
+- `paymentGatewayConfig.accessToken` e outros segredos ficam em Firestore.
+- Recomendar uso de Secret Manager ou criptografia no backend.
+- Evidencia: `src/types/store.ts` linhas 156-174.
 
-- `orders` eram criados com docId aleatorio; retries poderiam gerar duplicidade.
-- Correcao: docId = `orderNumber` para gravacoes do Kiosk.
+4. `analytics/*` restrito a superadmin
+- Admin nao le diretamente; fallback via callable `getMetricsAdmin`.
+- Manter `getMetricsAdmin` como via oficial para nao abrir rules.
+- Evidencias: `firestore.rules` linha 585; `functions/src/analytics/getMetricsAdmin.ts` linhas 41-104.
 
-3. Duplicidade de caminhos (legacy vs franchise)
-
-- Existem operacoes em `stores/{storeId}` e em 
-`franchises/{fid}/stores/{sid}`. 
-- Risco de dados divergentes e dificuldade de manutencao.
-
-4. Nomes e schemas divergentes
-
-- `created_at` e `updated_at` no Kiosk legado vs `createdAt`/`updatedAt` no Admin.
-- `audit_logs` global vs `franchises/{fid}/auditLogs` (duas fontes de auditoria).
-
-5. Regras e codigo desbalanceados
-
-- Regras preveem `sales` e `settings` por franquia que nao aparecem no fluxo atual.
-- Verificar se essas colecoes sao realmente usadas em producao ou devem ser removidas.
-
-6. Indices vs queries
-
-- Indices foram atualizados para `notifications`, `invitations`, `auditLogs`.
-- NAO CONFIRMADO: queries com multiplos filtros de igualdade (ex: `invitations` com `franchiseId` + `email` + `status`) podem exigir indice composto em alguns projetos Firestore.
-
-7. Offline sync e conflitos
-
-- `syncService` usa last write wins e `_syncedAt`. Falta log detalhado e resolucao deterministica de conflito para edicoes concorrentes.
-
-8. Campos sensiveis em `settings/config`
-
-- `paymentGatewayConfig.accessToken` e outros segredos ficam em Firestore. Considerar criptografia ou storage seguro.
-
-Evidencias (problemas):
-- `admin/src/pages/team/TeamPage.tsx` linhas 248-259 (convites com `storeAccess`).
-- `src/services/franchiseService.ts` linhas 65-72 (normalizacao `storeAccess`).
-- `src/services/salesService.ts` linhas 214-219 (docId = `orderNumber`).
-- `src/types/store.ts` linhas 24-31 (campos `created_at`/`updated_at` legado).
-- `admin/src/types/franchise.ts` linhas 123-135 (campos `createdAt`/`updatedAt`).
-- `functions/src/auth/claims.ts` linhas 108-114 (writes em `audit_logs` global).
-- `admin/src/services/auditService.ts` linhas 66-76 (reads em `franchises/{fid}/auditLogs`).
-- `src/lib/pathResolver.ts` linhas 92-103 (paths legado vs franquia).
 ## 9. Diagramas Textuais (Relacionamentos Principais)
 
 ```
@@ -1318,21 +851,23 @@ Cloud Functions
   -> billing webhook -> franchises + billingEvents
 ```
 
-## Apendice — Queries que exigem indices (Firestore)
+## Apendice - Queries que exigem indices (Firestore)
 
 | Query (colecao) | Trecho (arquivo:linha) | Indice (firestore.indexes.json) |
 | --- | --- | --- |
-| `notifications` (userId + isDismissed + orderBy createdAt desc) | `admin/src/services/notificationService.ts` linhas 119-125 | linhas 20-26 |
-| `notifications` (userId + createdAt < cutoff) | `admin/src/services/notificationService.ts` linhas 315-318 | linhas 29-33 |
-| `auditLogs` (action + orderBy timestamp) | `admin/src/services/auditService.ts` linhas 110-119 | linhas 62-67 |
-| `auditLogs` (actor.id + orderBy timestamp) | `admin/src/services/auditService.ts` linhas 110-123 | linhas 70-75 |
-| `auditLogs` (target.type + orderBy timestamp) | `admin/src/services/auditService.ts` linhas 110-127 | linhas 78-83 |
-| `orders` (status + orderBy timestamp) | `admin/src/components/store/StoreOrdersTab.tsx` linhas 37-42 | linhas 86-90 |
-| `invitations` (franchiseId + orderBy createdAt) | `admin/src/services/userService.ts` linhas 226-232 | linhas 37-42 |
+| `members` (collectionGroup: userId + isActive) | `src/services/franchiseService.ts` linhas 227-229 | linhas 4-15 |
+| `members` (collection: isActive + orderBy joinedAt) | `src/services/franchiseService.ts` linhas 432-433 | linhas 18-29 |
+| `notifications` (userId + isDismissed + orderBy createdAt) | `admin/src/services/notificationService.ts` linhas 122-124 | linhas 32-46 |
+| `notifications` (userId + createdAt <) | `admin/src/services/notificationService.ts` linha 303 | linhas 50-60 |
+| `auditLogs` (action + orderBy timestamp) | `admin/src/services/auditService.ts` linhas 114-121 | linhas 128-141 |
+| `auditLogs` (actor.id + orderBy timestamp) | `admin/src/services/auditService.ts` linhas 114-125 | linhas 142-155 |
+| `auditLogs` (target.type + orderBy timestamp) | `admin/src/services/auditService.ts` linhas 114-129 | linhas 156-169 |
+| `orders` (status + orderBy timestamp) | `admin/src/components/store/StoreOrdersTab.tsx` linhas 36-42 | linhas 170-181 |
+| `invitations` (franchiseId + orderBy createdAt) | `admin/src/services/userService.ts` linhas 161-162 | linhas 64-75 |
+| `invitations` (franchiseId + status + orderBy createdAt) | `src/services/franchiseService.ts` linhas 734-736 | linhas 78-93 |
+| `invitations` (token + status) | `src/services/franchiseService.ts` linhas 611-612 | linhas 96-107 |
+| `invitations` (franchiseId + email + status) | `src/services/franchiseService.ts` linhas 644-646 | linhas 110-124 |
 
 ---
 
 Relatorio gerado a partir de codigo de producao. Para novos campos, comparar `firestore.rules` com writes/reads em `src`, `admin/src` e `functions/src`.
-
-
-

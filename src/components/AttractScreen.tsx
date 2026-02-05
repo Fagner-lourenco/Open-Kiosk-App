@@ -3,7 +3,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Hand } from 'lucide-react';
 import { useTranslation } from '@/i18n';
-import { getFirebaseDb, getCurrentStoreId } from '@/services/firebase';
+import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
 import { AttractVideoSettings } from '@/types/store';
 import { useCachedVideo } from '@/hooks/useCachedVideo';
 
@@ -52,8 +52,19 @@ const AttractScreen = ({
         const storeId = getCurrentStoreId();
         if (!storeId) return;
 
+        const franchiseId = getCurrentFranchiseId();
+        if (!franchiseId) return;
+
         const db = getFirebaseDb();
-        const videoDocRef = doc(db, 'stores', storeId, 'settings', 'attract_video');
+        const videoDocRef = doc(
+          db,
+          'franchises',
+          franchiseId,
+          'stores',
+          storeId,
+          'settings',
+          'attract_video'
+        );
         const videoSnap = await getDoc(videoDocRef);
 
         // Verificar se ainda está montado antes de atualizar estado

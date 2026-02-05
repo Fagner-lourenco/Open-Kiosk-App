@@ -174,7 +174,6 @@ const cleanupLocalStorage = (): string[] => {
   // Chaves antigas que não são mais usadas
   const deprecatedKeys = [
     'old_settings',
-    'legacy_products',
     'temp_cart',
   ];
 

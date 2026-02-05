@@ -12,7 +12,6 @@
 
 import { doc, setDoc, onSnapshot, Unsubscribe, serverTimestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId, getFirebaseAuth } from './firebase';
-import { isFranchiseMode } from '@/lib/pathResolver';
 
 export interface TapStatusReport {
   id: number;
@@ -73,14 +72,6 @@ class HardwareStatusService {
    */
   async updateStatus(status: Partial<HardwareStatus>): Promise<void> {
     console.log('[HardwareStatus] updateStatus chamado:', status);
-    
-    if (!isFranchiseMode()) {
-      // Em modo legado, não persiste no Firestore
-      console.log('[HardwareStatus] Modo legado - não persiste no Firestore');
-      this.currentStatus = { ...this.currentStatus, ...status };
-      return;
-    }
-
     // 🔒 PROTEÇÃO: Verificar autenticação antes de escrever no Firestore
     const auth = getFirebaseAuth();
     if (!auth?.currentUser) {

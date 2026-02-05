@@ -83,6 +83,15 @@ O app estará disponível em `http://localhost:8080`
 
 ---
 
+## 📚 Documentação Técnica (Canônica)
+
+- `docs/data-architecture-report.md` — Mapa completo da arquitetura de dados (produção)
+- `docs/DEPLOY_READINESS.md` — Checklist e status de prontidão para deploy
+- `docs/FINAL_REVIEW.md` — Auditoria final e evidências de funcionamento
+- `docs/archives/` — Documentos históricos/arquivados
+
+---
+
 ## ⚙️ Configuração do Mercado Pago
 
 ### 1. Criar Aplicação no Mercado Pago
@@ -298,7 +307,7 @@ Open-Kiosk-App/
 ### Pagamento não é confirmado
 
 1. Verifique o polling no console do navegador (F12)
-2. Verifique a collection `sales` no Firebase Console
+2. Verifique a collection `orders` em `franchises/{fid}/stores/{sid}/orders` no Firebase Console
 3. Verifique se o polling está ativo: deve aparecer "Tentativa X/60"
 
 ### Erro de CORS em Desenvolvimento

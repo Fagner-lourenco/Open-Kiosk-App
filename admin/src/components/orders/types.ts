@@ -21,6 +21,7 @@ export interface OrderItem {
 export interface Order {
   id: string;
   orderId?: string;
+  orderNumber?: string; // Added for Kiosk compatibility
   items: OrderItem[];
   total: number;
   subtotal?: number;
@@ -39,6 +40,8 @@ export interface Order {
   customerPhone?: string;
   notes?: string;
   storeId?: string;
+  franchiseId?: string; // Added for Kiosk compatibility
+  deviceId?: string;    // Added for Kiosk compatibility
   date?: string;
 }
 

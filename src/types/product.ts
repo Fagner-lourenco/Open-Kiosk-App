@@ -26,11 +26,9 @@ export interface Product {
   // Multi-store support
   storeId?: string;
   
-  // Metadados (canonical/legacy)
+  // Metadados
   createdAt?: Date | string;
   updatedAt?: Date | string;
-  created_at?: string;
-  updated_at?: string;
 }
 
 export interface CartItem {

@@ -376,67 +376,12 @@ export const useReports = (storeId?: string) => {
     }
   };
 
-  const recordSale = async (items: SaleItem[], totalAmount: number, currency: string) => {
-    try {
-      const effectiveStoreId = getEffectiveStoreId();
-      if (!effectiveStoreId) {
-        throw new Error('[useReports] storeId obrigatorio para registrar pedidos');
-      }
-      // Usar 'orders' para compatibilidade com Admin
-      const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
-      const now = new Date();
-      const hour = now.getHours();
-      const dayOfWeek = now.getDay();
-      const timeSlot = hour >= 6 && hour < 12
-        ? 'morning'
-        : hour >= 12 && hour < 18
-          ? 'afternoon'
-          : hour >= 18 && hour < 24
-            ? 'evening'
-            : 'night';
-
-      await addDoc(salesCollection, {
-        total_amount: totalAmount,
-        total: totalAmount,
-        currency,
-        items,
-        timestamp: Timestamp.now(),
-        storeId: effectiveStoreId,
-        date: now.toISOString().split('T')[0],
-        hourOfDay: hour,
-        dayOfWeek,
-        timeSlot,
-        isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
-        status: 'completed',
-        paymentStatus: 'paid',
-        createdAt: serverTimestamp(),
-        paidAt: serverTimestamp(),
-        completedAt: serverTimestamp(),
-        lastSync: serverTimestamp(),
-        notes: '',
-      });
-
-      toast({
-        title: "Success",
-        description: "Sale recorded successfully",
-      });
-    } catch (error) {
-      console.error('Error recording sale:', error);
-      toast({
-        title: "Error",
-        description: "Failed to record sale",
-        variant: "destructive",
-      });
-    }
-  };
-
   return {
     loading,
     getTodayStats,
     getSalesReportByDateRange,
     getItemReportByDateRange,
     getSalesReport,
-    getItemReport,
-    recordSale
+    getItemReport
   };
 };

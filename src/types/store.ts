@@ -44,11 +44,6 @@ export interface Store {
   language?: 'en' | 'pt-BR';
   
   // Metadados
-  // Legado (snake_case)
-  created_at?: string;
-  updated_at?: string;
-  
-  // Canonico (camelCase)
   createdAt?: Date | string;
   updatedAt?: Date | string;
 }

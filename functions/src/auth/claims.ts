@@ -9,7 +9,7 @@
  * - role: 'superadmin' | 'admin' | 'owner' | 'manager' | 'operator' | 'employee' | 'technician'
  * - franchiseId: ID da franquia (para acesso multi-tenant)
  * - storeId: ID da loja (para acesso específico)
- * - storeAccess: '*' | string[] (lojas permitidas)
+ * - storeAccess: string[] (lojas permitidas; usar ['*'] para todas)
  * 
  * @author Open Kiosk Project
  * @version 1.0.0
@@ -89,10 +89,18 @@ export const setAdminClaims = functions
       const user = await admin.auth().getUser(userId);
       const currentClaims = user.customClaims || {};
       
+      // Normalizar storeAccess para array (padrão canônico)
+      const normalizedClaims: Record<string, unknown> = { ...claims };
+      if (normalizedClaims.storeAccess) {
+        normalizedClaims.storeAccess = Array.isArray(normalizedClaims.storeAccess)
+          ? normalizedClaims.storeAccess
+          : [normalizedClaims.storeAccess as string];
+      }
+
       // Mesclar com novas claims
       const newClaims: Record<string, unknown> = {
         ...currentClaims,
-        ...claims,
+        ...normalizedClaims,
       };
       
       // Remover claims null/undefined
@@ -105,14 +113,23 @@ export const setAdminClaims = functions
       // Aplicar claims
       await admin.auth().setCustomUserClaims(userId, newClaims);
       
-      // Log de auditoria
-      await db.collection('audit_logs').add({
+      // Log de auditoria (inclui franchiseId/storeId para compatibilidade com rules)
+      const auditLog: Record<string, unknown> = {
         action: 'set_admin_claims',
         targetUserId: userId,
         performedBy: context.auth.uid,
         claims: newClaims,
         timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      });
+      };
+
+      if (typeof newClaims.franchiseId === 'string' && newClaims.franchiseId) {
+        auditLog.franchiseId = newClaims.franchiseId;
+      }
+      if (typeof newClaims.storeId === 'string' && newClaims.storeId) {
+        auditLog.storeId = newClaims.storeId;
+      }
+
+      await db.collection('audit_logs').add(auditLog);
       
       functions.logger.info(`[claims] Admin claims set for ${userId}`, { claims: newClaims });
       
@@ -175,15 +192,19 @@ export const syncMembershipClaims = functions
       const membership = memberDoc.data()!;
       
       // Montar claims baseado no membership
+      const resolvedStoreAccess = Array.isArray(membership.storeAccess) && membership.storeAccess.length > 0
+        ? membership.storeAccess
+        : ['*'];
+
       const claims: Record<string, unknown> = {
         role: membership.role,
         franchiseId: franchiseId,
-        storeAccess: membership.storeAccess || '*',
+        storeAccess: resolvedStoreAccess,
       };
       
       // Se tem acesso a apenas uma loja, adicionar storeId
-      if (Array.isArray(membership.storeAccess) && membership.storeAccess.length === 1) {
-        claims.storeId = membership.storeAccess[0];
+      if (resolvedStoreAccess.length === 1 && resolvedStoreAccess[0] !== '*') {
+        claims.storeId = resolvedStoreAccess[0];
       }
       
       // Aplicar claims
@@ -193,7 +214,7 @@ export const syncMembershipClaims = functions
       await db.collection('users').doc(userId).set({
         role: membership.role,
         franchiseId: franchiseId,
-        storeAccess: membership.storeAccess,
+        storeAccess: resolvedStoreAccess,
         claimsSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
       

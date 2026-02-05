@@ -21,7 +21,7 @@ export interface User {
   role?: UserRole;
   franchiseId?: string | null;
   storeId?: string | null;
-  storeAccess?: string[] | '*';
+  storeAccess?: string[];
   status?: string;
   invitedBy?: string;
   createdAt: Timestamp | Date;

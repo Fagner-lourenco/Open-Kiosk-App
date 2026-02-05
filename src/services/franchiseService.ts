@@ -43,7 +43,8 @@ import {
   ROLE_PERMISSIONS,
   PendingInvite,
 } from '../types/franchise';
-import { isFranchiseMode, globalCollectionPath } from '../lib/pathResolver';
+import { globalCollectionPath } from '../lib/pathResolver';
+import { sanitizeFirestoreData } from '../utils/firestoreSanitize';
 
 // ============================================================================
 // HELPERS
@@ -100,7 +101,7 @@ function generateInviteToken(): string {
 // ============================================================================
 
 function franchisesPath(): string {
-  return isFranchiseMode() ? globalCollectionPath('franchises') : 'franchises';
+  return globalCollectionPath('franchises');
 }
 
 function membersPath(franchiseId: string): string {
@@ -112,7 +113,7 @@ function storesPath(franchiseId: string): string {
 }
 
 function invitationsPath(): string {
-  return isFranchiseMode() ? globalCollectionPath('invitations') : 'invitations';
+  return globalCollectionPath('invitations');
 }
 
 /**
@@ -383,10 +384,11 @@ class FranchiseService {
   ): Promise<void> {
     try {
       const docRef = doc(db(), franchisesPath(), franchiseId);
-      await updateDoc(docRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
-      });
+        const sanitizedUpdates = sanitizeFirestoreData(updates) as typeof updates;
+        await updateDoc(docRef, {
+          ...sanitizedUpdates,
+          updatedAt: serverTimestamp(),
+        });
     } catch (error) {
       console.error('[FranchiseService] Erro ao atualizar franquia:', error);
       throw error;
@@ -461,7 +463,8 @@ class FranchiseService {
         updates.storeAccess = storeAccess;
       }
 
-      await updateDoc(docRef, updates);
+        const sanitizedRoleUpdates = sanitizeFirestoreData(updates) as typeof updates;
+        await updateDoc(docRef, sanitizedRoleUpdates);
     } catch (error) {
       console.error('[FranchiseService] Erro ao atualizar role:', error);
       throw error;
@@ -570,19 +573,20 @@ class FranchiseService {
       const token = generateInviteToken();
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 dias
 
-      const inviteData = {
-        email: data.email.toLowerCase(),
-        franchiseId,
-        storeAccess: data.storeAccess,
-        role: data.role,
-        invitedBy,
-        status: 'pending' as InvitationStatus,
-        token,
-        expiresAt,
-        createdAt: serverTimestamp(),
-      };
+        const inviteData = {
+          email: data.email.toLowerCase(),
+          franchiseId,
+          storeAccess: data.storeAccess,
+          role: data.role,
+          invitedBy,
+          status: 'pending' as InvitationStatus,
+          token,
+          expiresAt,
+          createdAt: serverTimestamp(),
+        };
 
-      await setDoc(inviteRef, inviteData);
+        const sanitizedInviteData = sanitizeFirestoreData(inviteData) as typeof inviteData;
+        await setDoc(inviteRef, sanitizedInviteData);
 
       return {
         id: inviteRef.id,

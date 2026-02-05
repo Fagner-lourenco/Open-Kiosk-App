@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/select';
 import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Eye, EyeOff, Zap, Trash2, Droplets, Printer, Plus, X, Activity, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
+import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 // Interface para status de hardware em tempo real (do Firestore)
 interface HardwareStatus {
@@ -224,10 +225,11 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
   const updateSettingsMutation = useMutation({
     mutationFn: async (newSettings: Partial<StoreSettings>) => {
       const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-      await updateDoc(storeRef, {
-        ...newSettings,
-        updatedAt: new Date(),
-      });
+        const sanitizedSettings = sanitizeFirestoreData(newSettings) as typeof newSettings;
+        await updateDoc(storeRef, {
+          ...sanitizedSettings,
+          updatedAt: new Date(),
+        });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['store-settings', franchiseId, storeId] });

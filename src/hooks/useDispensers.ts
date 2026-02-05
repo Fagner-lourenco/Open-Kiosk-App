@@ -18,7 +18,6 @@ import { StoreDispenser, DispenserHardwareConfig, DispenserCalibration } from '.
 import { dispenserService } from '../services/dispenserService';
 import { useStoreContext } from '../context/StoreContext';
 import { useFranchiseSafe } from '../context/FranchiseContext';
-import { isFranchiseMode } from '../lib/pathResolver';
 
 // ============================================================================
 // TIPOS
@@ -82,16 +81,19 @@ export function useDispensers(): UseDispensersReturn {
   
   // Obtém franchiseId de forma segura (retorna null se fora do provider)
   const franchiseContext = useFranchiseSafe();
-  const franchiseId = isFranchiseMode() ? franchiseContext?.currentFranchise?.id : undefined;
+  const franchiseId = franchiseContext?.currentFranchise?.id;
 
   // ==========================================================================
   // LOAD & SUBSCRIBE
   // ==========================================================================
 
   useEffect(() => {
-    if (!currentStoreId) {
+    if (!currentStoreId || !franchiseId) {
       setDispensers([]);
       setLoading(false);
+      if (!franchiseId) {
+        setError('Nenhuma franquia selecionada');
+      }
       return;
     }
 
@@ -126,13 +128,13 @@ export function useDispensers(): UseDispensersReturn {
   // ==========================================================================
 
   const refresh = useCallback(async () => {
-    if (!currentStoreId) return;
+    if (!currentStoreId || !franchiseId) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const list = await dispenserService.listDispensers(currentStoreId, franchiseId);
+        const list = await dispenserService.listDispensers(currentStoreId, franchiseId);
       setDispensers(list);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro ao carregar dispensers';
@@ -145,6 +147,7 @@ export function useDispensers(): UseDispensersReturn {
   const createDispenser = useCallback(
     async (data: Omit<StoreDispenser, 'id' | 'createdAt' | 'updatedAt'>) => {
       if (!currentStoreId) throw new Error('Nenhuma loja selecionada');
+      if (!franchiseId) throw new Error('Nenhuma franquia selecionada');
 
       try {
         const newDispenser = await dispenserService.createDispenser(
@@ -168,6 +171,7 @@ export function useDispensers(): UseDispensersReturn {
       updates: Partial<Omit<StoreDispenser, 'id' | 'createdAt'>>
     ) => {
       if (!currentStoreId) throw new Error('Nenhuma loja selecionada');
+      if (!franchiseId) throw new Error('Nenhuma franquia selecionada');
 
       try {
         await dispenserService.updateDispenser(
@@ -188,6 +192,7 @@ export function useDispensers(): UseDispensersReturn {
   const deleteDispenser = useCallback(
     async (dispenserId: string) => {
       if (!currentStoreId) throw new Error('Nenhuma loja selecionada');
+      if (!franchiseId) throw new Error('Nenhuma franquia selecionada');
 
       try {
         await dispenserService.deleteDispenser(currentStoreId, dispenserId, franchiseId);
@@ -203,6 +208,7 @@ export function useDispensers(): UseDispensersReturn {
   const toggleDispenser = useCallback(
     async (dispenserId: string, isActive: boolean) => {
       if (!currentStoreId) throw new Error('Nenhuma loja selecionada');
+      if (!franchiseId) throw new Error('Nenhuma franquia selecionada');
 
       try {
         await dispenserService.toggleDispenser(
@@ -223,6 +229,7 @@ export function useDispensers(): UseDispensersReturn {
   const updateHardware = useCallback(
     async (dispenserId: string, hardware: DispenserHardwareConfig) => {
       if (!currentStoreId) throw new Error('Nenhuma loja selecionada');
+      if (!franchiseId) throw new Error('Nenhuma franquia selecionada');
 
       try {
         await dispenserService.updateHardwareConfig(
@@ -243,6 +250,7 @@ export function useDispensers(): UseDispensersReturn {
   const updateCalibration = useCallback(
     async (dispenserId: string, calibration: DispenserCalibration) => {
       if (!currentStoreId) throw new Error('Nenhuma loja selecionada');
+      if (!franchiseId) throw new Error('Nenhuma franquia selecionada');
 
       try {
         await dispenserService.updateCalibration(

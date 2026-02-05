@@ -70,7 +70,6 @@ export const useKioskIdle = (options: UseKioskIdleOptions = {}) => {
       listenersRegisteredRef.current = false;
       clearTimer();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suppressed, timeoutSeconds]);
 
   // If suppression toggles while idle, ensure consistent state
@@ -80,7 +79,6 @@ export const useKioskIdle = (options: UseKioskIdleOptions = {}) => {
     } else if (!isIdle) {
       startTimer();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [suppressed]);
 
   return { isIdle, resetIdle };

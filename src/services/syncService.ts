@@ -22,7 +22,8 @@ import {
   STORES,
   SyncQueueItem
 } from './cacheService';
-import { getFirebaseDb, getCurrentStoreId, getStoreDoc } from './firebase';
+import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
+import { storeSubPath, StoreSubcollection } from '@/lib/pathResolver';
 import { doc, setDoc, deleteDoc, getDoc, serverTimestamp, increment, FieldValue } from 'firebase/firestore';
 
 // Configurações de sync
@@ -94,6 +95,7 @@ export const enqueueSync = async (
   data?: unknown
 ): Promise<void> => {
   const storeId = getCurrentStoreId();
+  const franchiseId = getCurrentFranchiseId();
 
   const item: SyncQueueItem = {
     id: generateSyncId(),
@@ -104,6 +106,7 @@ export const enqueueSync = async (
     createdAt: Date.now(),
     retryCount: 0,
     storeId: storeId || '',
+    franchiseId: franchiseId || undefined,
   };
 
   await cacheSet(STORES.SYNC_QUEUE, item);
@@ -158,25 +161,46 @@ const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
   try {
     const db = getFirebaseDb();
     const storeId = item.storeId || getCurrentStoreId();
+    const franchiseId = item.franchiseId || getCurrentFranchiseId();
 
     let docRef;
     if (storeId) {
-      // Usa resolver centralizado para suportar franchise mode e legado
-      docRef = getStoreDoc(storeId, item.collection, item.docId);
+      if (!franchiseId) {
+        throw new Error('[SyncService] franchiseId obrigatorio para sincronizacao de loja');
+      }
+      const path = storeSubPath(franchiseId, storeId, item.collection as StoreSubcollection);
+      docRef = doc(db, ...path.split('/'), item.docId);
     } else {
       docRef = doc(db, item.collection, item.docId);
     }
 
     switch (item.operation) {
       case 'create':
-      case 'update':
+      case 'update': {
+        // Idempotencia: evita reaplicar a mesma operacao se ja foi sincronizada
+        const existingSnap = await getDoc(docRef);
+        if (existingSnap.exists()) {
+          const existingData = existingSnap.data() as { _lastSyncId?: string };
+          if (existingData?._lastSyncId === item.id) {
+            console.log(`[SyncService] Skipping already synced item ${item.id}`);
+            return true;
+          }
+          // Para create, se o documento ja existe, consideramos sincronizado
+          if (item.operation === 'create') {
+            console.log(`[SyncService] Document already exists for create ${item.docId}, skipping`);
+            return true;
+          }
+        }
+
         // Reconstruir tipos especiais antes de enviar
         const payload = reconstructFirestoreTypes(item.data);
         await setDoc(docRef, {
           ...(payload as object),
           _syncedAt: serverTimestamp(),
+          _lastSyncId: item.id,
         }, { merge: true });
         break;
+      }
 
       case 'delete':
         await deleteDoc(docRef);
@@ -429,8 +453,13 @@ export const syncFromFirebase = async (
   try {
     const storeId = getCurrentStoreId();
 
-    // Usa resolver centralizado que suporta franchise mode e legacy
-    const docRef = getStoreDoc(storeId, collection, docId);
+    const franchiseId = getCurrentFranchiseId();
+    if (!storeId || !franchiseId) {
+      console.warn('[SyncService] Missing storeId/franchiseId for syncFromFirebase');
+      return null;
+    }
+    const path = storeSubPath(franchiseId, storeId, collection as StoreSubcollection);
+    const docRef = doc(getFirebaseDb(), ...path.split('/'), docId);
 
     const snapshot = await getDoc(docRef);
 

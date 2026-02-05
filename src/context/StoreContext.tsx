@@ -55,13 +55,21 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
           return;
         }
         
-        // Fallback: tentar carregar do localStorage
+        // Preferir seleção atual (alinhado com Admin)
+        const selectedStore = localStorage.getItem('open-kiosk-admin:selectedStore');
+        if (selectedStore) {
+          setCurrentStoreIdState(selectedStore);
+          console.log('[StoreContext] Loaded storeId from selected store:', selectedStore);
+          return;
+        }
+
+        // Fallback: tentar carregar do storeSettings
         const settings = localStorage.getItem('storeSettings');
         if (settings) {
           const parsed = JSON.parse(settings);
           if (parsed.storeId) {
             setCurrentStoreIdState(parsed.storeId);
-            console.log('[StoreContext] Loaded storeId from localStorage:', parsed.storeId);
+            console.log('[StoreContext] Loaded storeId from storeSettings:', parsed.storeId);
           }
         }
       } catch (err) {
@@ -82,6 +90,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
     
     // Atualizar localStorage
     try {
+      localStorage.setItem('open-kiosk-admin:selectedStore', storeId);
       const settings = localStorage.getItem('storeSettings');
       if (settings) {
         const parsed = JSON.parse(settings);
@@ -141,8 +150,8 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
               currency: settings.currency || 'BRL',
               taxPercentage: settings.taxPercentage || 0,
               language: settings.language,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
             };
             setCurrentStore(cachedStore);
             console.log('[StoreContext] Using cached store data (offline mode):', cachedStore.name);
@@ -171,7 +180,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
         refreshStore();
       }
     }
-  }, [currentStoreId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentStoreId]);
 
   return (
     <StoreContext.Provider 

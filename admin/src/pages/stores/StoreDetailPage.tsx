@@ -66,7 +66,7 @@ interface StoreData {
   email?: string;
   isActive: boolean;
   settings?: Record<string, unknown>;
-  members?: Array<{
+  operators?: Array<{
     id: string;
     email: string;
     role: string;
@@ -129,7 +129,7 @@ export function StoreDetailPage() {
         email: data.email,
         isActive: data.isActive !== false,
         settings: data.settings,
-        members: data.members || [],
+        operators: data.operators || data.members || [],
         createdAt: data.createdAt?.toDate(),
         updatedAt: data.updatedAt?.toDate(),
       };
@@ -453,7 +453,7 @@ export function StoreDetailPage() {
                     <div>
                       <p className="text-sm font-medium">Membros</p>
                       <p className="text-sm text-gray-500">
-                        {store.members?.length || 0} usuário(s)
+                        {store.operators?.length || 0} usuário(s)
                       </p>
                     </div>
                   </div>

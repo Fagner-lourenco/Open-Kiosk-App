@@ -18,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { storesPath, storePath } from '@/lib/pathResolver';
+import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 export interface Store {
   id: string;
@@ -28,7 +29,7 @@ export interface Store {
   isActive: boolean;
   franchiseId: string;
   settings?: Record<string, any>;
-  members?: StoreMember[];
+  operators?: StoreMember[];
   createdAt?: Date;
   updatedAt?: Date;
   createdBy?: string;
@@ -108,7 +109,7 @@ export async function createStore(
     ...data,
     franchiseId,
     isActive: data.isActive ?? true,
-    members: [],
+    operators: [],
     settings: {},
     createdBy: userId,
     createdAt: serverTimestamp(),
@@ -133,8 +134,9 @@ export async function updateStore(
 ): Promise<void> {
   const docRef = doc(db, storePath(franchiseId, storeId));
 
+  const sanitizedData = sanitizeFirestoreData(data) as typeof data;
   await updateDoc(docRef, {
-    ...data,
+    ...sanitizedData,
     updatedAt: serverTimestamp(),
   });
 }
@@ -158,19 +160,19 @@ export async function addStoreMember(
   const store = await getStore(franchiseId, storeId);
   if (!store) throw new Error('Store not found');
 
-  const members = store.members || [];
-  const existingMember = members.find((m) => m.id === member.id);
+  const operators = store.operators || [];
+  const existingMember = operators.find((m) => m.id === member.id);
 
   if (existingMember) {
     throw new Error('Member already exists in store');
   }
 
-  members.push({
+  operators.push({
     ...member,
     addedAt: new Date().toISOString(),
   });
 
-  await updateStore(franchiseId, storeId, { members } as any);
+  await updateStore(franchiseId, storeId, { operators } as any);
 }
 
 /**
@@ -184,8 +186,8 @@ export async function removeStoreMember(
   const store = await getStore(franchiseId, storeId);
   if (!store) throw new Error('Store not found');
 
-  const members = (store.members || []).filter((m) => m.id !== memberId);
-  await updateStore(franchiseId, storeId, { members } as any);
+  const operators = (store.operators || []).filter((m) => m.id !== memberId);
+  await updateStore(franchiseId, storeId, { operators } as any);
 }
 
 /**

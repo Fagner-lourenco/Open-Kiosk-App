@@ -37,7 +37,5 @@ export { getMetricsAdmin } from './analytics/getMetricsAdmin';
 // Order aggregation triggers (real-time metrics)
 export { 
   onOrderCreated, 
-  onOrderUpdated,
-  onLegacyOrderCreated,
-  onLegacyOrderUpdated 
+  onOrderUpdated 
 } from './analytics/aggOrders';

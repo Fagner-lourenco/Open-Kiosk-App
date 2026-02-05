@@ -55,7 +55,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
       inviteDoc = inviteQuery.docs[0];
       invitation = inviteDoc.data()!;
     } else {
-      // Fallback: convite por ID (legacy)
+      // Fallback: convite por ID
       inviteDoc = await db.collection('invitations').doc(invitationId!).get();
       if (!inviteDoc.exists) {
         throw new functions.https.HttpsError(
@@ -94,6 +94,18 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
 
     const now = admin.firestore.FieldValue.serverTimestamp();
 
+    // Resolve storeAccess e storeId de forma canonica
+    const resolvedStoreAccess = Array.isArray(invitation.storeAccess) && invitation.storeAccess.length > 0
+      ? invitation.storeAccess
+      : (invitation.storeId ? [invitation.storeId] : ['*']);
+
+    const resolvedStoreId = invitation.storeId || (
+      resolvedStoreAccess.length === 1 && resolvedStoreAccess[0] !== '*'
+        ? resolvedStoreAccess[0]
+        : null
+    );
+
+
     // Executa em batch para garantir consistência
     const batch = db.batch();
 
@@ -113,7 +125,8 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
       batch.update(userRef, {
         role: invitation.role,
         franchiseId: invitation.franchiseId,
-        storeId: invitation.storeId,
+        storeId: resolvedStoreId,
+        storeAccess: resolvedStoreAccess,
         updatedAt: now,
       });
     } else {
@@ -125,7 +138,8 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
         photoURL: authUser.photoURL || null,
         role: invitation.role,
         franchiseId: invitation.franchiseId,
-        storeId: invitation.storeId,
+        storeId: resolvedStoreId,
+        storeAccess: resolvedStoreAccess,
         createdAt: now,
         lastLoginAt: now,
         status: 'active',
@@ -146,7 +160,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
         displayName: authUser.displayName || null,
         photoURL: authUser.photoURL || null,
         role: invitation.role,
-        storeAccess: invitation.storeId ? [invitation.storeId] : ['*'],
+        storeAccess: resolvedStoreAccess,
         invitedBy: invitation.invitedBy,
         invitedAt: invitation.createdAt || now,
         joinedAt: now,
@@ -156,7 +170,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
       // Atualiza membership existente
       batch.update(memberRef, {
         role: invitation.role,
-        storeAccess: invitation.storeId ? [invitation.storeId] : ['*'],
+        storeAccess: resolvedStoreAccess,
         isActive: true,
         updatedAt: now,
       });
@@ -169,7 +183,8 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
     await admin.auth().setCustomUserClaims(uid, {
       role: invitation.role,
       franchiseId: invitation.franchiseId,
-      storeId: invitation.storeId,
+      storeId: resolvedStoreId,
+      storeAccess: resolvedStoreAccess,
     });
 
     functions.logger.info(`Convite aceito por ${userEmail} para franquia ${invitation.franchiseId}`);
@@ -178,7 +193,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
       success: true,
       franchiseId: invitation.franchiseId,
       role: invitation.role,
-      storeId: invitation.storeId,
+      storeId: resolvedStoreId,
     };
 
   } catch (error) {

@@ -29,7 +29,8 @@ import {
 } from 'firebase/firestore';
 import { getFirebaseDb } from './firebase';
 import { User } from '../types/franchise';
-import { isFranchiseMode, globalCollectionPath } from '../lib/pathResolver';
+import { globalCollectionPath } from '../lib/pathResolver';
+import { sanitizeFirestoreData } from '../utils/firestoreSanitize';
 
 // ============================================================================
 // HELPERS
@@ -53,7 +54,7 @@ function convertTimestamps<T extends Record<string, unknown>>(data: T): T {
  * Retorna o path da collection de usuários
  */
 function usersPath(): string {
-  return isFranchiseMode() ? globalCollectionPath('users') : 'users';
+  return globalCollectionPath('users');
 }
 
 // ============================================================================
@@ -135,7 +136,8 @@ class UserService {
         lastLoginAt: serverTimestamp(),
       };
 
-      await setDoc(docRef, data);
+        const sanitizedData = sanitizeFirestoreData(data) as typeof data;
+        await setDoc(docRef, sanitizedData);
 
       return {
         id: userId,
@@ -159,10 +161,11 @@ class UserService {
     try {
       const db = getFirebaseDb();
       const docRef = doc(db, usersPath(), userId);
-      await updateDoc(docRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
-      });
+        const sanitizedUpdates = sanitizeFirestoreData(updates) as typeof updates;
+        await updateDoc(docRef, {
+          ...sanitizedUpdates,
+          updatedAt: serverTimestamp(),
+        });
     } catch (error) {
       console.error('[UserService] Erro ao atualizar usuário:', error);
       throw error;

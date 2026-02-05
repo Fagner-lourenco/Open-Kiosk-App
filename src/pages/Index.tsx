@@ -4,16 +4,12 @@ import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
 import { Settings, ShoppingCart } from "lucide-react";
 import { useTranslation } from "@/i18n";
-import { useAuth } from "@/context/AuthContext";
 
 const Index = () => {
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { setIsAuthenticated } = useAuth();
 
   const handleAdminAccess = () => {
-    // Ativar sessão autenticada com timeout de 30 minutos
-    setIsAuthenticated(true);
     navigate('/admin');
   };
 

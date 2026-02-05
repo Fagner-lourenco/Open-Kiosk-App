@@ -5,6 +5,7 @@ import { cacheGet, STORES, CachedProduct } from './cacheService';
 import { CartItem, Product } from '@/types/product';
 import { PaymentMethod, SaleTimingData } from '@/types/sales';
 import { deviceHeartbeatService } from './deviceHeartbeatService';
+import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 class SalesService {
   private calculateSaleTimingData(now: Date): SaleTimingData {
@@ -155,7 +156,8 @@ class SalesService {
     // syncService deve tratar isso ou usar Date.now() e converter no sync.
     // O ideal é usar null e deixar o syncService por o serverTimestamp real na hora do envio, 
     // mas vamos manter compatibilidade com o objeto esperado.
-    await enqueueSync('create', 'orders', orderNumber, saleData);
+    const sanitizedSaleData = sanitizeFirestoreData(saleData);
+    await enqueueSync('create', 'orders', orderNumber, sanitizedSaleData);
 
     // 5. Enfileirar atualizações de estoque (usando increment para segurança)
     for (const [productId, required] of Object.entries(requiredByProductId)) {

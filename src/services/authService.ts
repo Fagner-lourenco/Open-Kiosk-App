@@ -35,7 +35,7 @@ import {
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { getFirebaseAuth, getFirebaseDb } from './firebase';
 import { AuthenticatedUser, User, UserRole } from '../types/franchise';
-import { isFranchiseMode, globalCollectionPath } from '../lib/pathResolver';
+import { globalCollectionPath } from '../lib/pathResolver';
 
 // ============================================================================
 // CONSTANTES
@@ -509,9 +509,7 @@ class AuthService {
     };
 
     // Busca dados do usuário no Firestore
-    const userPath = isFranchiseMode()
-      ? globalCollectionPath('users')
-      : 'users';
+    const userPath = globalCollectionPath('users');
     
     const db = getFirebaseDb();
     const userDoc = await getDoc(doc(db, userPath, firebaseUser.uid));
@@ -545,9 +543,7 @@ class AuthService {
 
   private async updateLastLogin(userId: string): Promise<void> {
     try {
-      const userPath = isFranchiseMode()
-        ? globalCollectionPath('users')
-        : 'users';
+      const userPath = globalCollectionPath('users');
       
       const db = getFirebaseDb();
       await updateDoc(doc(db, userPath, userId), {

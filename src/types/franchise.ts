@@ -249,7 +249,7 @@ export interface User {
   storeId?: string | null;
   
   /** Lojas com acesso (claims) */
-  storeAccess?: string[] | '*';
+  storeAccess?: string[];
   
   /** Status interno (ex: active) */
   status?: string;

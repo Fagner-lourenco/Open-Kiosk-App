@@ -5,7 +5,6 @@ import { getStoreCollection, getStoreDoc, getCurrentStoreId, getFirebaseAuth } f
 import { addDoc, updateDoc, deleteDoc, onSnapshot, CollectionReference, serverTimestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
-import { isFranchiseMode } from '@/lib/pathResolver';
 import { 
   saveProductsToCache, 
   loadProductsFromCache, 
@@ -40,6 +39,20 @@ const getProductsCollection = (storeId: string | null): CollectionReference => {
 };
 
 /**
+ * Remove campos undefined e chaves nao gravaveis em updateDoc
+ * (Firestore nao aceita undefined e nao devemos sobrescrever createdAt/id)
+ */
+const sanitizeProductUpdates = (updates: Partial<Product>): Partial<Product> => {
+  const sanitized: Record<string, unknown> = {};
+  Object.entries(updates).forEach(([key, value]) => {
+    if (value === undefined) return;
+    if (key === 'id' || key === 'createdAt' || key === 'updatedAt') return;
+    sanitized[key] = value;
+  });
+  return sanitized as Partial<Product>;
+};
+
+/**
  * Reset global state para re-subscription
  */
 const resetGlobalState = () => {
@@ -68,14 +81,6 @@ export const useFirebaseProducts = () => {
 
   // Callback para configurar subscription com mutex para evitar race conditions
   const setupSubscription = useCallback(async (storeId: string | null) => {
-    // Se não tem storeId em modo franquia, aguarda até ter
-    // Isso evita queries sem permissão
-    if (!storeId && isFranchiseMode()) {
-      console.log('[useFirebaseProducts] No storeId in franchise mode, waiting...');
-      loadingGlobal = true;
-      productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
-      return;
-    }
     if (!storeId) {
       console.warn('[useFirebaseProducts] storeId ausente, nao e possivel assinar produtos');
       loadingGlobal = false;
@@ -84,16 +89,13 @@ export const useFirebaseProducts = () => {
       return;
     }
 
-
-    // 🔒 PROTEÇÃO: Em modo franquia, verificar autenticação antes de criar listener
-    if (isFranchiseMode()) {
-      const auth = getFirebaseAuth();
-      if (!auth?.currentUser) {
-        console.log('[useFirebaseProducts] ⚠️ Modo franquia sem autenticação - aguardando login');
-        loadingGlobal = true;
-        productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
-        return;
-      }
+    // 🔒 Proteção: verificar autenticação antes de criar listener
+    const auth = getFirebaseAuth();
+    if (!auth?.currentUser) {
+      console.log('[useFirebaseProducts] ⚠️ Sem autenticação - aguardando login');
+      loadingGlobal = true;
+      productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
+      return;
     }
 
     // Aguardar setup anterior se existir (mutex)
@@ -139,8 +141,8 @@ export const useFirebaseProducts = () => {
           return {
             id: d.id,
             ...data,
-            createdAt: (data as any).createdAt ?? (data as any).created_at,
-            updatedAt: (data as any).updatedAt ?? (data as any).updated_at,
+            createdAt: (data as any).createdAt,
+            updatedAt: (data as any).updatedAt,
           } as Product;
         });
         
@@ -326,9 +328,11 @@ export const useFirebaseProducts = () => {
       
       // Usar subcollection (products) - storeId obrigatorio
       const productDoc = getStoreDoc(storeId, 'products', id);
+
+      const sanitizedUpdates = sanitizeProductUpdates(updates);
       
       await updateDoc(productDoc, {
-        ...updates,
+        ...sanitizedUpdates,
         updatedAt: serverTimestamp()
       });
       
@@ -337,7 +341,7 @@ export const useFirebaseProducts = () => {
       // Atualiza cache local
       const updatedProduct = products.find(p => p.id === id);
       if (updatedProduct) {
-        updateProductInCache({ ...updatedProduct, ...updates }).catch((err) => {
+        updateProductInCache({ ...updatedProduct, ...sanitizedUpdates }).catch((err) => {
           console.warn('[useFirebaseProducts] Error caching updated product:', err);
         });
       }

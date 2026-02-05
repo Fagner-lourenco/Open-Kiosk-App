@@ -114,13 +114,10 @@ public class MainActivity extends BridgeActivity {
             setTurnScreenOn(true);
         }
 
-        // NOTA: startLockTask() foi REMOVIDO do onCreate()
-        // O modo kiosk agora é iniciado via setupKioskController.ts
-        // após a conclusão do setup inicial, permitindo que o usuário
-        // minimize o app durante o setup para copiar credenciais.
-        // 
-        // Para ativar o kiosk mode, chame enterKioskMode() do JavaScript.
-        // Isso é feito automaticamente em StoreInitialization após o setup.
+        // NOTA: startLockTask() não é chamado aqui.
+        // O modo kiosk é controlado via plugin Capacitor a partir do JS
+        // (kioskModeService). Use enterKioskMode() quando apropriado
+        // (ex.: após setup concluído ou via Admin Settings).
     }
 
     private void bringAppToFront() {

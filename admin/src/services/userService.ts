@@ -17,16 +17,23 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
-  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
   membersPath,
   memberPath,
-  franchisePath,
   invitationsPath,
   storePath
 } from '@/lib/pathResolver';
+
+/**
+ * Generate a secure random token for invitations
+ */
+function generateInvitationToken(): string {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
 
 export interface FranchiseMember {
   id: string;
@@ -69,7 +76,7 @@ export interface CreateInvitationData {
 }
 
 /**
- * Get all members of a franchise (from subcollection + legacy array)
+ * Get all members of a franchise (subcollection)
  */
 export async function getFranchiseMembers(franchiseId: string): Promise<FranchiseMember[]> {
   const members: FranchiseMember[] = [];
@@ -101,130 +108,47 @@ export async function getFranchiseMembers(franchiseId: string): Promise<Franchis
     console.warn('[userService] Erro ao buscar subcollection members:', error);
   }
 
-  // 2. Fallback: busca do array legado para compatibilidade
-  const franchiseRef = doc(db, franchisePath(franchiseId));
-  const franchiseSnap = await getDoc(franchiseRef);
-
-  if (!franchiseSnap.exists()) {
-    throw new Error('Franchise not found');
-  }
-
-  const legacyMembers = franchiseSnap.data().members || [];
-
-  // Adiciona membros do array que não estão na subcollection
-  for (const legacyMember of legacyMembers) {
-    if (!members.some(m => m.id === legacyMember.id)) {
-      members.push({
-        id: legacyMember.id,
-        userId: legacyMember.id,
-        email: legacyMember.email || '',
-        displayName: legacyMember.displayName || '',
-        role: legacyMember.role || 'viewer',
-        storeAccess: legacyMember.storeAccess || ['*'],
-        addedAt: legacyMember.addedAt,
-      } as FranchiseMember);
-    }
-  }
-
   return members;
 }
 
 /**
- * Update member role in franchise (subcollection + legacy array)
- * Usa writeBatch para garantir atomicidade
+ * Update member role in franchise (subcollection)
  */
 export async function updateMemberRole(
   franchiseId: string,
   memberId: string,
   newRole: string
 ): Promise<void> {
-  const batch = writeBatch(db);
-
-  // 1. Verifica na subcollection primeiro
   const memberRef = doc(db, 'franchises', franchiseId, 'members', memberId);
   const memberSnap = await getDoc(memberRef);
 
-  // 2. Carrega dados da franquia
-  const franchiseRef = doc(db, 'franchises', franchiseId);
-  const franchiseSnap = await getDoc(franchiseRef);
-
-  if (!franchiseSnap.exists()) {
-    throw new Error('Franchise not found');
-  }
-
-  // Verifica se é owner em qualquer lugar
-  if (memberSnap.exists() && memberSnap.data().role === 'owner') {
-    throw new Error('Cannot change owner role');
-  }
-
-  // Atualiza na subcollection se existe
-  if (memberSnap.exists()) {
-    batch.update(memberRef, { role: newRole });
-  }
-
-  // Atualiza no array legado
-  const members = franchiseSnap.data().members || [];
-  const memberIndex = members.findIndex((m: any) => m.id === memberId);
-
-  if (memberIndex !== -1) {
-    if (members[memberIndex].role === 'owner') {
-      throw new Error('Cannot change owner role');
-    }
-    members[memberIndex].role = newRole;
-    batch.update(franchiseRef, { members });
-  } else if (!memberSnap.exists()) {
+  if (!memberSnap.exists()) {
     throw new Error('Member not found');
   }
 
-  // Executa ambas operações atomicamente
-  await batch.commit();
+  if (memberSnap.data().role === 'owner') {
+    throw new Error('Cannot change owner role');
+  }
+
+  await updateDoc(memberRef, { role: newRole });
 }
 
 /**
  * Remove member from franchise (soft delete via isActive=false)
- * Usa writeBatch para garantir atomicidade
  */
 export async function removeMember(franchiseId: string, memberId: string): Promise<void> {
-  const batch = writeBatch(db);
-
-  // 1. Verifica na subcollection primeiro
   const memberRef = doc(db, 'franchises', franchiseId, 'members', memberId);
   const memberSnap = await getDoc(memberRef);
 
-  // 2. Carrega dados da franquia
-  const franchiseRef = doc(db, 'franchises', franchiseId);
-  const franchiseSnap = await getDoc(franchiseRef);
-
-  if (!franchiseSnap.exists()) {
-    throw new Error('Franchise not found');
-  }
-
-  // Verifica se é owner
-  if (memberSnap.exists() && memberSnap.data().role === 'owner') {
-    throw new Error('Cannot remove owner');
-  }
-
-  // Soft delete na subcollection
-  if (memberSnap.exists()) {
-    batch.update(memberRef, { isActive: false });
-  }
-
-  // Remove do array legado
-  const members = franchiseSnap.data().members || [];
-  const member = members.find((m: any) => m.id === memberId);
-
-  if (member) {
-    if (member.role === 'owner') {
-      throw new Error('Cannot remove owner');
-    }
-    const updatedMembers = members.filter((m: any) => m.id !== memberId);
-    batch.update(franchiseRef, { members: updatedMembers });
-  } else if (!memberSnap.exists()) {
+  if (!memberSnap.exists()) {
     throw new Error('Member not found');
   }
 
-  // Executa ambas operações atomicamente
-  await batch.commit();
+  if (memberSnap.data().role === 'owner') {
+    throw new Error('Cannot remove owner');
+  }
+
+  await updateDoc(memberRef, { isActive: false });
 }
 
 /**
@@ -337,24 +261,10 @@ export async function acceptInvitation(
     throw new Error('Franchise not found');
   }
 
-  const members = franchiseDoc.data().members || [];
+  const memberRef = doc(db, memberPath(invite.franchiseId, userId));
+  const memberDoc = await getDoc(memberRef);
 
-  // Check if user is already a member
-  if (!members.find((m: any) => m.id === userId)) {
-    const addedAt = new Date().toISOString();
-
-    // 1. Mantém compatibilidade: adiciona ao array no documento
-    members.push({
-      id: userId,
-      email: userEmail,
-      displayName: userDisplayName,
-      role: invite.role,
-      addedAt,
-    });
-    await updateDoc(franchiseRef, { members });
-
-    // 2. Nova estrutura: cria documento na subcollection members
-    const memberRef = doc(db, memberPath(invite.franchiseId, userId));
+  if (!memberDoc.exists()) {
     await setDoc(memberRef, {
       userId,
       email: userEmail,
@@ -367,14 +277,14 @@ export async function acceptInvitation(
       isActive: true,
     });
   }
-
   // If store-specific invitation, add to store as well
   if (invite.storeId) {
     const storeRef = doc(db, storePath(invite.franchiseId, invite.storeId));
     const storeDoc = await getDoc(storeRef);
 
     if (storeDoc.exists()) {
-      const storeMembers = storeDoc.data().members || [];
+      const storeData = storeDoc.data();
+      const storeMembers = storeData.operators || storeData.members || [];
 
       if (!storeMembers.find((m: any) => m.id === userId)) {
         storeMembers.push({
@@ -384,7 +294,7 @@ export async function acceptInvitation(
           addedAt: new Date().toISOString(),
         });
 
-        await updateDoc(storeRef, { members: storeMembers });
+        await updateDoc(storeRef, { operators: storeMembers });
       }
     }
   }

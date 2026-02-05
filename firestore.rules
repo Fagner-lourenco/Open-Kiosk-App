@@ -9,10 +9,8 @@
  * - franchises/{franchiseId}/members/{userId} - Membros com roles
  * - franchises/{franchiseId}/stores/{storeId} - Lojas da franquia
  * - franchises/{franchiseId}/stores/{storeId}/products - Produtos
- * - franchises/{franchiseId}/stores/{storeId}/sales - Vendas
  * - franchises/{franchiseId}/stores/{storeId}/settings - Configurações
  * - franchises/{franchiseId}/stores/{storeId}/dispensers - Torneiras
- * - stores/{storeId} - LEGADO: Compatibilidade com sistema atual
  * - invitations/{inviteId} - Convites pendentes
  * - audit_logs/{logId} - Logs de auditoria
  * 
@@ -269,7 +267,7 @@ service cloud.firestore {
                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager'])) ||
                        (hasStoreAccess(franchiseId, storeId) &&
                         request.resource.data.diff(resource.data).affectedKeys()
-                          .hasOnly(['stock', 'inStock', 'totalMlAvailable', 'updatedAt', 'updated_at']));
+                          .hasOnly(['stock', 'inStock', 'totalMlAvailable', 'updatedAt']));
           
           // Owner da franquia ou admin podem deletar produtos
           allow delete: if isSuperAdmin() || 
@@ -278,26 +276,11 @@ service cloud.firestore {
         }
         
         // ────────────────────────────────────────────────────────────────────
-        // SALES (Vendas são imutáveis após criação)
         // ────────────────────────────────────────────────────────────────────
         
-        match /sales/{saleId} {
-          // Owner da franquia ou membros com acesso podem ler vendas
-          allow read: if isSuperAdmin() || 
-                        isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
-          
-          // Owner ou qualquer membro com acesso pode registrar vendas
-          allow create: if isSuperAdmin() || 
-                          isFranchiseOwner(franchiseId) ||
-                          hasStoreAccess(franchiseId, storeId);
-          
-          // Vendas são imutáveis (não permite update/delete)
-          allow update, delete: if false;
-        }
         
         // ────────────────────────────────────────────────────────────────────
-        // ORDERS (Alias para SALES - compatibilidade com Kiosk App)
+        // ORDERS
         // ────────────────────────────────────────────────────────────────────
         
         match /orders/{orderId} {
@@ -455,6 +438,17 @@ service cloud.firestore {
       }
       
       // ──────────────────────────────────────────────────────────────────────
+      // METRICS (franchise - escritas via Cloud Functions)
+      match /metrics/{metricId} {
+        // Owner da franquia ou membros podem ler
+        allow read: if isSuperAdmin() || 
+                      isFranchiseOwner(franchiseId) ||
+                      isFranchiseMember(franchiseId);
+        
+        // Apenas Cloud Functions escrevem metricas
+        allow write: if false;
+      }
+
       // NOTIFICATIONS SUBCOLLECTION (dentro de franchise)
       // ──────────────────────────────────────────────────────────────────────
       
@@ -521,97 +515,6 @@ service cloud.firestore {
         allow update, delete: if false;
       }
       
-      // ──────────────────────────────────────────────────────────────────────
-      // SETTINGS SUBCOLLECTION (dentro de franchise - configurações gerais)
-      // ──────────────────────────────────────────────────────────────────────
-      
-      match /settings/{settingId} {
-        // Membros da franquia podem ler configurações
-        allow read: if isSuperAdmin() || 
-                      isFranchiseOwner(franchiseId) ||
-                      isFranchiseMember(franchiseId);
-        
-        // Owner e admin podem criar/editar configurações
-        allow create, update: if isSuperAdmin() || 
-                                isFranchiseOwner(franchiseId) ||
-                                isOwnerOrAdmin(franchiseId);
-        
-        // Configurações não podem ser deletadas
-        allow delete: if false;
-      }
-    }
-    
-    // ════════════════════════════════════════════════════════════════════════
-    // STORES COLLECTION (LEGADO - Compatibilidade)
-    // ════════════════════════════════════════════════════════════════════════
-    // 
-    // IMPORTANTE: Esta seção mantém compatibilidade com o sistema atual
-    // para lojas que ainda não foram migradas para o modelo de franquias.
-    // 
-    // Regras de segurança:
-    // - Leitura: Usuário deve ter storeId nos claims OU ser super admin
-    // - Escrita: Usuário deve ter storeId nos claims OU ser super admin
-    // ════════════════════════════════════════════════════════════════════════
-    
-    /**
-     * Verifica se o usuário tem acesso a uma loja legada via claims
-     */
-    function hasLegacyStoreAccess(storeId) {
-      return isAuthenticated() && 
-             (isSuperAdmin() || 
-              request.auth.token.storeId == storeId ||
-              request.auth.token.storeAccess == '*' ||
-              (request.auth.token.storeAccess is list && storeId in request.auth.token.storeAccess));
-    }
-    
-    match /stores/{storeId} {
-      // Leitura: Usuário deve ter acesso à loja via claims
-      allow read: if hasLegacyStoreAccess(storeId);
-      
-      // Escrita: Usuário deve ter acesso à loja via claims
-      allow write: if hasLegacyStoreAccess(storeId);
-      
-      // Subcollections legadas - seguem mesma regra de acesso
-      match /products/{productId} {
-        allow read: if hasLegacyStoreAccess(storeId);
-        allow write: if hasLegacyStoreAccess(storeId);
-      }
-      
-      match /orders/{orderId} {
-        allow read: if hasLegacyStoreAccess(storeId);
-        allow create: if hasLegacyStoreAccess(storeId);
-        // Permitir update apenas de campos de status
-        allow update: if hasLegacyStoreAccess(storeId) &&
-                      request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['status', 'paymentStatus', 'cancelledAt', 'refundedAt', 'notes', 'updatedAt']);
-        allow delete: if false; // Pedidos nunca podem ser deletados
-      }
-      
-      match /sales/{saleId} {
-        allow read: if hasLegacyStoreAccess(storeId);
-        allow create: if hasLegacyStoreAccess(storeId);
-        // Permitir update apenas de campos de status
-        allow update: if hasLegacyStoreAccess(storeId) &&
-                      request.resource.data.diff(resource.data).affectedKeys()
-                        .hasOnly(['status', 'paymentStatus', 'cancelledAt', 'refundedAt', 'notes', 'updatedAt']);
-        allow delete: if false; // Vendas nunca podem ser deletadas
-      }
-      
-      match /settings/{settingId} {
-        allow read: if hasLegacyStoreAccess(storeId);
-        allow write: if hasLegacyStoreAccess(storeId);
-      }
-      
-      match /dispensers/{dispenserId} {
-        allow read: if hasLegacyStoreAccess(storeId);
-        allow write: if hasLegacyStoreAccess(storeId);
-      }
-      
-      match /inventoryLogs/{logId} {
-        allow read: if hasLegacyStoreAccess(storeId);
-        allow create: if hasLegacyStoreAccess(storeId);
-        allow update, delete: if false; // Logs são imutáveis
-      }
     }
     
     // ════════════════════════════════════════════════════════════════════════
@@ -640,7 +543,7 @@ service cloud.firestore {
     }
     
     // ════════════════════════════════════════════════════════════════════════
-    // SETTINGS COLLECTION (Global fallback - Legacy)
+// SETTINGS COLLECTION (Global)
     // ════════════════════════════════════════════════════════════════════════
     
     match /settings/{settingId} {
@@ -667,17 +570,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     
-    // ════════════════════════════════════════════════════════════════════════
-    // ROLES COLLECTION (Templates de permissões)
-    // ════════════════════════════════════════════════════════════════════════
-    
-    match /roles/{roleId} {
-      // Todos podem ler roles (são públicos)
-      allow read: if isAuthenticated();
-      
-      // Apenas Cloud Functions podem escrever
-      allow write: if false;
-    }
     
     // ════════════════════════════════════════════════════════════════════════
     // ANALYTICS COLLECTION (Métricas Materializadas - Global)

@@ -1,65 +1,20 @@
 /**
  * ============================================================================
- * Path Resolver - Compatibilidade Single-Tenant ↔ Multi-Tenant
+ * Path Resolver - Paths Canônicos (Franchise)
  * ============================================================================
  * 
- * Este módulo resolve paths do Firestore para suportar migração gradual
- * do modelo single-tenant (atual) para multi-tenant (franquias).
+ * Este módulo resolve paths canônicos do Firestore
+ * para o modelo multi-franquia.
  * 
- * MODO LEGADO (franchiseMode = false):
- *   - Paths: stores/{storeId}/products
- *   - Compatível com o sistema atual
- * 
- * MODO FRANQUIA (franchiseMode = true):
- *   - Paths: franchises/{franchiseId}/stores/{storeId}/products
- *   - Novo modelo multi-franquia
- * 
- * A migração é controlada por feature flag para rollout gradual.
+ * Paths:
+ *   - franchises/{franchiseId}/stores/{storeId}/products
  * 
  * @author Open Kiosk Project
  * @version 1.0.0
  */
 
 // ============================================================================
-// FEATURE FLAGS
-// ============================================================================
-
-/**
- * Verifica se o modo franquia está habilitado
- * 
- * Fontes de configuração (em ordem de prioridade):
- * 1. localStorage('franchiseMode') - para testes locais
- * 2. import.meta.env.VITE_FRANCHISE_MODE - para deploy
- * 3. false (padrão) - modo legado para compatibilidade
- * 
- * @returns true se modo franquia está ativo
- */
-export const isFranchiseMode = (): boolean => {
-  // 1. Verificar localStorage (para testes)
-  const localFlag = localStorage.getItem('franchiseMode');
-  if (localFlag !== null) {
-    return localFlag === 'true';
-  }
-
-  // 2. Verificar variável de ambiente
-  if (import.meta.env.VITE_FRANCHISE_MODE !== undefined) {
-    return import.meta.env.VITE_FRANCHISE_MODE === 'true';
-  }
-
-  // 3. Padrão: modo franquia ativo (compatível com Admin)
-  return true;
-};
-
-/**
- * Habilita/desabilita modo franquia (para testes)
- */
-export const setFranchiseMode = (enabled: boolean): void => {
-  localStorage.setItem('franchiseMode', String(enabled));
-  console.log(`[PathResolver] Franchise mode ${enabled ? 'ENABLED' : 'DISABLED'}`);
-};
-
-// ============================================================================
-// PATH RESOLVERS
+// PATH RESOLVERS (CANONICAL)
 // ============================================================================
 
 /**
@@ -69,38 +24,32 @@ export const setFranchiseMode = (enabled: boolean): void => {
  * @returns Path da collection de lojas
  * 
  * @example
- * // Modo legado
- * storesPath() // => "stores"
- * 
- * // Modo franquia
+ * // Modo franquia (canônico)
  * storesPath("franchise123") // => "franchises/franchise123/stores"
  */
-export function storesPath(franchiseId?: string): string {
-  if (isFranchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores`;
+export function storesPath(franchiseId: string): string {
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para storesPath');
   }
-  return 'stores';
+  return `franchises/${franchiseId}/stores`;
 }
 
 /**
  * Retorna o path para um documento de loja específico
  * 
- * @param franchiseId - ID da franquia (opcional em modo legado)
+ * @param franchiseId - ID da franquia (obrigatório)
  * @param storeId - ID da loja
  * @returns Path do documento da loja
  * 
  * @example
- * // Modo legado
- * storePath(undefined, "loja001") // => "stores/loja001"
- * 
- * // Modo franquia
+ * // Modo franquia (canônico)
  * storePath("franchise123", "loja001") // => "franchises/franchise123/stores/loja001"
  */
-export function storePath(franchiseId: string | undefined, storeId: string): string {
-  if (isFranchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores/${storeId}`;
+export function storePath(franchiseId: string, storeId: string): string {
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para storePath');
   }
-  return `stores/${storeId}`;
+  return `franchises/${franchiseId}/stores/${storeId}`;
 }
 
 /**
@@ -109,43 +58,34 @@ export function storePath(franchiseId: string | undefined, storeId: string): str
 export type StoreSubcollection =
   | 'products'
   | 'orders'
-  | 'sales'
   | 'settings'
   | 'dispensers'
   | 'inventoryLogs'
-  | 'inventory_logs'
   | 'dailyStats'
   | 'metrics';
 
 /**
  * Retorna o path de uma subcollection da loja
  * 
- * @param franchiseId - ID da franquia (opcional em modo legado)
+ * @param franchiseId - ID da franquia (obrigatório)
  * @param storeId - ID da loja
  * @param subcollection - Nome da subcollection
  * @returns Path da subcollection
  * 
  * @example
- * // Modo legado
- * storeSubPath(undefined, "loja001", "products") 
- * // => "stores/loja001/products"
- * 
- * // Modo franquia
+ * // Modo franquia (canônico)
  * storeSubPath("franchise123", "loja001", "products") 
  * // => "franchises/franchise123/stores/loja001/products"
  */
 export function storeSubPath(
-  franchiseId: string | undefined,
+  franchiseId: string,
   storeId: string,
   subcollection: StoreSubcollection
 ): string {
-  const normalizedSubcollection = subcollection === 'inventory_logs'
-    ? 'inventoryLogs'
-    : subcollection;
-  if (isFranchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/stores/${storeId}/${normalizedSubcollection}`;
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para storeSubPath');
   }
-  return `stores/${storeId}/${normalizedSubcollection}`;
+  return `franchises/${franchiseId}/stores/${storeId}/${subcollection}`;
 }
 
 /**
@@ -158,7 +98,7 @@ export function storeSubPath(
  * @returns Path completo do documento
  */
 export function storeDocPath(
-  franchiseId: string | undefined,
+  franchiseId: string,
   storeId: string,
   subcollection: StoreSubcollection,
   docId: string
@@ -177,8 +117,7 @@ export type GlobalCollection =
   | 'users'
   | 'franchises'
   | 'invitations'
-  | 'audit_logs'
-  | 'roles';
+  | 'audit_logs';
 
 /**
  * Retorna o path de uma collection global
@@ -222,32 +161,13 @@ export const franchiseMembersPath = (franchiseId: string): string =>
 export const invitationsPath = (): string => 'invitations';
 
 /**
- * Path da collection de logs de auditoria
- * Suporta modo franquia (scoped: auditLogs) ou legado (global: audit_logs)
+ * Path da collection de logs de auditoria (franquia)
  */
-export const auditLogsPath = (franchiseId?: string): string => {
-  if (isFranchiseMode() && franchiseId) {
-    return `franchises/${franchiseId}/auditLogs`;
+export const auditLogsPath = (franchiseId: string): string => {
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para auditLogsPath');
   }
-  return 'audit_logs';
+  return `franchises/${franchiseId}/auditLogs`;
 };
 
-/**
- * Path da collection de roles/templates (global)
- */
-export const rolesPath = (): string => 'roles';
 
-// ============================================================================
-// HELPERS DE DEBUG
-// ============================================================================
-
-/**
- * Log do estado atual do path resolver
- */
-export const logPathResolverState = (): void => {
-  console.log('[PathResolver] Current state:', {
-    franchiseMode: isFranchiseMode(),
-    envVar: import.meta.env.VITE_FRANCHISE_MODE,
-    localStorage: localStorage.getItem('franchiseMode'),
-  });
-};

@@ -51,6 +51,7 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
 import { ProductForm, Product } from './ProductForm';
+import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 const INITIAL_LOAD_LIMIT = 50;
 
@@ -106,8 +107,9 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
   const createProductMutation = useMutation({
     mutationFn: async (productData: Omit<Product, 'id'>) => {
       const productsRef = collection(db, 'franchises', franchiseId, 'stores', storeId, 'products');
+      const sanitizedProduct = sanitizeFirestoreData(productData) as typeof productData;
       await addDoc(productsRef, {
-        ...productData,
+        ...sanitizedProduct,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -126,8 +128,9 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
   const updateProductMutation = useMutation({
     mutationFn: async ({ id, ...productData }: Product) => {
       const productRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'products', id);
+      const sanitizedProduct = sanitizeFirestoreData(productData) as typeof productData;
       await updateDoc(productRef, {
-        ...productData,
+        ...sanitizedProduct,
         updatedAt: serverTimestamp(),
       });
     },

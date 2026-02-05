@@ -174,7 +174,6 @@ export const useSettings = (storeId?: string) => {
       }
       window.removeEventListener(STORE_CHANGED_EVENT, handleStoreChange);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeId]); // Refetch quando storeId muda
 
   return {

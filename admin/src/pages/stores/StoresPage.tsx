@@ -234,7 +234,7 @@ export function StoresPage() {
                   )}
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4" />
-                    <span>{store.members?.length || 1} membro(s)</span>
+                    <span>{store.operators?.length || 1} membro(s)</span>
                   </div>
                 </div>
                 <Link to={`/stores/${store.id}`}>

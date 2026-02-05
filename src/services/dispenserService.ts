@@ -32,7 +32,8 @@ import {
 } from 'firebase/firestore';
 import { getFirebaseDb } from './firebase';
 import { StoreDispenser, DispenserHardwareConfig, DispenserCalibration } from '../types/franchise';
-import { isFranchiseMode, storeSubPath } from '../lib/pathResolver';
+import { storeSubPath } from '../lib/pathResolver';
+import { sanitizeFirestoreData } from '../utils/firestoreSanitize';
 
 // ============================================================================
 // HELPERS
@@ -57,7 +58,7 @@ function convertTimestamps<T extends Record<string, unknown>>(data: T): T {
 /**
  * Retorna o path da collection de dispensers
  */
-function dispensersPath(franchiseId: string | undefined, storeId: string): string {
+function dispensersPath(franchiseId: string, storeId: string): string {
   return storeSubPath(franchiseId, storeId, 'dispensers');
 }
 
@@ -87,7 +88,7 @@ class DispenserService {
   async getDispenser(
     storeId: string,
     dispenserId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<StoreDispenser | null> {
     const db = getDb();
     if (!db) return null;
@@ -117,7 +118,7 @@ class DispenserService {
    */
   async listDispensers(
     storeId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<StoreDispenser[]> {
     const db = getDb();
     if (!db) return [];
@@ -142,7 +143,7 @@ class DispenserService {
    */
   async listActiveDispensers(
     storeId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<StoreDispenser[]> {
     const db = getDb();
     if (!db) return [];
@@ -171,7 +172,7 @@ class DispenserService {
   async createDispenser(
     storeId: string,
     data: Omit<StoreDispenser, 'id' | 'createdAt' | 'updatedAt'>,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<StoreDispenser> {
     const db = getDb();
     if (!db) throw new Error('Firebase não inicializado');
@@ -180,11 +181,12 @@ class DispenserService {
       const path = dispensersPath(franchiseId, storeId);
       const docRef = doc(collection(db, path));
       
-      const dispenserData = {
-        ...data,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
+        const sanitizedData = sanitizeFirestoreData(data) as typeof data;
+        const dispenserData = {
+          ...sanitizedData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        };
 
       await setDoc(docRef, dispenserData);
 
@@ -207,7 +209,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     updates: Partial<Omit<StoreDispenser, 'id' | 'createdAt'>>,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     const db = getDb();
     if (!db) throw new Error('Firebase não inicializado');
@@ -215,10 +217,11 @@ class DispenserService {
     try {
       const path = dispensersPath(franchiseId, storeId);
       const docRef = doc(db, path, dispenserId);
-      await updateDoc(docRef, {
-        ...updates,
-        updatedAt: serverTimestamp(),
-      });
+        const sanitizedUpdates = sanitizeFirestoreData(updates) as typeof updates;
+        await updateDoc(docRef, {
+          ...sanitizedUpdates,
+          updatedAt: serverTimestamp(),
+        });
     } catch (error) {
       console.error('[DispenserService] Erro ao atualizar dispenser:', error);
       throw error;
@@ -231,7 +234,7 @@ class DispenserService {
   async deleteDispenser(
     storeId: string,
     dispenserId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     const db = getDb();
     if (!db) throw new Error('Firebase não inicializado');
@@ -253,7 +256,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     isActive: boolean,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     return this.updateDispenser(storeId, dispenserId, { isActive }, franchiseId);
   }
@@ -269,7 +272,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     hardware: DispenserHardwareConfig,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     return this.updateDispenser(storeId, dispenserId, { hardware }, franchiseId);
   }
@@ -281,7 +284,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     calibration: DispenserCalibration,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     return this.updateDispenser(storeId, dispenserId, { calibration }, franchiseId);
   }
@@ -297,7 +300,7 @@ class DispenserService {
       lastSeen: Date;
       firmwareVersion?: string;
     },
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     return this.updateDispenser(storeId, dispenserId, { lastStatus: status }, franchiseId);
   }
@@ -313,7 +316,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     productId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     const dispenser = await this.getDispenser(storeId, dispenserId, franchiseId);
     if (!dispenser) throw new Error('Dispenser não encontrado');
@@ -329,7 +332,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     productId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     const dispenser = await this.getDispenser(storeId, dispenserId, franchiseId);
     if (!dispenser) throw new Error('Dispenser não encontrado');
@@ -345,7 +348,7 @@ class DispenserService {
     storeId: string,
     dispenserId: string,
     productIds: string[],
-    franchiseId?: string
+    franchiseId: string
   ): Promise<void> {
     return this.updateDispenser(
       storeId,
@@ -365,7 +368,7 @@ class DispenserService {
   subscribeToDispensers(
     storeId: string,
     callback: (dispensers: StoreDispenser[]) => void,
-    franchiseId?: string
+    franchiseId: string
   ): Unsubscribe {
     const db = getDb();
     if (!db) {
@@ -398,7 +401,7 @@ class DispenserService {
   async findByDeviceId(
     storeId: string,
     deviceId: string,
-    franchiseId?: string
+    franchiseId: string
   ): Promise<StoreDispenser | null> {
     const db = getDb();
     if (!db) return null;
@@ -430,7 +433,7 @@ class DispenserService {
   async findByConnectionType(
     storeId: string,
     connectionType: 'usb' | 'wifi' | 'bluetooth',
-    franchiseId?: string
+    franchiseId: string
   ): Promise<StoreDispenser[]> {
     const db = getDb();
     if (!db) return [];

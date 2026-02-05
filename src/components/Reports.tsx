@@ -35,7 +35,6 @@ const Reports = () => {
       loadReports();
     }
     // loadReports é definido abaixo e é estável
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateRange]);
 
   const loadReports = async () => {

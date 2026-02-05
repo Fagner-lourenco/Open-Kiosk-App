@@ -15,7 +15,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { isFranchiseMode } from '@/lib/pathResolver';
 import { AuthLayout, LoginForm, LoginWithPin, ForgotPassword } from '@/components/auth';
 
 type AuthView = 'email' | 'pin' | 'forgot';
@@ -35,13 +34,6 @@ export function LoginPage() {
       navigate(from, { replace: true });
     }
   }, [user, isLoading, navigate, from]);
-
-  // Se não está em modo franquia, redirecionar para admin (usa PIN legado)
-  useEffect(() => {
-    if (!isFranchiseMode()) {
-      navigate('/admin', { replace: true });
-    }
-  }, [navigate]);
 
   // Loading
   if (isLoading) {

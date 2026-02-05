@@ -132,7 +132,6 @@ const OrderHistory = () => {
       window.removeEventListener(STORE_CHANGED_EVENT, handleStoreChange);
     };
     // fetchOrders é definido acima e é estável
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
