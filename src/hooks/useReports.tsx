@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { getFirebaseDb, getStoreCollection, getCurrentStoreId } from '@/services/firebase';
-import { collection, query, where, getDocs, addDoc, Timestamp, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, addDoc, Timestamp, orderBy, serverTimestamp } from 'firebase/firestore';
+import { SaleItem } from '@/types/sales';
 
 export interface SalesReport {
   period: string;
@@ -35,7 +36,7 @@ export const useReports = (storeId?: string) => {
   const getTodayStats = async (): Promise<TodayStats> => {
     try {
       const effectiveStoreId = getEffectiveStoreId();
-      
+
       // Se não tem storeId, retorna valores padrão (evita query sem permissão)
       if (!effectiveStoreId) {
         console.warn('[useReports] No storeId available, returning empty stats');
@@ -84,7 +85,7 @@ export const useReports = (storeId?: string) => {
     setLoading(true);
     try {
       const effectiveStoreId = getEffectiveStoreId();
-      
+
       // Se não tem storeId, retorna array vazio
       if (!effectiveStoreId) {
         console.warn('[useReports] No storeId available for getSalesReportByDateRange');
@@ -111,18 +112,18 @@ export const useReports = (storeId?: string) => {
 
       // Group sales by date for daily breakdown
       const dailySales = new Map<string, { sales: number; orders: number; currency: string }>();
-      
+
       salesData.forEach(sale => {
         // Validação segura do timestamp
         if (!sale.timestamp || typeof sale.timestamp.toDate !== 'function') {
           console.warn('[useReports] Sale missing valid timestamp:', sale);
           return;
         }
-        
+
         const saleDate = sale.timestamp.toDate();
         const dateKey = saleDate.toISOString().split('T')[0]; // YYYY-MM-DD format
         const saleAmount = Number(sale.total || sale.total_amount || 0);
-        
+
         const existing = dailySales.get(dateKey);
         if (existing) {
           existing.sales += saleAmount;
@@ -139,9 +140,9 @@ export const useReports = (storeId?: string) => {
       // Convert to array and sort by date
       const reports: SalesReport[] = Array.from(dailySales.entries())
         .map(([dateKey, data]) => ({
-          period: new Date(dateKey).toLocaleDateString('en-US', { 
-            month: 'short', 
-            day: 'numeric' 
+          period: new Date(dateKey).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric'
           }),
           totalSales: data.sales,
           totalOrders: data.orders,
@@ -187,19 +188,23 @@ export const useReports = (storeId?: string) => {
       const itemMap = new Map<string, { title: string; quantity: number; revenue: number; currency: string }>();
 
       salesData.forEach(sale => {
-        const items = sale.items as any[];
-        if (!items || !Array.isArray(items)) return; // Null check para evitar erro
+        const items = (sale.items || []) as SaleItem[];
+        if (!Array.isArray(items)) return;
+
         items.forEach(item => {
-          const existing = itemMap.get(item.productId);
+          const productId = item.productId || 'unknown';
+          const existing = itemMap.get(productId);
+          const total = Number(item.total || item.total_amount || 0);
+
           if (existing) {
-            existing.quantity += item.quantity;
-            existing.revenue += item.total;
+            existing.quantity += item.quantity || 0;
+            existing.revenue += total;
           } else {
-            itemMap.set(item.productId, {
-              title: item.title,
-              quantity: item.quantity,
-              revenue: item.total,
-              currency: sale.currency
+            itemMap.set(productId, {
+              title: item.title || 'Untitled',
+              quantity: item.quantity || 0,
+              revenue: total,
+              currency: sale.currency || 'INR' // fallback
             });
           }
         });
@@ -263,7 +268,7 @@ export const useReports = (storeId?: string) => {
       const querySnapshot = await getDocs(q);
       const salesData = querySnapshot.docs.map(doc => doc.data());
 
-      const totalSales = salesData.reduce((sum, sale) => sum + Number(sale.total), 0);
+      const totalSales = salesData.reduce((sum, sale) => sum + Number(sale.total || sale.total_amount || 0), 0);
       const totalOrders = salesData.length;
       const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
       const currency = salesData[0]?.currency || 'INR';
@@ -329,19 +334,23 @@ export const useReports = (storeId?: string) => {
       const itemMap = new Map<string, { title: string; quantity: number; revenue: number; currency: string }>();
 
       salesData.forEach(sale => {
-        const items = sale.items as any[];
-        if (!items || !Array.isArray(items)) return; // Null check para evitar erro
+        const items = (sale.items || []) as SaleItem[];
+        if (!Array.isArray(items)) return;
+
         items.forEach(item => {
-          const existing = itemMap.get(item.productId);
+          const productId = item.productId || 'unknown';
+          const existing = itemMap.get(productId);
+          const total = Number(item.total || item.total_amount || 0);
+
           if (existing) {
-            existing.quantity += item.quantity;
-            existing.revenue += item.total;
+            existing.quantity += item.quantity || 0;
+            existing.revenue += total;
           } else {
-            itemMap.set(item.productId, {
-              title: item.title,
-              quantity: item.quantity,
-              revenue: item.total,
-              currency: sale.currency
+            itemMap.set(productId, {
+              title: item.title || 'Untitled',
+              quantity: item.quantity || 0,
+              revenue: total,
+              currency: sale.currency || 'INR'
             });
           }
         });
@@ -367,18 +376,44 @@ export const useReports = (storeId?: string) => {
     }
   };
 
-  const recordSale = async (items: any[], totalAmount: number, currency: string) => {
+  const recordSale = async (items: SaleItem[], totalAmount: number, currency: string) => {
     try {
       const effectiveStoreId = getEffectiveStoreId();
+      if (!effectiveStoreId) {
+        throw new Error('[useReports] storeId obrigatorio para registrar pedidos');
+      }
       // Usar 'orders' para compatibilidade com Admin
       const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
-      
+      const now = new Date();
+      const hour = now.getHours();
+      const dayOfWeek = now.getDay();
+      const timeSlot = hour >= 6 && hour < 12
+        ? 'morning'
+        : hour >= 12 && hour < 18
+          ? 'afternoon'
+          : hour >= 18 && hour < 24
+            ? 'evening'
+            : 'night';
+
       await addDoc(salesCollection, {
         total_amount: totalAmount,
+        total: totalAmount,
         currency,
         items,
         timestamp: Timestamp.now(),
-        storeId: effectiveStoreId
+        storeId: effectiveStoreId,
+        date: now.toISOString().split('T')[0],
+        hourOfDay: hour,
+        dayOfWeek,
+        timeSlot,
+        isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+        status: 'completed',
+        paymentStatus: 'paid',
+        createdAt: serverTimestamp(),
+        paidAt: serverTimestamp(),
+        completedAt: serverTimestamp(),
+        lastSync: serverTimestamp(),
+        notes: '',
       });
 
       toast({

@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { getStoreCollection, getCurrentStoreId } from '@/services/firebase';
-import { addDoc, getDocs, query, where, orderBy } from 'firebase/firestore';
+import { getStoreCollection, getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
+import { doc, getDocs, query, setDoc, serverTimestamp, where, orderBy } from 'firebase/firestore';
 import { CartItem } from '@/types/product';
 import { useToast } from '@/hooks/use-toast';
 import { PaymentMethod, SaleTimingData } from '@/types/sales';
@@ -87,6 +87,10 @@ export const useFirebaseReports = (storeId?: string) => {
   ) => {
     try {
       const effectiveStoreId = getEffectiveStoreId();
+      if (!effectiveStoreId) {
+        throw new Error('[useFirebaseReports] storeId obrigatorio para registrar pedidos');
+      }
+      const franchiseId = getCurrentFranchiseId();
       const finalOrderNumber = orderNumber || await generateOrderNumber();
       const now = new Date();
       const timingData = calculateSaleTimingData(now);
@@ -106,12 +110,21 @@ export const useFirebaseReports = (storeId?: string) => {
         currency,
         paymentMethod,
         ...timingData,
-        storeId: effectiveStoreId
+        storeId: effectiveStoreId,
+        franchiseId: franchiseId || undefined,
+        status: 'completed' as const,
+        paymentStatus: 'paid' as const,
+        createdAt: serverTimestamp(),
+        paidAt: serverTimestamp(),
+        completedAt: serverTimestamp(),
+        lastSync: serverTimestamp(),
+        notes: '',
       };
 
       // Usar 'orders' para compatibilidade com Admin
       const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
-      await addDoc(salesCollection, saleData);
+      const salesDoc = doc(salesCollection, finalOrderNumber);
+      await setDoc(salesDoc, saleData, { merge: true });
       console.log('Sale recorded successfully with order number:', finalOrderNumber);
       
       return finalOrderNumber;
@@ -130,6 +143,9 @@ export const useFirebaseReports = (storeId?: string) => {
     setLoading(true);
     try {
       const effectiveStoreId = getEffectiveStoreId();
+      if (!effectiveStoreId) {
+        throw new Error('[useFirebaseReports] storeId obrigatorio para buscar relatorios');
+      }
       // Usar 'orders' para compatibilidade com Admin
       const salesCollection = getStoreCollection(effectiveStoreId, 'orders');
       

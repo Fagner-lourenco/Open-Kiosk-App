@@ -120,6 +120,7 @@ export function InvitationsPage() {
         franchiseName: currentFranchise.name,
         email: email.toLowerCase(),
         role,
+        storeAccess: ['*'],
         status: 'pending',
         invitedBy: user.uid,
         invitedByName: user.displayName || user.email,

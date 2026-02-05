@@ -17,6 +17,7 @@ import {
   QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { auditLogsPath } from '@/lib/pathResolver';
 
 export interface AuditLog {
   id: string;
@@ -71,26 +72,26 @@ export const AuditActions = {
   USER_ACCEPT_INVITE: 'user.accept_invite',
   USER_ROLE_CHANGE: 'user.role_change',
   USER_REMOVE: 'user.remove',
-  
+
   // Store actions
   STORE_CREATE: 'store.create',
   STORE_UPDATE: 'store.update',
   STORE_DELETE: 'store.delete',
   STORE_TOGGLE_STATUS: 'store.toggle_status',
-  
+
   // Product actions
   PRODUCT_CREATE: 'product.create',
   PRODUCT_UPDATE: 'product.update',
   PRODUCT_DELETE: 'product.delete',
-  
+
   // Order actions
   ORDER_CREATE: 'order.create',
   ORDER_UPDATE: 'order.update',
   ORDER_CANCEL: 'order.cancel',
-  
+
   // Settings actions
   SETTINGS_UPDATE: 'settings.update',
-  
+
   // Franchise actions
   FRANCHISE_UPDATE: 'franchise.update',
 } as const;
@@ -107,9 +108,9 @@ export async function getAuditLogs(
   } = {}
 ): Promise<{ logs: AuditLog[]; lastDoc?: QueryDocumentSnapshot }> {
   const { filter, pageSize = 20, lastDoc } = options;
-  
+
   let q = query(
-    collection(db, `franchises/${franchiseId}/auditLogs`),
+    collection(db, auditLogsPath(franchiseId)),
     orderBy('timestamp', 'desc'),
     limit(pageSize)
   );
@@ -118,11 +119,11 @@ export async function getAuditLogs(
   if (filter?.action) {
     q = query(q, where('action', '==', filter.action));
   }
-  
+
   if (filter?.actorId) {
     q = query(q, where('actor.id', '==', filter.actorId));
   }
-  
+
   if (filter?.targetType) {
     q = query(q, where('target.type', '==', filter.targetType));
   }
@@ -133,7 +134,7 @@ export async function getAuditLogs(
   }
 
   const snapshot = await getDocs(q);
-  
+
   const logs: AuditLog[] = snapshot.docs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
@@ -159,7 +160,7 @@ export async function createAuditLog(
   };
 
   const docRef = await addDoc(
-    collection(db, `franchises/${franchiseId}/auditLogs`),
+    collection(db, auditLogsPath(franchiseId)),
     logData
   );
 

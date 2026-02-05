@@ -8,8 +8,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import React from 'react';
 
+vi.unmock('@/context/AuthContext');
+
 // Mock authService usando vi.hoisted para evitar erro de hoisting
-const { 
+const {
   mockOnAuthStateChange,
   mockLoginWithEmail,
   mockLoginWithPin,
@@ -19,7 +21,7 @@ const {
   mockIsOfflineMode,
   mockIsFranchiseMode,
 } = vi.hoisted(() => ({
-  mockOnAuthStateChange: vi.fn(() => () => {}),
+  mockOnAuthStateChange: vi.fn(() => () => { }),
   mockLoginWithEmail: vi.fn(),
   mockLoginWithPin: vi.fn(),
   mockLogout: vi.fn(),
@@ -49,11 +51,11 @@ import { AuthContextProvider, useAuth } from '@/context/AuthContext';
 
 // Componente de teste
 const TestConsumer = () => {
-  const { 
-    user, 
-    isAuthenticated, 
-    isOfflineMode, 
-    isLoading, 
+  const {
+    user,
+    isAuthenticated,
+    isOfflineMode,
+    isLoading,
     sessionTimeout,
     authError,
     setIsAuthenticated,
@@ -63,7 +65,7 @@ const TestConsumer = () => {
     loginWithPin,
     clearAuthError,
   } = useAuth();
-  
+
   return (
     <div>
       <span data-testid="user">{user?.email || 'null'}</span>
@@ -95,7 +97,7 @@ describe('AuthContext', () => {
           <div data-testid="child">Child content</div>
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('child')).toBeTruthy();
     });
 
@@ -105,7 +107,7 @@ describe('AuthContext', () => {
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('authenticated').textContent).toBe('false');
     });
 
@@ -115,7 +117,7 @@ describe('AuthContext', () => {
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('timeout').textContent).toBe('30');
     });
 
@@ -125,7 +127,7 @@ describe('AuthContext', () => {
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('error').textContent).toBe('null');
     });
 
@@ -135,15 +137,15 @@ describe('AuthContext', () => {
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('user').textContent).toBe('null');
     });
   });
 
   describe('useAuth', () => {
     it('lança erro quando usado fora do Provider', () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-      
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => { });
+
       expect(() => {
         render(<TestConsumer />);
       }).toThrow('useAuth deve ser usado dentro de AuthContextProvider');
@@ -155,17 +157,17 @@ describe('AuthContext', () => {
   describe('setIsAuthenticated', () => {
     it('atualiza estado de autenticação', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('authenticated').textContent).toBe('false');
-      
+
       await user.click(screen.getByText('Set Auth'));
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
       });
@@ -175,17 +177,17 @@ describe('AuthContext', () => {
   describe('setSessionTimeout', () => {
     it('atualiza timeout de sessão', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(screen.getByTestId('timeout').textContent).toBe('30');
-      
+
       await user.click(screen.getByText('Set Timeout'));
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('timeout').textContent).toBe('60');
       });
@@ -195,22 +197,22 @@ describe('AuthContext', () => {
   describe('logout', () => {
     it('reseta estado de autenticação', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       // Primeiro autentica
       await user.click(screen.getByText('Set Auth'));
       await waitFor(() => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
       });
-      
+
       // Depois faz logout
       await user.click(screen.getByText('Logout'));
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('authenticated').textContent).toBe('false');
       });
@@ -221,25 +223,25 @@ describe('AuthContext', () => {
     it('inicializa authService em modo franquia', () => {
       mockIsFranchiseMode.mockReturnValue(true);
       mockIsInitialized.mockReturnValue(false);
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(mockInitialize).toHaveBeenCalled();
     });
 
     it('registra listener de auth state', () => {
       mockIsFranchiseMode.mockReturnValue(true);
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       expect(mockOnAuthStateChange).toHaveBeenCalled();
     });
   });
@@ -248,15 +250,15 @@ describe('AuthContext', () => {
     it('chama authService.loginWithEmail', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
       mockLoginWithEmail.mockResolvedValue({ success: true });
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       await user.click(screen.getByText('Login Email'));
-      
+
       await waitFor(() => {
         expect(mockLoginWithEmail).toHaveBeenCalledWith('test@test.com', 'pass');
       });
@@ -268,15 +270,15 @@ describe('AuthContext', () => {
       const user = (await import('@testing-library/user-event')).default.setup();
       mockIsFranchiseMode.mockReturnValue(true);
       mockLoginWithPin.mockResolvedValue({ success: true });
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       await user.click(screen.getByText('Login PIN'));
-      
+
       await waitFor(() => {
         expect(mockLoginWithPin).toHaveBeenCalledWith('123456');
       });
@@ -285,19 +287,19 @@ describe('AuthContext', () => {
     it('marca autenticado via PIN em modo legado sem chamar authService', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
       mockIsFranchiseMode.mockReturnValue(false);
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       await user.click(screen.getByText('Login PIN'));
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
       });
-      
+
       // Não deve chamar authService em modo legado
       expect(mockLoginWithPin).not.toHaveBeenCalled();
     });
@@ -306,15 +308,15 @@ describe('AuthContext', () => {
   describe('clearAuthError', () => {
     it('limpa erro de autenticação', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
-      
+
       render(
         <AuthContextProvider>
           <TestConsumer />
         </AuthContextProvider>
       );
-      
+
       await user.click(screen.getByText('Clear Error'));
-      
+
       await waitFor(() => {
         expect(screen.getByTestId('error').textContent).toBe('null');
       });

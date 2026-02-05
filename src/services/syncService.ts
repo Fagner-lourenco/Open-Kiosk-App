@@ -13,17 +13,17 @@
  * - Resolução de conflitos por timestamp
  */
 
-import { 
-  cacheSet, 
-  cacheGet, 
-  cacheGetAll, 
-  cacheDelete, 
+import {
+  cacheSet,
+  cacheGet,
+  cacheGetAll,
+  cacheDelete,
   cacheBatchSet,
-  STORES, 
-  SyncQueueItem 
+  STORES,
+  SyncQueueItem
 } from './cacheService';
 import { getFirebaseDb, getCurrentStoreId, getStoreDoc } from './firebase';
-import { doc, setDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, getDoc, serverTimestamp, increment, FieldValue } from 'firebase/firestore';
 
 // Configurações de sync
 const SYNC_CONFIG = {
@@ -94,7 +94,7 @@ export const enqueueSync = async (
   data?: unknown
 ): Promise<void> => {
   const storeId = getCurrentStoreId();
-  
+
   const item: SyncQueueItem = {
     id: generateSyncId(),
     operation,
@@ -107,7 +107,7 @@ export const enqueueSync = async (
   };
 
   await cacheSet(STORES.SYNC_QUEUE, item);
-  
+
   // Atualiza contador
   const queue = await cacheGetAll<SyncQueueItem>(STORES.SYNC_QUEUE);
   updateStatus({ pendingCount: queue.length });
@@ -121,13 +121,44 @@ export const enqueueSync = async (
 };
 
 /**
+ * Helper para reconstruir tipos do Firestore (Timestamp, FieldValue)
+ * que foram serializados para JSON no IndexedDB
+ */
+const reconstructFirestoreTypes = (data: unknown): unknown => {
+  if (data === null || typeof data !== 'object') {
+    return data;
+  }
+
+  // Check for arrays
+  if (Array.isArray(data)) {
+    return data.map(item => reconstructFirestoreTypes(item));
+  }
+
+  // Check for serialized markers
+  const obj = data as Record<string, any>;
+  if (obj._type === 'serverTimestamp') {
+    return serverTimestamp();
+  }
+  if (obj._type === 'increment' && typeof obj.value === 'number') {
+    return increment(obj.value);
+  }
+
+  // Recursive for objects
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    result[key] = reconstructFirestoreTypes(value);
+  }
+  return result;
+};
+
+/**
  * Processa um item da fila
  */
 const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
   try {
     const db = getFirebaseDb();
     const storeId = item.storeId || getCurrentStoreId();
-    
+
     let docRef;
     if (storeId) {
       // Usa resolver centralizado para suportar franchise mode e legado
@@ -139,12 +170,14 @@ const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
     switch (item.operation) {
       case 'create':
       case 'update':
+        // Reconstruir tipos especiais antes de enviar
+        const payload = reconstructFirestoreTypes(item.data);
         await setDoc(docRef, {
-          ...(item.data as object),
+          ...(payload as object),
           _syncedAt: serverTimestamp(),
         }, { merge: true });
         break;
-      
+
       case 'delete':
         await deleteDoc(docRef);
         break;
@@ -171,10 +204,10 @@ export const processQueue = async (): Promise<void> => {
 
   try {
     const queue = await cacheGetAll<SyncQueueItem>(STORES.SYNC_QUEUE);
-    
+
     if (queue.length === 0) {
-      updateStatus({ 
-        isSyncing: false, 
+      updateStatus({
+        isSyncing: false,
         pendingCount: 0,
         lastSyncAt: Date.now(),
       });
@@ -192,12 +225,12 @@ export const processQueue = async (): Promise<void> => {
 
     for (const item of toProcess) {
       const success = await processSyncItem(item);
-      
+
       if (success) {
         toRemove.push(item.id);
       } else {
         item.retryCount++;
-        
+
         if (item.retryCount >= SYNC_CONFIG.MAX_RETRY_COUNT) {
           console.warn(`[SyncService] Max retries reached for ${item.id}, removing from queue`);
           toRemove.push(item.id);
@@ -229,13 +262,13 @@ export const processQueue = async (): Promise<void> => {
     if (remainingQueue.length > 0 && isOnline) {
       // Delay antes de continuar (exponential backoff para retries)
       const hasRetries = toRetry.length > 0;
-      const delay = hasRetries 
+      const delay = hasRetries
         ? Math.min(
-            SYNC_CONFIG.BASE_RETRY_DELAY_MS * Math.pow(2, toRetry[0]?.retryCount || 0),
-            SYNC_CONFIG.MAX_RETRY_DELAY_MS
-          )
+          SYNC_CONFIG.BASE_RETRY_DELAY_MS * Math.pow(2, toRetry[0]?.retryCount || 0),
+          SYNC_CONFIG.MAX_RETRY_DELAY_MS
+        )
         : 100;
-      
+
       setTimeout(() => {
         syncInProgress = false;
         processQueue();
@@ -264,7 +297,7 @@ export const startBackgroundSync = (): void => {
   }
 
   console.log('[SyncService] Starting background sync');
-  
+
   syncIntervalId = setInterval(() => {
     if (isOnline && !syncInProgress) {
       processQueue();
@@ -314,7 +347,7 @@ export const initNetworkListeners = (): void => {
   if (networkListenersInitialized) {
     return; // Já inicializado, não duplicar listeners
   }
-  
+
   if (typeof window !== 'undefined') {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -343,7 +376,7 @@ export const addSyncListener = (listener: (status: SyncStatus) => void): () => v
   syncListeners.push(listener);
   // Notifica imediatamente com status atual
   listener({ ...syncStatus });
-  
+
   return () => {
     const index = syncListeners.indexOf(listener);
     if (index > -1) {
@@ -365,7 +398,7 @@ export const forceSync = async (): Promise<void> => {
     console.warn('[SyncService] Cannot force sync while offline');
     return;
   }
-  
+
   await processQueue();
 };
 
@@ -394,23 +427,18 @@ export const syncFromFirebase = async (
   }
 
   try {
-    const db = getFirebaseDb();
     const storeId = getCurrentStoreId();
-    
-    let docRef;
-    if (storeId) {
-      docRef = doc(db, 'stores', storeId, collection, docId);
-    } else {
-      docRef = doc(db, collection, docId);
-    }
+
+    // Usa resolver centralizado que suporta franchise mode e legacy
+    const docRef = getStoreDoc(storeId, collection, docId);
 
     const snapshot = await getDoc(docRef);
-    
+
     if (snapshot.exists()) {
       const data = snapshot.data() as Record<string, unknown>;
       return { id: snapshot.id, ...data };
     }
-    
+
     return null;
   } catch (error) {
     console.error(`[SyncService] Error syncing from Firebase:`, error);

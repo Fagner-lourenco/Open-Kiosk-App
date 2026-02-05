@@ -119,7 +119,10 @@ Object.defineProperty(window, 'Notification', {
   })),
 });
 
-Notification.permission = 'granted';
+Object.defineProperty(Notification, 'permission', {
+  writable: true,
+  value: 'granted',
+});
 
 // ============================================================
 // MOCK GLOBAL: SERVICE WORKER
@@ -197,6 +200,25 @@ vi.mock('@capacitor/core', () => ({
     getPlatform: vi.fn().mockReturnValue('web'),
   },
   registerPlugin: vi.fn(),
+}));
+
+vi.mock('capacitor-usb-serial-plugin', () => ({
+  UsbSerial: {
+    openSerial: vi.fn(),
+    closeSerial: vi.fn(),
+    readSerial: vi.fn(),
+    writeSerial: vi.fn(),
+    registerReadCallback: vi.fn(),
+  },
+}));
+
+vi.mock('usb', () => ({
+  usb: {
+    getDeviceList: vi.fn(() => []),
+    findByIds: vi.fn(),
+    on: vi.fn(),
+    removeListener: vi.fn(),
+  },
 }));
 
 // ============================================================
@@ -301,4 +323,4 @@ vi.setConfig({
   testTimeout: 10000,
 });
 
-export {};
+export { };

@@ -174,17 +174,19 @@ export const getMetricsAdmin = functions
       const metricsSnap = await db.doc(`franchises/${franchiseId}/stores/${storeId}/metrics/current`).get();
       if (!metricsSnap.exists) return { metrics: null };
 
-      const data = metricsSnap.data() || {};
+      const metricsData = metricsSnap.data() || {};
       const metrics: DailyMetrics = {
         date: new Date().toISOString().split('T')[0],
-        revenue: data.revenue || 0,
-        orders: data.orders || 0,
-        paidOrders: data.paidOrders || 0,
-        cancelledOrders: data.cancelledOrders || 0,
-        pendingOrders: data.pendingOrders || 0,
-        averageTicket: data.orders > 0 ? data.revenue / data.orders : 0,
-        paymentMethods: data.paymentMethods || {},
-        lastUpdate: data.lastUpdate?.toDate?.() || null,
+        revenue: metricsData.revenue || 0,
+        orders: metricsData.orders || 0,
+        paidOrders: metricsData.paidOrders || 0,
+        cancelledOrders: metricsData.cancelledOrders || 0,
+        pendingOrders: metricsData.pendingOrders || 0,
+        averageTicket: metricsData.orders > 0 ? metricsData.revenue / metricsData.orders : 0,
+        paymentMethods: metricsData.paymentMethods || {},
+        lastUpdate: (metricsData.lastUpdate && typeof metricsData.lastUpdate.toDate === 'function')
+          ? metricsData.lastUpdate.toDate()
+          : (metricsData.lastUpdate || null),
       };
 
       return { metrics };
@@ -193,17 +195,19 @@ export const getMetricsAdmin = functions
     const franchiseMetricsSnap = await db.doc(`franchises/${franchiseId}/metrics/current`).get();
     if (!franchiseMetricsSnap.exists) return { metrics: null };
 
-    const data = franchiseMetricsSnap.data() || {};
+    const franchiseData = franchiseMetricsSnap.data() || {};
     const metrics: DailyMetrics = {
       date: new Date().toISOString().split('T')[0],
-      revenue: data.revenue || 0,
-      orders: data.orders || 0,
-      paidOrders: data.paidOrders || 0,
-      cancelledOrders: data.cancelledOrders || 0,
-      pendingOrders: data.pendingOrders || 0,
-      averageTicket: data.orders > 0 ? data.revenue / data.orders : 0,
-      paymentMethods: data.paymentMethods || {},
-      lastUpdate: data.lastUpdate?.toDate?.() || null,
+      revenue: franchiseData.revenue || 0,
+      orders: franchiseData.orders || 0,
+      paidOrders: franchiseData.paidOrders || 0,
+      cancelledOrders: franchiseData.cancelledOrders || 0,
+      pendingOrders: franchiseData.pendingOrders || 0,
+      averageTicket: franchiseData.orders > 0 ? franchiseData.revenue / franchiseData.orders : 0,
+      paymentMethods: franchiseData.paymentMethods || {},
+      lastUpdate: (franchiseData.lastUpdate && typeof franchiseData.lastUpdate.toDate === 'function')
+        ? franchiseData.lastUpdate.toDate()
+        : (franchiseData.lastUpdate || null),
     };
 
     return { metrics };

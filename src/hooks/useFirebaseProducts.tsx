@@ -1,8 +1,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Product } from '@/types/product';
-import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId, getFirebaseAuth } from '@/services/firebase';
-import { collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, CollectionReference } from 'firebase/firestore';
+import { getStoreCollection, getStoreDoc, getCurrentStoreId, getFirebaseAuth } from '@/services/firebase';
+import { addDoc, updateDoc, deleteDoc, onSnapshot, CollectionReference, serverTimestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
 import { isFranchiseMode } from '@/lib/pathResolver';
@@ -29,17 +29,14 @@ let setupPromise: Promise<void> | null = null; // Mutex para evitar race conditi
 
 /**
  * Helper para obter a collection de produtos correta
- * - Se storeId existe: usa subcollection stores/{storeId}/products
- * - Se não: usa collection raiz /products (compatibilidade)
+ * - storeId e obrigatorio: usa subcollection stores/{storeId}/products
  */
 const getProductsCollection = (storeId: string | null): CollectionReference => {
-  const db = getFirebaseDb();
-  if (storeId) {
-    console.log('[useFirebaseProducts] Using store subcollection:', storeId);
-    return getStoreCollection(storeId, 'products');
+  if (!storeId) {
+    throw new Error('[useFirebaseProducts] storeId obrigatorio para produtos');
   }
-  console.log('[useFirebaseProducts] Using root collection (no storeId)');
-  return collection(db, 'products');
+  console.log('[useFirebaseProducts] Using store subcollection:', storeId);
+  return getStoreCollection(storeId, 'products');
 };
 
 /**
@@ -79,6 +76,14 @@ export const useFirebaseProducts = () => {
       productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
       return;
     }
+    if (!storeId) {
+      console.warn('[useFirebaseProducts] storeId ausente, nao e possivel assinar produtos');
+      loadingGlobal = false;
+      errorGlobal = 'storeId ausente';
+      productListeners.forEach(fn => fn(productsGlobal, loadingGlobal, errorGlobal));
+      return;
+    }
+
 
     // 🔒 PROTEÇÃO: Em modo franquia, verificar autenticação antes de criar listener
     if (isFranchiseMode()) {
@@ -129,10 +134,15 @@ export const useFirebaseProducts = () => {
       const productsCollection = getProductsCollection(storeId);
       
       unsubscribeGlobal = onSnapshot(productsCollection, (snapshot) => {
-        const productsData = snapshot.docs.map(d => ({
-          id: d.id,
-          ...d.data()
-        })) as Product[];
+        const productsData = snapshot.docs.map(d => {
+          const data = d.data() as Record<string, unknown>;
+          return {
+            id: d.id,
+            ...data,
+            createdAt: (data as any).createdAt ?? (data as any).created_at,
+            updatedAt: (data as any).updatedAt ?? (data as any).updated_at,
+          } as Product;
+        });
         
         productsGlobal = productsData;
         loadingGlobal = false;
@@ -250,13 +260,16 @@ export const useFirebaseProducts = () => {
       }
 
       const storeId = getCurrentStoreId();
+      if (!storeId) {
+        throw new Error('[useFirebaseProducts] storeId ausente para criar produto');
+      }
       const productsCollection = getProductsCollection(storeId);
       
       const docRef = await addDoc(productsCollection, {
         ...product,
-        storeId: storeId || undefined, // Adicionar storeId se disponível
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        storeId: storeId || undefined, // Adicionar storeId se disponivel
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       });
       
       console.log('[useFirebaseProducts] Product added with ID:', docRef.id);
@@ -307,16 +320,16 @@ export const useFirebaseProducts = () => {
       }
 
       const storeId = getCurrentStoreId();
-      const db = getFirebaseDb();
+      if (!storeId) {
+        throw new Error('[useFirebaseProducts] storeId ausente para atualizar produto');
+      }
       
-      // Usar subcollection ou raiz dependendo de storeId
-      const productDoc = storeId 
-        ? getStoreDoc(storeId, 'products', id)
-        : doc(db, 'products', id);
+      // Usar subcollection (products) - storeId obrigatorio
+      const productDoc = getStoreDoc(storeId, 'products', id);
       
       await updateDoc(productDoc, {
         ...updates,
-        updated_at: new Date().toISOString()
+        updatedAt: serverTimestamp()
       });
       
       console.log('[useFirebaseProducts] Product updated:', id);
@@ -347,13 +360,12 @@ export const useFirebaseProducts = () => {
   const deleteProduct = async (id: string) => {
     try {
       const storeId = getCurrentStoreId();
-      const db = getFirebaseDb();
+      if (!storeId) {
+        throw new Error('[useFirebaseProducts] storeId ausente para remover produto');
+      }
       
-      // Usar subcollection ou raiz dependendo de storeId
-      const productDoc = storeId 
-        ? getStoreDoc(storeId, 'products', id)
-        : doc(db, 'products', id);
-      
+      // Usar subcollection (products) - storeId obrigatorio
+      const productDoc = getStoreDoc(storeId, 'products', id);
       await deleteDoc(productDoc);
       
       console.log('[useFirebaseProducts] Product deleted:', id);
@@ -387,3 +399,4 @@ export const useFirebaseProducts = () => {
     deleteProduct
   };
 };
+

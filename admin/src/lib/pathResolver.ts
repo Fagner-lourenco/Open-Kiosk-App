@@ -23,7 +23,7 @@ export function franchiseMode(): boolean {
   if (localValue !== null) {
     return localValue === 'true';
   }
-  
+
   // Verificar variável de ambiente (default true)
   return import.meta.env.VITE_FRANCHISE_MODE !== 'false';
 }
@@ -58,14 +58,16 @@ export function storePath(franchiseId: string | undefined, storeId: string): str
 /**
  * Tipos de subcollections suportadas
  */
-export type StoreSubcollection = 
-  | 'products' 
+export type StoreSubcollection =
+  | 'products'
   | 'orders'
-  | 'sales' 
-  | 'settings' 
+  | 'sales'
+  | 'settings'
   | 'dispensers'
   | 'inventoryLogs'
-  | 'inventory_logs';
+  | 'inventory_logs'
+  | 'dailyStats'
+  | 'metrics';
 
 /**
  * Retorna o path de uma subcollection da loja
@@ -145,6 +147,20 @@ export function userPath(userId: string): string {
  */
 export function ordersPath(franchiseId: string | undefined, storeId: string): string {
   return storeSubPath(franchiseId, storeId, 'orders');
+}
+
+/**
+ * Retorna o path da coleção de notificações da franquia
+ */
+export function franchiseNotificationsPath(franchiseId: string): string {
+  return `franchises/${franchiseId}/notifications`;
+}
+
+/**
+ * Retorna o path da coleção de eventos de billing
+ */
+export function billingEventsPath(franchiseId: string): string {
+  return `franchises/${franchiseId}/billingEvents`;
 }
 
 /**

@@ -40,12 +40,12 @@ export const isFranchiseMode = (): boolean => {
   if (localFlag !== null) {
     return localFlag === 'true';
   }
-  
+
   // 2. Verificar variável de ambiente
   if (import.meta.env.VITE_FRANCHISE_MODE !== undefined) {
     return import.meta.env.VITE_FRANCHISE_MODE === 'true';
   }
-  
+
   // 3. Padrão: modo franquia ativo (compatível com Admin)
   return true;
 };
@@ -106,14 +106,16 @@ export function storePath(franchiseId: string | undefined, storeId: string): str
 /**
  * Tipos de subcollections suportadas
  */
-export type StoreSubcollection = 
-  | 'products' 
+export type StoreSubcollection =
+  | 'products'
   | 'orders'
-  | 'sales' 
-  | 'settings' 
-  | 'dispensers' 
+  | 'sales'
+  | 'settings'
+  | 'dispensers'
   | 'inventoryLogs'
-  | 'inventory_logs';
+  | 'inventory_logs'
+  | 'dailyStats'
+  | 'metrics';
 
 /**
  * Retorna o path de uma subcollection da loja
@@ -133,8 +135,8 @@ export type StoreSubcollection =
  * // => "franchises/franchise123/stores/loja001/products"
  */
 export function storeSubPath(
-  franchiseId: string | undefined, 
-  storeId: string, 
+  franchiseId: string | undefined,
+  storeId: string,
   subcollection: StoreSubcollection
 ): string {
   const normalizedSubcollection = subcollection === 'inventory_logs'
@@ -171,11 +173,11 @@ export function storeDocPath(
 /**
  * Tipos de collections globais
  */
-export type GlobalCollection = 
-  | 'users' 
-  | 'franchises' 
-  | 'invitations' 
-  | 'audit_logs' 
+export type GlobalCollection =
+  | 'users'
+  | 'franchises'
+  | 'invitations'
+  | 'audit_logs'
   | 'roles';
 
 /**
@@ -211,7 +213,7 @@ export const franchisePath = (franchiseId: string): string => `franchises/${fran
 /**
  * Path da collection de membros de uma franquia
  */
-export const franchiseMembersPath = (franchiseId: string): string => 
+export const franchiseMembersPath = (franchiseId: string): string =>
   `franchises/${franchiseId}/members`;
 
 /**
@@ -220,9 +222,15 @@ export const franchiseMembersPath = (franchiseId: string): string =>
 export const invitationsPath = (): string => 'invitations';
 
 /**
- * Path da collection de logs de auditoria (global)
+ * Path da collection de logs de auditoria
+ * Suporta modo franquia (scoped: auditLogs) ou legado (global: audit_logs)
  */
-export const auditLogsPath = (): string => 'audit_logs';
+export const auditLogsPath = (franchiseId?: string): string => {
+  if (isFranchiseMode() && franchiseId) {
+    return `franchises/${franchiseId}/auditLogs`;
+  }
+  return 'audit_logs';
+};
 
 /**
  * Path da collection de roles/templates (global)

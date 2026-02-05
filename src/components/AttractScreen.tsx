@@ -29,11 +29,11 @@ const AttractScreen = ({
   const startTriggeredRef = useRef(false);
 
   // Hook para cache de vídeo - baixa uma vez, usa do cache depois
-  const { 
-    videoUrl: cachedVideoUrl, 
-    isCached, 
-    isDownloading, 
-    downloadProgress 
+  const {
+    videoUrl: cachedVideoUrl,
+    isCached,
+    isDownloading,
+    downloadProgress
   } = useCachedVideo(
     videoSettings?.videoUrl && videoSettings.isEnabled ? videoSettings.videoUrl : null,
     { autoDownload: true, useFallbackWhileDownloading: true }
@@ -168,7 +168,7 @@ const AttractScreen = ({
           >
             <source src={cachedVideoUrl} type="video/mp4" />
           </video>
-          
+
           {/* Indicador de download/cache (apenas em dev ou debug) */}
           {isDownloading && (
             <div className="absolute bottom-4 right-4 z-[2] bg-black/60 text-white text-xs px-2 py-1 rounded">
@@ -197,13 +197,13 @@ const AttractScreen = ({
           <div className="relative">
             {/* Glow quente discreto atrás da caneca */}
             <div className="absolute inset-0 blur-3xl opacity-40" style={{ background: 'radial-gradient(circle, rgba(251,191,36,0.6) 0%, rgba(245,158,11,0.3) 50%, transparent 70%)' }} />
-            
+
             {/* Caneca sem círculo, apenas imagem com sombra */}
             <img
               src="/attract/beer-mug.png"
               alt={t('attract.title')}
               className="relative object-contain attract-mug"
-              style={{ 
+              style={{
                 height: '31vh',
                 maxHeight: '33vh',
                 width: 'auto',
@@ -216,11 +216,11 @@ const AttractScreen = ({
 
             {/* Bolhas discretas (substitui o sparkle) */}
             <div className="pointer-events-none absolute inset-0 overflow-visible">
-              <div className="attract-bubble" style={{ ['--x' as any]: '28%', ['--d' as any]: '0s', ['--t' as any]: '6.2s', ['--s' as any]: '5px' }} />
-              <div className="attract-bubble" style={{ ['--x' as any]: '42%', ['--d' as any]: '1.2s', ['--t' as any]: '5.6s', ['--s' as any]: '6px' }} />
-              <div className="attract-bubble" style={{ ['--x' as any]: '56%', ['--d' as any]: '0.6s', ['--t' as any]: '6.8s', ['--s' as any]: '4px' }} />
-              <div className="attract-bubble" style={{ ['--x' as any]: '68%', ['--d' as any]: '1.8s', ['--t' as any]: '5.9s', ['--s' as any]: '5px' }} />
-              <div className="attract-bubble" style={{ ['--x' as any]: '76%', ['--d' as any]: '2.4s', ['--t' as any]: '6.4s', ['--s' as any]: '3px' }} />
+              <div className="attract-bubble" style={{ '--x': '28%', '--d': '0s', '--t': '6.2s', '--s': '5px' } as React.CSSProperties} />
+              <div className="attract-bubble" style={{ '--x': '42%', '--d': '1.2s', '--t': '5.6s', '--s': '6px' } as React.CSSProperties} />
+              <div className="attract-bubble" style={{ '--x': '56%', '--d': '0.6s', '--t': '6.8s', '--s': '4px' } as React.CSSProperties} />
+              <div className="attract-bubble" style={{ '--x': '68%', '--d': '1.8s', '--t': '5.9s', '--s': '5px' } as React.CSSProperties} />
+              <div className="attract-bubble" style={{ '--x': '76%', '--d': '2.4s', '--t': '6.4s', '--s': '3px' } as React.CSSProperties} />
             </div>
           </div>
         </div>
@@ -229,7 +229,7 @@ const AttractScreen = ({
         <h1 className="text-5xl sm:text-6xl font-bold text-gray-900 mt-2 mb-3 tracking-tight leading-tight">
           {displayTitle}
         </h1>
-        
+
         {/* Subtitle */}
         <p className="text-xl sm:text-2xl text-gray-600/75 mb-7 font-medium">
           {displaySubtitle}

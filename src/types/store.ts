@@ -44,8 +44,13 @@ export interface Store {
   language?: 'en' | 'pt-BR';
   
   // Metadados
-  created_at: string;
-  updated_at: string;
+  // Legado (snake_case)
+  created_at?: string;
+  updated_at?: string;
+  
+  // Canonico (camelCase)
+  createdAt?: Date | string;
+  updatedAt?: Date | string;
 }
 
 // ============================================
@@ -133,6 +138,9 @@ export interface StoreSettings {
   
   /** Configuração do gateway de pagamento (opcional - fallback para env vars) */
   paymentGatewayConfig?: PaymentGatewayConfig;
+  
+  /** Timestamp de atualizacao (Firestore) */
+  updatedAt?: Date | string;
 }
 
 // ============================================

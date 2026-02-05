@@ -16,3 +16,14 @@ export interface SaleTimingData {
   isWeekend: boolean;
   isHoliday?: boolean;
 }
+
+export interface SaleItem {
+  productId: string;
+  title: string;
+  quantity: number;
+  total: number; // Valor total (quantity * unitPrice) ou apenas total
+  total_amount?: number; // Alternativa encontrada em alguns lugares
+  unitPrice?: number;
+  currency?: string;
+  [key: string]: any; // Permite flexibilidade para outros campos legados
+}

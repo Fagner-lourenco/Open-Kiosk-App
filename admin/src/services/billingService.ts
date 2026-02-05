@@ -7,21 +7,22 @@
  */
 
 import { getFunctions, httpsCallable } from 'firebase/functions';
-import { 
-  collection, 
-  doc, 
-  getDoc, 
-  getDocs, 
-  query, 
-  orderBy, 
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  orderBy,
   limit,
-  Timestamp 
+  Timestamp
 } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { 
-  BillingPlan, 
-  BillingStatus, 
-  BillingInterval, 
+import { franchisePath, billingEventsPath } from '../lib/pathResolver';
+import {
+  BillingPlan,
+  BillingStatus,
+  BillingInterval,
   FranchiseBilling,
   BillingEvent,
   PLAN_DETAILS,
@@ -35,15 +36,15 @@ const functions = getFunctions();
  */
 export async function getFranchiseBilling(franchiseId: string): Promise<FranchiseBilling | null> {
   try {
-    const franchiseRef = doc(db, 'franchises', franchiseId);
+    const franchiseRef = doc(db, franchisePath(franchiseId));
     const franchiseSnap = await getDoc(franchiseRef);
-    
+
     if (!franchiseSnap.exists()) {
       return null;
     }
-    
+
     const data = franchiseSnap.data();
-    
+
     return {
       plan: (data.plan as BillingPlan) || 'free',
       planStatus: (data.planStatus as BillingStatus) || 'active',
@@ -62,14 +63,14 @@ export async function getFranchiseBilling(franchiseId: string): Promise<Franchis
  * Obtém histórico de eventos de billing
  */
 export async function getBillingHistory(
-  franchiseId: string, 
+  franchiseId: string,
   maxItems = 20
 ): Promise<BillingEvent[]> {
   try {
-    const eventsRef = collection(db, 'franchises', franchiseId, 'billingEvents');
+    const eventsRef = collection(db, billingEventsPath(franchiseId));
     const eventsQuery = query(eventsRef, orderBy('timestamp', 'desc'), limit(maxItems));
     const eventsSnap = await getDocs(eventsQuery);
-    
+
     return eventsSnap.docs.map(doc => {
       const data = doc.data();
       return {
@@ -81,8 +82,8 @@ export async function getBillingHistory(
         invoiceId: data.invoiceId,
         subscriptionId: data.subscriptionId,
         sessionId: data.sessionId,
-        timestamp: data.timestamp instanceof Timestamp 
-          ? data.timestamp.toDate() 
+        timestamp: data.timestamp instanceof Timestamp
+          ? data.timestamp.toDate()
           : new Date(data.timestamp),
       } as BillingEvent;
     });
@@ -104,7 +105,7 @@ export async function createCheckoutSession(
       { plan: string; interval: string },
       { sessionId: string; url: string }
     >(functions, 'createCheckoutSession');
-    
+
     const result = await createCheckout({ plan, interval });
     return result.data;
   } catch (error) {
@@ -122,7 +123,7 @@ export async function openBillingPortal(): Promise<string> {
       Record<string, never>,
       { url: string }
     >(functions, 'createBillingPortalSession');
-    
+
     const result = await createPortal({});
     return result.data.url;
   } catch (error) {
@@ -135,7 +136,7 @@ export async function openBillingPortal(): Promise<string> {
  * Obtém todos os planos disponíveis
  */
 export function getAvailablePlans(): PlanDetails[] {
-  return Object.values(PLAN_DETAILS).filter(plan => 
+  return Object.values(PLAN_DETAILS).filter(plan =>
     plan.id !== 'free' && plan.id !== 'trial'
   );
 }
@@ -152,12 +153,12 @@ export function getPlanDetails(plan: BillingPlan): PlanDetails {
  */
 export function getDaysRemaining(expiresAt: Date | null): number | null {
   if (!expiresAt) return null;
-  
+
   const now = new Date();
   const diff = expiresAt.getTime() - now.getTime();
-  
+
   if (diff <= 0) return 0;
-  
+
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 

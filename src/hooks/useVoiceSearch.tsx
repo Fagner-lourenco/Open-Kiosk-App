@@ -1,85 +1,6 @@
-
 import { useState, useEffect, useRef } from 'react';
+import { VOICE_ERROR_MESSAGES, VoiceSearchHook } from '@/types/voiceSearchTypes';
 
-// Mapeamento de erros para mensagens amigáveis
-const VOICE_ERROR_MESSAGES: Record<string, string> = {
-  'not-allowed': 'Permissão de microfone negada. Habilite nas configurações do navegador.',
-  'no-speech': 'Nenhuma fala detectada. Tente novamente.',
-  'audio-capture': 'Microfone não disponível.',
-  'network': 'Erro de rede. Verifique sua conexão.',
-  'aborted': 'Reconhecimento cancelado.',
-  'language-not-supported': 'Idioma não suportado.',
-};
-
-interface VoiceSearchHook {
-  isListening: boolean;
-  transcript: string;
-  startListening: () => void;
-  stopListening: () => void;
-  resetTranscript: () => void;
-  isSupported: boolean;
-  confidence: number;
-  error: string | null;
-  clearError: () => void;
-}
-
-// Define Web Speech API types
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => any) | null;
-  onstart: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onend: ((this: SpeechRecognition, ev: Event) => any) | null;
-  onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => any) | null;
-}
-
-interface SpeechRecognitionEvent extends Event {
-  resultIndex: number;
-  results: SpeechRecognitionResultList;
-}
-
-interface SpeechRecognitionErrorEvent extends Event {
-  error: string;
-}
-
-interface SpeechRecognitionResultList {
-  length: number;
-  item(index: number): SpeechRecognitionResult;
-  [index: number]: SpeechRecognitionResult;
-}
-
-interface SpeechRecognitionResult {
-  isFinal: boolean;
-  length: number;
-  item(index: number): SpeechRecognitionAlternative;
-  [index: number]: SpeechRecognitionAlternative;
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-
-declare var SpeechRecognition: {
-  prototype: SpeechRecognition;
-  new(): SpeechRecognition;
-};
-
-declare var webkitSpeechRecognition: {
-  prototype: SpeechRecognition;
-  new(): SpeechRecognition;
-};
-
-// Extend Window interface for TypeScript
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof webkitSpeechRecognition;
-  }
-}
 
 export const useVoiceSearch = (): VoiceSearchHook => {
   const [isListening, setIsListening] = useState(false);
@@ -110,7 +31,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
       if (!isMountedRef.current) return;
       let finalTranscript = '';
       let interimTranscript = '';
-      
+
       for (let i = event.resultIndex; i < event.results.length; i++) {
         if (event.results[i].isFinal) {
           finalTranscript += event.results[i][0].transcript;
@@ -119,16 +40,16 @@ export const useVoiceSearch = (): VoiceSearchHook => {
           interimTranscript += event.results[i][0].transcript;
         }
       }
-      
+
       if (finalTranscript) {
         const cleanedTranscript = finalTranscript.trim().replace(/[.!?]+$/, '');
         setTranscript(cleanedTranscript);
-        
+
         // Clear existing timeout
         if (timeoutRef.current) {
           clearTimeout(timeoutRef.current);
         }
-        
+
         // Auto-stop after 1 second of silence
         timeoutRef.current = setTimeout(() => {
           recognitionInstance.stop();
@@ -144,7 +65,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
       setIsListening(true);
       setTranscript('');
       setConfidence(0);
-      
+
       // Auto-stop after 3 seconds regardless
       autoStopRef.current = setTimeout(() => {
         recognitionInstance.stop();
@@ -165,11 +86,11 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
       if (!isMountedRef.current) return;
       console.error('Speech recognition error:', event.error);
-      
+
       // Mapear erro para mensagem amigável
       const errorMessage = VOICE_ERROR_MESSAGES[event.error] || `Erro no reconhecimento de voz: ${event.error}`;
       setError(errorMessage);
-      
+
       setIsListening(false);
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);

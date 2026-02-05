@@ -7,15 +7,15 @@
  * Suporta notificações locais e sincronizadas via Firestore.
  */
 
-import { 
-  collection, 
-  doc, 
-  addDoc, 
-  updateDoc, 
-  query, 
-  where, 
-  orderBy, 
-  limit, 
+import {
+  collection,
+  doc,
+  addDoc,
+  updateDoc,
+  query,
+  where,
+  orderBy,
+  limit,
   onSnapshot,
   serverTimestamp,
   Timestamp,
@@ -23,9 +23,10 @@ import {
   getDocs,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { franchiseNotificationsPath } from '@/lib/pathResolver';
 
 // Tipos de notificação
-export type NotificationType = 
+export type NotificationType =
   | 'info'           // Informação geral
   | 'success'        // Sucesso em operação
   | 'warning'        // Alerta/Aviso
@@ -50,17 +51,17 @@ export interface Notification {
   isDismissed: boolean;
   createdAt: Date;
   readAt?: Date;
-  
+
   // Contexto adicional
   storeId?: string;
   storeName?: string;
   orderId?: string;
   productId?: string;
-  
+
   // Ação associada
   actionUrl?: string;
   actionLabel?: string;
-  
+
   // Metadata
   metadata?: Record<string, unknown>;
 }
@@ -111,10 +112,8 @@ class NotificationService {
     if (!this.userId || !this.franchiseId) return;
 
     const notificationsRef = collection(
-      db, 
-      'franchises', 
-      this.franchiseId, 
-      'notifications'
+      db,
+      franchiseNotificationsPath(this.franchiseId)
     );
 
     // Query: notificações não descartadas, ordenadas por data
@@ -132,15 +131,15 @@ class NotificationService {
         return {
           id: doc.id,
           ...data,
-          createdAt: data.createdAt instanceof Timestamp 
-            ? data.createdAt.toDate() 
+          createdAt: data.createdAt instanceof Timestamp
+            ? data.createdAt.toDate()
             : new Date(data.createdAt),
-          readAt: data.readAt instanceof Timestamp 
-            ? data.readAt.toDate() 
+          readAt: data.readAt instanceof Timestamp
+            ? data.readAt.toDate()
             : data.readAt ? new Date(data.readAt) : undefined,
         } as Notification;
       });
-      
+
       this.notifyListeners();
     }, (error) => {
       console.error('Error listening to notifications:', error);
@@ -156,10 +155,8 @@ class NotificationService {
     }
 
     const notificationsRef = collection(
-      db, 
-      'franchises', 
-      this.franchiseId, 
-      'notifications'
+      db,
+      franchiseNotificationsPath(this.franchiseId)
     );
 
     const docRef = await addDoc(notificationsRef, {
@@ -178,7 +175,7 @@ class NotificationService {
    * Adiciona notificação para múltiplos usuários (broadcast)
    */
   async broadcastNotification(
-    input: CreateNotificationInput, 
+    input: CreateNotificationInput,
     userIds: string[]
   ): Promise<void> {
     if (!this.franchiseId) {
@@ -187,10 +184,8 @@ class NotificationService {
 
     const batch = writeBatch(db);
     const notificationsRef = collection(
-      db, 
-      'franchises', 
-      this.franchiseId, 
-      'notifications'
+      db,
+      franchiseNotificationsPath(this.franchiseId)
     );
 
     for (const userId of userIds) {
@@ -215,10 +210,8 @@ class NotificationService {
     if (!this.franchiseId) return;
 
     const notificationRef = doc(
-      db, 
-      'franchises', 
-      this.franchiseId, 
-      'notifications', 
+      db,
+      franchiseNotificationsPath(this.franchiseId),
       notificationId
     );
 
@@ -239,10 +232,8 @@ class NotificationService {
 
     for (const notification of unreadNotifications) {
       const notificationRef = doc(
-        db, 
-        'franchises', 
-        this.franchiseId, 
-        'notifications', 
+        db,
+        franchiseNotificationsPath(this.franchiseId),
         notification.id
       );
       batch.update(notificationRef, {
@@ -261,10 +252,8 @@ class NotificationService {
     if (!this.franchiseId) return;
 
     const notificationRef = doc(
-      db, 
-      'franchises', 
-      this.franchiseId, 
-      'notifications', 
+      db,
+      franchiseNotificationsPath(this.franchiseId),
       notificationId
     );
 
@@ -283,10 +272,8 @@ class NotificationService {
 
     for (const notification of this.notifications) {
       const notificationRef = doc(
-        db, 
-        'franchises', 
-        this.franchiseId, 
-        'notifications', 
+        db,
+        franchiseNotificationsPath(this.franchiseId),
         notification.id
       );
       batch.update(notificationRef, {
@@ -307,10 +294,8 @@ class NotificationService {
     cutoffDate.setDate(cutoffDate.getDate() - daysOld);
 
     const notificationsRef = collection(
-      db, 
-      'franchises', 
-      this.franchiseId, 
-      'notifications'
+      db,
+      franchiseNotificationsPath(this.franchiseId)
     );
 
     const q = query(
@@ -321,7 +306,7 @@ class NotificationService {
 
     const snapshot = await getDocs(q);
     const batch = writeBatch(db);
-    
+
     snapshot.docs.forEach(doc => {
       batch.delete(doc.ref);
     });
@@ -358,7 +343,7 @@ class NotificationService {
    */
   subscribe(callback: NotificationCallback): () => void {
     this.listeners.add(callback);
-    
+
     // Chama imediatamente com os dados atuais
     callback(this.notifications);
 

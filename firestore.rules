@@ -256,10 +256,20 @@ service cloud.firestore {
                         isFranchiseOwner(franchiseId) ||
                         hasStoreAccess(franchiseId, storeId);
           
-          // Super admin ou owner/admin/manager podem criar/editar produtos
-          allow create, update: if isSuperAdmin() || 
-                                  isFranchiseOwner(franchiseId) ||
-                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+        // Super admin ou owner/admin/manager podem criar produtos
+        allow create: if isSuperAdmin() || 
+                        isFranchiseOwner(franchiseId) ||
+                        canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+        
+        // AtualizaÃ§Ãµes:
+        // - owner/admin/manager podem editar qualquer campo
+        // - operadores com acesso podem atualizar apenas estoque (para vendas do Kiosk)
+        allow update: if (isSuperAdmin() || 
+                         isFranchiseOwner(franchiseId) ||
+                         canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager'])) ||
+                       (hasStoreAccess(franchiseId, storeId) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['stock', 'inStock', 'totalMlAvailable', 'updatedAt', 'updated_at']));
           
           // Owner da franquia ou admin podem deletar produtos
           allow delete: if isSuperAdmin() || 

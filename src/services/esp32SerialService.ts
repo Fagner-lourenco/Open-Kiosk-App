@@ -66,6 +66,10 @@ export interface ESP32Response {
   chip_id?: string;
   hardware_id?: string;
   mac?: string;
+  // Campos de diagnóstico de GPIO
+  results?: any;
+  gpio_ok?: boolean;
+  recommendation?: string;
 }
 
 export interface ESP32Command {
@@ -96,7 +100,7 @@ class ESP32SerialService {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private isReading = false;
   private readBuffer = '';
-  
+
   // Callbacks para eventos
   private messageCallbacks: ESP32MessageCallback[] = [];
   private rawCallbacks: ESP32RawCallback[] = [];
@@ -154,7 +158,7 @@ class ESP32SerialService {
       }
 
       console.log('[ESP32] ✅ Conectado via USB Serial');
-      
+
       // Iniciar leitura contínua em background
       this.startReading();
 
@@ -202,7 +206,7 @@ class ESP32SerialService {
 
     try {
       const ports = await this.getAuthorizedPorts();
-      
+
       if (ports.length === 0) {
         console.log('[ESP32] Nenhuma porta autorizada encontrada');
         return false;
@@ -377,7 +381,7 @@ class ESP32SerialService {
    */
   private processBuffer(): void {
     const lines = this.readBuffer.split('\n');
-    
+
     // Manter última linha incompleta no buffer
     this.readBuffer = lines.pop() || '';
 
@@ -415,7 +419,7 @@ class ESP32SerialService {
     if (jsonString.startsWith('{') && jsonString.endsWith('}')) {
       try {
         const json = JSON.parse(jsonString) as ESP32Response;
-        
+
         // Notificar callbacks de mensagem
         for (const callback of this.messageCallbacks) {
           try {

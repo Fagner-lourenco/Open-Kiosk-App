@@ -1,5 +1,7 @@
 import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { runTransaction, collection, doc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { runTransaction, collection, doc, serverTimestamp, Timestamp, increment } from 'firebase/firestore';
+import { enqueueSync } from './syncService';
+import { cacheGet, STORES, CachedProduct } from './cacheService';
 import { CartItem, Product } from '@/types/product';
 import { PaymentMethod, SaleTimingData } from '@/types/sales';
 import { deviceHeartbeatService } from './deviceHeartbeatService';
@@ -36,7 +38,7 @@ class SalesService {
     const hour = now.getHours().toString().padStart(2, '0');
     const minute = now.getMinutes().toString().padStart(2, '0');
     const second = now.getSeconds().toString().padStart(2, '0');
-    
+
     // Usar UUID para garantir unicidade mesmo em alta concorrência
     let uniqueId: string;
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -45,13 +47,140 @@ class SalesService {
       // Fallback com mais entropia: timestamp em ms + random maior
       uniqueId = `${Date.now().toString(36)}${Math.random().toString(36).substring(2, 8)}`;
     }
-    
+
     return `${year}${month}${day}${hour}${minute}${second}-${uniqueId}`;
+  }
+
+
+  /**
+   * Registrar venda offline
+   * Usa cache local para validação otimista e enfileira operações via syncService
+   */
+  private async recordOfflineSale(
+    cartItems: CartItem[],
+    totalAmount: number,
+    currency: string,
+    orderNumber: string,
+    paymentMethod: PaymentMethod,
+    storeId: string
+  ): Promise<string> {
+    console.log('[SalesService] Processing offline sale:', orderNumber);
+
+    // 1. Calcular requisitos por produto
+    const requiredByProductId: Record<string, { ml: number; qty: number }> = {};
+    cartItems.forEach((item) => {
+      const key = item.product.id;
+      if (!requiredByProductId[key]) {
+        requiredByProductId[key] = { ml: 0, qty: 0 };
+      }
+      if (item.product.isDrink && item.mlPerUnit) {
+        requiredByProductId[key].ml += item.mlPerUnit * item.quantity;
+      } else {
+        requiredByProductId[key].qty += item.quantity;
+      }
+    });
+
+    // 2. Tentar validar com cache local (Best Effort)
+    // Se não tiver cache, assume positivo para não bloquear venda
+    for (const [productId, required] of Object.entries(requiredByProductId)) {
+      try {
+        const cached = await cacheGet<CachedProduct>(STORES.PRODUCTS, productId);
+        if (cached && cached.data) {
+          const prod = cached.data as Product;
+
+          if (prod.isDrink) {
+            const currentMl = prod.totalMlAvailable || 0;
+            if (currentMl < required.ml) {
+              console.warn(`[SalesService] Offline stock warning for ${prod.title}: needed ${required.ml}, have ${currentMl}`);
+              // Não bloqueamos venda offline por estoque, mas logamos
+            }
+          } else {
+            const currentQty = prod.stock || 0;
+            if (currentQty < required.qty) {
+              console.warn(`[SalesService] Offline stock warning for ${prod.title}: needed ${required.qty}, have ${currentQty}`);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[SalesService] Failed to check local cache, proceeding anyway:', err);
+      }
+    }
+
+    // 3. Gerar dados da venda
+    const now = new Date();
+    const timingData = this.calculateSaleTimingData(now);
+    const deviceId = await deviceHeartbeatService.getDeviceId();
+    const franchiseId = getCurrentFranchiseId();
+
+    const saleData = {
+      orderNumber,
+      storeId,
+      franchiseId: franchiseId || undefined,
+      deviceId,
+      paymentMethod,
+      ...timingData,
+      status: 'completed' as const,
+      paymentStatus: 'paid' as const,
+      createdAt: { _type: 'serverTimestamp' },
+      paidAt: { _type: 'serverTimestamp' },
+      completedAt: { _type: 'serverTimestamp' },
+      lastSync: { _type: 'serverTimestamp' },
+      notes: 'Offline Sale',
+      items: cartItems.map((item) => {
+        const baseItem = {
+          productId: item.product.id,
+          title: item.product.title,
+          price: item.unitPrice,
+          quantity: item.quantity,
+          total: item.unitPrice * item.quantity,
+        };
+        if (item.product.isDrink && item.sizeKey) {
+          return {
+            ...baseItem,
+            sizeKey: item.sizeKey,
+            sizeLabel: item.sizeLabel,
+            mlPerUnit: item.mlPerUnit,
+          };
+        }
+        return baseItem;
+      }),
+      subtotal: cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
+      tax: totalAmount - cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
+      total: totalAmount,
+      currency,
+    };
+
+    // 4. Enfileirar criação do pedido
+    // Nota: 'serverTimestamp' será transformado em null/object no JSON do IndexedDB, 
+    // syncService deve tratar isso ou usar Date.now() e converter no sync.
+    // O ideal é usar null e deixar o syncService por o serverTimestamp real na hora do envio, 
+    // mas vamos manter compatibilidade com o objeto esperado.
+    await enqueueSync('create', 'orders', orderNumber, saleData);
+
+    // 5. Enfileirar atualizações de estoque (usando increment para segurança)
+    for (const [productId, required] of Object.entries(requiredByProductId)) {
+      const isDrink = cartItems.find(i => i.product.id === productId)?.product.isDrink;
+
+      if (isDrink) {
+        await enqueueSync('update', 'products', productId, {
+          totalMlAvailable: { _type: 'increment', value: -required.ml },
+          updatedAt: { _type: 'serverTimestamp' }
+        });
+      } else {
+        await enqueueSync('update', 'products', productId, {
+          stock: { _type: 'increment', value: -required.qty },
+          updatedAt: { _type: 'serverTimestamp' }
+        });
+      }
+    }
+
+    console.log('[SalesService] Offline sale queued:', orderNumber);
+    return orderNumber;
   }
 
   /**
    * Registrar venda e atualizar estoque
-   * Suporta multi-loja: usa storeId passado ou fallback para getCurrentStoreId()
+   * Suporta multi-loja e OFFLINE via syncService
    */
   async recordSaleAndUpdateStock(
     cartItems: CartItem[],
@@ -62,16 +191,28 @@ class SalesService {
     storeId?: string  // Parâmetro opcional para multi-loja
   ): Promise<string> {
     const db = getFirebaseDb();
-    
+
     // Usar storeId passado ou obter do localStorage
     const effectiveStoreId = storeId || getCurrentStoreId();
-    
-    // Validação: em produção, storeId é obrigatório para garantir isolamento de dados
+
+    // Validacao: em producao, storeId e obrigatorio para garantir isolamento de dados
     if (!effectiveStoreId) {
-      console.warn('[SalesService] No storeId provided - using root collection (legacy mode)');
+      throw new Error('[SalesService] storeId obrigatorio para registrar pedido');
     }
-    
-    console.log('[SalesService] Recording sale for store:', effectiveStoreId || 'root');
+
+    // OFFLINE HANDLING: Se não houver conexão, usar modo offline
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      return this.recordOfflineSale(
+        cartItems,
+        totalAmount,
+        currency,
+        orderNumber,
+        paymentMethod,
+        effectiveStoreId
+      );
+    }
+
+    console.log('[SalesService] Recording sale for store:', effectiveStoreId);
 
     return await runTransaction(db, async (transaction) => {
       // 1. Calcular requisitos por produto
@@ -90,20 +231,18 @@ class SalesService {
       });
 
       // 2. FASE DE LEITURA: Ler todos os documentos ANTES de qualquer write
-      // Usar subcollection se storeId disponível, senão usar raiz
-      const productRefs = Object.keys(requiredByProductId).map(productId => 
-        effectiveStoreId 
-          ? getStoreDoc(effectiveStoreId, 'products', productId)
-          : doc(db, 'products', productId)
+      // Usar subcollection (products) - storeId e obrigatorio em producao
+      const productRefs = Object.keys(requiredByProductId).map(productId =>
+        getStoreDoc(effectiveStoreId, 'products', productId)
       );
-      
+
       const productSnapshots = await Promise.all(
         productRefs.map(ref => transaction.get(ref))
       );
 
       // 3. Mapear snapshots para validação
       const productDataMap: Record<string, { ref: typeof productRefs[0], data: Product }> = {};
-      
+
       productSnapshots.forEach((snapshot, index) => {
         const productId = Object.keys(requiredByProductId)[index];
         if (!snapshot.exists()) {
@@ -142,6 +281,7 @@ class SalesService {
           transaction.update(prodRef, {
             totalMlAvailable: newMl,
             inStock: newMl > 0,
+            updatedAt: serverTimestamp(),
           });
         } else {
           const currentQty = prod.stock || 0;
@@ -149,6 +289,7 @@ class SalesService {
           transaction.update(prodRef, {
             stock: newQty,
             inStock: newQty > 0,
+            updatedAt: serverTimestamp(),
           });
         }
       }
@@ -156,10 +297,10 @@ class SalesService {
       // 6. Criar registro de venda
       const now = new Date();
       const timingData = this.calculateSaleTimingData(now);
-      
+
       // Obter deviceId para rastreabilidade
       const deviceId = await deviceHeartbeatService.getDeviceId();
-      
+
       // Obter franchiseId para agregação multi-tenant
       const franchiseId = getCurrentFranchiseId();
 
@@ -170,7 +311,7 @@ class SalesService {
         deviceId,                                // Rastreabilidade do dispositivo
         paymentMethod,
         ...timingData,
-        
+
         // ======= CAMPOS DE STATUS PARA SINCRONIZAÇÃO COM ADMIN =======
         // Vendas do Kiosk são self-service: já estão completas e pagas
         status: 'completed' as const,
@@ -181,7 +322,7 @@ class SalesService {
         lastSync: serverTimestamp(),           // Momento da sincronização
         notes: '',                              // Campo para observações futuras
         // ==============================================================
-        
+
         items: cartItems.map((item) => {
           const baseItem = {
             productId: item.product.id,
@@ -190,7 +331,7 @@ class SalesService {
             quantity: item.quantity,
             total: item.unitPrice * item.quantity,
           };
-          
+
           // Only include drink-specific fields if product is a drink
           if (item.product.isDrink && item.sizeKey) {
             if (!item.sizeLabel || !item.mlPerUnit) {
@@ -203,7 +344,7 @@ class SalesService {
               mlPerUnit: item.mlPerUnit,
             };
           }
-          
+
           return baseItem;
         }),
         subtotal: cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
@@ -212,19 +353,17 @@ class SalesService {
         currency,
       };
 
-      // Usar subcollection se storeId disponível, senão usar raiz
+      // Usar subcollection (products) - storeId e obrigatorio em producao
       // Nota: Usando 'orders' para compatibilidade com Admin
-      const salesRef = effectiveStoreId 
-        ? getStoreCollection(effectiveStoreId, 'orders')
-        : collection(db, 'orders');
-      const newDocRef = doc(salesRef);
+      const salesRef = getStoreCollection(effectiveStoreId, 'orders');
+      const newDocRef = doc(salesRef, orderNumber);
       transaction.set(newDocRef, saleData);
-      
+
       console.log('[SalesService] Sale recorded:', newDocRef.id);
-      
+
       // Enviar heartbeat após venda bem sucedida
       deviceHeartbeatService.sendHeartbeat();
-      
+
       return newDocRef.id;
     });
   }

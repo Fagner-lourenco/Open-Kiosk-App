@@ -90,35 +90,26 @@ export function FranchiseGuard({
   const franchiseContext = useFranchiseSafe();
   
   const [autoSelectAttempted, setAutoSelectAttempted] = useState(false);
-
-  // Se não está em modo franchise, passa direto
-  if (!isFranchiseMode()) {
-    return <>{children}</>;
-  }
-
-  // Se o contexto de franquia não está disponível, mostra loading
-  // Isso pode acontecer durante a inicialização
-  if (!franchiseContext) {
-    console.log('[FranchiseGuard] FranchiseContext não disponível, aguardando...');
-    return <LoadingScreen />;
-  }
+  const isFranchise = isFranchiseMode();
 
   const {
     currentStore = null,
     userStores = [],
     isLoading: franchiseLoading = false,
     selectStore,
-  } = franchiseContext;
+  } = franchiseContext || {};
 
-  // Considera loading se auth OU franchise ainda estão carregando
-  // OU se não tem usuário mas ainda está no fluxo inicial
-  const isLoading = authLoading || franchiseLoading;
+  // Considera loading se auth OU franchise (se existir) ainda estão carregando
+  const isLoading = authLoading || (isFranchise && franchiseLoading);
 
   // ==========================================================================
   // AUTO-SELECT SINGLE STORE
   // ==========================================================================
 
   useEffect(() => {
+    // Se não está em modo franchise, ignora
+    if (!isFranchise) return;
+
     // Se já tentou auto-selecionar, não tenta de novo
     if (autoSelectAttempted) return;
 
@@ -132,16 +123,32 @@ export function FranchiseGuard({
     if (currentStore) return;
 
     // Se tem apenas 1 loja, seleciona automaticamente
-    if (userStores.length === 1 && selectStore) {
+    if (userStores && userStores.length === 1 && selectStore) {
       console.log('[FranchiseGuard] Auto-selecionando loja única:', userStores[0].storeName);
       setAutoSelectAttempted(true);
       selectStore(userStores[0].franchiseId, userStores[0].storeId).catch((err) => {
         console.error('[FranchiseGuard] Erro ao auto-selecionar loja:', err);
       });
-    } else if (userStores.length > 1) {
+    } else if (userStores && userStores.length > 1) {
       setAutoSelectAttempted(true);
     }
-  }, [user, currentStore, userStores, isLoading, autoSelectAttempted, selectStore]);
+  }, [user, currentStore, userStores, isLoading, autoSelectAttempted, selectStore, isFranchise]);
+
+  // ==========================================================================
+  // RENDER
+  // ==========================================================================
+
+  // Se não está em modo franchise, passa direto
+  if (!isFranchise) {
+    return <>{children}</>;
+  }
+
+  // Se o contexto de franquia não está disponível, mostra loading
+  // Isso pode acontecer durante a inicialização
+  if (!franchiseContext) {
+    console.log('[FranchiseGuard] FranchiseContext não disponível, aguardando...');
+    return <LoadingScreen />;
+  }
 
   // ==========================================================================
   // RENDER

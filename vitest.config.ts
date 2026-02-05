@@ -15,7 +15,7 @@ export default defineConfig({
     // ============================================================
     environment: 'jsdom',
     globals: true,
-    
+
     // ============================================================
     // SETUP & TEARDOWN
     // ============================================================
@@ -73,6 +73,8 @@ export default defineConfig({
       '@/types': path.resolve(__dirname, './src/types'),
       '@/utils': path.resolve(__dirname, './src/utils'),
       '@/context': path.resolve(__dirname, './src/context'),
+      'usb': path.resolve(__dirname, './src/__tests__/mocks/usb.ts'),
+      'capacitor-usb-serial-plugin': path.resolve(__dirname, './src/__tests__/mocks/usb-serial.ts'),
     },
 
     // ============================================================

@@ -63,6 +63,17 @@ function convertTimestamps<T extends Record<string, unknown>>(data: T): T {
   return result;
 }
 
+function resolveInviteStoreAccess(invite: Record<string, unknown>): string[] {
+  const storeAccess = invite.storeAccess;
+  if (Array.isArray(storeAccess) && storeAccess.length > 0) {
+    return storeAccess as string[];
+  }
+  if (typeof invite.storeId === 'string' && invite.storeId) {
+    return [invite.storeId];
+  }
+  return ['*'];
+}
+
 /**
  * Gera um slug a partir do nome
  */
@@ -608,9 +619,11 @@ class FranchiseService {
       }
 
       const docSnap = querySnap.docs[0];
+      const data = convertTimestamps(docSnap.data());
       return {
         id: docSnap.id,
-        ...convertTimestamps(docSnap.data()),
+        ...data,
+        storeAccess: resolveInviteStoreAccess(data as Record<string, unknown>),
       } as Invitation;
     } catch (error) {
       console.error('[FranchiseService] Erro ao buscar convite:', error);
@@ -640,9 +653,11 @@ class FranchiseService {
       }
 
       const docSnap = querySnap.docs[0];
+      const data = convertTimestamps(docSnap.data());
       return {
         id: docSnap.id,
-        ...convertTimestamps(docSnap.data()),
+        ...data,
+        storeAccess: resolveInviteStoreAccess(data as Record<string, unknown>),
       } as Invitation;
     } catch (error) {
       console.error('[FranchiseService] Erro ao buscar convite pendente:', error);

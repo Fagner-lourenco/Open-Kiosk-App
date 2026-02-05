@@ -6,14 +6,14 @@ import { initializeFirebase, getFirebaseDb, getCurrentStoreId, getCurrentFranchi
 import { authService } from '@/services/authService';
 import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { cacheSet, cacheGet, ensureDBReady, STORES, CachedSettings } from '@/services/cacheService';
-import { initNetworkListeners, startBackgroundSync } from '@/services/syncService';
+import { initNetworkListeners, startBackgroundSync, enqueueSync } from '@/services/syncService';
 import { startAutoCleanup } from '@/services/cleanupService';
 import { isFranchiseMode } from '@/lib/pathResolver';
 
 const SETTINGS_CACHE_KEY = 'storeSettings';
 const SETTINGS_DOC_ID = 'store_settings';
 
-// Singleton flags para evitar mÃºltiplas inicializaÃ§Ãµes
+// Singleton flags para evitar múltiplas inicializações
 let servicesInitialized = false;
 let initializationPromise: Promise<void> | null = null;
 
@@ -24,7 +24,7 @@ export const useStoreSettings = () => {
   const [isSyncing, setIsSyncing] = useState(false);
 
   /**
-   * Carrega settings do localStorage (hot cache mais rÃ¡pido)
+   * Carrega settings do localStorage (hot cache mais rápido)
    */
   const loadFromLocalStorage = useCallback((): StoreSettings | null => {
     try {
@@ -40,11 +40,11 @@ export const useStoreSettings = () => {
 
   /**
    * Salva settings no localStorage
-   * Inclui franchiseId automaticamente se disponÃ­vel
+   * Inclui franchiseId automaticamente se disponível
    */
   const saveToLocalStorage = useCallback((newSettings: StoreSettings) => {
     try {
-      // Enriquecer com franchiseId se disponÃ­vel e nÃ£o presente
+      // Enriquecer com franchiseId se disponível e não presente
       const enrichedSettings = { ...newSettings };
       if (!enrichedSettings.franchiseId) {
         const franchiseId = getCurrentFranchiseId();
@@ -91,11 +91,19 @@ export const useStoreSettings = () => {
   }, []);
 
   /**
-   * Sincroniza settings com Firebase (background, nÃ£o bloqueia UI)
+   * Sincroniza settings com Firebase (background, não bloqueia UI)
    */
   const syncToFirebase = useCallback(async (newSettings: StoreSettings) => {
     if (!navigator.onLine) {
       console.log('[useStoreSettings] Offline, sync queued');
+      try {
+        await enqueueSync('update', 'settings', 'config', {
+          ...newSettings,
+          updatedAt: new Date(),
+        });
+      } catch (queueError) {
+        console.error('[useStoreSettings] Error queueing sync:', queueError);
+      }
       return;
     }
 
@@ -133,20 +141,20 @@ export const useStoreSettings = () => {
   }, []);
 
   /**
-   * Inicializa serviÃ§os apenas uma vez (singleton)
+   * Inicializa serviços apenas uma vez (singleton)
    * Protegido contra HMR verificando getApps()
    */
   const initializeServicesOnce = useCallback(async (settingsData: StoreSettings) => {
-    // Verificar se jÃ¡ inicializado (flag OU Firebase jÃ¡ existe - protege contra HMR)
+    // Verificar se já inicializado (flag OU Firebase já existe - protege contra HMR)
     if (servicesInitialized || getApps().length > 0) {
-      servicesInitialized = true; // Sincronizar flag caso Firebase jÃ¡ exista
+      servicesInitialized = true; // Sincronizar flag caso Firebase já exista
       return;
     }
     
     servicesInitialized = true;
     try {
       initializeFirebase(settingsData);
-      // Inicializa authService apÃ³s Firebase estar pronto
+      // Inicializa authService após Firebase estar pronto
       authService.initialize();
       startBackgroundSync();
       startAutoCleanup();
@@ -157,13 +165,13 @@ export const useStoreSettings = () => {
   }, []);
 
   /**
-   * InicializaÃ§Ã£o: carrega offline-first
+   * Inicialização: carrega offline-first
    */
   useEffect(() => {
-    // Evita inicializaÃ§Ãµes paralelas
+    // Evita inicializações paralelas
     if (initializationPromise) {
       initializationPromise.then(() => {
-        // Apenas atualiza estado local apÃ³s init global
+        // Apenas atualiza estado local após init global
         const localSettings = loadFromLocalStorage();
         if (localSettings) {
           setSettings(localSettings);
@@ -181,7 +189,7 @@ export const useStoreSettings = () => {
       await ensureDBReady();
       initNetworkListeners();
       
-      // 2. Carrega do localStorage PRIMEIRO (hot cache, mais rÃ¡pido)
+      // 2. Carrega do localStorage PRIMEIRO (hot cache, mais rápido)
       const localSettings = loadFromLocalStorage();
       
       if (localSettings) {
@@ -189,7 +197,7 @@ export const useStoreSettings = () => {
         setSettings(localSettings);
         setIsInitialized(true);
         
-        // Inicializa serviÃ§os (singleton - sÃ³ executa uma vez)
+        // Inicializa serviços (singleton - só executa uma vez)
         await initializeServicesOnce(localSettings);
       } else {
         // 3. Fallback: tenta IndexedDB
@@ -200,12 +208,12 @@ export const useStoreSettings = () => {
           setIsInitialized(true);
           saveToLocalStorage(idbSettings);
           
-          // Inicializa serviÃ§os (singleton - sÃ³ executa uma vez)
+          // Inicializa serviços (singleton - só executa uma vez)
           await initializeServicesOnce(idbSettings);
         } else {
           console.log('[useStoreSettings] No saved settings found');
           
-          // 4. Em franchise mode, criar settings mÃ­nimos para ativar listeners Firebase
+          // 4. Em franchise mode, criar settings mínimos para ativar listeners Firebase
           if (isFranchiseMode()) {
             const storeId = getCurrentStoreId();
             const franchiseId = getCurrentFranchiseId();
@@ -213,7 +221,7 @@ export const useStoreSettings = () => {
             console.log('[useStoreSettings] Franchise mode detected, creating minimal settings:', { storeId, franchiseId });
             
             if (storeId) {
-              // Criar settings mÃ­nimos para ativar os listeners do Firebase
+              // Criar settings mínimos para ativar os listeners do Firebase
               const minimalSettings: StoreSettings = {
                 storeId,
                 franchiseId: franchiseId || undefined,
@@ -241,36 +249,36 @@ export const useStoreSettings = () => {
       setLoading(false);
     };
 
-    // Cria promise para sincronizaÃ§Ã£o entre instÃ¢ncias do hook
+    // Cria promise para sincronização entre instâncias do hook
     initializationPromise = initializeSettings();
     initializationPromise.finally(() => {
       initializationPromise = null;
     });
   }, [loadFromLocalStorage, loadFromIndexedDB, saveToLocalStorage, initializeServicesOnce]);
 
-  // Memoizar firebaseConfig key para evitar re-execuÃ§Ãµes do useEffect
-  // (objetos mudam de referÃªncia a cada render mesmo com conteÃºdo igual)
+  // Memoizar firebaseConfig key para evitar re-execuções do useEffect
+  // (objetos mudam de referência a cada render mesmo com conteúdo igual)
   const firebaseConfigKey = useMemo(
     () => settings?.firebaseConfig ? JSON.stringify(settings.firebaseConfig) : null,
     [settings?.firebaseConfig]
   );
 
   /**
-   * Listener para mudanÃ§as do Firebase (sync em background)
+   * Listener para mudanças do Firebase (sync em background)
    * Escuta DOIS documentos:
    * 1. Documento principal da loja (dados gerenciados pelo Admin Web)
-   * 2. SubcoleÃ§Ã£o settings/config (configs especÃ­ficas do Kiosk)
+   * 2. Subcoleção settings/config (configs específicas do Kiosk)
    * 
-   * ðŸ”’ PROTEÃ‡ÃƒO: SÃ³ cria listeners se usuÃ¡rio estiver autenticado em modo franquia
+   * ?? PROTEÇÃO: Só cria listeners se usuário estiver autenticado em modo franquia
    */
   useEffect(() => {
     if (!isInitialized || !settings?.storeId) return;
 
-    // ðŸ”’ Em modo franquia, verificar se usuÃ¡rio estÃ¡ autenticado antes de criar listeners
+    // ?? Em modo franquia, verificar se usuário está autenticado antes de criar listeners
     if (isFranchiseMode()) {
       const auth = getFirebaseAuth();
       if (!auth?.currentUser) {
-        console.log('[useStoreSettings] âš ï¸ Modo franquia sem autenticaÃ§Ã£o - aguardando login para criar listeners');
+        console.log('[useStoreSettings] ?? Modo franquia sem autenticação - aguardando login para criar listeners');
         return;
       }
     }
@@ -291,7 +299,7 @@ export const useStoreSettings = () => {
         let storeDocRef;
         let kioskConfigRef;
         
-        // Tentar obter franchiseId de mÃºltiplas fontes (settings tem prioridade)
+        // Tentar obter franchiseId de múltiplas fontes (settings tem prioridade)
         const franchiseId = settings.franchiseId || getCurrentFranchiseId();
         const isInFranchiseMode = isFranchiseMode();
         
@@ -305,7 +313,7 @@ export const useStoreSettings = () => {
         if (franchiseId) {
           // Documento principal da loja (dados do Admin Web)
           storeDocRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-          // Configs especÃ­ficas do Kiosk
+          // Configs específicas do Kiosk
           kioskConfigRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'settings', 'config');
           console.log('[useStoreSettings] Using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
         } else {
@@ -320,7 +328,7 @@ export const useStoreSettings = () => {
             const storeData = snapshot.data();
             console.log('[useStoreSettings] Store data updated from Admin Web');
             
-            // Normaliza language do Admin Web (en-US â†’ en)
+            // Normaliza language do Admin Web (en-US ? en)
             const normalizeLanguage = (lang?: string): 'en' | 'pt-BR' | undefined => {
               if (!lang) return undefined;
               if (lang === 'en-US' || lang === 'en') return 'en';
@@ -344,7 +352,7 @@ export const useStoreSettings = () => {
                 phone: storeData.phone,
                 address: storeData.address,
                 description: storeData.description,
-                // Language normalizado (en-US â†’ en)
+                // Language normalizado (en-US ? en)
                 language: normalizeLanguage(storeData.language) ?? prev.language,
                 // Timezone do Admin
                 timezone: storeData.timezone,
@@ -363,13 +371,13 @@ export const useStoreSettings = () => {
         
         unsubscribers.push(unsubStore);
 
-        // Listener 2: Configs especÃ­ficas do Kiosk (ESP32, vÃ­deo, printer, etc.)
+        // Listener 2: Configs específicas do Kiosk (ESP32, vídeo, printer, etc.)
         const unsubKiosk = onSnapshot(kioskConfigRef, (snapshot) => {
           if (snapshot.exists()) {
             const kioskConfig = snapshot.data() as Partial<StoreSettings>;
             console.log('[useStoreSettings] Kiosk config updated');
             
-            // Atualiza apenas os campos especÃ­ficos do Kiosk
+            // Atualiza apenas os campos específicos do Kiosk
             setSettings(prev => {
               if (!prev) return prev;
               
@@ -411,9 +419,9 @@ export const useStoreSettings = () => {
     return () => {
       unsubscribers.forEach(unsub => unsub());
     };
-  // ðŸ”§ FIX: Removido saveToLocalStorage e saveToIndexedDB das dependÃªncias
-  // Esses callbacks sÃ£o estÃ¡veis (useCallback sem deps mutÃ¡veis), mas causavam
-  // re-execuÃ§Ã£o desnecessÃ¡ria. O storeId Ã© a Ãºnica dependÃªncia que importa.
+  // ?? FIX: Removido saveToLocalStorage e saveToIndexedDB das dependências
+  // Esses callbacks são estáveis (useCallback sem deps mutáveis), mas causavam
+  // re-execução desnecessária. O storeId é a única dependência que importa.
   }, [isInitialized, settings?.storeId, firebaseConfigKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
@@ -433,11 +441,11 @@ export const useStoreSettings = () => {
     // 3. Salva no IndexedDB (backup)
     saveToIndexedDB(newSettings);
     
-    // 4. Inicializa serviÃ§os se ainda nÃ£o foram (singleton)
+    // 4. Inicializa serviços se ainda não foram (singleton)
     if (!servicesInitialized) {
       try {
         initializeFirebase(newSettings);
-        // Inicializa authService apÃ³s Firebase estar pronto
+        // Inicializa authService após Firebase estar pronto
         authService.initialize();
         startBackgroundSync();
         startAutoCleanup();
@@ -447,7 +455,7 @@ export const useStoreSettings = () => {
       }
     }
     
-    // 5. Sync para Firebase em background (nÃ£o bloqueia)
+    // 5. Sync para Firebase em background (não bloqueia)
     syncToFirebase(newSettings);
   }, [saveToLocalStorage, saveToIndexedDB, syncToFirebase]);
 
@@ -472,3 +480,5 @@ export const useStoreSettings = () => {
     resetStore,
   };
 };
+
+

@@ -19,6 +19,7 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { storeSubPath, storeDocPath } from '@/lib/pathResolver';
 
 export interface ReportPeriod {
   startDate: Date;
@@ -128,13 +129,13 @@ export async function getSalesReport(
     try {
       const dailyStatsRef = collection(
         db,
-        `franchises/${franchiseId}/stores/${storeId}/dailyStats`
+        storeSubPath(franchiseId, storeId, 'dailyStats')
       );
-      
+
       // Buscar stats do período
       const startKey = formatDateKey(period.startDate);
       const endKey = formatDateKey(period.endDate);
-      
+
       const statsQuery = query(
         dailyStatsRef,
         where('date', '>=', startKey),
@@ -143,17 +144,17 @@ export async function getSalesReport(
       );
 
       const snapshot = await getDocs(statsQuery);
-      
+
       if (!snapshot.empty) {
         usedMaterialized = true;
-        
+
         snapshot.docs.forEach((docSnap) => {
           const stats = docSnap.data();
           const dateKey = stats.date || docSnap.id;
-          
+
           totalRevenue += stats.totalRevenue || 0;
           totalOrders += stats.totalOrders || 0;
-          
+
           const existing = ordersByDayMap.get(dateKey) || { orders: 0, revenue: 0 };
           ordersByDayMap.set(dateKey, {
             orders: existing.orders + (stats.totalOrders || 0),
@@ -170,16 +171,16 @@ export async function getSalesReport(
       }
     }
   }
-  
+
   // Fallback: query direta em orders se não encontrou dados materializados
   if (!usedMaterialized) {
     for (const storeId of storeIds) {
       try {
         const ordersRef = collection(
           db,
-          `franchises/${franchiseId}/stores/${storeId}/orders`
+          storeSubPath(franchiseId, storeId, 'orders')
         );
-        
+
         const ordersQuery = query(
           ordersRef,
           where('createdAt', '>=', Timestamp.fromDate(period.startDate)),
@@ -194,7 +195,7 @@ export async function getSalesReport(
           const order = docSnap.data();
           const orderTotal = order.total || 0;
           const orderDate = order.createdAt?.toDate();
-          
+
           totalOrders++;
           totalRevenue += orderTotal;
 
@@ -247,9 +248,9 @@ export async function getProductReport(
     try {
       const ordersRef = collection(
         db,
-        `franchises/${franchiseId}/stores/${storeId}/orders`
+        storeSubPath(franchiseId, storeId, 'orders')
       );
-      
+
       const ordersQuery = query(
         ordersRef,
         where('createdAt', '>=', Timestamp.fromDate(period.startDate)),
@@ -273,7 +274,7 @@ export async function getProductReport(
             quantity: 0,
             revenue: 0,
           };
-          
+
           productMap.set(productId, {
             name: productName || existing.name,
             quantity: existing.quantity + (item.quantity || 1),
@@ -283,7 +284,7 @@ export async function getProductReport(
           // Category tracking
           const category = item.category || 'Outros';
           const categoryExisting = categoryMap.get(category) || { quantity: 0, revenue: 0 };
-          
+
           categoryMap.set(category, {
             quantity: categoryExisting.quantity + (item.quantity || 1),
             revenue: categoryExisting.revenue + (item.price || 0) * (item.quantity || 1),
@@ -334,9 +335,9 @@ export async function getStoreReport(
     try {
       const dailyStatsRef = collection(
         db,
-        `franchises/${franchiseId}/stores/${storeId}/dailyStats`
+        storeSubPath(franchiseId, storeId, 'dailyStats')
       );
-      
+
       const statsQuery = query(
         dailyStatsRef,
         where('date', '>=', startKey),
@@ -344,7 +345,7 @@ export async function getStoreReport(
       );
 
       const snapshot = await getDocs(statsQuery);
-      
+
       if (!snapshot.empty) {
         usedMaterialized = true;
         snapshot.docs.forEach((docSnap) => {
@@ -364,11 +365,11 @@ export async function getStoreReport(
       try {
         const metricsRef = doc(
           db,
-          `franchises/${franchiseId}/stores/${storeId}/metrics/current`
+          storeDocPath(franchiseId, storeId, 'metrics', 'current')
         );
-        
+
         const metricsSnap = await getDoc(metricsRef);
-        
+
         if (metricsSnap.exists()) {
           const metrics = metricsSnap.data();
           orders = metrics.orders || 0;
@@ -385,9 +386,9 @@ export async function getStoreReport(
       try {
         const ordersRef = collection(
           db,
-          `franchises/${franchiseId}/stores/${storeId}/orders`
+          storeSubPath(franchiseId, storeId, 'orders')
         );
-        
+
         const ordersQuery = query(
           ordersRef,
           where('createdAt', '>=', Timestamp.fromDate(period.startDate)),

@@ -17,6 +17,7 @@ import {
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { storesPath, storePath } from '@/lib/pathResolver';
 
 export interface Store {
   id: string;
@@ -63,7 +64,7 @@ export interface UpdateStoreData {
 export async function getStores(franchiseId: string): Promise<Store[]> {
   const snapshot = await getDocs(
     query(
-      collection(db, `franchises/${franchiseId}/stores`),
+      collection(db, storesPath(franchiseId)),
       orderBy('name')
     )
   );
@@ -80,7 +81,7 @@ export async function getStores(franchiseId: string): Promise<Store[]> {
  * Get a single store by ID
  */
 export async function getStore(franchiseId: string, storeId: string): Promise<Store | null> {
-  const docRef = doc(db, `franchises/${franchiseId}/stores/${storeId}`);
+  const docRef = doc(db, storePath(franchiseId, storeId));
   const docSnap = await getDoc(docRef);
 
   if (!docSnap.exists()) {
@@ -115,7 +116,7 @@ export async function createStore(
   };
 
   const docRef = await addDoc(
-    collection(db, `franchises/${franchiseId}/stores`),
+    collection(db, storesPath(franchiseId)),
     storeData
   );
 
@@ -130,8 +131,8 @@ export async function updateStore(
   storeId: string,
   data: UpdateStoreData
 ): Promise<void> {
-  const docRef = doc(db, `franchises/${franchiseId}/stores/${storeId}`);
-  
+  const docRef = doc(db, storePath(franchiseId, storeId));
+
   await updateDoc(docRef, {
     ...data,
     updatedAt: serverTimestamp(),
@@ -142,7 +143,7 @@ export async function updateStore(
  * Delete a store
  */
 export async function deleteStore(franchiseId: string, storeId: string): Promise<void> {
-  const docRef = doc(db, `franchises/${franchiseId}/stores/${storeId}`);
+  const docRef = doc(db, storePath(franchiseId, storeId));
   await deleteDoc(docRef);
 }
 
@@ -159,7 +160,7 @@ export async function addStoreMember(
 
   const members = store.members || [];
   const existingMember = members.find((m) => m.id === member.id);
-  
+
   if (existingMember) {
     throw new Error('Member already exists in store');
   }

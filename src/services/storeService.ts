@@ -1,21 +1,42 @@
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, serverTimestamp } from 'firebase/firestore';
 import { Store } from '@/types/store';
-import { isFranchiseMode } from '@/lib/pathResolver';
+import { isFranchiseMode, storePath, franchisePath } from '@/lib/pathResolver';
 
 // ============================================
 // Store Service - Gerenciamento de Lojas
 // ============================================
 
 class StoreService {
-  
+
   /**
    * Obter loja atual do localStorage
    */
   getCurrentStoreId(): string | null {
     return getCurrentStoreId();
   }
-  
+  private normalizeStoreData(data: Record<string, unknown>): Store {
+    const toIso = (value: any): string | undefined => {
+      if (!value) return undefined;
+      if (typeof value === 'string') return value;
+      if (value.toDate) return value.toDate().toISOString();
+      if (value instanceof Date) return value.toISOString();
+      return undefined;
+    };
+
+    const createdAtIso = toIso((data as any).createdAt ?? (data as any).created_at);
+    const updatedAtIso = toIso((data as any).updatedAt ?? (data as any).updated_at);
+
+    return {
+      ...(data as Store),
+      createdAt: (data as any).createdAt,
+      updatedAt: (data as any).updatedAt,
+      created_at: createdAtIso ?? (data as any).created_at,
+      updated_at: updatedAtIso ?? (data as any).updated_at,
+    };
+  }
+
+
   /**
    * Validar que storeId existe no Firestore E tem dados válidos
    */
@@ -24,18 +45,18 @@ class StoreService {
       const db = getFirebaseDb();
       const storeDoc = doc(db, 'stores', storeId);
       const snapshot = await getDoc(storeDoc);
-      
+
       // Verificar se existe E tem dados válidos (não é placeholder vazio)
       const data = snapshot.data();
       const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
-      
+
       return snapshot.exists() && !!hasValidData;
     } catch (error) {
       console.error('[StoreService] Error validating store:', error);
       return false;
     }
   }
-  
+
   /**
    * Obter dados completos de uma loja
    * NOTA: Detecta documentos vazios (placeholder) e tenta recuperar automaticamente
@@ -44,41 +65,35 @@ class StoreService {
   async getStore(storeId: string): Promise<Store | null> {
     try {
       const db = getFirebaseDb();
-      
+
       // Determinar path correto baseado no modo
-      let storeDoc;
-      if (isFranchiseMode()) {
-        const franchiseId = getCurrentFranchiseId();
-        if (franchiseId) {
-          storeDoc = doc(db, 'franchises', franchiseId, 'stores', storeId);
-          console.log('[StoreService] Using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
-        } else {
-          storeDoc = doc(db, 'stores', storeId);
-        }
-      } else {
-        storeDoc = doc(db, 'stores', storeId);
-      }
-      
+      const franchiseId = getCurrentFranchiseId();
+      const path = storePath(franchiseId || undefined, storeId);
+      console.log('[StoreService] Using path:', path);
+
+      const storeDoc = doc(db, path);
+
       const snapshot = await getDoc(storeDoc);
-      
+
       const data = snapshot.data();
       const hasValidData = data && Object.keys(data).length > 0 && (data.storeId || data.name);
-      
+
       // Documento não existe OU está vazio (placeholder de subcoleção)
       if (!snapshot.exists() || !hasValidData) {
         console.warn(`[StoreService] Store ${storeId} not found or empty - attempting auto-recovery`);
-        
+
         // Tentar recuperar dados do localStorage para popular o documento
         const recovered = await this.recoverStoreFromLocalStorage(storeId);
         if (recovered) {
           return recovered;
         }
-        
+
         console.warn(`[StoreService] Could not recover store ${storeId}`);
         return null;
       }
-      
-      return { id: snapshot.id, ...data } as Store;
+
+      const normalized = this.normalizeStoreData(data as Record<string, unknown>);
+      return { id: snapshot.id, ...normalized } as Store;
     } catch (error: any) {
       // Se for erro de permissão, tentar usar cache local
       if (error?.code === 'permission-denied' || error?.message?.includes('permission')) {
@@ -89,7 +104,7 @@ class StoreService {
       throw error;
     }
   }
-  
+
   /**
    * Recuperar dados da loja a partir do localStorage
    * Usado quando o documento Firestore está vazio ou corrompido
@@ -101,20 +116,20 @@ class StoreService {
         console.log('[StoreService] No localStorage settings available for recovery');
         return null;
       }
-      
+
       const parsed = JSON.parse(localSettings);
       if (parsed.storeId !== storeId) {
         console.log(`[StoreService] localStorage storeId (${parsed.storeId}) does not match requested (${storeId})`);
         return null;
       }
-      
+
       if (!parsed.name) {
         console.log('[StoreService] localStorage missing required field: name');
         return null;
       }
-      
+
       console.log('[StoreService] 🔧 Recovering store from localStorage...');
-      
+
       // Popular o documento no Firestore
       await this.ensureStoreExists(
         storeId,
@@ -123,58 +138,58 @@ class StoreService {
         parsed.taxId || '',
         parsed.taxPercentage || 0
       );
-      
+
       // Buscar novamente após criar
       const db = getFirebaseDb();
       const storeDoc = doc(db, 'stores', storeId);
       const newSnapshot = await getDoc(storeDoc);
-      
+
       if (newSnapshot.exists() && newSnapshot.data()?.storeId) {
         console.log('[StoreService] ✅ Store recovered successfully from localStorage');
         return { id: newSnapshot.id, ...newSnapshot.data() } as Store;
       }
-      
+
       return null;
     } catch (recoveryError) {
       console.error('[StoreService] Recovery failed:', recoveryError);
       return null;
     }
   }
-  
+
   /**
    * Criar nova loja (com documento e configurações iniciais)
    */
-  async createStore(store: Omit<Store, 'id' | 'created_at' | 'updated_at'>): Promise<string> {
+  async createStore(store: Omit<Store, 'id' | 'created_at' | 'updated_at' | 'createdAt' | 'updatedAt'>): Promise<string> {
     try {
       const db = getFirebaseDb();
       const storeRef = doc(db, 'stores', store.storeId);
-      
+
       // Verificar se já existe
       const exists = await getDoc(storeRef);
       if (exists.exists()) {
         console.log(`[StoreService] Store ${store.storeId} already exists, updating...`);
         await updateDoc(storeRef, {
           ...store,
-          updated_at: new Date().toISOString()
+          updatedAt: serverTimestamp()
         });
         return store.storeId;
       }
-      
+
       // Criar novo documento
       await setDoc(storeRef, {
         ...store,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       });
-      
+
       // Criar documento inicial de settings na subcollection
       const settingsRef = doc(db, 'stores', store.storeId, 'settings', 'general');
       await setDoc(settingsRef, {
         currency: store.currency,
         language: store.language || 'pt-BR',
-        created_at: new Date().toISOString()
+        createdAt: serverTimestamp()
       });
-      
+
       console.log('[StoreService] Store created:', store.storeId);
       return store.storeId;
     } catch (error) {
@@ -182,7 +197,7 @@ class StoreService {
       throw error;
     }
   }
-  
+
   /**
    * Atualizar dados de uma loja existente
    */
@@ -190,19 +205,19 @@ class StoreService {
     try {
       const db = getFirebaseDb();
       const storeRef = doc(db, 'stores', storeId);
-      
+
       await updateDoc(storeRef, {
         ...updates,
-        updated_at: new Date().toISOString()
+        updatedAt: serverTimestamp()
       });
-      
+
       console.log('[StoreService] Store updated:', storeId);
     } catch (error) {
       console.error('[StoreService] Error updating store:', error);
       throw error;
     }
   }
-  
+
   /**
    * Listar todas as lojas (para dashboard futuro)
    */
@@ -211,17 +226,20 @@ class StoreService {
       const db = getFirebaseDb();
       const storesCollection = collection(db, 'stores');
       const snapshot = await getDocs(storesCollection);
-      
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Store[];
+
+      return snapshot.docs.map(doc => {
+        const normalized = this.normalizeStoreData(doc.data() as Record<string, unknown>);
+        return {
+          id: doc.id,
+          ...normalized
+        };
+      }) as Store[];
     } catch (error) {
       console.error('[StoreService] Error fetching stores:', error);
       throw error;
     }
   }
-  
+
   /**
    * Listar apenas lojas ativas
    */
@@ -231,11 +249,14 @@ class StoreService {
       const storesCollection = collection(db, 'stores');
       const q = query(storesCollection, where('isActive', '==', true));
       const snapshot = await getDocs(q);
-      
-      return snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Store[];
+
+      return snapshot.docs.map(doc => {
+        const normalized = this.normalizeStoreData(doc.data() as Record<string, unknown>);
+        return {
+          id: doc.id,
+          ...normalized
+        };
+      }) as Store[];
     } catch (error) {
       console.error('[StoreService] Error fetching active stores:', error);
       throw error;
@@ -250,26 +271,23 @@ class StoreService {
   async ensureStoreExists(storeId: string, name: string, currency: string, taxId: string, taxPercentage: number): Promise<void> {
     try {
       const db = getFirebaseDb();
-      
+
       // Determinar path correto baseado no modo (consistente com getStore)
-      let storeRef;
       const franchiseId = getCurrentFranchiseId();
-      if (isFranchiseMode() && franchiseId) {
-        storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-        console.log('[StoreService] ensureStoreExists using franchise path:', `franchises/${franchiseId}/stores/${storeId}`);
-      } else {
-        storeRef = doc(db, 'stores', storeId);
-      }
-      
+      const path = storePath(franchiseId || undefined, storeId);
+      console.log('[StoreService] ensureStoreExists using path:', path);
+
+      const storeRef = doc(db, path);
+
       const snapshot = await getDoc(storeRef);
-      
+
       const data = snapshot.data();
       const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
-      
+
       // Criar se não existe OU se é um placeholder vazio (sem campos)
       if (!snapshot.exists() || !hasValidData) {
         console.log(`[StoreService] Creating/populating store document: ${storeId}`);
-        
+
         // Usar setDoc com merge:true para não sobrescrever subcoleções existentes
         await setDoc(storeRef, {
           storeId,
@@ -282,10 +300,10 @@ class StoreService {
           useThermalPrinter: false,
           attractTimeoutSeconds: 60,
           language: 'pt-BR',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
         }, { merge: true });
-        
+
         console.log('[StoreService] ✅ Store document created/populated:', storeId);
       } else {
         console.log('[StoreService] Store already exists with valid data:', storeId);
