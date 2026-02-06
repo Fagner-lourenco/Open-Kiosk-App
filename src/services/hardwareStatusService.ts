@@ -13,6 +13,33 @@
 import { doc, setDoc, onSnapshot, Unsubscribe, serverTimestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId, getFirebaseAuth } from './firebase';
 
+/**
+ * Tenta buscar MAC do ESP32 via HTTP GET /status (Opção A)
+ * Usa o endpoint real existente no firmware (linha 858+ firmware.ino)
+ * Não bloqueia; se timeout, retorna null
+ */
+export async function fetchDeviceMAC(ipAddress: string | undefined): Promise<string | null> {
+  if (!ipAddress) return null;
+
+  try {
+    // Timeout 3s (device slow, mas não travamos UI)
+    const response = await Promise.race([
+      fetch(`http://${ipAddress}/status`, { method: 'GET' }),
+      new Promise<Response>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout')), 3000)
+      )
+    ]);
+
+    if (!response.ok) return null;
+
+    const data = await response.json() as { mac?: string; macAddress?: string };
+    return data.mac || data.macAddress || null;
+  } catch (error) {
+    console.warn(`[hardwareStatusService] Failed to fetch MAC from ${ipAddress}:`, error);
+    return null;
+  }
+}
+
 export interface TapStatusReport {
   id: number;
   isDispensing: boolean;
@@ -45,6 +72,7 @@ export interface HardwareStatus {
   // Metadados
   lastHeartbeat: Date | null;
   updatedAt: Date | null;
+  lastSyncAt?: Date | null;
   kioskVersion?: string;
 
   // Contexto (para collectionGroup rules)
@@ -127,6 +155,17 @@ class HardwareStatusService {
         lastHeartbeat: serverTimestamp(),
         kioskVersion: import.meta.env.VITE_APP_VERSION || '1.0.0', // Versão do Kiosk
       }, { merge: true });
+
+      // Tentar buscar MAC via HTTP /status quando estiver online e sem MAC
+      if (status.esp32Connected && status.esp32Ip && !status.macAddress) {
+        fetchDeviceMAC(status.esp32Ip).then((mac) => {
+          if (mac) {
+            setDoc(statusRef, { macAddress: mac }, { merge: true }).catch((err) => {
+              console.warn('[HardwareStatus] Erro ao atualizar MAC:', err);
+            });
+          }
+        });
+      }
       
       console.log('[HardwareStatus] ✅ Status atualizado com sucesso no Firestore');
     } catch (error) {
@@ -135,14 +174,30 @@ class HardwareStatusService {
   }
 
   /**
-   * Inicia heartbeat periódico (a cada 30 segundos)
+   * Inicia heartbeat periódico
+   * @param intervalMs Intervalo em milissegundos (padrão: 30000ms = 30s)
    */
-  startHeartbeat(): void {
+  startHeartbeat(intervalMs: number = 30000): void {
     if (this.updateInterval) return;
+
+    // Validar bounds
+    const MIN = 5000;
+    const MAX = 60000;
+    let validInterval = intervalMs;
+
+    if (intervalMs < MIN) {
+      console.warn(`[HardwareStatus] Intervalo ${intervalMs}ms é menor que o mínimo ${MIN}ms. Usando ${MIN}ms`);
+      validInterval = MIN;
+    } else if (intervalMs > MAX) {
+      console.warn(`[HardwareStatus] Intervalo ${intervalMs}ms é maior que o máximo ${MAX}ms. Usando ${MAX}ms`);
+      validInterval = MAX;
+    }
+
+    console.log(`[HardwareStatus] Iniciando heartbeat com intervalo de ${validInterval}ms`);
 
     this.updateInterval = window.setInterval(() => {
       this.updateStatus({ lastHeartbeat: new Date() });
-    }, 30000); // 30 segundos
+    }, validInterval);
   }
 
   /**
@@ -178,13 +233,18 @@ class HardwareStatusService {
           esp32Type: data.esp32Type,
           esp32Port: data.esp32Port,
           esp32Ip: data.esp32Ip,
+          macAddress: data.macAddress,
           firmwareVersion: data.firmwareVersion,
           dispensersTotal: data.dispensersTotal ?? 0,
           dispensersOnline: data.dispensersOnline ?? 0,
+          numTaps: data.numTaps ?? 0,
+          taps: data.taps || [],
+          hardwareId: data.hardwareId,
           printerConnected: data.printerConnected ?? false,
           printerPort: data.printerPort,
           lastHeartbeat: data.lastHeartbeat?.toDate?.() || null,
           updatedAt: data.updatedAt?.toDate?.() || null,
+          lastSyncAt: data.lastSyncAt?.toDate?.() || null,
           kioskVersion: data.kioskVersion,
         };
         callback(status);

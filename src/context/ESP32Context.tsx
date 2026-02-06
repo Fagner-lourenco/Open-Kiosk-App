@@ -7,8 +7,11 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
-import esp32Service, { ConnectionStatus, ConnectionType, ESP32Device } from '@/services/esp32CommunicationService';
+import esp32Service, { ConnectionStatus, ConnectionType, ESP32Device, getESP32WiFiIP } from '@/services/esp32CommunicationService';
 import esp32Serial, { ESP32Response } from '@/services/esp32SerialService';
+import { useStoreContext } from '@/context/StoreContext';
+import { useStoreSettings } from '@/hooks/useStoreSettings';
+import { getCurrentFranchiseId, getCurrentStoreId } from '@/services/firebase';
 import { hardwareStatusService } from '@/services/hardwareStatusService';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -43,6 +46,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   autoReconnect = true,
 }) => {
   const { toast } = useToast();
+  const { settings: storeSettings } = useStoreSettings();
 
   // Estado
   const [status, setStatus] = useState<ConnectionStatus>({ connected: false, type: 'none' });
@@ -60,6 +64,127 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // Logs persistentes
   const [logs, setLogs] = useState<ESP32LogEntry[]>([]);
   const logIdRef = useRef(0);
+
+  // ✅ Taps Configuration Sync Logic
+  const { taps: storeTaps, tapsVersion, reportTapApplied } = useStoreContext();
+  const appliedVersionRef = useRef<number>(0);
+  const applyInFlightRef = useRef<boolean>(false);
+  const applyRetryCountRef = useRef<number>(0);
+  const applyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 1. Load appliedVersion on mount
+  useEffect(() => {
+    const fid = getCurrentFranchiseId();
+    const sid = getCurrentStoreId();
+    if (fid && sid) {
+      const key = `applied_taps_version:${fid}:${sid}`;
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        appliedVersionRef.current = parseInt(saved, 10);
+        console.log('[ESP32Context] Loaded appliedVersion:', appliedVersionRef.current);
+      }
+    }
+  }, []);
+
+  // 2. Sync effect: Detect version changes or connection
+  useEffect(() => {
+    if (!status.connected || tapsVersion <= appliedVersionRef.current || storeTaps.length === 0) {
+      return;
+    }
+
+    if (applyInFlightRef.current) return;
+
+    // Debounce to avoid rapid changes
+    if (applyTimeoutRef.current) clearTimeout(applyTimeoutRef.current);
+
+    applyTimeoutRef.current = setTimeout(async () => {
+      applyInFlightRef.current = true;
+      console.log(`[ESP32Context] 🔄 Syncing taps to v${tapsVersion}...`);
+
+      try {
+        const success = await esp32Service.configureMultipleTaps(storeTaps);
+
+        if (success) {
+          console.log('[ESP32Context] ✅ Taps configured successfully to v', tapsVersion);
+          appliedVersionRef.current = tapsVersion;
+
+          // Persist locally
+          const fid = getCurrentFranchiseId();
+          const sid = getCurrentStoreId();
+          if (fid && sid) {
+            localStorage.setItem(`applied_taps_version:${fid}:${sid}`, tapsVersion.toString());
+          }
+
+          // Standardized report
+          await reportTapApplied(tapsVersion, { status: 'success' });
+          applyRetryCountRef.current = 0;
+        } else {
+          throw new Error('ESP32 NACK or timeout on configure_taps');
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Unknown hardware error';
+        console.error('[ESP32Context] ❌ Sync failed:', errorMsg);
+
+        // Limited retry for transient errors
+        if (applyRetryCountRef.current < 3 && status.connected) {
+          applyRetryCountRef.current++;
+          console.log(`[ESP32Context] Retrying apply (${applyRetryCountRef.current}/3)...`);
+          // Logic to retry: let the next tick or effect trigger it again
+          // by keeping appliedVersionRef < tapsVersion and clearing inFlight
+        } else {
+          await reportTapApplied(tapsVersion, { status: 'error', errorMsg });
+          applyRetryCountRef.current = 0;
+        }
+      } finally {
+        applyInFlightRef.current = false;
+        applyTimeoutRef.current = null;
+      }
+    }, 500);
+
+    return () => {
+      if (applyTimeoutRef.current) clearTimeout(applyTimeoutRef.current);
+    };
+  }, [status.connected, tapsVersion, storeTaps, reportTapApplied]);
+
+  // 🆕 SINCRONIZAR HEARTBEAT COM SETTINGS
+  // Quando esp32HeartbeatIntervalMs mudar em StoreSettings, atualizar o intervalo dinâmicamente
+  useEffect(() => {
+    if (!status.connected || !storeSettings?.esp32HeartbeatIntervalMs) {
+      return;
+    }
+
+    const newInterval = storeSettings.esp32HeartbeatIntervalMs;
+    const MIN = 5000;
+    const MAX = 60000;
+
+    // Validar bounds
+    if (newInterval < MIN || newInterval > MAX) {
+      console.warn(`[ESP32Context] esp32HeartbeatIntervalMs inválido: ${newInterval}ms. Min: ${MIN}, Max: ${MAX}`);
+      return;
+    }
+
+    console.log(`[ESP32Context] 🔄 Atualizando heartbeat de 60000ms para ${newInterval}ms`);
+
+    // Limpar interval antigo
+    if (heartbeatRef.current) {
+      clearInterval(heartbeatRef.current);
+    }
+
+    // Criar novo interval com valor dinâmico
+    heartbeatRef.current = setInterval(() => {
+      esp32Service.ping().catch(() => {
+        console.warn('[ESP32Context] Heartbeat falhou');
+      });
+    }, newInterval);
+
+    // Cleanup: limpar interval ao desconectar ou when component unmounts
+    return () => {
+      if (heartbeatRef.current) {
+        clearInterval(heartbeatRef.current);
+        heartbeatRef.current = null;
+      }
+    };
+  }, [status.connected, storeSettings?.esp32HeartbeatIntervalMs]);
 
   // Refs para listeners
   const responseListeners = useRef<Set<(response: ESP32Response) => void>>(new Set());
@@ -104,6 +229,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         return;
       }
       lastPongTimeRef.current = now;
+
+      // 🆕 Atualizar status remoto com dados do pong (ip, firmware_version, mac, num_taps)
+      hardwareStatusService.updateStatus({
+        esp32Connected: true,
+        lastSyncAt: new Date(),
+        ...(response.ip ? { esp32Ip: response.ip } : {}),
+        ...(response.mac ? { macAddress: response.mac } : {}),
+        ...(response.firmware_version ? { firmwareVersion: response.firmware_version } : {}),
+        ...(response.num_taps ? { numTaps: response.num_taps } : {}),
+      });
     }
 
     console.log('[ESP32Context] Resposta recebida:', response);
@@ -213,6 +348,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           hardwareStatusService.updateStatus({
             numTaps: response.num_taps,
             hardwareId: response.chip_id || response.hardware_id,
+            lastSyncAt: new Date() // 🆕 Sync detectado
           });
         }
 
@@ -280,6 +416,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           firmwareVersion: response.firmware_version,
           esp32Ip: response.wifi_ip,
           macAddress: response.mac,
+          lastSyncAt: new Date() // 🆕 Sync detectado
         });
         break;
 
@@ -311,18 +448,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     if (newStatus.connected) {
       setLastError(null);
 
-      // Iniciar heartbeat local e remoto
-      hardwareStatusService.startHeartbeat();
-
-      // Iniciar heartbeat
-      if (heartbeatRef.current) {
-        clearInterval(heartbeatRef.current);
-      }
-      heartbeatRef.current = setInterval(() => {
-        esp32Service.ping().catch(() => {
-          console.warn('[ESP32Context] Heartbeat falhou');
-        });
-      }, heartbeatInterval);
+      // Iniciar heartbeat remoto com o mesmo intervalo (heartbeat local é gerenciado pelo useEffect dinâmico)
+      const interval = storeSettings?.esp32HeartbeatIntervalMs || 60000;
+      hardwareStatusService.startHeartbeat(interval);
     } else {
       // Parar heartbeat local e remoto
       hardwareStatusService.stopHeartbeat();
@@ -333,7 +461,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         heartbeatRef.current = null;
       }
     }
-  }, [heartbeatInterval]);
+  }, []);
 
   // 🆕 Força sincronização do status de conexão com o serviço
   const refreshConnectionStatus = useCallback(() => {
@@ -348,7 +476,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // Registrar listener no serviço de comunicação
   useEffect(() => {
     // Listener para mudanças de conexão
-    esp32Service.setOnConnectionChange(updateConnectionStatus);
+    const unsubConnectionChange = esp32Service.setOnConnectionChange(updateConnectionStatus);
 
     // Listener para respostas Serial/USB (JSON parsed)
     const unsubscribeMessage = esp32Serial.onMessage(handleESP32Response);
@@ -362,7 +490,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     // 🆕 Listener para dados recebidos via Bluetooth
     // NOTA: O serviço agora envia linhas completas (já processou o buffer)
-    esp32Service.setOnBleDataReceived((line: string) => {
+    const unsubBleData = esp32Service.setOnBleDataReceived((line: string) => {
       console.log('[ESP32Context] BLE linha recebida:', line);
 
       // Tentar parsear como JSON
@@ -384,7 +512,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     // 🆕 Listener para dados recebidos via USB OTG nativo (Android)
     // NOTA: O serviço agora envia linhas completas (já processou o buffer)
-    esp32Service.setOnUsbDataReceived((line: string) => {
+    const unsubUsbData = esp32Service.setOnUsbDataReceived((line: string) => {
       console.log('[ESP32Context] USB OTG linha recebida:', line);
 
       // Tentar parsear como JSON
@@ -446,13 +574,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       }, 500);
 
       return () => {
-        clearTimeout(reconnectTimer);
-        esp32Service.setOnConnectionChange(null);
-        esp32Service.setOnBleDataReceived(null);
-        esp32Service.setOnUsbDataReceived(null);
+        if (typeof unsubConnectionChange === 'function') unsubConnectionChange();
+        if (typeof unsubBleData === 'function') unsubBleData();
+        if (typeof unsubUsbData === 'function') unsubUsbData();
         unsubscribeMessage();
         unsubscribeRaw();
         unsubscribeConnection();
+        clearTimeout(reconnectTimer);
 
         if (heartbeatRef.current) {
           clearInterval(heartbeatRef.current);
@@ -461,9 +589,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     }
 
     return () => {
-      esp32Service.setOnConnectionChange(null);
-      esp32Service.setOnBleDataReceived(null);
-      esp32Service.setOnUsbDataReceived(null);
+      if (typeof unsubConnectionChange === 'function') unsubConnectionChange();
+      if (typeof unsubBleData === 'function') unsubBleData();
+      if (typeof unsubUsbData === 'function') unsubUsbData();
       unsubscribeMessage();
       unsubscribeRaw();
       unsubscribeConnection();
@@ -489,8 +617,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     const pollInterval = setInterval(async () => {
       try {
-        // Buscar status via HTTP GET /status
-        const response = await fetch('http://192.168.4.1/status', {
+        // Buscar status via HTTP GET /status (usando IP configurável)
+        const wifiIP = getESP32WiFiIP();
+        const response = await fetch(`http://${wifiIP}/status`, {
           method: 'GET',
           headers: { 'Accept': 'application/json' },
         });

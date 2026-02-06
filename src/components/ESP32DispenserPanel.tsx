@@ -115,8 +115,7 @@ export function ESP32DispenserPanel() {
   // Configurações de autoconexão das settings
   const autoConnectEnabled = settings?.esp32AutoConnect ?? true;
   const connectionOrder = settings?.esp32ConnectionOrder ?? ['usb', 'wifi', 'bluetooth'];
-  const heartbeatInterval = settings?.esp32HeartbeatIntervalMs ?? 15000;
-  
+
   // Detecção de plataforma (Android/iOS/Web)
   const isNativePlatform = Capacitor.isNativePlatform();
   const platformName = Capacitor.getPlatform();
