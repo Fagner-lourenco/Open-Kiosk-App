@@ -156,8 +156,8 @@ WebServer server(80);
 // ----- Bluetooth -----
 BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
-bool deviceConnected = false;
-bool oldDeviceConnected = false;
+volatile int connectedCount = 0;
+int oldConnectedCount = 0;
 
 // ============================================================================
 // 🆕 ESTRUTURAS MULTI-TAP
@@ -315,13 +315,17 @@ void initOTA();
 // Callback quando um cliente BLE conecta/desconecta
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* server) override {
-    deviceConnected = true;
-    Serial.println("[BLE] Cliente conectado!");
+    connectedCount++;
+    Serial.println("[BLE] Cliente conectado! Total: " + String(connectedCount));
+    server->startAdvertising();  // keep advertising to allow multiple clients
   }
 
   void onDisconnect(BLEServer* server) override {
-    deviceConnected = false;
-    Serial.println("[BLE] Cliente desconectado!");
+    if (connectedCount > 0) {
+      connectedCount--;
+    }
+    Serial.println("[BLE] Cliente desconectado! Total: " + String(connectedCount));
+    server->startAdvertising();  // resume advertising after disconnect
   }
 };
 
@@ -653,14 +657,14 @@ void loop() {
   
   // ----- Gerenciar conexão Bluetooth -----
   // Reconectar se desconectou
-  if (!deviceConnected && oldDeviceConnected) {
+  if (connectedCount == 0 && oldConnectedCount > 0) {
     delay(500);
     pServer->startAdvertising();
     Serial.println("[BLE] Aguardando nova conexão...");
-    oldDeviceConnected = deviceConnected;
+    oldConnectedCount = connectedCount;
   }
-  if (deviceConnected && !oldDeviceConnected) {
-    oldDeviceConnected = deviceConnected;
+  if (connectedCount > 0 && oldConnectedCount == 0) {
+    oldConnectedCount = connectedCount;
   }
   
   // ----- Processar dispensação em andamento (Multi-Tap) -----
@@ -889,7 +893,7 @@ void handleStatus() {
   
   // Bluetooth
   doc["ble_name"] = BLE_DEVICE_NAME;
-  doc["ble_connected"] = deviceConnected;
+  doc["ble_connected"] = (connectedCount > 0);
   
   // Hardware — v4.1.0: show actual pin assignments (from NVS, not compile-time defaults)
   doc["led_pin"] = LED_PIN;
@@ -1015,7 +1019,7 @@ void processCommand(String jsonString) {
   
   // 🔧 CORREÇÃO v4.0.4: Enviar também via Bluetooth (se conectado)
   // Isso garante que o Android receba as respostas dos comandos
-  if (deviceConnected && pCharacteristic != NULL) {
+  if (connectedCount > 0 && pCharacteristic != NULL) {
     // 🔧 FIX: Adicionar \n para que o app reconheça linha completa
     String bleResult = result + "\n";
     pCharacteristic->setValue(bleResult.c_str());
@@ -1499,7 +1503,7 @@ String getStatusJson() {
   // Bluetooth
   doc["ble_name"] = BLE_DEVICE_NAME;
   doc["ble_pin"] = BLE_PIN;
-  doc["ble_connected"] = deviceConnected;
+  doc["ble_connected"] = (connectedCount > 0);
   
   // 🆕 Status de cada torneira
   JsonArray tapsArray = doc["taps"].to<JsonArray>();
@@ -1955,7 +1959,7 @@ void sendStatusTap(int tapId, const char* orderId, const char* stage, String mes
   Serial.println(json);
   
   // Enviar via Bluetooth (se conectado)
-  if (deviceConnected && pCharacteristic != NULL) {
+  if (connectedCount > 0 && pCharacteristic != NULL) {
     // 🔧 FIX v4.0.4: Adicionar \n para que o app reconheça linha completa
     String bleJson = json + "\n";
     pCharacteristic->setValue(bleJson.c_str());
@@ -1995,7 +1999,7 @@ void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount
   Serial.println(json);
   
   // Enviar via Bluetooth (se conectado)
-  if (deviceConnected && pCharacteristic != NULL) {
+  if (connectedCount > 0 && pCharacteristic != NULL) {
     // 🔧 FIX v4.0.4: Adicionar \n para que o app reconheça linha completa
     String bleJson = json + "\n";
     pCharacteristic->setValue(bleJson.c_str());

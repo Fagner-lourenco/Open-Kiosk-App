@@ -1,0 +1,13 @@
+# Ignorar tudo exceto admin e shared
+/*
+!/admin
+!/shared
+!/vercel.json
+
+# Dentro de admin, ignorar node_modules e arquivos de build
+admin/node_modules
+admin/dist
+admin/.vercel
+admin/coverage
+admin/src/**/*.test.tsx
+admin/src/**/*.test.ts

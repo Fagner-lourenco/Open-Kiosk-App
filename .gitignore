@@ -7,18 +7,68 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+node_modules/
+dist/
+dist-ssr/
+build/
+coverage/
 *.local
+
+# Framework/build outputs
+.next/
+.nuxt/
+.svelte-kit/
+.output/
+.expo/
+web-build/
+
+# Vite/TS and bundler caches
+.vite/
+.cache/
+.turbo/
+.parcel-cache/
+.rollup.cache/
+.esbuild/
+tsconfig.tsbuildinfo
+
+# Package manager caches
+.npm/
+.pnpm-store/
+.yarn/
+.pnp.*
+
+# Runtime caches
+.eslintcache
+.stylelintcache
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
+Thumbs.db
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+.vercel/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Android/Gradle
+android/.gradle/
+android/**/build/
+android/**/.cxx/
+android/**/local.properties
+
+# Firebase
+.firebase/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
