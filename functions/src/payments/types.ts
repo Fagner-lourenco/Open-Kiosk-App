@@ -59,7 +59,16 @@ export interface CreatePaymentResponse {
 }
 
 export interface NormalizedPaymentGatewayConfig {
-  provider: 'none' | 'mercado_pago' | 'mercadopago' | 'pagbank';
+  /**
+   * Payment provider (canonical form)
+   *
+   * NOTE: Legacy 'mercadopago' is automatically converted to canonical
+   * 'mercado_pago' at runtime. This ensures type safety while maintaining
+   * backward compatibility with existing Firestore documents.
+   *
+   * @see normalizePaymentGatewayConfig() - Handles normalization
+   */
+  provider: 'none' | 'mercado_pago' | 'pagbank';
   environment: 'sandbox' | 'production';
   enabledMethods: {
     cash: boolean;

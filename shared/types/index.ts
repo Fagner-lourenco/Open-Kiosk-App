@@ -2,7 +2,7 @@
  * ============================================================================
  * Tipos Compartilhados - Barrel Export
  * ============================================================================
- * 
+ *
  * Re-exporta todos os tipos unificados para Kiosk e Admin
  */
 
@@ -51,3 +51,24 @@ export {
   type StoreDispenser,
   type StoreStats,
 } from './store';
+
+// Operations (ERP Vertical de Chopp)
+export {
+  type TapStatus,
+  type TapOperationalState,
+  type KegStatus,
+  type Keg,
+  type TapAssignmentStatus,
+  type TapAssignment,
+  type ServingSessionStatus,
+  type ServingSession,
+  type WastageType,
+  type WastageSource,
+  type WastageEvent,
+  type MaintenanceType,
+  type MaintenanceStatus,
+  type MaintenanceLog,
+  type NotificationType,
+  type NotificationSeverity,
+  type OperationalNotification,
+} from './operations';

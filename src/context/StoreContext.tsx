@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { Store } from '@/types/store';
+import { TapConfig } from '@/types/store';
 import { storeService } from '@/services/storeService';
+import { useTapConfiguration } from '@/hooks/useTapConfiguration';
 
 // ============================================
 // Store Context Types
@@ -13,6 +15,13 @@ interface StoreContextType {
   error: string | null;
   setCurrentStoreId: (storeId: string) => void;
   refreshStore: () => Promise<void>;
+
+  // ✅ Taps Configuration
+  taps: TapConfig[];
+  tapsVersion: number;
+  tapsLoading: boolean;
+  tapsSource: 'none' | 'cache' | 'firestore';
+  reportTapApplied: (version: number, result: { status: 'success' | 'error', errorMsg?: string }) => Promise<void>;
 }
 
 // Evento customizado para notificar mudança de loja
@@ -38,7 +47,19 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   const [currentStore, setCurrentStore] = useState<Store | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
+  // ✅ Taps Configuration from Firestore
+  const {
+    taps,
+    version: tapsVersion,
+    loading: tapsLoading,
+    source: tapsSource,
+    reportApplied: reportTapApplied,
+  } = useTapConfiguration({
+    currentStoreId,
+    currentFranchiseId: localStorage.getItem('open-kiosk-admin:selectedFranchise'),
+  });
+
   // 🔧 FIX: Flag para evitar fetch duplicado (previne loop infinito)
   const isFetchingRef = useRef(false);
   const lastFetchedStoreIdRef = useRef<string | null>(null);
@@ -54,7 +75,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
           setLoading(false);
           return;
         }
-        
+
         // Preferir seleção atual (alinhado com Admin)
         const selectedStore = localStorage.getItem('open-kiosk-admin:selectedStore');
         if (selectedStore) {
@@ -87,7 +108,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   const setCurrentStoreId = useCallback((storeId: string) => {
     console.log('[StoreContext] Setting storeId:', storeId);
     setCurrentStoreIdState(storeId);
-    
+
     // Atualizar localStorage
     try {
       localStorage.setItem('open-kiosk-admin:selectedStore', storeId);
@@ -100,10 +121,10 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
     } catch (err) {
       console.error('[StoreContext] Error updating localStorage:', err);
     }
-    
+
     // Disparar evento para notificar outros hooks
-    window.dispatchEvent(new CustomEvent(STORE_CHANGED_EVENT, { 
-      detail: { storeId } 
+    window.dispatchEvent(new CustomEvent(STORE_CHANGED_EVENT, {
+      detail: { storeId }
     }));
   }, []);
 
@@ -111,17 +132,17 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   // 🔧 FIX: Removido currentStore das dependências para evitar loop infinito
   const refreshStore = useCallback(async () => {
     if (!currentStoreId) return;
-    
+
     // 🔧 FIX: Evitar fetch duplicado para o mesmo storeId
     if (isFetchingRef.current && lastFetchedStoreIdRef.current === currentStoreId) {
       console.log('[StoreContext] Already fetching store, skipping duplicate request');
       return;
     }
-    
+
     isFetchingRef.current = true;
     lastFetchedStoreIdRef.current = currentStoreId;
     setLoading(true);
-    
+
     try {
       console.log('[StoreContext] Refreshing store:', currentStoreId);
       const storeData = await storeService.getStore(currentStoreId);
@@ -132,7 +153,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
       setError(null);
     } catch (err) {
       console.warn('[StoreContext] Error refreshing store from Firebase:', err);
-      
+
       // Fallback: tentar criar Store a partir do localStorage (modo offline)
       try {
         const settingsStr = localStorage.getItem('storeSettings');
@@ -162,7 +183,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
       } catch (cacheErr) {
         console.error('[StoreContext] Error loading from cache:', cacheErr);
       }
-      
+
       // Definir erro apenas se não temos dados em cache
       setError('Store data unavailable - working offline');
     } finally {
@@ -183,14 +204,19 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   }, [currentStoreId]);
 
   return (
-    <StoreContext.Provider 
-      value={{ 
-        currentStoreId, 
-        currentStore, 
-        loading, 
-        error, 
+    <StoreContext.Provider
+      value={{
+        currentStoreId,
+        currentStore,
+        loading,
+        error,
         setCurrentStoreId,
-        refreshStore 
+        refreshStore,
+        taps,
+        tapsVersion,
+        tapsLoading,
+        tapsSource,
+        reportTapApplied
       }}
     >
       {children}

@@ -446,6 +446,141 @@ service cloud.firestore {
           // Apenas Cloud Functions escrevem métricas
           allow write: if false;
         }
+
+        // ────────────────────────────────────────────────────────────────────
+        // TAPS (Estado Operacional das Torneiras - ERP Chopp)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /taps/{tapId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']);
+
+          allow delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // KEGS (Barris - ERP Chopp)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /kegs/{kegId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                  isFranchiseOwner(franchiseId) ||
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // TAP ASSIGNMENTS (Historico de conexao Tap/Keg)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /tapAssignments/{assignmentId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          // Update limitado: apenas campos de remocao e contadores operacionais
+          allow update: if (isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager'])) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'removedAt', 'removedBy', 'removalReason',
+                                    'totalMlDispensed', 'totalSessions', 'totalWastageMl',
+                                    'updatedAt', 'updatedBy']);
+
+          allow delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // SERVING SESSIONS (Sessoes de Servir - IMUTAVEL)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /servingSessions/{eventId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+          // IMUTAVEL: sem update, sem delete
+          allow update, delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // WASTAGE EVENTS (Perdas - IMUTAVEL)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /wastageEvents/{wastageId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          // IMUTAVEL: sem update, sem delete
+          allow update, delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // MAINTENANCE LOGS (Manutencao - update limitado)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /maintenanceLogs/{logId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']);
+
+          // Update limitado: apenas transicoes de status e dados de conclusao
+          allow update: if (isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician'])) &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'performedAt', 'performedBy', 'durationMinutes',
+                                    'notes', 'updatedAt', 'updatedBy']);
+
+          allow delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // NOTIFICATIONS (Notificacoes Operacionais)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /notifications/{notifId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          // Apenas Cloud Functions criam notificacoes
+          allow create: if false;
+
+          // Membros podem marcar como lida
+          allow update: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+          allow delete: if false;
+        }
       }
       
       // ──────────────────────────────────────────────────────────────────────

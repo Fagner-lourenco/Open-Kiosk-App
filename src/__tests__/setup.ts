@@ -68,19 +68,31 @@ global.fetch = vi.fn();
 // ============================================================
 // MOCK GLOBAL: LOCALSTORAGE & SESSIONSTORAGE
 // ============================================================
-const localStorageMock = {
-  getItem: vi.fn(),
-  setItem: vi.fn(),
-  removeItem: vi.fn(),
-  clear: vi.fn(),
+const createStorageMock = () => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] || null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = value.toString();
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+  };
 };
+
+const localStorageMock = createStorageMock();
+const sessionStorageMock = createStorageMock();
 
 Object.defineProperty(window, 'localStorage', {
   value: localStorageMock,
 });
 
 Object.defineProperty(window, 'sessionStorage', {
-  value: localStorageMock,
+  value: sessionStorageMock,
 });
 
 // ============================================================

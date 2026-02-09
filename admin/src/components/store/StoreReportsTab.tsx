@@ -9,7 +9,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { collection, query, getDocs, orderBy, where, Timestamp } from 'firebase/firestore';
+import { collection, query, getDocs, orderBy, where, limit as firestoreLimit, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ordersPath, storeSubPath } from '@/lib/pathResolver';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -24,16 +24,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { 
-  BarChart3, 
-  Loader2, 
-  TrendingUp, 
+import {
+  BarChart3,
+  Loader2,
+  TrendingUp,
   DollarSign,
   ShoppingCart,
   Package,
   Users,
   Calendar,
   Download,
+  Droplets,
+  Beer,
+  Activity,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   BarChart,
@@ -474,6 +478,207 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
           )}
         </CardContent>
       </Card>
+
+      {/* ── OPERATIONAL REPORTS SECTION ─────────────────────────────── */}
+      <OperationalReportsSection franchiseId={franchiseId} storeId={storeId} startDate={startDate} />
     </div>
+  );
+}
+
+// ============================================================================
+// OPERATIONAL REPORTS SECTION
+// ============================================================================
+
+interface OperationalSession {
+  tapId: string;
+  actualMl: number;
+  targetMl: number;
+  status: string;
+}
+
+interface OperationalWastage {
+  tapId: string;
+  mlLost: number;
+  type: string;
+}
+
+function formatMl(ml: number): string {
+  if (ml >= 1000) return `${(ml / 1000).toFixed(1)}L`;
+  return `${Math.round(ml)}ml`;
+}
+
+function OperationalReportsSection({
+  franchiseId,
+  storeId,
+  startDate,
+}: {
+  franchiseId: string;
+  storeId: string;
+  startDate: Date;
+}) {
+  const base = `franchises/${franchiseId}/stores/${storeId}`;
+
+  // Fetch serving sessions for the period
+  const { data: sessions = [] } = useQuery({
+    queryKey: ['ops-report-sessions', franchiseId, storeId, startDate.toISOString()],
+    queryFn: async (): Promise<OperationalSession[]> => {
+      const ref = collection(db, base, 'servingSessions');
+      const q = query(ref,
+        where('createdAt', '>=', Timestamp.fromDate(startDate)),
+        orderBy('createdAt', 'desc'),
+        firestoreLimit(1000),
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          tapId: (data.tapId as string) || '0',
+          actualMl: (data.actualMl as number) || 0,
+          targetMl: (data.targetMl as number) || 0,
+          status: (data.status as string) || 'completed',
+        };
+      });
+    },
+    enabled: !!franchiseId && !!storeId,
+  });
+
+  // Fetch wastage events for the period
+  const { data: wastage = [] } = useQuery({
+    queryKey: ['ops-report-wastage', franchiseId, storeId, startDate.toISOString()],
+    queryFn: async (): Promise<OperationalWastage[]> => {
+      const ref = collection(db, base, 'wastageEvents');
+      const q = query(ref,
+        where('createdAt', '>=', Timestamp.fromDate(startDate)),
+        orderBy('createdAt', 'desc'),
+        firestoreLimit(500),
+      );
+      const snap = await getDocs(q);
+      return snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          tapId: (data.tapId as string) || '0',
+          mlLost: (data.mlLost as number) || 0,
+          type: (data.type as string) || 'other',
+        };
+      });
+    },
+    enabled: !!franchiseId && !!storeId,
+  });
+
+  // Calculate metrics
+  const totalMlDispensed = sessions.reduce((sum, s) => sum + s.actualMl, 0);
+  const totalMlWasted = wastage.reduce((sum, w) => sum + w.mlLost, 0);
+  const totalVolume = totalMlDispensed + totalMlWasted;
+  const wastePercentage = totalVolume > 0 ? (totalMlWasted / totalVolume) * 100 : 0;
+  const totalSessions = sessions.length;
+
+  // By tap
+  const byTap: Record<string, { dispensed: number; sessions: number; wasted: number }> = {};
+  sessions.forEach((s) => {
+    if (!byTap[s.tapId]) byTap[s.tapId] = { dispensed: 0, sessions: 0, wasted: 0 };
+    byTap[s.tapId].dispensed += s.actualMl;
+    byTap[s.tapId].sessions += 1;
+  });
+  wastage.forEach((w) => {
+    if (!byTap[w.tapId]) byTap[w.tapId] = { dispensed: 0, sessions: 0, wasted: 0 };
+    byTap[w.tapId].wasted += w.mlLost;
+  });
+
+  const tapData = Object.entries(byTap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([tapId, data]) => ({
+      name: `T${Number(tapId) + 1}`,
+      dispensado: Math.round(data.dispensed / 1000 * 10) / 10,
+      perda: Math.round(data.wasted / 1000 * 10) / 10,
+      sessoes: data.sessions,
+    }));
+
+  if (sessions.length === 0 && wastage.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Beer className="h-5 w-5 mr-2" />
+            Operacional
+          </CardTitle>
+          <CardDescription>Dados operacionais de chopp no periodo</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="py-8 text-center text-gray-400">
+            Nenhum dado operacional no periodo
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      {/* Operational KPIs */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center">
+            <Beer className="h-5 w-5 mr-2" />
+            Operacional — Periodo Selecionado
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-3 bg-blue-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <Droplets className="h-4 w-4 text-blue-500" />
+                <span className="text-xs text-gray-500">Dispensado</span>
+              </div>
+              <p className="text-lg font-bold text-blue-700">{formatMl(totalMlDispensed)}</p>
+            </div>
+            <div className="p-3 bg-red-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle className="h-4 w-4 text-red-500" />
+                <span className="text-xs text-gray-500">Perdas</span>
+              </div>
+              <p className="text-lg font-bold text-red-600">{formatMl(totalMlWasted)}</p>
+            </div>
+            <div className="p-3 bg-yellow-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <TrendingUp className="h-4 w-4 text-yellow-600" />
+                <span className="text-xs text-gray-500">% Perda</span>
+              </div>
+              <p className="text-lg font-bold text-yellow-700">
+                {wastePercentage.toFixed(1)}%
+              </p>
+            </div>
+            <div className="p-3 bg-green-50 rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <Activity className="h-4 w-4 text-green-500" />
+                <span className="text-xs text-gray-500">Sessoes</span>
+              </div>
+              <p className="text-lg font-bold text-green-700">{totalSessions}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* By Tap Chart */}
+      {tapData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Volume por Torneira (L)</CardTitle>
+            <CardDescription>Dispensado vs Perda por torneira</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={250}>
+              <BarChart data={tapData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="name" />
+                <YAxis />
+                <Tooltip formatter={(value: number) => [`${value}L`]} />
+                <Bar dataKey="dispensado" fill="#3b82f6" name="Dispensado" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="perda" fill="#ef4444" name="Perda" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+    </>
   );
 }

@@ -7,6 +7,15 @@ const DEFAULT_ENABLED_METHODS = {
   debit: true,
 };
 
+/**
+ * Normaliza formato de payment provider (legacy → canonical)
+ *
+ * Converte legacy 'mercadopago' para canonical 'mercado_pago'.
+ * Esta é a primeira linha de defesa para backward-compatibility com dados antigos.
+ *
+ * @param provider - Valor do Firestore (pode estar em formato legado)
+ * @returns Canonical payment provider
+ */
 const normalizeProvider = (provider?: string): NormalizedPaymentGatewayConfig['provider'] => {
   if (!provider) return 'mercado_pago';
   if (provider === 'mercadopago') return 'mercado_pago';

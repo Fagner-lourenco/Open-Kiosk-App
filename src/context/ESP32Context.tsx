@@ -13,6 +13,7 @@ import { useStoreContext } from '@/context/StoreContext';
 import { useStoreSettings } from '@/hooks/useStoreSettings';
 import { getCurrentFranchiseId, getCurrentStoreId } from '@/services/firebase';
 import { hardwareStatusService } from '@/services/hardwareStatusService';
+import { persistSession } from '@/services/servingSessionService';
 import { useToast } from '@/hooks/use-toast';
 import {
   TapStatus,
@@ -64,6 +65,10 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // Logs persistentes
   const [logs, setLogs] = useState<ESP32LogEntry[]>([]);
   const logIdRef = useRef(0);
+
+  // ServingSession: capture progress ref for persistence before state clear
+  const currentProgressRef = useRef<ESP32DispensingProgress | null>(null);
+  const dispensingStartedAtRef = useRef<Date | null>(null);
 
   // ✅ Taps Configuration Sync Logic
   const { taps: storeTaps, tapsVersion, reportTapApplied } = useStoreContext();
@@ -286,18 +291,22 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     switch (responseType) {
       case 'progress':
         setIsDispensing(true);
-        setCurrentProgress({
-          orderId: response.orderId || '',
-          cup: response.cup || 1,
-          totalCups: response.total_cups || 1,
-          ml: response.ml || 0,
-          targetMl: response.target || response.target_ml || 0,
-          percent: response.percent || 0,
-          flowStarted: response.flow_started ?? false,
-          elapsedSeconds: response.elapsed_seconds ?? 0,
-          remainingSeconds: response.remaining_seconds ?? 300,
-          tapId: response.tapId, // 🆕 Multi-Tap: incluir tapId no progresso
-        });
+        {
+          const progressData: ESP32DispensingProgress = {
+            orderId: response.orderId || '',
+            cup: response.cup || 1,
+            totalCups: response.total_cups || 1,
+            ml: response.ml || 0,
+            targetMl: response.target || response.target_ml || 0,
+            percent: response.percent || 0,
+            flowStarted: response.flow_started ?? false,
+            elapsedSeconds: response.elapsed_seconds ?? 0,
+            remainingSeconds: response.remaining_seconds ?? 300,
+            tapId: response.tapId, // Multi-Tap: incluir tapId no progresso
+          };
+          setCurrentProgress(progressData);
+          currentProgressRef.current = progressData; // keep ref in sync for persistSession
+        }
 
         // 🆕 Multi-Tap: Atualizar status do tap específico
         if (response.tapId !== undefined) {
@@ -326,11 +335,40 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         break;
 
       case 'status':
+        // Persist per-cup session on cup_complete (multi-cup orders)
+        if (response.stage === 'cup_complete') {
+          const cupProgressSnapshot = currentProgressRef.current;
+          if (cupProgressSnapshot && cupProgressSnapshot.orderId) {
+            persistSession({
+              progress: cupProgressSnapshot,
+              stage: 'completed',
+              startedAt: dispensingStartedAtRef.current || undefined,
+            }).catch((err) => {
+              console.error('[ESP32Context] Failed to persist cup session:', err);
+            });
+          }
+        }
+
         if (response.stage === 'completed' || response.stage === 'error') {
+          // Persist ServingSession BEFORE clearing state
+          const progressSnapshot = currentProgressRef.current;
+          if (progressSnapshot && progressSnapshot.orderId) {
+            persistSession({
+              progress: progressSnapshot,
+              stage: response.stage,
+              errorMessage: response.error || response.message,
+              startedAt: dispensingStartedAtRef.current || undefined,
+            }).catch((err) => {
+              console.error('[ESP32Context] Failed to persist serving session:', err);
+            });
+          }
+
           setIsDispensing(false);
           setCurrentProgress(null);
+          currentProgressRef.current = null;
+          dispensingStartedAtRef.current = null;
 
-          // 🆕 Multi-Tap: Atualizar tap como não dispensando
+          // Multi-Tap: Atualizar tap como não dispensando
           if (response.tapId !== undefined) {
             setTaps(prev => prev.map(t =>
               t.id === response.tapId
@@ -401,6 +439,21 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         }
         break;
 
+      // Handle config_applied ACK from firmware (set_config / configure_taps response)
+      case 'config_applied':
+        if (response.applied && response.tapsVersion) {
+          console.log('[ESP32Context] Config applied ACK received, version:', response.tapsVersion);
+          appliedVersionRef.current = response.tapsVersion;
+          const fid = getCurrentFranchiseId();
+          const sid = getCurrentStoreId();
+          if (fid && sid) {
+            localStorage.setItem(`applied_taps_version:${fid}:${sid}`, String(response.tapsVersion));
+          }
+          reportTapApplied(response.tapsVersion, { status: 'success' });
+          applyRetryCountRef.current = 0;
+        }
+        break;
+
       case 'settings':
         setSettings({
           firmwareVersion: response.firmware_version || 'unknown',
@@ -416,15 +469,29 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           firmwareVersion: response.firmware_version,
           esp32Ip: response.wifi_ip,
           macAddress: response.mac,
-          lastSyncAt: new Date() // 🆕 Sync detectado
+          lastSyncAt: new Date()
         });
         break;
 
       case 'error':
         setLastError(response.message || 'Erro desconhecido');
         if (response.stage === 'error') {
+          // Persist ServingSession for error case
+          const errorProgressSnapshot = currentProgressRef.current;
+          if (errorProgressSnapshot && errorProgressSnapshot.orderId) {
+            persistSession({
+              progress: errorProgressSnapshot,
+              stage: 'error',
+              errorMessage: response.message || 'Erro desconhecido',
+              startedAt: dispensingStartedAtRef.current || undefined,
+            }).catch((err) => {
+              console.error('[ESP32Context] Failed to persist error serving session:', err);
+            });
+          }
           setIsDispensing(false);
           setCurrentProgress(null);
+          currentProgressRef.current = null;
+          dispensingStartedAtRef.current = null;
         }
         break;
     }
@@ -817,7 +884,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     // Preparar UI para dispensação
     setIsDispensing(true);
-    setCurrentProgress({
+    dispensingStartedAtRef.current = new Date(); // capture start time for ServingSession
+    const initialProgress: ESP32DispensingProgress = {
       orderId,
       cup: 1,
       totalCups: quantity,
@@ -826,9 +894,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       percent: 0,
       flowStarted: false,
       elapsedSeconds: 0,
-      remainingSeconds: 120, // 🔧 v4.0.6: Reduzido para 2 minutos (consistente com firmware)
+      remainingSeconds: 120,
       tapId,
-    });
+    };
+    setCurrentProgress(initialProgress);
+    currentProgressRef.current = initialProgress;
 
     addLog('sent', `release_drink: ${orderId} (${mlPerUnit}ml x${quantity}) [Tap ${tapId}]`);
 

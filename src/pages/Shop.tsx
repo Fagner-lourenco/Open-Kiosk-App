@@ -59,7 +59,7 @@ const Shop = () => {
   // 🔒 PRODUÇÃO: Verificar conexão ESP32 antes de checkout de bebida
   const { status: esp32Status, ping } = useESP32();
   const { toast } = useToast();
-  
+
   // Kiosk idle overlay (suppressed when any modal/overlay is active)
   const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible || isCheckoutOpen;
   const attractTimeout = settings?.attractTimeoutSeconds ?? 15;
@@ -99,16 +99,16 @@ const Shop = () => {
         // Products with lower stock are considered "more sold"
         const stockA = a.stock || 0;
         const stockB = b.stock || 0;
-        
+
         // If both have stock, sort by lowest stock first (most sold)
         if (stockA > 0 && stockB > 0) {
           return stockA - stockB;
         }
-        
+
         // In-stock items come before out-of-stock
         if (stockA > 0 && stockB === 0) return -1;
         if (stockA === 0 && stockB > 0) return 1;
-        
+
         return 0;
       });
 
@@ -147,7 +147,7 @@ const Shop = () => {
           return;
         }
       }
-      
+
       setSelectedDrink(product);
       setIsDrinkCheckoutOpen(true);
       return;
@@ -267,19 +267,19 @@ const Shop = () => {
             <VoiceSearchButton onTranscript={handleVoiceTranscript} />
             <div>
               <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setIsCartOpen(true)}
-              className="relative"
-            >
-              <ShoppingCart className="w-4 h-4 mr-2" />
-              {t('shop.cart')}
-              {getTotalItems() > 0 && (
-                <Badge variant="destructive" className="ml-2 px-1 min-w-[1.2rem] h-5">
-                  {getTotalItems()}
-                </Badge>
-              )}
-            </Button>
+                variant="outline"
+                size="sm"
+                onClick={() => setIsCartOpen(true)}
+                className="relative"
+              >
+                <ShoppingCart className="w-4 h-4 mr-2" />
+                {t('shop.cart')}
+                {getTotalItems() > 0 && (
+                  <Badge variant="destructive" className="ml-2 px-1 min-w-[1.2rem] h-5">
+                    {getTotalItems()}
+                  </Badge>
+                )}
+              </Button>
             </div>
           </div>
         </div>
@@ -301,7 +301,7 @@ const Shop = () => {
                       />
                     </div>
                   )}
-                  
+
                   <div>
                     <h3 className="font-semibold text-sm line-clamp-2">{product.title}</h3>
                     <p className="text-gray-600 text-xs line-clamp-2 mt-1">{product.description}</p>
@@ -324,7 +324,7 @@ const Shop = () => {
                       </Badge>
                     </div>
                   </div>
-                  
+
                   <Button
                     onClick={() => addToCart(product)}
                     disabled={product.isDrink ? (product.totalMlAvailable || 0) <= 0 : (product.stock || 0) <= 0}
@@ -390,10 +390,11 @@ const Shop = () => {
 
       {/* Attract Screen Overlay */}
       <AttractScreen
-        visible={isIdle}
+        visible={isIdle && (settings?.attractScreenEnabled ?? true)}
         onStart={resetIdle}
         title={t('shop.orderHere')}
         subtitle={t('shop.touchToStart')}
+        attractVideoConfig={settings?.attractVideoConfig}
       />
     </div>
   );

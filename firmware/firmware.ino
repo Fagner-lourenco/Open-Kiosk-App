@@ -86,6 +86,7 @@
 #include <ESPmDNS.h>           // mDNS - Acessar via kiosk-bier.local
 #include <esp_task_wdt.h>      // Watchdog Timer para segurança
 // NOTA: BLE2902 removido - deprecated no ESP32 Core 3.x (NimBLE adiciona automaticamente)
+#include <Update.h>            // v4.1.0: OTA firmware update
 
 // ============================================================================
 // ⚙️ CONFIGURAÇÕES - AJUSTE CONFORME SUA NECESSIDADE
@@ -140,7 +141,7 @@ const uint32_t BLE_PIN = 123456;              // 🔒 PIN para pareamento BLE
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // ----- VERSÃO DO FIRMWARE -----
-const char* FIRMWARE_VERSION = "4.0.6";  // Non-blocking state machine + bug fixes
+const char* FIRMWARE_VERSION = "4.1.0";  // set_config + OTA + /status pins
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
@@ -294,6 +295,16 @@ String handleGetSettings();
 String handleWifiInfo();
 String handleDiagnoseGPIO();  // Diagnóstico de GPIO para debugging
 // handleResetWifi e handleStartWifiPortal REMOVIDOS - Access Point fixo
+
+// v4.1.0: set_config (dynamic pin assignment from Admin/Kiosk)
+String handleSetConfig(JsonDocument& doc);
+void applyTapPins();  // Re-attach interrupts after pin change
+
+// v4.1.0: OTA
+bool otaEnabled = true;  // Can be disabled via NVS flag
+String otaUsername = "admin";
+String otaPassword = "kiosk2026";
+void initOTA();
 
 
 
@@ -849,7 +860,10 @@ void initHTTPServer() {
   
   // Habilitar CORS básico (complementar aos handlers OPTIONS acima)
   server.enableCORS(true);
-  
+
+  // v4.1.0: Register OTA endpoint before server.begin()
+  initOTA();
+
   server.begin();
   Serial.println("[HTTP] Servidor iniciado na porta 80 (CORS habilitado)");
 }
@@ -877,11 +891,19 @@ void handleStatus() {
   doc["ble_name"] = BLE_DEVICE_NAME;
   doc["ble_connected"] = deviceConnected;
   
-  // Hardware
-  doc["valve_pin"] = VALVE_PIN;
-  doc["flow_sensor_pin"] = FLOW_SENSOR_PIN;
+  // Hardware — v4.1.0: show actual pin assignments (from NVS, not compile-time defaults)
   doc["led_pin"] = LED_PIN;
   doc["num_taps"] = NUM_TAPS;
+  JsonArray statusTaps = doc["taps_config"].to<JsonArray>();
+  for (int i = 0; i < NUM_TAPS; i++) {
+    JsonObject tc = statusTaps.add<JsonObject>();
+    tc["id"] = i;
+    tc["valve_pin"] = tapConfig[i].valvePin;
+    tc["sensor_pin"] = tapConfig[i].sensorPin;
+    tc["pulsos_por_litro"] = tapConfig[i].pulsosPorLitro;
+    tc["ml_por_segundo"] = tapConfig[i].mlPorSegundo;
+    tc["is_dispensing"] = tapState[i].isDispensing;
+  }
   
   // 🆕 Ajuste 3: Identificação do hardware (facilita suporte técnico)
   char chipId[18];
@@ -1113,7 +1135,12 @@ String processCommandAndGetResult(String jsonString) {
   else if (strcmp(action, "diagnose_gpio") == 0) {
     return handleDiagnoseGPIO();
   }
-  
+
+  // ----- AÇÃO: SET_CONFIG (v4.1.0 — dynamic pin + calibration from Admin/Kiosk) -----
+  else if (strcmp(action, "set_config") == 0 || strcmp(action, "configure_taps") == 0) {
+    return handleSetConfig(doc);
+  }
+
   // ----- AÇÃO DESCONHECIDA -----
   else {
     return "{\"type\":\"error\",\"code\":\"UNKNOWN_ACTION\",\"message\":\"Ação desconhecida: " + String(action) + "\"}";
@@ -2000,6 +2027,17 @@ void loadSettings() {
     mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
   }
   
+  // v4.1.0: Load pin assignments from NVS (set by set_config)
+  for (int i = 0; i < NUM_TAPS; i++) {
+    String kVP = "tap" + String(i) + "_vpin";
+    String kSP = "tap" + String(i) + "_spin";
+    // Default to compile-time constants if no NVS key
+    int defaultVP = (i == 0) ? VALVE_PIN_0 : VALVE_PIN_1;
+    int defaultSP = (i == 0) ? FLOW_SENSOR_PIN_0 : FLOW_SENSOR_PIN_1;
+    tapConfig[i].valvePin = preferences.getInt(kVP.c_str(), defaultVP);
+    tapConfig[i].sensorPin = preferences.getInt(kSP.c_str(), defaultSP);
+  }
+
   // 🆕 Carregar calibração por tap
   for (int i = 0; i < NUM_TAPS; i++) {
     String keyPulsos = "tap" + String(i) + "_pulsos";
@@ -2309,6 +2347,207 @@ String handleDiagnoseGPIO() {
   String result;
   serializeJson(doc, result);
   return result;
+}
+
+// ============================================================================
+// v4.1.0: SET_CONFIG — Dynamic pin + calibration from Admin/Kiosk
+// ============================================================================
+// Receives: {"action":"set_config","taps":[{"id":0,"valve_pin":5,"sensor_pin":6,...},...]}
+// Persists to NVS, re-attaches ISRs, responds with config_applied ACK.
+
+// Allowed GPIOs on XIAO ESP32-S3 (must match Admin board profile)
+const int ALLOWED_GPIOS[] = {1,2,3,4,5,6,7,8,9,12,13,43,44};
+const int ALLOWED_GPIOS_COUNT = 13;
+
+bool isAllowedGpio(int pin) {
+  for (int i = 0; i < ALLOWED_GPIOS_COUNT; i++) {
+    if (ALLOWED_GPIOS[i] == pin) return true;
+  }
+  return false;
+}
+
+String handleSetConfig(JsonDocument& doc) {
+  JsonArray tapsArr = doc["taps"].as<JsonArray>();
+  if (tapsArr.isNull() || tapsArr.size() == 0) {
+    return "{\"type\":\"error\",\"code\":\"INVALID_PARAMS\",\"message\":\"Array 'taps' obrigatorio\"}";
+  }
+
+  // Validate first, apply second
+  for (JsonVariant t : tapsArr) {
+    int id = t["id"] | -1;
+    if (id < 0 || id >= NUM_TAPS) {
+      return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId " + String(id) + " fora do range 0-" + String(NUM_TAPS-1) + "\"}";
+    }
+    int vp = t["valve_pin"] | -1;
+    int sp = t["sensor_pin"] | -1;
+    if (vp != -1 && !isAllowedGpio(vp)) {
+      return "{\"type\":\"error\",\"code\":\"INVALID_PIN\",\"message\":\"valve_pin " + String(vp) + " nao permitido no XIAO ESP32-S3\"}";
+    }
+    if (sp != -1 && !isAllowedGpio(sp)) {
+      return "{\"type\":\"error\",\"code\":\"INVALID_PIN\",\"message\":\"sensor_pin " + String(sp) + " nao permitido no XIAO ESP32-S3\"}";
+    }
+    if (vp != -1 && sp != -1 && vp == sp) {
+      return "{\"type\":\"error\",\"code\":\"PIN_CONFLICT\",\"message\":\"Tap " + String(id) + ": valve_pin == sensor_pin (" + String(vp) + ")\"}";
+    }
+  }
+
+  // Close all valves before reconfiguring pins
+  for (int i = 0; i < NUM_TAPS; i++) {
+    if (tapState[i].isDispensing) {
+      closeValveTap(i);
+      tapState[i].isDispensing = false;
+      tapState[i].phase = TAP_PHASE_IDLE;
+    }
+  }
+
+  // Detach current ISRs
+  detachInterrupt(digitalPinToInterrupt(tapConfig[0].sensorPin));
+  if (NUM_TAPS > 1) {
+    detachInterrupt(digitalPinToInterrupt(tapConfig[1].sensorPin));
+  }
+
+  // Apply new config
+  for (JsonVariant t : tapsArr) {
+    int id = t["id"];
+    int vp = t["valve_pin"] | -1;
+    int sp = t["sensor_pin"] | -1;
+    float ppl = t["pulsos_por_litro"] | -1.0f;
+    float mps = t["ml_por_segundo"] | -1.0f;
+
+    if (vp != -1) tapConfig[id].valvePin = vp;
+    if (sp != -1) tapConfig[id].sensorPin = sp;
+    if (ppl > 0) tapConfig[id].pulsosPorLitro = ppl;
+    if (mps > 0) tapConfig[id].mlPorSegundo = mps;
+
+    Serial.println("[SET_CONFIG] Applied tap" + String(id) +
+      " valvePin=" + String(tapConfig[id].valvePin) +
+      " sensorPin=" + String(tapConfig[id].sensorPin) +
+      " ppl=" + String(tapConfig[id].pulsosPorLitro) +
+      " mps=" + String(tapConfig[id].mlPorSegundo));
+  }
+
+  // Persist pin config to NVS
+  for (int i = 0; i < NUM_TAPS; i++) {
+    String kVP = "tap" + String(i) + "_vpin";
+    String kSP = "tap" + String(i) + "_spin";
+    preferences.putInt(kVP.c_str(), tapConfig[i].valvePin);
+    preferences.putInt(kSP.c_str(), tapConfig[i].sensorPin);
+  }
+  // Also save calibration
+  saveSettings();
+
+  // Re-apply pin modes and ISRs
+  applyTapPins();
+
+  // Update legacy globals (tap 0)
+  pulsosPorLitro = tapConfig[0].pulsosPorLitro;
+  mlPorSegundo = tapConfig[0].mlPorSegundo;
+
+  // Get tapsVersion from doc if present
+  int tapsVersion = doc["tapsVersion"] | 0;
+
+  // Build ACK response (matching what ESP32Context expects in 'config_applied' handler)
+  JsonDocument resp;
+  resp["type"] = "config_applied";
+  resp["stage"] = "config_applied";
+  resp["applied"] = true;
+  resp["tapsVersion"] = tapsVersion;
+  resp["num_taps"] = NUM_TAPS;
+  JsonArray appliedTaps = resp["taps"].to<JsonArray>();
+  for (int i = 0; i < NUM_TAPS; i++) {
+    JsonObject tap = appliedTaps.add<JsonObject>();
+    tap["id"] = i;
+    tap["valve_pin"] = tapConfig[i].valvePin;
+    tap["sensor_pin"] = tapConfig[i].sensorPin;
+    tap["pulsos_por_litro"] = tapConfig[i].pulsosPorLitro;
+    tap["ml_por_segundo"] = tapConfig[i].mlPorSegundo;
+  }
+
+  String json;
+  serializeJson(resp, json);
+  return json;
+}
+
+void applyTapPins() {
+  for (int i = 0; i < NUM_TAPS; i++) {
+    pinMode(tapConfig[i].valvePin, OUTPUT);
+    digitalWrite(tapConfig[i].valvePin, LOW);
+    pinMode(tapConfig[i].sensorPin, INPUT_PULLUP);
+
+    Serial.println("[PINS] Tap " + String(i) + ": valve=GPIO" +
+      String(tapConfig[i].valvePin) + " sensor=GPIO" + String(tapConfig[i].sensorPin));
+  }
+
+  // Re-attach ISRs (only supports 2 taps currently via dedicated ISR functions)
+  resetPulseCounter(0);
+  resetPulseCounter(1);
+  attachInterrupt(digitalPinToInterrupt(tapConfig[0].sensorPin), flowPulseCounter0, FALLING);
+  if (NUM_TAPS > 1) {
+    attachInterrupt(digitalPinToInterrupt(tapConfig[1].sensorPin), flowPulseCounter1, FALLING);
+  }
+  Serial.println("[PINS] ISRs re-attached OK");
+}
+
+// ============================================================================
+// v4.1.0: OTA UPDATE via HTTP
+// ============================================================================
+// POST /ota with binary firmware payload.
+// Protected by basic auth (otaUsername/otaPassword).
+
+void initOTA() {
+  if (!otaEnabled) {
+    Serial.println("[OTA] Disabled via NVS flag");
+    return;
+  }
+
+  // OTA upload endpoint
+  server.on("/ota", HTTP_OPTIONS, []() {
+    sendCORSHeaders();
+    server.send(204);
+  });
+
+  server.on("/ota", HTTP_POST, []() {
+    // After upload completes
+    sendCORSHeaders();
+    if (Update.hasError()) {
+      String errMsg = String("{\"type\":\"error\",\"message\":\"OTA failed: ") + Update.errorString() + "\"}";
+      server.send(500, "application/json", errMsg);
+    } else {
+      server.send(200, "application/json",
+        "{\"type\":\"success\",\"message\":\"OTA OK. Rebooting...\"}");
+      delay(1000);
+      ESP.restart();
+    }
+  }, []() {
+    // During upload (streaming)
+    // Basic auth check on first chunk
+    HTTPUpload& upload = server.upload();
+
+    if (upload.status == UPLOAD_FILE_START) {
+      // Authenticate
+      if (!server.authenticate(otaUsername.c_str(), otaPassword.c_str())) {
+        server.requestAuthentication();
+        return;
+      }
+      Serial.println(String("[OTA] Starting update: ") + upload.filename);
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+        Serial.println(String("[OTA] Begin failed: ") + Update.errorString());
+      }
+    } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+        Serial.println(String("[OTA] Write failed: ") + Update.errorString());
+      }
+      esp_task_wdt_reset();  // Keep watchdog happy during long uploads
+    } else if (upload.status == UPLOAD_FILE_END) {
+      if (Update.end(true)) {
+        Serial.println(String("[OTA] Update complete: ") + upload.totalSize + " bytes");
+      } else {
+        Serial.println(String("[OTA] End failed: ") + Update.errorString());
+      }
+    }
+  });
+
+  Serial.println(String("[OTA] Endpoint /ota enabled (basic auth: ") + otaUsername + ")");
 }
 
 // ============================================================================

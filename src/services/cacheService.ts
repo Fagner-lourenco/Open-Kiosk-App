@@ -32,6 +32,7 @@ export const STORES = {
   PRODUCTS: 'products',
   VIDEOS: 'videos',
   SYNC_QUEUE: 'syncQueue',
+  TAPS: 'taps',  // Configuração de torneiras
 } as const;
 
 type StoreName = typeof STORES[keyof typeof STORES];

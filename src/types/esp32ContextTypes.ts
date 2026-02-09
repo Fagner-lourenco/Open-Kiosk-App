@@ -110,3 +110,152 @@ export interface ESP32ContextValue extends ESP32State {
     addLog: (type: ESP32LogEntry['type'], message: string, json?: ESP32Response) => void;
     clearLogs: () => void;
 }
+
+// ===== NOVO: DeviceStatus para UI administrativa =====
+
+export type ConnectionState = 
+  | 'unconfigured'    // Nenhum device pareado
+  | 'connecting'      // em tentativa (auto-retry)
+  | 'online'          // Conectado e respondendo
+  | 'offline'         // Pareado mas sem resposta (heartbeat falhou)
+  | 'error';          // Erro de configuração ou conexão crítica
+
+export type ConnectionType = 
+  | 'none'
+  | 'usb'
+  | 'ble'
+  | 'wifi';
+
+export interface DeviceStatus {
+  // Estado principal (UI-facing)
+  state: ConnectionState;
+  type: ConnectionType;
+  
+  // Timestamps
+  lastSeenAt: Date | null;        // Último heartbeat bem-sucedido
+  lastSyncAt: Date | null;        // Última escrita em Firestore
+  lastErrorAt: Date | null;       // Último erro registrado
+  
+  // Hardware Info (pode ser null se state !== 'online')
+  firmwareVersion: string | null;
+  macAddress: string | null;
+  ipAddress: string | null;
+  deviceName?: string;
+  
+  // Mensagem de UI (user-friendly)
+  message: string;                // Ex.: "Aguardando conexão USB...", "Online", "Não configurado"
+  
+  // Debug
+  lastError?: string;
+  connectionAttempts?: number;
+}
+
+// Helper para calcular minutos passados
+function getMinutesAgo(date: Date): number {
+  if (!date) return 0;
+  return Math.floor((Date.now() - date.getTime()) / 60000);
+}
+
+// ===== CONVERSOR: Firestore data → DeviceStatus =====
+/**
+ * Mapeia dados do Firestore (flat ou nested) para estado UI consistente.
+ * Aceita AMBOS os formatos (Kiosk flat + Admin nested).
+ * Retorna sempre um DeviceStatus com estado único.
+ */
+export function mapFirestoreToDeviceStatus(data: any): DeviceStatus {
+  // Se data é null, undefined ou {}
+  if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+    return {
+      state: 'unconfigured',
+      type: 'none',
+      lastSeenAt: null,
+      lastSyncAt: null,
+      lastErrorAt: null,
+      firmwareVersion: null,
+      macAddress: null,
+      ipAddress: null,
+      message: 'Dispositivo não configurado. Escaneie QR ou conecte USB.',
+      lastError: undefined
+    };
+  }
+
+  // Normalizar dados de ambos os formatos
+  // Formato 1 (Kiosk/hardwareStatusService - flat): esp32Connected, esp32Ip, macAddress
+  // Formato 2 (Admin/StoreSettingsTab - nested): esp32.isConnected, esp32.ipAddress
+  const isConnected = data.isConnected ?? data.esp32Connected ?? false;
+  const connectionType = data.type ?? data.esp32Type ?? 'wifi';
+  const ipAddress = data.ipAddress ?? data.esp32Ip;
+  const lastSeenRaw = data.lastSeenAt ?? data.lastSeen ?? data.lastHeartbeat;
+  const lastSeen = lastSeenRaw instanceof Date ? lastSeenRaw : (lastSeenRaw?.toDate?.() ?? null);
+  const lastError = data.lastError ?? null;
+
+  const hasSignal = Boolean(
+    isConnected ||
+    lastSeen ||
+    data.firmwareVersion ||
+    data.macAddress ||
+    ipAddress ||
+    lastError
+  );
+
+  if (!hasSignal) {
+    return {
+      state: 'unconfigured',
+      type: 'none',
+      lastSeenAt: null,
+      lastSyncAt: null,
+      lastErrorAt: null,
+      firmwareVersion: null,
+      macAddress: null,
+      ipAddress: null,
+      message: 'Dispositivo não configurado. Escaneie QR ou conecte USB.',
+      lastError: undefined
+    };
+  }
+
+  // Se esp32Connected === true
+  if (isConnected === true) {
+    return {
+      state: 'online',
+      type: (connectionType as ConnectionType) || 'wifi',
+      lastSeenAt: lastSeen,
+      lastSyncAt: new Date(), // Firestore read time (aproximado)
+      lastErrorAt: null,
+      firmwareVersion: data.firmwareVersion ?? null,
+      macAddress: data.macAddress ?? null,
+      ipAddress: ipAddress ?? null,
+      message: `Online • ${String(connectionType).toUpperCase()}`,
+      lastError: lastError ?? undefined
+    };
+  }
+
+  // Se foi conectado antes mas agora está offline (>1min sem heartbeat)
+  if (lastSeen instanceof Date && lastSeen < new Date(Date.now() - 60_000)) {
+    return {
+      state: 'offline',
+      type: (connectionType as ConnectionType) || 'wifi',
+      lastSeenAt: lastSeen,
+      lastSyncAt: new Date(),
+      lastErrorAt: lastError && new Date(),
+      firmwareVersion: data.firmwareVersion ?? null,  // Mantém dados antigos
+      macAddress: data.macAddress ?? null,
+      ipAddress: ipAddress ?? null,
+      message: `Offline (último visto há ${getMinutesAgo(lastSeen)}min)`,
+      lastError: lastError ?? undefined
+    };
+  }
+
+  // Conectando (tentativa em andamento ou estado indeterminado)
+  return {
+    state: 'connecting',
+    type: (connectionType as ConnectionType) || 'wifi',
+    lastSeenAt: lastSeen,
+    lastSyncAt: new Date(),
+    lastErrorAt: null,
+    firmwareVersion: null,
+    macAddress: null,
+    ipAddress: null,
+    message: 'Conectando...',
+    lastError: lastError ?? undefined
+  };
+}

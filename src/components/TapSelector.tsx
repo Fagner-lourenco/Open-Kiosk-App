@@ -6,12 +6,14 @@
  */
 
 import { useESP32 } from "@/context/ESP32Context";
+import { useStoreContext } from "@/context/StoreContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Beer, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
+import { useMemo } from "react";
 
 interface TapSelectorProps {
   /** ID do tap selecionado */
@@ -33,28 +35,46 @@ export function TapSelector({
   disabled = false,
   className,
 }: TapSelectorProps) {
-  const { numTaps, taps, status } = useESP32();
+  const { taps: hardwareTaps, numTaps, status } = useESP32();
+  const { taps: configuredTaps, tapsLoading, tapsSource } = useStoreContext();
   const { t } = useTranslation();
-  
-  // Se não há múltiplas torneiras, não mostrar seletor
-  if (numTaps <= 1) {
-    return null;
-  }
-  
-  // Gerar array de taps se não vier do ESP32
-  const tapList = taps.length > 0 
-    ? taps 
-    : Array.from({ length: numTaps }, (_, i) => ({
+
+  // Combinar dados do Store (configuração) com dados do Hardware (status vivo)
+  const tapList = useMemo(() => {
+    // Se não temos nada do store, usar numTaps do hardware como fallback
+    if (configuredTaps.length === 0) {
+      return Array.from({ length: numTaps || 1 }, (_, i) => ({
         id: i,
-        isDispensing: false,
-        orderId: undefined,
-        currentCup: 0,
-        totalCups: 0,
-        mlDispensed: 0,
-        targetMl: 0,
-        flowStarted: false,
-        progress: 0,
+        name: `Torneira ${i + 1}`,
+        enabled: true,
+        isDispensing: hardwareTaps.find(h => h.id === i)?.isDispensing || false,
+        progress: hardwareTaps.find(h => h.id === i)?.progress || 0,
       }));
+    }
+
+    // Usar taps do store (filtrando apenas habilitados)
+    return configuredTaps
+      .filter(tap => tap.enabled)
+      .map(tap => {
+        const hardwareTap = hardwareTaps.find(h => h.id === tap.id);
+        return {
+          id: tap.id,
+          name: tap.name,
+          enabled: true,
+          isDispensing: hardwareTap?.isDispensing || false,
+          progress: hardwareTap?.progress || 0,
+        };
+      });
+  }, [configuredTaps, hardwareTaps, numTaps]);
+
+  // Se não há taps disponíveis para mostrar
+  if (tapList.length <= 1 && tapsSource !== 'none') {
+    // No modo quiosque, se só tem 1 tap, talvez nem mostramos o seletor
+    // ou mostramos só se for para informar o nome.
+    // Mas o requisito numTaps <= 1 costumava retornar null.
+    // Vamos manter a lógica de esconder se for 1 ou 0.
+    if (tapList.length <= 1) return null;
+  }
 
   // Modo compacto - badges inline
   if (mode === 'compact') {
@@ -74,7 +94,7 @@ export function TapSelector({
             onClick={() => !tap.isDispensing && !disabled && onSelectTap(tap.id)}
           >
             <Beer className="h-3 w-3 mr-1" />
-            {tap.id + 1}
+            {tap.name}
             {tap.isDispensing && <Loader2 className="h-3 w-3 ml-1 animate-spin" />}
           </Badge>
         ))}
@@ -88,7 +108,7 @@ export function TapSelector({
       {tapList.map((tap) => {
         const isSelected = selectedTapId === tap.id;
         const isBusy = tap.isDispensing;
-        
+
         return (
           <Card
             key={tap.id}
@@ -113,10 +133,10 @@ export function TapSelector({
                   <Beer className="h-6 w-6" />
                 )}
               </div>
-              
+
               {/* Label */}
               <div className="text-center">
-                <p className="font-semibold">{t('tapSelector.tapNumber', { number: tap.id + 1 })}</p>
+                <p className="font-semibold">{tap.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {isBusy ? (
                     <span className="text-orange-600">{t('tapSelector.inUse', { progress: tap.progress })}</span>
@@ -127,7 +147,7 @@ export function TapSelector({
                   )}
                 </p>
               </div>
-              
+
               {/* Indicador de selecionado */}
               {isSelected && !isBusy && (
                 <div className="absolute top-2 right-2">
@@ -147,16 +167,16 @@ export function TapSelector({
  */
 export function useTapSelection(defaultTapId: number = 0) {
   const { selectedTapId, setSelectedTapId, numTaps, taps } = useESP32();
-  
+
   // Usar o tap do contexto ou o default
   const currentTapId = selectedTapId ?? defaultTapId;
-  
+
   // Verificar se o tap está disponível
   const isTapAvailable = (tapId: number): boolean => {
     const tap = taps.find(t => t.id === tapId);
     return !tap?.isDispensing;
   };
-  
+
   // Encontrar próximo tap disponível
   const getNextAvailableTap = (): number => {
     for (let i = 0; i < numTaps; i++) {
@@ -166,7 +186,7 @@ export function useTapSelection(defaultTapId: number = 0) {
     }
     return 0; // Fallback
   };
-  
+
   return {
     selectedTapId: currentTapId,
     setSelectedTapId,

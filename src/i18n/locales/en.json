@@ -43,7 +43,10 @@
     "failed": "Failed",
     "pending": "Pending",
     "running": "Running",
-    "passRate": "Pass Rate"
+    "passRate": "Pass Rate",
+    "sync": "Synced",
+    "localOnly": "Local only",
+    "notConfigured": "Not configured"
   },
   "tests": {
     "testExecution": "Test Execution",
@@ -626,7 +629,15 @@
     "storeDetails": "Store Details",
     "storeDetailsDescription": "To edit this information, access the Admin Web",
     "storeEmail": "Email",
-    "storeDescription": "Description"
+    "storeDescription": "Description",
+    "kioskBehavior": "Kiosk Behavior",
+    "kioskBehaviorDescription": "Control terminal restrictions and idle timeout",
+    "kioskModeSoftwareDescription": "Enables interface restrictions and forced navigation on the kiosk.",
+    "kioskModeNative": "Lock Task Mode (Android)",
+    "kioskModeNativeDescription": "Locks the device to this application at the system level.",
+    "inactivityTimeout": "Inactivity Timeout",
+    "inactivityTimeoutDescription": "Idle time before showing the attract screen (10-300s).",
+    "attractTimeoutUpdated": "Inactivity timeout updated"
   },
   "inventory": {
       "managementTitle": "Inventory Management",
@@ -799,7 +810,14 @@
     "lastConnectionCleared": "Last connection cleared",
     "bleRequiresGesture": "Bluetooth requires user action in browser",
     "autoConnectSettings": "Auto-connect Settings",
-    "enableAutoConnect": "Enable auto-connect on startup"
+    "enableAutoConnect": "Enable auto-connect on startup",
+    "hardwareStatus": "ESP32 & Hardware",
+    "firmware": "Firmware",
+    "macAddress": "MAC Address",
+    "ipAddress": "IP Address",
+    "lastSync": "Last Sync",
+    "kioskHealth": "Kiosk Health (last seen)",
+    "kioskInactive": "Kiosk Inactive"
   },
   "esp32Dispenser": {
     "title": "ESP32 Dispenser",

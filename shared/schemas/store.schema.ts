@@ -81,7 +81,20 @@ const MercadoPagoProviderConfigSchema = z.object({
 });
 
 /**
- * Schema de configuração de pagamento (canônico + legado)
+ * Schema de configuração de pagamento (input validation)
+ *
+ * IMPORTANT: This schema accepts BOTH 'mercado_pago' (canonical) and
+ * 'mercadopago' (legacy) because it needs to validate documents read from
+ * Firestore that may still contain the legacy format.
+ *
+ * Runtime normalization via normalizeProvider() and normalizePaymentGatewayConfig()
+ * ensures that the canonical format is always used in application code.
+ *
+ * The type layer (PaymentProvider type) enforces canonical format only,
+ * ensuring type safety while this schema layer maintains backward compatibility.
+ *
+ * @see normalizeProvider() - Converts legacy 'mercadopago' → 'mercado_pago'
+ * @see PaymentProvider type - Enforces canonical format
  */
 export const PaymentGatewayConfigSchema = z.object({
   provider: z.enum(['none', 'mercado_pago', 'mercadopago', 'pagbank']),
@@ -113,6 +126,25 @@ export const PaymentGatewayConfigSchema = z.object({
   configuredBy: z.string().optional(),
   lastValidatedAt: z.string().optional(),
   lastValidationResult: z.enum(['success', 'error']).optional(),
+});
+
+// ============================================================================
+// SCHEMA DE VÍDEO DA TELA DE ATRAÇÃO
+// ============================================================================
+
+/**
+ * Schema de configuração do vídeo da tela de atração
+ */
+export const AttractVideoConfigSchema = z.object({
+  isEnabled: z.boolean().default(false),
+  videoUrl: z.string().url('URL inválida').optional(),
+  displayTitle: z.string().max(200).optional(),
+  displaySubtitle: z.string().max(200).optional(),
+  videoOpacity: z.number().min(0).max(1).default(0.4),
+  videoCoverMode: z.enum(['cover', 'contain']).default('cover'),
+  lastValidatedAt: z.string().optional(),
+  lastValidationResult: z.enum(['valid', 'invalid', 'cors_warning']).optional(),
+  contentType: z.string().optional(),
 });
 
 // ============================================================================
@@ -148,7 +180,17 @@ export const StoreSchema = z.object({
   language: z.enum(['pt-BR', 'en']).default('pt-BR'),
   attractTimeoutSeconds: z.number().min(10).max(600).default(60),
   useThermalPrinter: z.boolean().default(false),
-  
+
+  // Kiosk (store-level)
+  kioskEnabled: z.boolean().default(false),
+  attractScreenEnabled: z.boolean().default(true),
+  attractVideoConfig: AttractVideoConfigSchema.optional(),
+
+  // Legacy fields (backward compat)
+  kioskMode: z.boolean().optional(),
+  idleTimeout: z.number().optional(),
+  _migrationVersion: z.number().optional(),
+
   // Hardware
   esp32Config: ESP32ConfigSchema.optional(),
   comPort: z.string().optional(),
@@ -195,6 +237,9 @@ export const UpdateStoreSchema = CreateStoreSchema.partial().extend({
   isActive: z.boolean().optional(),
   attractTimeoutSeconds: z.number().min(10).max(600).optional(),
   useThermalPrinter: z.boolean().optional(),
+  kioskEnabled: z.boolean().optional(),
+  attractScreenEnabled: z.boolean().optional(),
+  attractVideoConfig: AttractVideoConfigSchema.partial().optional(),
   esp32Config: ESP32ConfigSchema.partial().optional(),
   paymentGatewayConfig: PaymentGatewayConfigSchema.partial().optional(),
 });
@@ -207,6 +252,7 @@ export type StoreAddressInput = z.infer<typeof StoreAddressSchema>;
 export type StoreContactInput = z.infer<typeof StoreContactSchema>;
 export type ESP32ConfigInput = z.infer<typeof ESP32ConfigSchema>;
 export type PaymentGatewayConfigInput = z.infer<typeof PaymentGatewayConfigSchema>;
+export type AttractVideoConfigInput = z.infer<typeof AttractVideoConfigSchema>;
 export type StoreInput = z.infer<typeof StoreSchema>;
 export type CreateStoreInput = z.infer<typeof CreateStoreSchema>;
 export type UpdateStoreInput = z.infer<typeof UpdateStoreSchema>;

@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Printer, Video, Store, MonitorPlay, Droplets, Lock, Unlock, Smartphone } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
@@ -25,7 +26,7 @@ export default function AdminSettings() {
   const { settings, updateSettings, loading: settingsLoading } = useStoreSettings();
   const { language, setLanguage } = useLanguage();
   const { t } = useTranslation();
-  
+
   // ESP32 context para obter número de torneiras
   const { numTaps, status: esp32Status, setSelectedTapId } = useESP32();
 
@@ -33,11 +34,15 @@ export default function AdminSettings() {
   const esp32AutoConnect = settings?.esp32AutoConnect ?? true;
   const esp32ConnectionOrder = settings?.esp32ConnectionOrder ?? ['usb', 'wifi', 'bluetooth'];
   const esp32HeartbeatIntervalMs = settings?.esp32HeartbeatIntervalMs ?? 15000;
-  
+
   // Drink Pickup settings com defaults
   const drinkPickupTimeoutSeconds = settings?.drinkPickupTimeoutSeconds ?? 90;
   const drinkPickupSoundEnabled = settings?.drinkPickupSoundEnabled ?? true;
-  
+
+  // Estado local para o input de timeout (evita writes no Firestore a cada digitação)
+  const [localTimeout, setLocalTimeout] = useState<string>(String(settings?.attractTimeoutSeconds ?? 15));
+  const [isEditingTimeout, setIsEditingTimeout] = useState(false);
+
   // Multi-Tap settings (localStorage - cada tablet gerencia sua própria torneira)
   const [defaultTapId, setDefaultTapIdState] = useState<number>(getDefaultTapId());
 
@@ -65,15 +70,22 @@ export default function AdminSettings() {
     checkKioskMode();
   }, [isNativePlatform]);
 
-  // Handler para toggle do modo kiosk
-  const handleKioskModeToggle = async (enabled: boolean) => {
+  // Sincronizar localTimeout com Firestore (quando não está editando)
+  useEffect(() => {
+    if (!isEditingTimeout && settings?.attractTimeoutSeconds != null) {
+      setLocalTimeout(String(settings.attractTimeoutSeconds));
+    }
+  }, [settings?.attractTimeoutSeconds, isEditingTimeout]);
+
+  // Handler para toggle do modo kiosk (Nativo Android) - Não sincronizado
+  const handleNativeKioskToggle = async (enabled: boolean) => {
     setKioskModeLoading(true);
     try {
       if (enabled) {
         const success = await enterKioskMode();
         if (success) {
           setKioskModeEnabled(true);
-          toast.success(t('settings.kioskModeEnabled') || 'Modo Kiosk ativado');
+          toast.success(t('settings.kioskModeEnabled') || 'Modo Kiosk (Android) ativado');
         } else {
           toast.error(t('settings.kioskModeError') || 'Erro ao ativar modo kiosk');
         }
@@ -81,7 +93,7 @@ export default function AdminSettings() {
         const success = await exitKioskMode();
         if (success) {
           setKioskModeEnabled(false);
-          toast.success(t('settings.kioskModeDisabled') || 'Modo Kiosk desativado');
+          toast.success(t('settings.kioskModeDisabled') || 'Modo Kiosk (Android) desativado');
         } else {
           toast.error(t('settings.kioskModeError') || 'Erro ao desativar modo kiosk');
         }
@@ -94,6 +106,33 @@ export default function AdminSettings() {
     }
   };
 
+  // Handler para toggle do modo kiosk (Software) - Sincronizado via Firestore
+  const handleSoftwareKioskToggle = async (enabled: boolean) => {
+    if (settings) {
+      await updateSettings({ ...settings, kioskEnabled: enabled });
+      toast.success(enabled
+        ? (t('settings.kioskModeEnabled') || 'Modo Kiosk (Software) ativado')
+        : (t('settings.kioskModeDisabled') || 'Modo Kiosk (Software) desativado')
+      );
+    }
+  };
+
+  // Handler para tempo de inatividade (Attract Screen)
+  const handleAttractTimeoutChange = async (seconds: number) => {
+    if (settings) {
+      // Normalização: clamp 10..300 + NaN handling
+      const currentTimeout = settings.attractTimeoutSeconds ?? 15;
+      const normalizedSeconds = isNaN(seconds)
+        ? currentTimeout
+        : Math.min(Math.max(seconds, 10), 300);
+
+      if (normalizedSeconds !== settings.attractTimeoutSeconds) {
+        await updateSettings({ ...settings, attractTimeoutSeconds: normalizedSeconds });
+        toast.success(`${t('settings.attractTimeoutUpdated') || 'Tempo de inatividade atualizado'}: ${normalizedSeconds}s`);
+      }
+    }
+  };
+
   // Carregar configurações de vídeo do Firestore
   useEffect(() => {
     const loadAttractVideoSettings = async () => {
@@ -101,7 +140,7 @@ export default function AdminSettings() {
         if (!settings?.storeId) return;
 
         const db = getFirebaseDb();
-        
+
         const franchiseId = getCurrentFranchiseId();
         if (!franchiseId) {
           console.warn('[AdminSettings] franchiseId ausente para carregar attract_video');
@@ -117,7 +156,7 @@ export default function AdminSettings() {
           'settings',
           'attract_video'
         );
-        
+
         const videoSnap = await getDoc(videoDocRef);
 
         if (videoSnap.exists()) {
@@ -140,11 +179,11 @@ export default function AdminSettings() {
 
   const handleSaveVideoSettings = async () => {
     if (!settings?.storeId) return;
-    
+
     setVideoSaving(true);
     try {
       const db = getFirebaseDb();
-      
+
       const franchiseId = getCurrentFranchiseId();
       if (!franchiseId) {
         console.warn('[AdminSettings] franchiseId ausente para salvar attract_video');
@@ -174,10 +213,10 @@ export default function AdminSettings() {
   const handleLanguageChange = async (newLanguage: Language) => {
     try {
       console.log('[AdminSettings] Mudando idioma para:', newLanguage);
-      
+
       // Atualiza o contexto local primeiro (imediato)
       setLanguage(newLanguage);
-      
+
       // Depois salva no Firebase para sincronizar entre dispositivos
       if (settings) {
         await updateSettings({ ...settings, language: newLanguage });
@@ -226,7 +265,7 @@ export default function AdminSettings() {
   const handlePickupSoundChange = async (enabled: boolean) => {
     if (settings) {
       await updateSettings({ ...settings, drinkPickupSoundEnabled: enabled });
-      toast.success(enabled 
+      toast.success(enabled
         ? (t('drinkPickup.soundEnabled') || 'Som de confirmação ativado')
         : (t('drinkPickup.soundDisabled') || 'Som de confirmação desativado')
       );
@@ -279,94 +318,110 @@ export default function AdminSettings() {
         </p>
       </div>
 
-      {/* Seletor de Idioma */}
+      {/* Idioma - Read-only (gerenciado pelo Admin Web) */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Globe className="h-5 w-5" />
             {t('settings.language')}
+            <Badge variant="outline" className="text-[10px] uppercase ml-2 text-purple-600 border-purple-200 bg-purple-50">
+              Admin Web
+            </Badge>
           </CardTitle>
           <CardDescription>
             {t('settings.languageDescription')}
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            <Label htmlFor="language-select">{t('settings.selectLanguage')}</Label>
-            <Select value={language} onValueChange={(value) => handleLanguageChange(value as Language)}>
-              <SelectTrigger id="language-select" className="w-full max-w-xs">
-                <SelectValue placeholder={t('settings.selectLanguage')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="en">
-                  <span className="flex items-center gap-2">
-                    🇺🇸 English
-                  </span>
-                </SelectItem>
-                <SelectItem value="pt-BR">
-                  <span className="flex items-center gap-2">
-                    🇧🇷 Português (Brasil)
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground mt-2">
-              Idioma atual: {language === 'pt-BR' ? '🇧🇷 Português (Brasil)' : '🇺🇸 English'}
+          <div className="p-3 bg-muted rounded-lg">
+            <p className="text-sm font-medium">
+              {language === 'pt-BR' ? 'Portugues (Brasil)' : 'English'}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Gerenciado pelo Admin Web. Altere na aba Configuracoes do painel administrativo.
             </p>
           </div>
         </CardContent>
       </Card>
 
-      {/* Modo Kiosk (Android Lock Task) */}
-      {isNativePlatform && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Smartphone className="h-5 w-5" />
-              {t('settings.kioskMode') || 'Modo Kiosk'}
-            </CardTitle>
-            <CardDescription>
-              {t('settings.kioskModeDescription') || 'Bloqueia o dispositivo neste aplicativo (Lock Task Mode)'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <Label htmlFor="kiosk-mode" className="flex items-center gap-2">
-                    {kioskModeEnabled ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
-                    {kioskModeEnabled 
-                      ? (t('settings.kioskModeLocked') || 'Bloqueado') 
-                      : (t('settings.kioskModeUnlocked') || 'Desbloqueado')
-                    }
-                  </Label>
-                  <p className="text-xs text-muted-foreground">
-                    {kioskModeEnabled 
-                      ? (t('settings.kioskModeLockedDescription') || 'O dispositivo está bloqueado neste app. Botões de navegação desabilitados.')
-                      : (t('settings.kioskModeUnlockedDescription') || 'O usuário pode sair do app e acessar outras funções do dispositivo.')
-                    }
-                  </p>
-                </div>
-                <Switch
-                  id="kiosk-mode"
-                  checked={kioskModeEnabled}
-                  onCheckedChange={handleKioskModeToggle}
-                  disabled={kioskModeLoading}
-                />
-              </div>
-              
-              {kioskModeEnabled && (
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-md">
-                  <p className="text-sm text-amber-800 flex items-center gap-2">
-                    <Lock className="h-4 w-4" />
-                    {t('settings.kioskModeWarning') || 'Modo Kiosk ativo! O dispositivo só pode executar este aplicativo.'}
-                  </p>
-                </div>
-              )}
+      {/* Configurações de Comportamento do Kiosk */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Smartphone className="h-5 w-5" />
+            {t('settings.kioskBehavior') || 'Comportamento do Kiosk'}
+          </CardTitle>
+          <CardDescription>
+            {t('settings.kioskBehaviorDescription') || 'Controle as restrições e o tempo de espera do terminal'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Modo Kiosk (Software) - Read-only (gerenciado pelo Admin Web) */}
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <Label className="flex items-center gap-2">
+                <Lock className="h-4 w-4" />
+                {t('settings.kioskMode') || 'Modo Kiosk (Software)'}
+                <Badge variant="outline" className="text-[10px] uppercase ml-2 text-purple-600 border-purple-200 bg-purple-50">
+                  Admin Web
+                </Badge>
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {t('settings.kioskModeSoftwareDescription') || 'Habilita restrições de interface e navegação forçada no quiosque.'}
+              </p>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <div className="px-3 py-1 bg-muted rounded text-sm font-medium">
+              {settings?.kioskEnabled ? 'Ativo' : 'Inativo'}
+            </div>
+          </div>
+
+          {/* Modo Kiosk (Nativo Android) - Local - STILL EDITABLE (device-level) */}
+          {isNativePlatform && (
+            <div className="flex items-center justify-between pt-4 border-t">
+              <div className="space-y-1">
+                <Label htmlFor="native-kiosk" className="flex items-center gap-2">
+                  <Smartphone className="h-4 w-4" />
+                  {t('settings.kioskModeNative') || 'Lock Task Mode (Android)'}
+                  <Badge variant="outline" className="text-[10px] uppercase ml-2 text-amber-600 border-amber-200 bg-amber-50">
+                    {t('common.localOnly') || 'Local apenas'}
+                  </Badge>
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('settings.kioskModeNativeDescription') || 'Bloqueia o dispositivo neste aplicativo em nível de sistema.'}
+                </p>
+              </div>
+              <Switch
+                id="native-kiosk"
+                checked={kioskModeEnabled}
+                onCheckedChange={handleNativeKioskToggle}
+                disabled={kioskModeLoading}
+              />
+            </div>
+          )}
+
+          {/* Tempo de Inatividade - Read-only (gerenciado pelo Admin Web) */}
+          <div className="space-y-2 pt-4 border-t">
+            <Label className="flex items-center gap-2">
+              <MonitorPlay className="h-4 w-4" />
+              {t('settings.inactivityTimeout') || 'Tempo de Inatividade'}
+              <Badge variant="outline" className="text-[10px] uppercase ml-2 text-purple-600 border-purple-200 bg-purple-50">
+                Admin Web
+              </Badge>
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t('settings.inactivityTimeoutDescription') || 'Tempo sem interação para exibir a tela de atração (10-300s).'}
+            </p>
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-sm font-medium">
+                {settings?.attractTimeoutSeconds ?? 60} segundos
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Gerenciado pelo Admin Web.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Configurações ESP32 Auto-Connect */}
       <Card>
@@ -521,7 +576,7 @@ export default function AdminSettings() {
               onCheckedChange={handlePickupSoundChange}
             />
           </div>
-          
+
           {/* Seleção de Torneira Padrão */}
           {numTaps > 1 && (
             <div className="space-y-2 pt-4 border-t">
@@ -553,7 +608,7 @@ export default function AdminSettings() {
               )}
             </div>
           )}
-          
+
           {numTaps <= 1 && esp32Status.connected && (
             <div className="pt-4 border-t">
               <p className="text-xs text-muted-foreground">
@@ -615,137 +670,64 @@ export default function AdminSettings() {
         </CardContent>
       </Card>
 
-      {/* Configurações de Vídeo de Fundo (Tela de Espera) */}
+      {/* Configurações de Vídeo de Fundo - Read-only (gerenciado pelo Admin Web) */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Video className="h-5 w-5" />
             {t('settings.attractVideoTitle')}
+            <Badge variant="outline" className="text-[10px] uppercase ml-2 text-purple-600 border-purple-200 bg-purple-50">
+              Admin Web
+            </Badge>
           </CardTitle>
           <CardDescription>
             {t('settings.attractVideoDescription') || 'Configure o vídeo de fundo para a tela de espera do Kiosk'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Toggle para habilitar/desabilitar */}
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="videoEnabled">{t('settings.enableAttractVideo')}</Label>
-              <p className="text-xs text-muted-foreground">
-                {t('settings.enableAttractVideoDescription')}
-              </p>
+          {/* Status do vídeo */}
+          <div className="p-3 bg-muted rounded-lg space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Video habilitado</span>
+              <span className="text-sm font-medium">
+                {(settings?.attractVideoConfig?.isEnabled || attractVideoSettings.isEnabled) ? 'Sim' : 'Nao'}
+              </span>
             </div>
-            <Switch
-              id="videoEnabled"
-              checked={attractVideoSettings.isEnabled || false}
-              onCheckedChange={(checked) => handleAttractVideoChange('isEnabled', checked)}
-            />
+            {(settings?.attractVideoConfig?.videoUrl || attractVideoSettings.videoUrl) && (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">URL</span>
+                  <span className="text-xs font-mono truncate max-w-[200px]">
+                    {settings?.attractVideoConfig?.videoUrl || attractVideoSettings.videoUrl}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Titulo</span>
+                  <span className="text-sm">
+                    {settings?.attractVideoConfig?.displayTitle || attractVideoSettings.displayTitle || '-'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Opacidade</span>
+                  <span className="text-sm">
+                    {Math.round((settings?.attractVideoConfig?.videoOpacity ?? attractVideoSettings.videoOpacity ?? 0.4) * 100)}%
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Modo</span>
+                  <span className="text-sm">
+                    {(settings?.attractVideoConfig?.videoCoverMode || attractVideoSettings.videoCoverMode || 'cover') === 'cover' ? 'Preencher' : 'Ajustar'}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Campos de vídeo apenas se habilitado */}
-          {attractVideoSettings.isEnabled && (
-            <div className="space-y-4 border-t pt-4">
-              {/* URL do vídeo */}
-              <div>
-                <Label htmlFor="videoUrl">{t('settings.videoUrl')} *</Label>
-                <Input
-                  id="videoUrl"
-                  type="url"
-                  value={attractVideoSettings.videoUrl || ""}
-                  onChange={(e) => handleAttractVideoChange('videoUrl', e.target.value)}
-                  placeholder={t('settings.videoUrlPlaceholder')}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('settings.videoUrlHelp')}
-                </p>
-              </div>
-
-              {/* Título customizado */}
-              <div>
-                <Label htmlFor="displayTitle">{t('settings.displayTitle')}</Label>
-                <Input
-                  id="displayTitle"
-                  value={attractVideoSettings.displayTitle || ""}
-                  onChange={(e) => handleAttractVideoChange('displayTitle', e.target.value)}
-                  placeholder={t('settings.displayTitlePlaceholder')}
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('settings.displayTitleHelp')}
-                </p>
-              </div>
-
-              {/* Subtítulo customizado */}
-              <div>
-                <Label htmlFor="displaySubtitle">{t('settings.displaySubtitle')}</Label>
-                <Input
-                  id="displaySubtitle"
-                  value={attractVideoSettings.displaySubtitle || ""}
-                  onChange={(e) => handleAttractVideoChange('displaySubtitle', e.target.value)}
-                  placeholder={t('settings.displaySubtitlePlaceholder')}
-                />
-              </div>
-
-              {/* Opacidade do vídeo */}
-              <div>
-                <Label htmlFor="videoOpacity">
-                  {t('settings.videoOpacity')} ({Math.round((attractVideoSettings.videoOpacity || 0.4) * 100)}%)
-                </Label>
-                <input
-                  id="videoOpacity"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={attractVideoSettings.videoOpacity || 0.4}
-                  onChange={(e) => handleAttractVideoChange('videoOpacity', parseFloat(e.target.value))}
-                  className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('settings.videoOpacityHelp')}
-                </p>
-              </div>
-
-              {/* Modo de preenchimento */}
-              <div>
-                <Label htmlFor="coverMode">{t('settings.videoCoverMode')}</Label>
-                <Select
-                  value={attractVideoSettings.videoCoverMode || 'cover'}
-                  onValueChange={(value) => handleAttractVideoChange('videoCoverMode', value)}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cover">{t('settings.videoCoverModeFullScreen')}</SelectItem>
-                    <SelectItem value="contain">{t('settings.videoCoverModeContain')}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('settings.videoCoverModeHelp')}
-                </p>
-              </div>
-
-              {/* Botão de salvar vídeo */}
-              <Button 
-                onClick={handleSaveVideoSettings} 
-                disabled={videoSaving}
-                className="w-full"
-              >
-                {videoSaving ? (t('settings.saving') || 'Salvando...') : (t('settings.saveVideoSettings') || 'Salvar Configurações de Vídeo')}
-              </Button>
-
-              {/* Informação sobre CORS */}
-              <div className="p-3 bg-amber-50 rounded-lg">
-                <p className="text-amber-800 text-sm">
-                  {t('settings.videoSecurityNote')}
-                </p>
-              </div>
-            </div>
-          )}
+          <p className="text-xs text-muted-foreground">
+            Gerenciado pelo Admin Web. Para alterar o video, acesse a aba Configuracoes do painel administrativo.
+          </p>
         </CardContent>
       </Card>
-
-      
 
       {/* Card de Informações da Loja - Modo Visualização */}
       <Card>

@@ -7,7 +7,7 @@
  * Permite editar configurações com persistência no Firestore.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -26,9 +26,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Trash2, Droplets, Printer, Plus, X, Activity, Clock } from 'lucide-react';
+import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Trash2, Droplets, Printer, Plus, X, Activity, Video, CheckCircle, XCircle } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
+import { validateVideoUrl, type ValidationResult } from '@/utils/videoUrlValidator';
+import { VideoUploader } from './VideoUploader';
+import { toDualWritePayload } from '../../../../shared/utils/settingsNormalizer';
+import type { AttractVideoConfig } from '../../../../shared/types/store';
 import type { PaymentGatewayConfig, PaymentProvider, PaymentEnvironment, EnabledPaymentMethods } from '@/types/store';
 
 // Interface para status de hardware em tempo real (do Firestore)
@@ -61,16 +65,253 @@ interface HardwareStatus {
   updatedAt?: Date;
 }
 
-// Interface para configuração de dispensadores
-interface DispenserConfig {
+type ConnectionState = 'unconfigured' | 'connecting' | 'online' | 'offline' | 'error';
+type ConnectionType = 'none' | 'usb' | 'ble' | 'wifi';
+
+interface DeviceStatus {
+  state: ConnectionState;
+  type: ConnectionType;
+  lastSeenAt: Date | null;
+  lastSyncAt: Date | null;
+  lastErrorAt: Date | null;
+  firmwareVersion: string | null;
+  macAddress: string | null;
+  ipAddress: string | null;
+  message: string;
+  lastError?: string;
+}
+
+function getMinutesAgo(date: Date): number {
+  return Math.floor((Date.now() - date.getTime()) / 60000);
+}
+
+// Aceita formato nested (admin) e flat (kiosk) para evitar regressao
+function mapFirestoreToDeviceStatus(data: Record<string, any> | null): DeviceStatus {
+  if (!data || (typeof data === 'object' && Object.keys(data).length === 0)) {
+    return {
+      state: 'unconfigured',
+      type: 'none',
+      lastSeenAt: null,
+      lastSyncAt: null,
+      lastErrorAt: null,
+      firmwareVersion: null,
+      macAddress: null,
+      ipAddress: null,
+      message: 'Dispositivo não configurado. Escaneie QR ou conecte USB.'
+    };
+  }
+
+  const isConnected = data.isConnected ?? data.esp32Connected ?? false;
+  const connectionType = data.type ?? data.esp32Type ?? 'wifi';
+  const ipAddress = data.ipAddress ?? data.esp32Ip ?? null;
+  const lastSeenRaw = data.lastSeenAt ?? data.lastSeen ?? data.lastHeartbeat ?? null;
+  const lastSeen = lastSeenRaw instanceof Date ? lastSeenRaw : (lastSeenRaw?.toDate?.() ?? null);
+  const lastError = data.lastError ?? null;
+
+  const hasSignal = Boolean(
+    isConnected ||
+    lastSeen ||
+    data.firmwareVersion ||
+    data.macAddress ||
+    ipAddress ||
+    lastError
+  );
+
+  if (!hasSignal) {
+    return {
+      state: 'unconfigured',
+      type: 'none',
+      lastSeenAt: null,
+      lastSyncAt: null,
+      lastErrorAt: null,
+      firmwareVersion: null,
+      macAddress: null,
+      ipAddress: null,
+      message: 'Dispositivo não configurado. Escaneie QR ou conecte USB.'
+    };
+  }
+
+  if (isConnected === true) {
+    return {
+      state: 'online',
+      type: (connectionType as ConnectionType) || 'wifi',
+      lastSeenAt: lastSeen,
+      lastSyncAt: new Date(),
+      lastErrorAt: null,
+      firmwareVersion: data.firmwareVersion ?? null,
+      macAddress: data.macAddress ?? null,
+      ipAddress,
+      message: `Online \u2022 ${String(connectionType).toUpperCase()}`,
+      lastError: lastError ?? undefined
+    };
+  }
+
+  if (lastSeen instanceof Date && lastSeen < new Date(Date.now() - 60_000)) {
+    return {
+      state: 'offline',
+      type: (connectionType as ConnectionType) || 'wifi',
+      lastSeenAt: lastSeen,
+      lastSyncAt: new Date(),
+      lastErrorAt: lastError && new Date(),
+      firmwareVersion: data.firmwareVersion ?? null,
+      macAddress: data.macAddress ?? null,
+      ipAddress,
+      message: `Offline (último visto há ${getMinutesAgo(lastSeen)}min)`,
+      lastError: lastError ?? undefined
+    };
+  }
+
+  return {
+    state: 'connecting',
+    type: (connectionType as ConnectionType) || 'wifi',
+    lastSeenAt: lastSeen,
+    lastSyncAt: new Date(),
+    lastErrorAt: null,
+    firmwareVersion: null,
+    macAddress: null,
+    ipAddress: null,
+    message: 'Conectando...',
+    lastError: lastError ?? undefined
+  };
+}
+
+// ============================================================================
+// TAP CONFIG (CANONICAL)
+// ============================================================================
+
+/**
+ * Canonical TapConfig — the format persisted as taps[] in Firestore.
+ * Admin UI edits this directly. No more DispenserConfig intermediate format.
+ */
+interface TapConfigLocal {
   id: number;
   name: string;
-  productId?: string;
-  calibration?: {
-    mlPerPulse: number;
-    flowTimeout: number;
-  };
   enabled: boolean;
+  valvePin?: number;
+  sensorPin?: number;
+  calibration?: {
+    pulsesPerLiter?: number;
+    mlPerSecond?: number;
+  };
+  productId?: string;
+  productName?: string;
+}
+
+// ============================================================================
+// XIAO ESP32-S3 BOARD PROFILE
+// ============================================================================
+
+/**
+ * Available GPIO pins on Seeed Studio XIAO ESP32-S3 header.
+ * This is the SINGLE source of truth for the pin dropdown.
+ */
+const XIAO_GPIO_OPTIONS: { gpio: number; label: string }[] = [
+  { gpio: 1,  label: 'D0 (GPIO1)' },
+  { gpio: 2,  label: 'D1 (GPIO2)' },
+  { gpio: 3,  label: 'D2 (GPIO3)' },
+  { gpio: 4,  label: 'D3 (GPIO4)' },
+  { gpio: 5,  label: 'D4 (GPIO5)' },
+  { gpio: 6,  label: 'D5 (GPIO6)' },
+  { gpio: 7,  label: 'D8 (GPIO7)' },
+  { gpio: 8,  label: 'D9 (GPIO8)' },
+  { gpio: 9,  label: 'D10 (GPIO9)' },
+  { gpio: 12, label: 'D11 (GPIO12)' },
+  { gpio: 13, label: 'D12 (GPIO13)' },
+];
+
+/** UART pins — selectable only in advanced mode with explicit warning */
+const XIAO_UART_OPTIONS: { gpio: number; label: string }[] = [
+  { gpio: 43, label: 'D6/TX (GPIO43) ⚠️' },
+  { gpio: 44, label: 'D7/RX (GPIO44) ⚠️' },
+];
+
+const ALLOWED_PINS = new Set(XIAO_GPIO_OPTIONS.map(o => o.gpio));
+const UART_PINS = new Set(XIAO_UART_OPTIONS.map(o => o.gpio));
+
+// ============================================================================
+// GPIO VALIDATION HELPERS
+// ============================================================================
+
+function validateGpioPin(
+  pin: number | undefined,
+  _isValve: boolean,
+  advancedMode: boolean,
+): { valid: boolean; warning?: string } {
+  if (pin === undefined || pin === null) return { valid: true };
+  if (!Number.isInteger(pin)) {
+    return { valid: false, warning: 'GPIO deve ser número inteiro' };
+  }
+  if (UART_PINS.has(pin)) {
+    if (!advancedMode) {
+      return { valid: false, warning: `GPIO ${pin} é TX/RX Serial — habilite "Modo Avançado" para usar` };
+    }
+    return { valid: true, warning: `GPIO ${pin} é TX/RX Serial — pode causar ativação indesejada da válvula quando idle!` };
+  }
+  if (!ALLOWED_PINS.has(pin) && !UART_PINS.has(pin)) {
+    return { valid: false, warning: `GPIO ${pin} não está disponível no XIAO ESP32-S3` };
+  }
+  return { valid: true };
+}
+
+function findDuplicateGpioPins(taps: TapConfigLocal[]): Map<number, string[]> {
+  const usage = new Map<number, string[]>();
+  taps.forEach((t) => {
+    if (t.valvePin !== undefined && t.valvePin !== null) {
+      const list = usage.get(t.valvePin) || [];
+      list.push(`T${t.id} Válvula`);
+      usage.set(t.valvePin, list);
+    }
+    if (t.sensorPin !== undefined && t.sensorPin !== null) {
+      const list = usage.get(t.sensorPin) || [];
+      list.push(`T${t.id} Sensor`);
+      usage.set(t.sensorPin, list);
+    }
+  });
+  const dupes = new Map<number, string[]>();
+  usage.forEach((users, pin) => { if (users.length > 1) dupes.set(pin, users); });
+  return dupes;
+}
+
+/**
+ * Backward-compat: Convert canonical taps[] → legacy dispensers[] for dual-write.
+ * Maps pulsesPerLiter → mlPerPulse (1000/pulsesPerLiter).
+ */
+function convertTapsToDispensers(taps: TapConfigLocal[]): any[] {
+  return taps.map(t => ({
+    id: t.id,
+    name: t.name,
+    enabled: t.enabled,
+    valvePin: t.valvePin,
+    sensorPin: t.sensorPin,
+    calibration: {
+      mlPerPulse: t.calibration?.pulsesPerLiter && t.calibration.pulsesPerLiter > 0
+        ? parseFloat((1000 / t.calibration.pulsesPerLiter).toFixed(3))
+        : 1.0,
+      flowTimeout: 30,
+    },
+    productId: t.productId,
+  }));
+}
+
+/**
+ * Convert legacy dispensers[] → canonical taps[] on load.
+ */
+function convertDispensersToTaps(dispensers: any[]): TapConfigLocal[] {
+  return dispensers.map(d => ({
+    id: d.id,
+    name: d.name,
+    enabled: d.enabled ?? true,
+    valvePin: d.valvePin,
+    sensorPin: d.sensorPin,
+    calibration: {
+      pulsesPerLiter: d.calibration?.mlPerPulse && d.calibration.mlPerPulse > 0
+        ? Math.round(1000 / d.calibration.mlPerPulse)
+        : d.calibration?.pulsesPerLiter,
+      mlPerSecond: d.calibration?.mlPerSecond,
+    },
+    productId: d.productId,
+    productName: d.productName,
+  }));
 }
 
 interface StoreSettings {
@@ -101,19 +342,33 @@ interface StoreSettings {
     macAddress?: string;
     lastError?: string;
   };
-  
-  // Dispensers Configuration
-  dispensers?: DispenserConfig[];
-  maxDispensers?: number; // Máximo de torneiras (default 4)
+
+  // Multi-Tap versioning
+  tapsUpdatedAt?: Date | string | number;
+  tapsVersion?: string | number;
+
+  // Canonical Taps Configuration (source of truth)
+  taps?: TapConfigLocal[];
+  maxTaps?: number; // Máximo de torneiras (default 4)
+
+  // Legacy dispensers (load-only, kept for backward compat)
+  dispensers?: any[];
   
   // Notifications
   orderNotifications?: boolean;
   lowStockAlerts?: boolean;
   lowStockThreshold?: number;
   
-  // Kiosk
-  kioskMode?: boolean;
+  // Kiosk (canonical names)
+  kioskEnabled?: boolean;
   attractScreenEnabled?: boolean;
+  attractTimeoutSeconds?: number;
+  attractVideoConfig?: AttractVideoConfig;
+
+  // Legacy fields (read from Firestore, kept for backward compat)
+  /** @deprecated Use kioskEnabled */
+  kioskMode?: boolean;
+  /** @deprecated Use attractTimeoutSeconds */
   idleTimeout?: number;
 }
 
@@ -129,6 +384,15 @@ const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
   debit: true,
 };
 
+/**
+ * Normaliza formato de payment provider (legacy → canonical)
+ *
+ * Converte legacy 'mercadopago' para canonical 'mercado_pago'.
+ * Esta é a primeira linha de defesa para backward-compatibility com dados antigos.
+ *
+ * @param provider - Valor do Firestore (pode estar em formato legado)
+ * @returns Canonical PaymentProvider
+ */
 const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
   if (!provider) return 'none';
   if (provider === 'mercadopago') return 'mercado_pago';
@@ -209,6 +473,188 @@ const validatePaymentGatewayConfig = (config: PaymentGatewayConfig): string[] =>
   return errors;
 };
 
+// ============================================================================
+// Attract Video Card (sub-component)
+// ============================================================================
+
+interface AttractVideoCardProps {
+  settings: StoreSettings;
+  franchiseId: string;
+  storeId: string;
+  onVideoConfigChange: (update: Partial<AttractVideoConfig>) => void;
+}
+
+function AttractVideoCard({ settings, franchiseId, storeId, onVideoConfigChange }: AttractVideoCardProps) {
+  const [validating, setValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+
+  const videoConfig = settings.attractVideoConfig || { isEnabled: false };
+
+  const handleValidateUrl = async () => {
+    if (!videoConfig.videoUrl) return;
+    setValidating(true);
+    setValidationResult(null);
+    try {
+      const result = await validateVideoUrl(videoConfig.videoUrl);
+      setValidationResult(result);
+      // Store validation metadata in the config
+      onVideoConfigChange({
+        lastValidatedAt: new Date().toISOString(),
+        lastValidationResult: result.status,
+        contentType: result.contentType,
+      });
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  const handleUploadComplete = (downloadUrl: string, contentType: string) => {
+    onVideoConfigChange({
+      videoUrl: downloadUrl,
+      contentType,
+      lastValidatedAt: new Date().toISOString(),
+      lastValidationResult: 'valid',
+    });
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center">
+          <Video className="h-5 w-5 mr-2" />
+          Vídeo de Fundo (Tela de Atração)
+        </CardTitle>
+        <CardDescription>
+          Configure o vídeo exibido na tela de atração do Kiosk quando ocioso
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Enable video toggle */}
+        <div className="flex items-center justify-between">
+          <div>
+            <Label>Habilitar Vídeo</Label>
+            <p className="text-sm text-gray-500">Reproduzir vídeo de fundo na tela de atração</p>
+          </div>
+          <Switch
+            checked={videoConfig.isEnabled ?? false}
+            onCheckedChange={(v) => onVideoConfigChange({ isEnabled: v })}
+          />
+        </div>
+
+        {videoConfig.isEnabled && (
+          <>
+            {/* Video URL input + validate button */}
+            <div className="space-y-2">
+              <Label>URL do Vídeo</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={videoConfig.videoUrl || ''}
+                  onChange={(e) => {
+                    onVideoConfigChange({ videoUrl: e.target.value });
+                    setValidationResult(null);
+                  }}
+                  placeholder="https://cdn.exemplo.com/video.mp4"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleValidateUrl}
+                  disabled={validating || !videoConfig.videoUrl}
+                >
+                  {validating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    'Validar'
+                  )}
+                </Button>
+              </div>
+
+              {/* Validation result badge */}
+              {validationResult && (
+                <div className={`flex items-center gap-2 text-sm ${
+                  validationResult.status === 'valid' ? 'text-green-700' :
+                  validationResult.status === 'cors_warning' ? 'text-yellow-700' :
+                  'text-red-700'
+                }`}>
+                  {validationResult.status === 'valid' && <CheckCircle className="h-4 w-4" />}
+                  {validationResult.status === 'cors_warning' && <AlertTriangle className="h-4 w-4" />}
+                  {validationResult.status === 'invalid' && <XCircle className="h-4 w-4" />}
+                  <span>{validationResult.message}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Upload section */}
+            <VideoUploader
+              franchiseId={franchiseId}
+              storeId={storeId}
+              currentUrl={videoConfig.videoUrl}
+              onUploadComplete={handleUploadComplete}
+            />
+
+            {/* Display title */}
+            <div>
+              <Label>Título Customizado</Label>
+              <Input
+                value={videoConfig.displayTitle || ''}
+                onChange={(e) => onVideoConfigChange({ displayTitle: e.target.value })}
+                placeholder="Faça seu pedido aqui"
+                maxLength={200}
+              />
+              <p className="text-xs text-gray-400 mt-1">Exibido sobre o vídeo na tela de atração</p>
+            </div>
+
+            {/* Display subtitle */}
+            <div>
+              <Label>Subtítulo Customizado</Label>
+              <Input
+                value={videoConfig.displaySubtitle || ''}
+                onChange={(e) => onVideoConfigChange({ displaySubtitle: e.target.value })}
+                placeholder="Toque para iniciar"
+                maxLength={200}
+              />
+            </div>
+
+            {/* Opacity slider */}
+            <div>
+              <Label>Opacidade do Vídeo: {Math.round((videoConfig.videoOpacity ?? 0.4) * 100)}%</Label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={Math.round((videoConfig.videoOpacity ?? 0.4) * 100)}
+                onChange={(e) => onVideoConfigChange({ videoOpacity: Number(e.target.value) / 100 })}
+                className="w-full mt-1"
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                Controla o escurecimento sobre o vídeo (0% = invisível, 100% = sem escurecimento)
+              </p>
+            </div>
+
+            {/* Cover mode */}
+            <div>
+              <Label>Modo de Preenchimento</Label>
+              <Select
+                value={videoConfig.videoCoverMode || 'cover'}
+                onValueChange={(v) => onVideoConfigChange({ videoCoverMode: v as 'cover' | 'contain' })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cover">Preencher (cover)</SelectItem>
+                  <SelectItem value="contain">Ajustar (contain)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -218,6 +664,37 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
   // Estado para hardware em tempo real
   const [hardwareStatus, setHardwareStatus] = useState<HardwareStatus | null>(null);
   const [hardwareLoading, setHardwareLoading] = useState(true);
+
+  const deviceStatusSource = useMemo(() => {
+    const esp32 = hardwareStatus?.esp32;
+    const fallback = settings?.esp32;
+    const merged = {
+      isConnected: esp32?.isConnected ?? fallback?.isConnected ?? false,
+      lastSeen: esp32?.lastSeen ?? fallback?.lastSeen ?? hardwareStatus?.lastHeartbeat ?? null,
+      firmwareVersion: esp32?.firmwareVersion ?? fallback?.firmwareVersion ?? null,
+      macAddress: esp32?.macAddress ?? fallback?.macAddress ?? null,
+      ipAddress: esp32?.ipAddress ?? null,
+      lastError: esp32?.lastError ?? fallback?.lastError ?? null,
+      esp32Connected: esp32?.isConnected,
+      esp32Ip: esp32?.ipAddress,
+    };
+
+    const hasData = Boolean(
+      merged.isConnected ||
+      merged.lastSeen ||
+      merged.firmwareVersion ||
+      merged.macAddress ||
+      merged.ipAddress ||
+      merged.lastError
+    );
+
+    return hasData ? merged : null;
+  }, [hardwareStatus?.esp32, hardwareStatus?.lastHeartbeat, settings?.esp32]);
+
+  const deviceStatus = useMemo<DeviceStatus>(
+    () => mapFirestoreToDeviceStatus(deviceStatusSource),
+    [deviceStatusSource]
+  );
 
   // Listener em tempo real para status de hardware
   useEffect(() => {
@@ -281,9 +758,34 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
   useEffect(() => {
     if (storeData) {
       const normalizedConfig = normalizePaymentGatewayConfig(storeData);
+
+      // Load taps from canonical taps[] first, fallback to legacy dispensers[]
+      let loadedTaps: TapConfigLocal[] = [];
+      if (Array.isArray((storeData as any).taps) && (storeData as any).taps.length > 0) {
+        loadedTaps = (storeData as any).taps.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          enabled: t.enabled ?? true,
+          valvePin: t.valvePin,
+          sensorPin: t.sensorPin,
+          calibration: {
+            pulsesPerLiter: t.calibration?.pulsesPerLiter,
+            mlPerSecond: t.calibration?.mlPerSecond,
+          },
+          productId: t.productId,
+          productName: t.productName,
+        }));
+      } else if (Array.isArray(storeData.dispensers) && storeData.dispensers.length > 0) {
+        loadedTaps = convertDispensersToTaps(storeData.dispensers);
+      }
+
       setSettings({
         ...storeData,
+        // Normalize legacy field names on load
+        kioskEnabled: storeData.kioskEnabled ?? storeData.kioskMode ?? false,
+        attractTimeoutSeconds: storeData.attractTimeoutSeconds ?? storeData.idleTimeout ?? 60,
         paymentGatewayConfig: normalizedConfig,
+        taps: loadedTaps,
       });
     }
   }, [storeData]);
@@ -305,8 +807,46 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           (sanitizedSettings.paymentGatewayConfig || normalizePaymentGatewayConfig(sanitizedSettings)) as PaymentGatewayConfig
         );
 
+        // Dual-write kiosk settings: canonical + legacy for backward compat
+        const dualWrite = toDualWritePayload({
+          kioskEnabled: sanitizedSettings.kioskEnabled,
+          attractTimeoutSeconds: sanitizedSettings.attractTimeoutSeconds,
+          attractScreenEnabled: sanitizedSettings.attractScreenEnabled,
+          language: sanitizedSettings.language as 'en' | 'pt-BR' | undefined,
+          attractVideoConfig: sanitizedSettings.attractVideoConfig,
+        });
+
+        // CANONICAL: Write taps[] directly + dual-write dispensers[] for backward compat
+        const tapsPayload: Record<string, unknown> = {};
+        if (sanitizedSettings.taps && sanitizedSettings.taps.length > 0) {
+          tapsPayload.taps = sanitizedSettings.taps.map(t => ({
+            id: t.id,
+            name: t.name,
+            enabled: t.enabled,
+            valvePin: t.valvePin,
+            sensorPin: t.sensorPin,
+            calibration: t.calibration ? {
+              pulsesPerLiter: t.calibration.pulsesPerLiter,
+              mlPerSecond: t.calibration.mlPerSecond,
+            } : undefined,
+            productId: t.productId,
+            productName: t.productName,
+          }));
+          tapsPayload.tapsVersion = (typeof storeData?.tapsVersion === 'number' ? storeData.tapsVersion : 0) + 1;
+          tapsPayload.tapsUpdatedAt = new Date();
+          // Backward compat: dual-write dispensers[] for old Kiosk versions
+          tapsPayload.dispensers = convertTapsToDispensers(sanitizedSettings.taps);
+        } else if (sanitizedSettings.taps && sanitizedSettings.taps.length === 0) {
+          tapsPayload.taps = [];
+          tapsPayload.dispensers = [];
+          tapsPayload.tapsVersion = (typeof storeData?.tapsVersion === 'number' ? storeData.tapsVersion : 0) + 1;
+          tapsPayload.tapsUpdatedAt = new Date();
+        }
+
         await updateDoc(storeRef, {
           ...sanitizedSettings,
+          ...dualWrite,
+          ...tapsPayload,
           paymentGatewayConfig,
           updatedAt: new Date(),
         });
@@ -537,8 +1077,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="pt-BR">Português (BR)</SelectItem>
-                  <SelectItem value="en-US">English (US)</SelectItem>
-                  <SelectItem value="es">Español</SelectItem>
+                  <SelectItem value="en">English</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -813,7 +1352,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           {/* Connection Status - Usa dados em tempo real quando disponível */}
           <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
             <div className="flex items-center gap-3">
-              {(hardwareStatus?.esp32?.isConnected ?? settings.esp32?.isConnected) ? (
+              {deviceStatus.state === 'online' ? (
                 <div className="relative">
                   <Wifi className="h-5 w-5 text-green-600" />
                   <span className="absolute -top-1 -right-1 flex h-2 w-2">
@@ -821,26 +1360,38 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                   </span>
                 </div>
+              ) : deviceStatus.state === 'offline' ? (
+                <WifiOff className="h-5 w-5 text-orange-500" />
               ) : (
                 <WifiOff className="h-5 w-5 text-gray-400" />
               )}
               <div>
                 <p className="font-medium">Status de Conexão</p>
                 <p className="text-sm text-gray-500">
-                  {hardwareStatus?.esp32?.macAddress || settings.esp32?.macAddress || 'Dispositivo não configurado'}
+                  {deviceStatus.message}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <Badge variant={(hardwareStatus?.esp32?.isConnected ?? settings.esp32?.isConnected) ? 'default' : 'secondary'}>
-                {(hardwareStatus?.esp32?.isConnected ?? settings.esp32?.isConnected) ? 'Online' : 'Offline'}
+              <Badge variant={
+                deviceStatus.state === 'online' ? 'default' :
+                deviceStatus.state === 'connecting' ? 'outline' :
+                deviceStatus.state === 'offline' ? 'secondary' :
+                'destructive'
+              }>
+                {deviceStatus.state === 'online' && (
+                  <span className="flex items-center">
+                    <Activity className="h-3 w-3 mr-1" />
+                    {deviceStatus.lastSeenAt
+                      ? `Online • ${deviceStatus.lastSeenAt.toLocaleTimeString('pt-BR')}`
+                      : 'Online'}
+                  </span>
+                )}
+                {deviceStatus.state === 'offline' && 'Offline'}
+                {deviceStatus.state === 'connecting' && 'Conectando...'}
+                {deviceStatus.state === 'unconfigured' && 'Não Configurado'}
+                {deviceStatus.state === 'error' && 'Erro'}
               </Badge>
-              {hardwareStatus?.lastHeartbeat && (
-                <span className="text-xs text-gray-400 flex items-center">
-                  <Clock className="h-3 w-3 mr-1" />
-                  {new Date(hardwareStatus.lastHeartbeat).toLocaleTimeString('pt-BR')}
-                </span>
-              )}
             </div>
           </div>
 
@@ -848,26 +1399,32 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-gray-500">Firmware</p>
-              <p className="font-medium">{hardwareStatus?.esp32?.firmwareVersion || settings.esp32?.firmwareVersion || '-'}</p>
+              <p className="font-medium">
+                {deviceStatus.firmwareVersion || (
+                  <span className="text-gray-400">Não disponível</span>
+                )}
+              </p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-gray-500">Última Sync</p>
               <p className="font-medium">
-                {(hardwareStatus?.esp32?.lastSeen || settings.esp32?.lastSeen)
-                  ? new Date(hardwareStatus?.esp32?.lastSeen || settings.esp32?.lastSeen as Date).toLocaleString('pt-BR')
+                {deviceStatus.lastSeenAt
+                  ? deviceStatus.lastSeenAt.toLocaleString('pt-BR')
                   : '-'}
               </p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-gray-500">MAC Address</p>
               <p className="font-medium font-mono text-xs">
-                {hardwareStatus?.esp32?.macAddress || settings.esp32?.macAddress || '-'}
+                {deviceStatus.macAddress || (
+                  <span className="text-gray-400">Não disponível</span>
+                )}
               </p>
             </div>
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-gray-500">IP Address</p>
               <p className="font-medium font-mono text-xs">
-                {hardwareStatus?.esp32?.ipAddress || '-'}
+                {deviceStatus.ipAddress || '-'}
               </p>
             </div>
           </div>
@@ -954,16 +1511,16 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           )}
 
           {/* Error Alerts */}
-          {(hardwareStatus?.esp32?.lastError || settings.esp32?.lastError) && (
+          {deviceStatus.lastError && (
             <Alert className="border-red-500 bg-red-50">
               <AlertTriangle className="h-4 w-4 text-red-600" />
               <AlertDescription className="text-red-800">
-                <strong>Último erro:</strong> {hardwareStatus?.esp32?.lastError || settings.esp32?.lastError}
+                <strong>Último erro:</strong> {deviceStatus.lastError}
               </AlertDescription>
             </Alert>
           )}
 
-          {!(hardwareStatus?.esp32?.isConnected ?? settings.esp32?.isConnected) && (
+          {(deviceStatus.state === 'offline' || deviceStatus.state === 'error') && (
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
@@ -974,161 +1531,281 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         </CardContent>
       </Card>
 
-      {/* Dispensers Configuration */}
+      {/* Tap Configuration — XIAO ESP32-S3 GPIO Mapping */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center">
               <Droplets className="h-5 w-5 mr-2" />
-              Configuração de Torneiras
+              Configuracao de Torneiras (GPIO)
             </div>
-            <Button 
-              size="sm" 
+            <Button
+              size="sm"
               variant="outline"
               onClick={() => {
-                const currentDispensers = settings.dispensers || [];
-                const maxDispensers = settings.maxDispensers || 4;
-                if (currentDispensers.length >= maxDispensers) {
-                  toast.error(`Máximo de ${maxDispensers} torneiras permitido`);
+                const currentTaps = settings.taps || [];
+                const maxTaps = settings.maxTaps || 4;
+                if (currentTaps.length >= maxTaps) {
+                  toast.error(`Maximo de ${maxTaps} torneiras permitido`);
                   return;
                 }
-                const newId = currentDispensers.length > 0 
-                  ? Math.max(...currentDispensers.map(d => d.id)) + 1 
-                  : 1;
-                handleChange('dispensers', [
-                  ...currentDispensers,
-                  { 
-                    id: newId, 
-                    name: `Torneira ${newId}`, 
+                const newId = currentTaps.length > 0
+                  ? Math.max(...currentTaps.map(t => t.id)) + 1
+                  : 0;
+                handleChange('taps', [
+                  ...currentTaps,
+                  {
+                    id: newId,
+                    name: `Torneira ${newId + 1}`,
                     enabled: true,
-                    calibration: { mlPerPulse: 1.0, flowTimeout: 30 }
-                  }
+                    calibration: { pulsesPerLiter: 5680, mlPerSecond: 33.3 }
+                  } as TapConfigLocal,
                 ]);
               }}
-              disabled={(settings.dispensers?.length || 0) >= (settings.maxDispensers || 4)}
+              disabled={(settings.taps?.length || 0) >= (settings.maxTaps || 4)}
             >
               <Plus className="h-4 w-4 mr-1" />
               Adicionar Torneira
             </Button>
           </CardTitle>
           <CardDescription>
-            Configure as torneiras de dispensação de sua loja (máx. {settings.maxDispensers || 4})
+            Board: XIAO ESP32-S3 - Vincule GPIO a cada torneira (max. {settings.maxTaps || 4})
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {(!settings.dispensers || settings.dispensers.length === 0) ? (
+          {/* Advanced Mode Toggle */}
+          <div className="flex items-center gap-2 text-xs">
+            <Switch
+              id="gpio-advanced-mode"
+              checked={!!(settings as any).__gpioAdvancedMode}
+              onCheckedChange={(checked) => {
+                handleChange('__gpioAdvancedMode' as any, checked);
+              }}
+            />
+            <Label htmlFor="gpio-advanced-mode" className="text-xs text-gray-500 cursor-pointer">
+              Modo Avancado (habilita GPIO 43/44 UART)
+            </Label>
+          </div>
+
+          {(!settings.taps || settings.taps.length === 0) ? (
             <div className="text-center py-8 text-gray-500">
               <Droplets className="h-12 w-12 mx-auto mb-3 opacity-50" />
               <p>Nenhuma torneira configurada</p>
-              <p className="text-sm">Clique em "Adicionar Torneira" para começar</p>
+              <p className="text-sm">Clique em "Adicionar Torneira" para comecar</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {settings.dispensers.map((dispenser, index) => (
-                <div 
-                  key={dispenser.id} 
-                  className="p-4 border rounded-lg space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-full ${dispenser.enabled ? 'bg-green-100' : 'bg-gray-100'}`}>
-                        <Droplets className={`h-4 w-4 ${dispenser.enabled ? 'text-green-600' : 'text-gray-400'}`} />
+              {settings.taps.map((tap, index) => {
+                const advancedMode = !!(settings as any).__gpioAdvancedMode;
+                const pinOptions = advancedMode
+                  ? [...XIAO_GPIO_OPTIONS, ...XIAO_UART_OPTIONS]
+                  : XIAO_GPIO_OPTIONS;
+                // Compute which pins are already used by OTHER taps
+                const usedValvePins = new Set(
+                  settings.taps!.filter((_, i) => i !== index).map(t => t.valvePin).filter((p): p is number => p !== undefined)
+                );
+                const usedSensorPins = new Set(
+                  settings.taps!.filter((_, i) => i !== index).map(t => t.sensorPin).filter((p): p is number => p !== undefined)
+                );
+
+                const valveValidation = validateGpioPin(tap.valvePin, true, advancedMode);
+                const sensorValidation = validateGpioPin(tap.sensorPin, false, advancedMode);
+                const samePinConflict = tap.valvePin !== undefined && tap.sensorPin !== undefined && tap.valvePin === tap.sensorPin;
+
+                return (
+                  <div
+                    key={tap.id}
+                    className={`p-4 border rounded-lg space-y-3 ${!tap.enabled ? 'opacity-60 bg-gray-50' : ''}`}
+                  >
+                    {/* Header: Name + Enable + Delete */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-full ${tap.enabled ? 'bg-green-100' : 'bg-gray-100'}`}>
+                          <Droplets className={`h-4 w-4 ${tap.enabled ? 'text-green-600' : 'text-gray-400'}`} />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={tap.name}
+                            onChange={(e) => {
+                              const updated = [...settings.taps!];
+                              updated[index] = { ...updated[index], name: e.target.value };
+                              handleChange('taps', updated);
+                            }}
+                            className="font-medium w-40"
+                            placeholder="Nome da torneira"
+                          />
+                          <span className="text-xs text-gray-400">ID: {tap.id}</span>
+                        </div>
                       </div>
-                      <div>
-                        <Input
-                          value={dispenser.name}
-                          onChange={(e) => {
-                            const updated = [...settings.dispensers!];
-                            updated[index] = { ...updated[index], name: e.target.value };
-                            handleChange('dispensers', updated);
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={tap.enabled}
+                          onCheckedChange={(checked) => {
+                            const updated = [...settings.taps!];
+                            updated[index] = { ...updated[index], enabled: checked };
+                            handleChange('taps', updated);
                           }}
-                          className="font-medium w-40"
-                          placeholder="Nome da torneira"
                         />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => {
+                            const updated = settings.taps!.filter((_, i) => i !== index);
+                            handleChange('taps', updated);
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Switch
-                        checked={dispenser.enabled}
-                        onCheckedChange={(checked) => {
-                          const updated = [...settings.dispensers!];
-                          updated[index] = { ...updated[index], enabled: checked };
-                          handleChange('dispensers', updated);
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                        onClick={() => {
-                          const updated = settings.dispensers!.filter((_, i) => i !== index);
-                          handleChange('dispensers', updated);
-                        }}
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                  
-                  {/* Calibration Settings */}
-                  <details className="text-sm">
-                    <summary className="cursor-pointer text-gray-600 hover:text-gray-900">
-                      ⚙️ Configurações Avançadas
-                    </summary>
-                    <div className="mt-3 grid grid-cols-2 gap-4 p-3 bg-gray-50 rounded">
+
+                    {/* GPIO Pins — Dropdown Selectors */}
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <Label className="text-xs">mL por Pulso</Label>
+                        <Label className="text-xs font-medium">Pino da Valvula (OUTPUT)</Label>
+                        <select
+                          className="w-full mt-1 px-3 py-2 border rounded-md text-sm bg-white"
+                          value={tap.valvePin ?? ''}
+                          onChange={(e) => {
+                            const updated = [...settings.taps!];
+                            const val = e.target.value === '' ? undefined : parseInt(e.target.value);
+                            updated[index] = { ...updated[index], valvePin: val };
+                            handleChange('taps', updated);
+                          }}
+                        >
+                          <option value="">-- Selecione GPIO --</option>
+                          {pinOptions.map(opt => {
+                            const isUsed = usedValvePins.has(opt.gpio) || usedSensorPins.has(opt.gpio);
+                            return (
+                              <option key={opt.gpio} value={opt.gpio} disabled={isUsed}>
+                                {opt.label}{isUsed ? ' (em uso)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {valveValidation.warning && (
+                          <p className={`text-xs mt-1 ${valveValidation.valid ? 'text-yellow-600' : 'text-red-600'}`}>
+                            <AlertTriangle className="h-3 w-3 inline mr-1" />
+                            {valveValidation.warning}
+                          </p>
+                        )}
+                      </div>
+                      <div>
+                        <Label className="text-xs font-medium">Pino do Sensor de Fluxo (INPUT)</Label>
+                        <select
+                          className="w-full mt-1 px-3 py-2 border rounded-md text-sm bg-white"
+                          value={tap.sensorPin ?? ''}
+                          onChange={(e) => {
+                            const updated = [...settings.taps!];
+                            const val = e.target.value === '' ? undefined : parseInt(e.target.value);
+                            updated[index] = { ...updated[index], sensorPin: val };
+                            handleChange('taps', updated);
+                          }}
+                        >
+                          <option value="">-- Selecione GPIO --</option>
+                          {pinOptions.map(opt => {
+                            const isUsed = usedValvePins.has(opt.gpio) || usedSensorPins.has(opt.gpio);
+                            return (
+                              <option key={opt.gpio} value={opt.gpio} disabled={isUsed}>
+                                {opt.label}{isUsed ? ' (em uso)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                        {sensorValidation.warning && (
+                          <p className={`text-xs mt-1 ${sensorValidation.valid ? 'text-yellow-600' : 'text-red-600'}`}>
+                            <AlertTriangle className="h-3 w-3 inline mr-1" />
+                            {sensorValidation.warning}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {samePinConflict && (
+                      <p className="text-xs text-red-600">
+                        <AlertTriangle className="h-3 w-3 inline mr-1" />
+                        Valvula e sensor nao podem usar o mesmo GPIO!
+                      </p>
+                    )}
+
+                    {/* Calibration */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs font-medium">Pulsos por Litro</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={99999}
+                          value={tap.calibration?.pulsesPerLiter ?? ''}
+                          onChange={(e) => {
+                            const updated = [...settings.taps!];
+                            updated[index] = {
+                              ...updated[index],
+                              calibration: {
+                                ...updated[index].calibration,
+                                pulsesPerLiter: e.target.value === '' ? undefined : parseInt(e.target.value),
+                              },
+                            };
+                            handleChange('taps', updated);
+                          }}
+                          placeholder="5680"
+                          className="w-32"
+                        />
+                        <p className="text-xs text-gray-400 mt-0.5">Sensor YF-S201: ~5680</p>
+                      </div>
+                      <div>
+                        <Label className="text-xs font-medium">mL por Segundo (vazao)</Label>
                         <Input
                           type="number"
                           step="0.1"
-                          min="0.1"
-                          max="10"
-                          value={dispenser.calibration?.mlPerPulse || 1.0}
+                          min={0.1}
+                          max={500}
+                          value={tap.calibration?.mlPerSecond ?? ''}
                           onChange={(e) => {
-                            const updated = [...settings.dispensers!];
-                            updated[index] = { 
-                              ...updated[index], 
-                              calibration: { 
+                            const updated = [...settings.taps!];
+                            updated[index] = {
+                              ...updated[index],
+                              calibration: {
                                 ...updated[index].calibration,
-                                mlPerPulse: parseFloat(e.target.value) || 1.0,
-                                flowTimeout: updated[index].calibration?.flowTimeout || 30
-                              }
+                                mlPerSecond: e.target.value === '' ? undefined : parseFloat(e.target.value),
+                              },
                             };
-                            handleChange('dispensers', updated);
+                            handleChange('taps', updated);
                           }}
-                          className="w-24"
+                          placeholder="33.3"
+                          className="w-32"
                         />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Timeout de Fluxo (s)</Label>
-                        <Input
-                          type="number"
-                          min="5"
-                          max="120"
-                          value={dispenser.calibration?.flowTimeout || 30}
-                          onChange={(e) => {
-                            const updated = [...settings.dispensers!];
-                            updated[index] = { 
-                              ...updated[index], 
-                              calibration: { 
-                                mlPerPulse: updated[index].calibration?.mlPerPulse || 1.0,
-                                flowTimeout: parseInt(e.target.value) || 30,
-                              }
-                            };
-                            handleChange('dispensers', updated);
-                          }}
-                          className="w-24"
-                        />
+                        <p className="text-xs text-gray-400 mt-0.5">Valor tipico: 30-40 mL/s</p>
                       </div>
                     </div>
-                  </details>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </CardContent>
-        <CardFooter className="text-xs text-gray-500">
-          As configurações de torneiras são sincronizadas automaticamente com o Kiosk conectado.
+        <CardFooter className="flex flex-col items-start gap-2 text-xs text-gray-500">
+          {/* Duplicate GPIO pin warning */}
+          {settings.taps && settings.taps.length > 1 && (() => {
+            const dupes = findDuplicateGpioPins(settings.taps!);
+            if (dupes.size === 0) return null;
+            return (
+              <div className="w-full p-2 bg-red-50 border border-red-200 rounded text-red-700">
+                <div className="flex items-center gap-1 font-medium">
+                  <AlertTriangle className="h-3 w-3" />
+                  Conflito de pinos GPIO
+                </div>
+                {Array.from(dupes.entries()).map(([pin, users]) => (
+                  <p key={pin} className="ml-4">GPIO {pin} usado por: {users.join(', ')}</p>
+                ))}
+              </div>
+            );
+          })()}
+          <span>
+            Ultima atualizacao: {settings.tapsUpdatedAt
+              ? new Date(settings.tapsUpdatedAt as any).toLocaleString('pt-BR')
+              : 'Nunca'} {settings.tapsVersion && `(v${settings.tapsVersion})`}
+          </span>
         </CardFooter>
       </Card>
 
@@ -1191,8 +1868,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
               <p className="text-sm text-gray-500">Habilitar interface de autoatendimento</p>
             </div>
             <Switch
-              checked={settings.kioskMode ?? false}
-              onCheckedChange={(v) => handleChange('kioskMode', v)}
+              checked={settings.kioskEnabled ?? false}
+              onCheckedChange={(v) => handleChange('kioskEnabled', v)}
             />
           </div>
           <div className="flex items-center justify-between">
@@ -1211,13 +1888,24 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
               type="number"
               min={10}
               max={300}
-              value={settings.idleTimeout || 60}
-              onChange={(e) => handleChange('idleTimeout', Number(e.target.value))}
+              value={settings.attractTimeoutSeconds ?? 60}
+              onChange={(e) => handleChange('attractTimeoutSeconds', Number(e.target.value))}
               className="w-24"
             />
           </div>
         </CardContent>
       </Card>
+
+      {/* Attract Video Config */}
+      <AttractVideoCard
+        settings={settings}
+        franchiseId={franchiseId}
+        storeId={storeId}
+        onVideoConfigChange={(update) => {
+          const current = settings.attractVideoConfig || { isEnabled: false };
+          handleChange('attractVideoConfig', { ...current, ...update });
+        }}
+      />
 
       {/* Save Button at bottom */}
       <div className="flex justify-end">

@@ -1,23 +1,23 @@
 /**
  * ============================================================================
- * Permissões Unificadas - Kiosk + Admin
+ * Permissoes Unificadas - Kiosk + Admin
  * ============================================================================
- * 
- * IMPORTANTE: Este arquivo é compartilhado entre Kiosk e Admin.
- * Qualquer mudança deve ser compatível com ambos os apps.
- * 
- * Convenção de nomes: {resource}:{action}
- * 
+ *
+ * IMPORTANTE: Este arquivo e compartilhado entre Kiosk e Admin.
+ * Qualquer mudanca deve ser compativel com ambos os apps.
+ *
+ * Convencao de nomes: {resource}:{action}
+ *
  * @author Open Kiosk Project
- * @version 1.0.0
+ * @version 1.1.0
  */
 
 import { UserRole } from './roles';
 
 /**
- * Permissões granulares do sistema
+ * Permissoes granulares do sistema
  */
-export type Permission = 
+export type Permission =
   // === Super Admin (plataforma) ===
   | 'superadmin:access'
   | 'superadmin:manage_franchises'
@@ -25,76 +25,106 @@ export type Permission =
   | 'superadmin:manage_billing'
   | 'superadmin:view_metrics'
   | 'superadmin:system_settings'
-  
+
   // === Produtos ===
   | 'products:read'
   | 'products:create'
   | 'products:update'
   | 'products:delete'
-  
+
   // === Vendas/Pedidos ===
   | 'sales:read'
   | 'sales:create'
   | 'sales:refund'
   | 'sales:export'
-  
+
   // === Estoque ===
   | 'inventory:read'
   | 'inventory:update'
-  
-  // === Relatórios ===
+
+  // === Relatorios ===
   | 'reports:read'
   | 'reports:export'
-  
-  // === Configurações ===
+
+  // === Configuracoes ===
   | 'settings:read'
   | 'settings:update'
-  
+
   // === Pagamentos ===
   | 'payments:read'
   | 'payments:configure'
-  
+
   // === Hardware/ESP32 ===
   | 'esp32:read'
   | 'esp32:connect'
   | 'esp32:configure'
   | 'esp32:dispense'
-  
+
   // === Dispensers ===
   | 'dispensers:read'
   | 'dispensers:create'
   | 'dispensers:update'
   | 'dispensers:delete'
-  
-  // === Usuários ===
+
+  // === Usuarios ===
   | 'users:read'
   | 'users:invite'
   | 'users:update'
   | 'users:delete'
-  
+
   // === Lojas ===
   | 'stores:read'
   | 'stores:create'
   | 'stores:update'
   | 'stores:delete'
-  
+
   // === Franquia ===
   | 'franchise:read'
   | 'franchise:update'
-  
+
   // === Billing (apenas owner) ===
   | 'billing:read'
   | 'billing:update'
-  
+
   // === Auditoria ===
-  | 'audit:read';
+  | 'audit:read'
+
+  // === Operacoes (ERP Chopp) - Torneiras ===
+  | 'taps:read'
+  | 'taps:write'
+
+  // === Operacoes - Barris (Kegs) ===
+  | 'kegs:read'
+  | 'kegs:write'
+
+  // === Operacoes - Conexao Tap/Keg ===
+  | 'tap_assignments:read'
+  | 'tap_assignments:write'
+
+  // === Operacoes - Sessoes de Servir ===
+  | 'serving:read'
+  | 'serving:create'
+
+  // === Operacoes - Perdas ===
+  | 'wastage:read'
+  | 'wastage:create'
+
+  // === Operacoes - Manutencao ===
+  | 'maintenance:read'
+  | 'maintenance:write'
+
+  // === Relatorios Operacionais ===
+  | 'reports:operational'
+  | 'reports:op' // alias para reports:operational (spec original)
+
+  // === Notificacoes Operacionais ===
+  | 'notifications:read';
 
 /**
- * Mapeamento unificado de roles para permissões
+ * Mapeamento unificado de roles para permissoes
  */
 export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   superadmin: [
-    // Super Admin tem TODAS as permissões + permissões de plataforma
     'superadmin:access', 'superadmin:manage_franchises', 'superadmin:manage_users',
     'superadmin:manage_billing', 'superadmin:view_metrics', 'superadmin:system_settings',
     'products:read', 'products:create', 'products:update', 'products:delete',
@@ -110,10 +140,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'franchise:read', 'franchise:update',
     'billing:read', 'billing:update',
     'audit:read',
+    'taps:read', 'taps:write',
+    'kegs:read', 'kegs:write',
+    'tap_assignments:read', 'tap_assignments:write',
+    'serving:read', 'serving:create',
+    'wastage:read', 'wastage:create',
+    'maintenance:read', 'maintenance:write',
+    'reports:operational', 'reports:op',
+    'notifications:read',
   ],
 
   owner: [
-    // Owner tem TODAS as permissões
     'products:read', 'products:create', 'products:update', 'products:delete',
     'sales:read', 'sales:create', 'sales:refund', 'sales:export',
     'inventory:read', 'inventory:update',
@@ -127,10 +164,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'franchise:read', 'franchise:update',
     'billing:read', 'billing:update',
     'audit:read',
+    'taps:read', 'taps:write',
+    'kegs:read', 'kegs:write',
+    'tap_assignments:read', 'tap_assignments:write',
+    'serving:read', 'serving:create',
+    'wastage:read', 'wastage:create',
+    'maintenance:read', 'maintenance:write',
+    'reports:operational', 'reports:op',
+    'notifications:read',
   ],
-  
+
   admin: [
-    // Admin: tudo exceto billing
     'products:read', 'products:create', 'products:update', 'products:delete',
     'sales:read', 'sales:create', 'sales:refund', 'sales:export',
     'inventory:read', 'inventory:update',
@@ -143,10 +187,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'stores:read', 'stores:create', 'stores:update', 'stores:delete',
     'franchise:read', 'franchise:update',
     'audit:read',
+    'taps:read', 'taps:write',
+    'kegs:read', 'kegs:write',
+    'tap_assignments:read', 'tap_assignments:write',
+    'serving:read', 'serving:create',
+    'wastage:read', 'wastage:create',
+    'maintenance:read', 'maintenance:write',
+    'reports:operational', 'reports:op',
+    'notifications:read',
   ],
-  
+
   manager: [
-    // Manager: gestão de loja, sem criar/deletar lojas ou usuários
     'products:read', 'products:create', 'products:update',
     'sales:read', 'sales:create', 'sales:refund',
     'inventory:read', 'inventory:update',
@@ -157,10 +208,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'users:read', 'users:invite',
     'stores:read',
     'franchise:read',
+    'taps:read', 'taps:write',
+    'kegs:read', 'kegs:write',
+    'tap_assignments:read', 'tap_assignments:write',
+    'serving:read', 'serving:create',
+    'wastage:read', 'wastage:create',
+    'maintenance:read', 'maintenance:write',
+    'reports:operational', 'reports:op',
+    'notifications:read',
   ],
-  
+
   operator: [
-    // Operator: apenas PDV e operações básicas
     'products:read',
     'sales:read', 'sales:create',
     'inventory:read',
@@ -168,10 +226,14 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'dispensers:read',
     'stores:read',
     'franchise:read',
+    'taps:read',
+    'kegs:read',
+    'tap_assignments:read',
+    'serving:read', 'serving:create',
+    'notifications:read',
   ],
 
   employee: [
-    // Employee: mesmas permissões do operator (compatibilidade com Admin)
     'products:read',
     'sales:read', 'sales:create',
     'inventory:read',
@@ -179,37 +241,54 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'dispensers:read',
     'stores:read',
     'franchise:read',
+    'taps:read',
+    'kegs:read',
+    'tap_assignments:read',
+    'serving:read', 'serving:create',
+    'notifications:read',
   ],
-  
+
   technician: [
-    // Technician: foco em hardware e dispensers
     'esp32:read', 'esp32:connect', 'esp32:configure', 'esp32:dispense',
     'dispensers:read', 'dispensers:create', 'dispensers:update',
     'settings:read',
     'stores:read',
     'franchise:read',
+    'taps:read', 'taps:write',
+    'kegs:read',
+    'tap_assignments:read',
+    'serving:read',
+    'maintenance:read', 'maintenance:write',
+    'notifications:read',
   ],
-  
+
   viewer: [
-    // Viewer: apenas leitura
     'products:read',
     'sales:read',
     'inventory:read',
     'reports:read',
     'stores:read',
     'franchise:read',
+    'taps:read',
+    'kegs:read',
+    'tap_assignments:read',
+    'serving:read',
+    'wastage:read',
+    'maintenance:read',
+    'reports:operational', 'reports:op',
+    'notifications:read',
   ],
 };
 
 /**
- * Verifica se um role tem uma permissão específica
+ * Verifica se um role tem uma permissao especifica
  */
 export function roleHasPermission(role: UserRole, permission: Permission): boolean {
   return ROLE_PERMISSIONS[role]?.includes(permission) ?? false;
 }
 
 /**
- * Verifica se um role tem todas as permissões listadas
+ * Verifica se um role tem todas as permissoes listadas
  */
 export function roleHasAllPermissions(role: UserRole, permissions: Permission[]): boolean {
   const rolePerms = ROLE_PERMISSIONS[role] || [];
@@ -217,7 +296,7 @@ export function roleHasAllPermissions(role: UserRole, permissions: Permission[])
 }
 
 /**
- * Verifica se um role tem alguma das permissões listadas
+ * Verifica se um role tem alguma das permissoes listadas
  */
 export function roleHasAnyPermission(role: UserRole, permissions: Permission[]): boolean {
   const rolePerms = ROLE_PERMISSIONS[role] || [];
@@ -225,11 +304,11 @@ export function roleHasAnyPermission(role: UserRole, permissions: Permission[]):
 }
 
 /**
- * Agrupa permissões por recurso
+ * Agrupa permissoes por recurso
  */
 export function groupPermissionsByResource(permissions: Permission[]): Record<string, string[]> {
   const groups: Record<string, string[]> = {};
-  
+
   permissions.forEach(perm => {
     const [resource, action] = perm.split(':');
     if (!groups[resource]) {
@@ -237,22 +316,20 @@ export function groupPermissionsByResource(permissions: Permission[]): Record<st
     }
     groups[resource].push(action);
   });
-  
+
   return groups;
 }
 
 /**
- * Labels para permissões em português
+ * Labels para permissoes em portugues
  */
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  // Super Admin
   'superadmin:access': 'Acesso Super Admin',
   'superadmin:manage_franchises': 'Gerenciar todas as franquias',
-  'superadmin:manage_users': 'Gerenciar todos os usuários',
+  'superadmin:manage_users': 'Gerenciar todos os usuarios',
   'superadmin:manage_billing': 'Gerenciar billing global',
-  'superadmin:view_metrics': 'Ver métricas da plataforma',
-  'superadmin:system_settings': 'Configurações do sistema',
-  // Produtos
+  'superadmin:view_metrics': 'Ver metricas da plataforma',
+  'superadmin:system_settings': 'Configuracoes do sistema',
   'products:read': 'Ver produtos',
   'products:create': 'Criar produtos',
   'products:update': 'Editar produtos',
@@ -263,10 +340,10 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'sales:export': 'Exportar vendas',
   'inventory:read': 'Ver estoque',
   'inventory:update': 'Ajustar estoque',
-  'reports:read': 'Ver relatórios',
-  'reports:export': 'Exportar relatórios',
-  'settings:read': 'Ver configurações',
-  'settings:update': 'Alterar configurações',
+  'reports:read': 'Ver relatorios',
+  'reports:export': 'Exportar relatorios',
+  'settings:read': 'Ver configuracoes',
+  'settings:update': 'Alterar configuracoes',
   'payments:read': 'Ver pagamentos',
   'payments:configure': 'Configurar pagamentos',
   'esp32:read': 'Ver status ESP32',
@@ -277,10 +354,10 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'dispensers:create': 'Criar dispensers',
   'dispensers:update': 'Editar dispensers',
   'dispensers:delete': 'Excluir dispensers',
-  'users:read': 'Ver usuários',
-  'users:invite': 'Convidar usuários',
-  'users:update': 'Editar usuários',
-  'users:delete': 'Remover usuários',
+  'users:read': 'Ver usuarios',
+  'users:invite': 'Convidar usuarios',
+  'users:update': 'Editar usuarios',
+  'users:delete': 'Remover usuarios',
   'stores:read': 'Ver lojas',
   'stores:create': 'Criar lojas',
   'stores:update': 'Editar lojas',
@@ -290,4 +367,19 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'billing:read': 'Ver faturamento',
   'billing:update': 'Gerenciar faturamento',
   'audit:read': 'Ver logs de auditoria',
+  'taps:read': 'Ver torneiras (operacao)',
+  'taps:write': 'Gerenciar torneiras (operacao)',
+  'kegs:read': 'Ver barris',
+  'kegs:write': 'Gerenciar barris',
+  'tap_assignments:read': 'Ver conexoes torneira/barril',
+  'tap_assignments:write': 'Conectar/desconectar barris',
+  'serving:read': 'Ver sessoes de servir',
+  'serving:create': 'Registrar sessao de servir',
+  'wastage:read': 'Ver perdas',
+  'wastage:create': 'Registrar perdas',
+  'maintenance:read': 'Ver manutencoes',
+  'maintenance:write': 'Gerenciar manutencoes',
+  'reports:operational': 'Ver relatorios operacionais',
+  'reports:op': 'Ver relatorios operacionais (alias)',
+  'notifications:read': 'Ver notificacoes operacionais',
 };

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { Button } from '@/components/ui/button';
 import { Hand } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
 import { AttractVideoSettings } from '@/types/store';
+import type { AttractVideoConfig } from '../../shared/types/store';
 import { useCachedVideo } from '@/hooks/useCachedVideo';
 
 type AttractScreenProps = {
@@ -12,6 +13,8 @@ type AttractScreenProps = {
   onStart: () => void;
   title?: string;
   subtitle?: string;
+  /** Video config from store doc (canonical source). Falls back to sub-doc listener if absent. */
+  attractVideoConfig?: AttractVideoConfig;
 };
 
 const AttractScreen = ({
@@ -19,14 +22,29 @@ const AttractScreen = ({
   onStart,
   title,
   subtitle,
+  attractVideoConfig,
 }: AttractScreenProps) => {
   const { t } = useTranslation();
   const startBtnRef = useRef<HTMLButtonElement | null>(null);
-  const [videoSettings, setVideoSettings] = useState<AttractVideoSettings | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [legacyVideoSettings, setLegacyVideoSettings] = useState<AttractVideoSettings | null>(null);
   const [shouldRender, setShouldRender] = useState(visible);
   const [isEntering, setIsEntering] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const startTriggeredRef = useRef(false);
+
+  // Canonical source: attractVideoConfig from store doc (via props/context)
+  // Fallback: legacy sub-doc listener (settings/attract_video) for migration period
+  const videoSettings: AttractVideoSettings | null = attractVideoConfig
+    ? {
+        isEnabled: attractVideoConfig.isEnabled,
+        videoUrl: attractVideoConfig.videoUrl,
+        displayTitle: attractVideoConfig.displayTitle,
+        displaySubtitle: attractVideoConfig.displaySubtitle,
+        videoOpacity: attractVideoConfig.videoOpacity,
+        videoCoverMode: attractVideoConfig.videoCoverMode,
+      }
+    : legacyVideoSettings;
 
   // Hook para cache de vídeo - baixa uma vez, usa do cache depois
   const {
@@ -43,54 +61,55 @@ const AttractScreen = ({
   const displayTitle = title || videoSettings?.displayTitle || t('attract.title');
   const displaySubtitle = subtitle || videoSettings?.displaySubtitle || t('attract.subtitle');
 
-  // Carrega configurações de vídeo do Firestore
+  // Legacy sub-doc listener: only active when attractVideoConfig prop is not provided
+  // This ensures backward compat during migration (before PR4 moves data to store doc)
   useEffect(() => {
-    let isMounted = true;
+    // Skip if canonical config is available from store doc
+    if (attractVideoConfig) return;
 
-    const loadVideoSettings = async () => {
-      try {
-        const storeId = getCurrentStoreId();
-        if (!storeId) return;
+    const storeId = getCurrentStoreId();
+    if (!storeId) return;
 
-        const franchiseId = getCurrentFranchiseId();
-        if (!franchiseId) return;
+    const franchiseId = getCurrentFranchiseId();
+    if (!franchiseId) return;
 
-        const db = getFirebaseDb();
-        const videoDocRef = doc(
-          db,
-          'franchises',
-          franchiseId,
-          'stores',
-          storeId,
-          'settings',
-          'attract_video'
-        );
-        const videoSnap = await getDoc(videoDocRef);
+    const db = getFirebaseDb();
+    const videoDocRef = doc(
+      db,
+      'franchises',
+      franchiseId,
+      'stores',
+      storeId,
+      'settings',
+      'attract_video'
+    );
 
-        // Verificar se ainda está montado antes de atualizar estado
-        if (!isMounted) return;
-
-        if (videoSnap.exists()) {
-          const data = videoSnap.data() as AttractVideoSettings;
-          if (data.isEnabled) {
-            setVideoSettings(data);
-          }
+    const unsubscribe = onSnapshot(
+      videoDocRef,
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data() as AttractVideoSettings;
+          setLegacyVideoSettings(data);
+        } else {
+          setLegacyVideoSettings(null);
         }
-      } catch (error) {
-        if (isMounted) {
-          console.error('Error loading attract video settings:', error);
-        }
+      },
+      (error) => {
+        console.error('Error listening to attract video settings:', error);
       }
-    };
+    );
 
-    if (visible) {
-      loadVideoSettings();
+    return () => unsubscribe();
+  }, [attractVideoConfig]);
+
+  // Autoplay defensivo para Android/Capacitor WebView
+  useEffect(() => {
+    if (visible && cachedVideoUrl && videoSettings?.isEnabled) {
+      videoRef.current?.play().catch(() => {
+        // Silently ignore - autoplay may be blocked without user gesture
+      });
     }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [visible]);
+  }, [visible, cachedVideoUrl, videoSettings?.isEnabled]);
 
   useEffect(() => {
     if (visible) {
@@ -164,6 +183,8 @@ const AttractScreen = ({
       {cachedVideoUrl && videoSettings?.isEnabled && (
         <>
           <video
+            key={cachedVideoUrl}
+            ref={videoRef}
             autoPlay
             muted
             loop

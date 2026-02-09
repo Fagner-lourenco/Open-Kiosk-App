@@ -5,6 +5,7 @@
  */
 
 import { Timestamp } from 'firebase/firestore';
+import type { AttractVideoConfig } from '../../../shared/types/store';
 
 /**
  * Endereço da loja
@@ -21,9 +22,17 @@ export interface StoreAddress {
 }
 
 /**
- * Configuração de gateway de pagamento (canônico + legado)
+ * Configuração de gateway de pagamento (canônico)
+ *
+ * NOTE: Legacy 'mercadopago' format is automatically converted to canonical
+ * 'mercado_pago' at runtime via normalizeProvider(). This ensures the type
+ * system enforces canonical format while maintaining full backward compatibility
+ * with existing Firestore documents containing the legacy format.
+ *
+ * @see normalizeProvider() - Runtime conversion for legacy data
+ * @see PaymentGatewayConfigSchema - Zod schema still validates both formats on input
  */
-export type PaymentProvider = 'none' | 'mercado_pago' | 'mercadopago' | 'pagbank';
+export type PaymentProvider = 'none' | 'mercado_pago' | 'pagbank';
 export type PaymentEnvironment = 'sandbox' | 'production';
 
 export interface EnabledPaymentMethods {
@@ -106,6 +115,19 @@ export interface Store {
   paymentGatewayConfig?: PaymentGatewayConfig;
   createdAt: Timestamp | Date;
   updatedAt: Timestamp | Date;
+
+  // Kiosk store-level settings
+  kioskEnabled?: boolean;
+  attractScreenEnabled?: boolean;
+  attractVideoConfig?: AttractVideoConfig;
+
+  // Legacy fields (backward compat)
+  /** @deprecated Use kioskEnabled */
+  kioskMode?: boolean;
+  /** @deprecated Use attractTimeoutSeconds */
+  idleTimeout?: number;
+  /** Versão da migração */
+  _migrationVersion?: number;
 }
 
 /**
@@ -131,6 +153,9 @@ export interface UpdateStoreData extends Partial<CreateStoreData> {
   isActive?: boolean;
   attractTimeoutSeconds?: number;
   useThermalPrinter?: boolean;
+  kioskEnabled?: boolean;
+  attractScreenEnabled?: boolean;
+  attractVideoConfig?: Partial<AttractVideoConfig>;
   esp32Config?: Partial<ESP32Config>;
   paymentGatewayConfig?: Partial<PaymentGatewayConfig>;
 }

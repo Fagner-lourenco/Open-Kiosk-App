@@ -62,7 +62,14 @@ export type StoreSubcollection =
   | 'dispensers'
   | 'inventoryLogs'
   | 'dailyStats'
-  | 'metrics';
+  | 'metrics'
+  | 'taps'
+  | 'kegs'
+  | 'tapAssignments'
+  | 'servingSessions'
+  | 'wastageEvents'
+  | 'maintenanceLogs'
+  | 'notifications';
 
 /**
  * Retorna o path de uma subcollection da loja

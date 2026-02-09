@@ -101,7 +101,10 @@ export default defineConfig({
     // ============================================================
     // INCLUDES & EXCLUDES
     // ============================================================
-    include: ['src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    include: [
+      'src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
+      'shared/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
+    ],
     exclude: [
       'node_modules',
       'dist',

@@ -68,9 +68,17 @@ export interface ESP32Config {
 // ============================================================================
 
 /**
- * Provedor de pagamento (canônico + legado)
+ * Provedor de pagamento (canônico)
+ *
+ * NOTE: Legacy 'mercadopago' format is automatically converted to canonical
+ * 'mercado_pago' at runtime via normalizeProvider(). This ensures the type
+ * system enforces canonical format while maintaining full backward compatibility
+ * with existing Firestore documents containing the legacy format.
+ *
+ * @see normalizeProvider() - Runtime conversion for legacy data
+ * @see PaymentGatewayConfigSchema - Zod schema still validates both formats on input
  */
-export type PaymentProvider = 'none' | 'mercado_pago' | 'mercadopago' | 'pagbank';
+export type PaymentProvider = 'none' | 'mercado_pago' | 'pagbank';
 
 /**
  * Ambiente de pagamento
@@ -139,100 +147,210 @@ export interface PaymentGatewayConfig {
 }
 
 // ============================================================================
+// CONFIGURAÇÃO DE VÍDEO DA TELA DE ATRAÇÃO
+// ============================================================================
+
+/**
+ * Configuração do vídeo de fundo da tela de atração (attract screen).
+ *
+ * Gerenciado exclusivamente pelo Admin Web. O Kiosk consome como read-only.
+ */
+export interface AttractVideoConfig {
+  /** Habilitar/desabilitar vídeo de fundo */
+  isEnabled: boolean;
+
+  /** URL do vídeo (HTTPS obrigatório, ex: https://cdn.example.com/video.mp4) */
+  videoUrl?: string;
+
+  /** Título customizado (substitui translate key 'attract.title') */
+  displayTitle?: string;
+
+  /** Subtítulo customizado (substitui translate key 'attract.subtitle') */
+  displaySubtitle?: string;
+
+  /** Opacidade do vídeo (0.0-1.0, padrão 0.4 para legibilidade) */
+  videoOpacity?: number;
+
+  /** Modo de preenchimento: 'cover' (preenche tela) ou 'contain' (cabe na tela) */
+  videoCoverMode?: 'cover' | 'contain';
+
+  /** Timestamp da última validação da URL */
+  lastValidatedAt?: string;
+
+  /** Resultado da última validação */
+  lastValidationResult?: 'valid' | 'invalid' | 'cors_warning';
+
+  /** Content-Type do vídeo (ex: 'video/mp4') */
+  contentType?: string;
+}
+
+// ============================================================================
 // LOJA
 // ============================================================================
 
 /**
  * Interface unificada da Loja
- * 
+ *
  * Esta interface é a fonte da verdade para ambos os apps.
  */
 export interface Store {
   /** ID único do documento no Firestore */
   id: string;
-  
+
   /** ID da franquia (obrigatório em modo multi-tenant) */
   franchiseId: string;
-  
+
   /** Slug único para URL (ex: "loja-centro") */
   slug: string;
-  
+
   /** Nome de exibição */
   name: string;
-  
+
   /** Indica se a loja está ativa */
   isActive: boolean;
-  
+
   // =========================================
   // Localização e Contato
   // =========================================
-  
+
   /** Endereço da loja */
   address?: StoreAddress;
-  
+
   /** Contato da loja */
   contact?: StoreContact;
-  
+
   /** Telefone (atalho) */
   phone?: string;
-  
+
   /** Email (atalho) */
   email?: string;
-  
+
   /** Fuso horário (ex: "America/Sao_Paulo") */
   timezone: string;
-  
+
   // =========================================
   // Configurações Fiscais
   // =========================================
-  
+
   /** CNPJ ou identificador fiscal */
   taxId?: string;
-  
+
   /** Moeda (ex: "BRL", "USD") */
   currency: string;
-  
+
   /** Percentual de imposto padrão */
   taxPercentage: number;
-  
+
   // =========================================
   // Configurações de Interface
   // =========================================
-  
+
   /** Idioma da interface */
   language: 'pt-BR' | 'en';
-  
+
   /** Tempo de inatividade para tela de atração (segundos) */
   attractTimeoutSeconds: number;
-  
+
   /** Usar impressora térmica */
   useThermalPrinter: boolean;
-  
+
+  // =========================================
+  // Configurações do Kiosk (store-level)
+  // =========================================
+
+  /** Habilita modo kiosk (restrições de interface) */
+  kioskEnabled?: boolean;
+
+  /** Habilita tela de atração quando ocioso */
+  attractScreenEnabled?: boolean;
+
+  /** Configuração do vídeo da tela de atração */
+  attractVideoConfig?: AttractVideoConfig;
+
+  // =========================================
+  // Campos legados (backward compat)
+  // =========================================
+
+  /** @deprecated Use kioskEnabled */
+  kioskMode?: boolean;
+
+  /** @deprecated Use attractTimeoutSeconds */
+  idleTimeout?: number;
+
+  /** Versão da migração de settings */
+  _migrationVersion?: number;
+
   // =========================================
   // Configurações de Hardware
   // =========================================
-  
+
   /** Configuração do ESP32 */
   esp32Config?: ESP32Config;
-  
+
   /** Porta COM para comunicação serial (legado) */
   comPort?: string;
-  
+
   /** Configuração do gateway de pagamento */
   paymentGatewayConfig?: PaymentGatewayConfig;
-  
+
   // =========================================
   // Metadados
   // =========================================
-  
+
   /** Data de criação */
   createdAt: Date;
-  
+
   /** Data da última atualização */
   updatedAt: Date;
-  
+
   /** ID do usuário que criou */
   createdBy?: string;
+}
+
+// ============================================================================
+// TAP CONFIGURATION (CANONICAL)
+// ============================================================================
+
+/**
+ * Configuração canônica de torneira (Tap).
+ *
+ * Este é o formato PREFERENCIAL usado pelo Kiosk para configurar o hardware ESP32.
+ * O Admin Web deve escrever configurações neste formato no campo `taps[]`.
+ *
+ * Backward Compatibility: O campo legado `dispensers[]` ainda é suportado
+ * via fallback, mas `taps[]` tem prioridade.
+ *
+ * Estrutura deve espelhar src/types/store.ts TapConfig (Kiosk).
+ */
+export interface TapConfig {
+  /** ID da torneira (0-3, máximo 4 torneiras) */
+  id: number;
+
+  /** Nome da torneira */
+  name: string;
+
+  /** Torneira habilitada */
+  enabled: boolean;
+
+  /** Pino GPIO da válvula (opcional, configurado pelo Kiosk) */
+  valvePin?: number;
+
+  /** Pino GPIO do sensor de fluxo (opcional, configurado pelo Kiosk) */
+  sensorPin?: number;
+
+  /** Calibração do sensor de fluxo */
+  calibration?: {
+    /** Pulsos por litro do sensor (ex: 450 para YF-S201) */
+    pulsesPerLiter?: number;
+    /** Taxa de fluxo em ml/segundo */
+    mlPerSecond?: number;
+  };
+
+  /** ID do produto pré-selecionado (opcional) */
+  productId?: string;
+
+  /** Nome do produto pré-selecionado (opcional) */
+  productName?: string;
 }
 
 // ============================================================================
@@ -264,6 +382,9 @@ export interface UpdateStoreData extends Partial<CreateStoreData> {
   isActive?: boolean;
   attractTimeoutSeconds?: number;
   useThermalPrinter?: boolean;
+  kioskEnabled?: boolean;
+  attractScreenEnabled?: boolean;
+  attractVideoConfig?: Partial<AttractVideoConfig>;
   esp32Config?: Partial<ESP32Config>;
   paymentGatewayConfig?: Partial<PaymentGatewayConfig>;
 }

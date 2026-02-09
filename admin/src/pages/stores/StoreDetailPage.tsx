@@ -46,6 +46,10 @@ import {
   Package,
   ShoppingCart,
   Boxes,
+  Beer,
+  Activity,
+  Droplets,
+  Wrench,
 } from 'lucide-react';
 
 // Import store tab components
@@ -56,6 +60,10 @@ import {
   StoreReportsTab,
   StoreSettingsTab,
   StoreMembersTab,
+  StoreKegsTab,
+  StoreOperationsTab,
+  StoreWastageTab,
+  StoreMaintenanceTab,
 } from '@/components/store';
 
 interface StoreData {
@@ -305,6 +313,22 @@ export function StoreDetailPage() {
             <ShoppingCart className="mr-2 h-4 w-4" />
             Pedidos
           </TabsTrigger>
+          <TabsTrigger value="operations">
+            <Activity className="mr-2 h-4 w-4" />
+            Operacao
+          </TabsTrigger>
+          <TabsTrigger value="kegs">
+            <Beer className="mr-2 h-4 w-4" />
+            Barris
+          </TabsTrigger>
+          <TabsTrigger value="wastage">
+            <Droplets className="mr-2 h-4 w-4" />
+            Perdas
+          </TabsTrigger>
+          <TabsTrigger value="maintenance">
+            <Wrench className="mr-2 h-4 w-4" />
+            Manutencao
+          </TabsTrigger>
           <TabsTrigger value="reports">
             <BarChart3 className="mr-2 h-4 w-4" />
             Relatórios
@@ -502,9 +526,41 @@ export function StoreDetailPage() {
 
         {/* Orders Tab */}
         <TabsContent value="orders" className="mt-6">
-          <StoreOrdersTab 
-            franchiseId={currentFranchise.id} 
-            storeId={storeId} 
+          <StoreOrdersTab
+            franchiseId={currentFranchise.id}
+            storeId={storeId}
+          />
+        </TabsContent>
+
+        {/* Operations Tab */}
+        <TabsContent value="operations" className="mt-6">
+          <StoreOperationsTab
+            franchiseId={currentFranchise.id}
+            storeId={storeId}
+          />
+        </TabsContent>
+
+        {/* Kegs Tab */}
+        <TabsContent value="kegs" className="mt-6">
+          <StoreKegsTab
+            franchiseId={currentFranchise.id}
+            storeId={storeId}
+          />
+        </TabsContent>
+
+        {/* Wastage Tab */}
+        <TabsContent value="wastage" className="mt-6">
+          <StoreWastageTab
+            franchiseId={currentFranchise.id}
+            storeId={storeId}
+          />
+        </TabsContent>
+
+        {/* Maintenance Tab */}
+        <TabsContent value="maintenance" className="mt-6">
+          <StoreMaintenanceTab
+            franchiseId={currentFranchise.id}
+            storeId={storeId}
           />
         </TabsContent>
 

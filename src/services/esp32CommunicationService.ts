@@ -1,6 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { BleClient } from '@capacitor-community/bluetooth-le';
 import esp32Serial from './esp32SerialService';  // 🔧 FIX: Fallback para USB Web Serial
+import { TapConfig } from '@/types/store';
 
 // Plugin USB Serial para Android (capacitor-usb-serial-plugin)
 // Importação dinâmica para não quebrar na web
@@ -27,8 +28,39 @@ const ESP32_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 export const ESP32_DEVICE_NAME = 'Kiosk_Bier';      // Nome BLE do ESP32
 export const ESP32_WIFI_SSID = 'Kiosk_Bier';        // SSID do Access Point WiFi
 export const ESP32_WIFI_PASSWORD = 'bier2026';      // Senha do WiFi (para referência)
-export const ESP32_DEFAULT_IP = '192.168.4.1';      // IP padrão do Access Point
 export const ESP32_BLE_PIN = '123456';              // PIN para pareamento BLE
+
+// 🆕 Configuração dinâmica de IP WiFi (permite override)
+let ESP32_DEFAULT_IP = '192.168.4.1';               // IP padrão do Access Point (configurável)
+
+/**
+ * 🆕 Permite configurar o IP padrão do ESP32 em runtime
+ * Útil para setups com subnets diferentes
+ */
+export const setESP32WiFiIP = (ip: string): void => {
+  ESP32_DEFAULT_IP = ip;
+  console.log(`[ESP32Config] WiFi IP atualizado para: ${ip}`);
+  localStorage.setItem('esp32_wifi_ip', ip);
+}
+
+/**
+ * Carrega IP do WiFi do storage na inicialização
+ */
+export const loadESP32WiFiIP = (): string => {
+  const savedIP = localStorage.getItem('esp32_wifi_ip');
+  if (savedIP) {
+    ESP32_DEFAULT_IP = savedIP;
+    console.log(`[ESP32Config] WiFi IP carregado do storage: ${savedIP}`);
+  }
+  return ESP32_DEFAULT_IP;
+}
+
+/**
+ * Getter para acessar IP atual
+ */
+export const getESP32WiFiIP = (): string => {
+  return ESP32_DEFAULT_IP;
+}
 
 // Chave de persistência para última conexão
 const LAST_CONNECTION_KEY = 'esp32_last_connection';
@@ -100,14 +132,14 @@ class ESP32CommunicationService {
   private onHeartbeatFail: HeartbeatFailCallback | null = null;
 
   // Evento de conexão
-  private onConnectionChange: ConnectionEventCallback | null = null;
+  private connectionListeners: Set<ConnectionEventCallback> = new Set();
 
-  // 🆕 Callback para dados recebidos via BLE
-  private onBleDataReceived: ((data: string) => void) | null = null;
-  
-  // 🆕 Callback para dados recebidos via USB OTG nativo
-  private onUsbDataReceived: ((data: string) => void) | null = null;
-  
+  // 🆕 Callbacks para dados recebidos via BLE
+  private bleDataListeners: Set<(data: string) => void> = new Set();
+
+  // 🆕 Callbacks para dados recebidos via USB OTG nativo
+  private usbDataListeners: Set<(data: string) => void> = new Set();
+
   // 🆕 Buffer para reconstruir mensagens BLE fragmentadas
   private bleReceiveBuffer: string = '';
   private usbReceiveBuffer: string = '';
@@ -135,28 +167,28 @@ class ESP32CommunicationService {
 
     for (let i = 0; i < buffer.length; i++) {
       const char = buffer[i];
-      
+
       // Tratamento de escape: se o char anterior era \, ignorar este char
       if (escape) {
         escape = false;
         continue;
       }
-      
+
       // Se estamos dentro de uma string e encontramos \, o próximo char é escaped
       if (char === '\\' && inString) {
         escape = true;
         continue;
       }
-      
+
       // Toggle de estado de string ao encontrar " (não escaped)
       if (char === '"') {
         inString = !inString;
         continue;
       }
-      
+
       // Se estamos dentro de uma string, ignorar {} 
       if (inString) continue;
-      
+
       // Contagem de profundidade de objetos JSON
       if (char === '{') {
         if (depth === 0) {
@@ -183,7 +215,7 @@ class ESP32CommunicationService {
 
     // Remainder é tudo após o último JSON completo encontrado
     const remainder = buffer.substring(lastEnd);
-    
+
     return { jsons, remainder };
   }
 
@@ -252,26 +284,56 @@ class ESP32CommunicationService {
 
   /**
    * Registra callback para mudanças de conexão
+   * @returns Função para remover o listener
    */
-  setOnConnectionChange(callback: ConnectionEventCallback | null): void {
-    this.onConnectionChange = callback;
-    // Log removido - era muito frequente e poluía o console
+  setOnConnectionChange(callback: ConnectionEventCallback | null): (() => void) | void {
+    if (!callback) return;
+    this.connectionListeners.add(callback);
+    return () => this.connectionListeners.delete(callback);
+  }
+
+  /**
+   * Adiciona listener para mudanças de conexão
+   */
+  addConnectionListener(callback: ConnectionEventCallback): () => void {
+    this.connectionListeners.add(callback);
+    return () => this.connectionListeners.delete(callback);
   }
 
   /**
    * 🆕 Registra callback para dados recebidos via BLE
+   * @returns Função para remover o listener
    */
-  setOnBleDataReceived(callback: ((data: string) => void) | null): void {
-    this.onBleDataReceived = callback;
-    console.log('[ESP32Service] Callback BLE data registrado:', callback ? 'SIM' : 'NÃO');
+  setOnBleDataReceived(callback: ((data: string) => void) | null): (() => void) | void {
+    if (!callback) return;
+    this.bleDataListeners.add(callback);
+    return () => this.bleDataListeners.delete(callback);
+  }
+
+  /**
+   * 🆕 Adiciona listener para dados BLE
+   */
+  addBleDataListener(callback: (data: string) => void): () => void {
+    this.bleDataListeners.add(callback);
+    return () => this.bleDataListeners.delete(callback);
   }
 
   /**
    * 🆕 Registra callback para dados recebidos via USB OTG
+   * @returns Função para remover o listener
    */
-  setOnUsbDataReceived(callback: ((data: string) => void) | null): void {
-    this.onUsbDataReceived = callback;
-    console.log('[ESP32Service] Callback USB data registrado:', callback ? 'SIM' : 'NÃO');
+  setOnUsbDataReceived(callback: ((data: string) => void) | null): (() => void) | void {
+    if (!callback) return;
+    this.usbDataListeners.add(callback);
+    return () => this.usbDataListeners.delete(callback);
+  }
+
+  /**
+   * 🆕 Adiciona listener para dados USB OTG
+   */
+  addUsbDataListener(callback: (data: string) => void): () => void {
+    this.usbDataListeners.add(callback);
+    return () => this.usbDataListeners.delete(callback);
   }
 
   /**
@@ -279,11 +341,15 @@ class ESP32CommunicationService {
    */
   private notifyConnectionChange(): void {
     console.log('[ESP32Service] notifyConnectionChange chamado, status:', JSON.stringify(this.connectionStatus));
-    console.log('[ESP32Service] Callback registrado?', this.onConnectionChange ? 'SIM' : 'NÃO');
-    if (this.onConnectionChange) {
-      console.log('[ESP32Service] Chamando callback...');
-      this.onConnectionChange(this.connectionStatus);
-    }
+    console.log(`[ESP32Service] Notificando ${this.connectionListeners.size} listeners`);
+
+    this.connectionListeners.forEach(listener => {
+      try {
+        listener(this.connectionStatus);
+      } catch (error) {
+        console.error('[ESP32Service] Erro em listener de conexão:', error);
+      }
+    });
   }
 
   // ============================================
@@ -329,16 +395,16 @@ class ESP32CommunicationService {
       // Verificar limite de falhas
       if (this.heartbeatFailCount >= HEARTBEAT_FAIL_THRESHOLD) {
         console.error('[Heartbeat] Limite de falhas atingido, conexão considerada perdida');
-        
+
         // Atualizar status
         this.connectionStatus = { connected: false, type: 'none' };
         this.notifyConnectionChange();
-        
+
         // Notificar callback
         if (this.onHeartbeatFail) {
           this.onHeartbeatFail(this.heartbeatFailCount);
         }
-        
+
         this.stopHeartbeat();
       }
     }, intervalMs);
@@ -450,7 +516,7 @@ class ESP32CommunicationService {
                 console.log('[AutoConnect BLE] Tentando deviceId salvo:', lastConnection.deviceId);
                 success = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
               }
-              
+
               if (!success) {
                 // 🆕 Fallback: Scan e conectar pelo nome "Kiosk_Bier"
                 console.log(`[AutoConnect BLE] Procurando dispositivo "${ESP32_DEVICE_NAME}"...`);
@@ -570,7 +636,7 @@ class ESP32CommunicationService {
 
     try {
       console.log(`[AutoConnect BLE] Inicializando scan para "${deviceName}"...`);
-      
+
       // Inicializar BLE
       await BleClient.initialize({
         androidNeverForLocation: false,
@@ -581,17 +647,17 @@ class ESP32CommunicationService {
 
       // Scan por dispositivos
       console.log('[AutoConnect BLE] Iniciando scan...');
-      
+
       await BleClient.requestLEScan(
         { allowDuplicates: false },
         (result) => {
           const name = result.device.name || '';
           console.log(`[AutoConnect BLE] Encontrado: "${name}" (${result.device.deviceId})`);
-          
+
           // Procurar pelo nome exato ou parcial
           if (name.toLowerCase().includes(deviceName.toLowerCase()) ||
-              name.toLowerCase().includes('kiosk') ||
-              name.toLowerCase().includes('bier')) {
+            name.toLowerCase().includes('kiosk') ||
+            name.toLowerCase().includes('bier')) {
             if (!foundDevice) {
               foundDevice = {
                 id: result.device.deviceId,
@@ -617,7 +683,7 @@ class ESP32CommunicationService {
       if (foundDevice) {
         console.log(`[AutoConnect BLE] Tentando conectar a ${foundDevice.name}...`);
         const success = await this.connectBluetooth(foundDevice.id, foundDevice.name);
-        
+
         if (success) {
           console.log('[AutoConnect BLE] ✅ Conectado com sucesso!');
           return true;
@@ -657,7 +723,7 @@ class ESP32CommunicationService {
               ],
               optionalServices: [ESP32_SERVICE_UUID],
             });
-            
+
             if (device) {
               devices.push({
                 id: device.id,
@@ -682,36 +748,36 @@ class ESP32CommunicationService {
 
       // No Android/nativo, usar Capacitor BLE
       console.log('[BLE] Iniciando scan no Android...');
-      
+
       // Inicializar BLE com permissões
       await BleClient.initialize({
         androidNeverForLocation: false,
       });
-      
+
       // 🆕 ESTRATÉGIA: Fazer scan SEM filtro de UUID para encontrar todos os dispositivos BLE
       // Depois filtramos por nome (mais confiável com dispositivos com PIN)
       console.log('[BLE] Iniciando scan geral (sem filtro UUID)...');
       console.log('[BLE] Procurando dispositivos com nome contendo: kiosk, esp32, bier');
-      
+
       await BleClient.requestLEScan(
-        { 
+        {
           allowDuplicates: false,
           // 🆕 NÃO filtrar por serviço UUID - dispositivos com PIN podem não anunciar
         },
         (result) => {
           const deviceName = result.device.name || '';
           const deviceId = result.device.deviceId;
-          
+
           // Log TODOS os dispositivos encontrados (para debug)
           if (deviceName) {
             console.log(`[BLE] Dispositivo: "${deviceName}" (${deviceId}) RSSI: ${result.rssi}`);
           }
-          
+
           // Filtrar por nome que contenha "Kiosk", "ESP32" ou "Bier"
           const nameLower = deviceName.toLowerCase();
-          if (nameLower.includes('kiosk') || 
-              nameLower.includes('esp32') ||
-              nameLower.includes('bier')) {
+          if (nameLower.includes('kiosk') ||
+            nameLower.includes('esp32') ||
+            nameLower.includes('bier')) {
             const device: ESP32Device = {
               id: deviceId,
               name: deviceName,
@@ -769,7 +835,7 @@ class ESP32CommunicationService {
 
       // 🆕 Limpar buffer ao conectar
       this.bleReceiveBuffer = '';
-      
+
       // 🆕 Configurar notifications para receber respostas do ESP32
       try {
         await BleClient.startNotifications(
@@ -781,37 +847,49 @@ class ESP32CommunicationService {
             const decoder = new TextDecoder();
             const chunk = decoder.decode(value.buffer);
             console.log('[BLE] Chunk recebido (' + chunk.length + ' bytes):', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
-            
+
             // 🆕 Adicionar ao buffer e processar linhas completas
             this.bleReceiveBuffer += chunk;
-            
+
             // Processar linhas completas (terminadas em \n)
             const lines = this.bleReceiveBuffer.split('\n');
             // Manter última linha incompleta no buffer
             this.bleReceiveBuffer = lines.pop() || '';
-            
+
             // Processar cada linha completa
             for (const line of lines) {
               const trimmed = line.trim();
-              if (trimmed && this.onBleDataReceived) {
+              if (trimmed && this.bleDataListeners.size > 0) {
                 console.log('[BLE] Linha completa:', trimmed);
-                this.onBleDataReceived(trimmed);
+                this.bleDataListeners.forEach(listener => {
+                  try {
+                    listener(trimmed);
+                  } catch (error) {
+                    console.error('[BLE] Erro em listener de dados:', error);
+                  }
+                });
               }
             }
-            
+
             // 🔧 CORREÇÃO v4.0.6: Se o buffer ficou muito grande, processar parcialmente
             // usando parser que suporta JSON aninhado
             if (this.bleReceiveBuffer.length > 4096) {
               console.warn('[BLE] Buffer muito grande (' + this.bleReceiveBuffer.length + '), tentando processar...');
-              
+
               // 🔧 v4.0.6: Extrair JSONs completos (suporta aninhamento)
               const extractedJsons = this.extractCompleteJsons(this.bleReceiveBuffer);
-              
+
               if (extractedJsons.jsons.length > 0) {
                 for (const jsonStr of extractedJsons.jsons) {
-                  if (this.onBleDataReceived) {
+                  if (this.bleDataListeners.size > 0) {
                     console.log('[BLE] JSON extraído do buffer grande:', jsonStr.substring(0, 50));
-                    this.onBleDataReceived(jsonStr);
+                    this.bleDataListeners.forEach(listener => {
+                      try {
+                        listener(jsonStr);
+                      } catch (error) {
+                        console.error('[BLE] Erro em listener de dados:', error);
+                      }
+                    });
                   }
                 }
                 // Manter apenas o resto do buffer após os JSONs extraídos
@@ -988,7 +1066,7 @@ class ESP32CommunicationService {
       console.log('[USB] Usando esp32Serial como fallback para enviar comando');
       return esp32Serial.sendRaw(command);
     }
-    
+
     if (!this.serialPort || !this.serialPort.writable) {
       console.error('[USB] Porta não aberta e esp32Serial não conectado');
       return false;
@@ -1058,7 +1136,7 @@ class ESP32CommunicationService {
    */
   async scanWifiDevices(baseIp: string = '192.168.1'): Promise<ESP32Device[]> {
     const devices: ESP32Device[] = [];
-    
+
     // No navegador web, CORS impede scan de rede
     // Apenas mostrar mensagem informativa
     if (this.isWeb()) {
@@ -1067,7 +1145,7 @@ class ESP32CommunicationService {
       // Retornar lista vazia - usuário deve usar conexão manual
       return devices;
     }
-    
+
     const BATCH_SIZE = 25; // Processa 25 IPs por vez
     const TIMEOUT_PER_IP = 300; // 300ms timeout por IP
 
@@ -1090,7 +1168,7 @@ class ESP32CommunicationService {
               });
             }
           })
-          .catch(() => {}); // Ignorar erros de conexão
+          .catch(() => { }); // Ignorar erros de conexão
 
         batchPromises.push(promise);
       }
@@ -1250,29 +1328,35 @@ class ESP32CommunicationService {
 
         // 🆕 Limpar buffer ao conectar
         this.usbReceiveBuffer = '';
-        
+
         // Registrar listener para receber dados
         await plugin.registerReadCallback((data: { value: string }) => {
           const chunk = data.value || '';
           console.log('[USB OTG] Chunk recebido (' + chunk.length + ' bytes)');
-          
+
           // 🆕 Adicionar ao buffer e processar linhas completas
           this.usbReceiveBuffer += chunk;
-          
+
           // Processar linhas completas (terminadas em \n)
           const lines = this.usbReceiveBuffer.split('\n');
           // Manter última linha incompleta no buffer
           this.usbReceiveBuffer = lines.pop() || '';
-          
+
           // Processar cada linha completa
           for (const line of lines) {
             const trimmed = line.trim();
-            if (trimmed && this.onUsbDataReceived) {
+            if (trimmed && this.usbDataListeners.size > 0) {
               console.log('[USB OTG] Linha completa:', trimmed);
-              this.onUsbDataReceived(trimmed);
+              this.usbDataListeners.forEach(listener => {
+                try {
+                  listener(trimmed);
+                } catch (error) {
+                  console.error('[USB OTG] Erro em listener de dados:', error);
+                }
+              });
             }
           }
-          
+
           // Se o buffer ficou muito grande (mais de 2KB), algo está errado - limpar
           if (this.usbReceiveBuffer.length > 2048) {
             console.warn('[USB OTG] Buffer muito grande, limpando:', this.usbReceiveBuffer.length);
@@ -1334,12 +1418,12 @@ class ESP32CommunicationService {
       const plugin = await loadUsbSerialPlugin();
       if (!plugin) return false;
 
-      const data = typeof command === 'string' 
-        ? command 
+      const data = typeof command === 'string'
+        ? command
         : JSON.stringify(command);
 
       console.log('[USB OTG] Enviando:', data);
-      
+
       await plugin.write({ value: data + '\n' });
       return true;
     } catch (error) {
@@ -1359,19 +1443,19 @@ class ESP32CommunicationService {
    */
   async connectWifi(ipAddress: string): Promise<boolean> {
     const TIMEOUT_MS = 5000;
-    
+
     try {
       this.esp32IpAddress = ipAddress;
-      
+
       console.log(`[WiFi] Tentando conectar ao ESP32 em ${ipAddress}...`);
-      
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
       // No Android nativo, usar mode 'cors' normal (não tem restrição CORS)
       // Na web, usar 'no-cors' porque CORS bloqueia
       const fetchMode = this.isWeb() ? 'no-cors' : 'cors';
-      
+
       console.log(`[WiFi] Usando modo fetch: ${fetchMode} (plataforma: ${Capacitor.getPlatform()})`);
 
       // Tentar verificar conexão
@@ -1383,7 +1467,7 @@ class ESP32CommunicationService {
           'Accept': 'application/json',
         },
       });
-      
+
       clearTimeout(timeout);
 
       console.log(`[WiFi] Resposta recebida: status=${response.status}, type=${response.type}`);
@@ -1391,14 +1475,14 @@ class ESP32CommunicationService {
       // No navegador com no-cors, não podemos verificar resposta (opaque)
       // No Android nativo, podemos verificar normalmente
       let isConnected = false;
-      
+
       if (this.isWeb()) {
         // Na web, opaque response significa que chegou (mas não podemos ler)
         isConnected = response.type === 'opaque' || response.ok;
       } else {
         // No Android, verificar resposta normalmente
         isConnected = response.ok;
-        
+
         if (response.ok) {
           try {
             const data = await response.json();
@@ -1599,24 +1683,38 @@ class ESP32CommunicationService {
   }
 
   /**
+   * Helper: Verifica se está pronto para enviar comandos
+   * 🆕 GUARD: Falha rápido se não conectado
+   */
+  private canSendCommand(): boolean {
+    return this.connectionStatus.type !== 'none' || esp32Serial.isConnected();
+  }
+
+  /**
    * Envia comando (auto-detecta tipo de conexão)
    * 🆕 CORRIGIDO: Agora formata JSON completo para todos os protocolos
    * 🔧 FIX: Verifica esp32Serial.isConnected() como fallback quando connectionStatus é 'none'
    */
   async sendCommand(command: string, data?: object): Promise<boolean> {
+    // 🔧 GUARD: Falha rápido se não conectado
+    if (!this.canSendCommand()) {
+      console.error(`[SendCommand] ❌ Device not connected - cannot send: ${command}`);
+      return false;
+    }
+
     // Construir payload JSON completo com action + parâmetros
     const payload = data ? { action: command, ...data } : { action: command };
     const jsonString = JSON.stringify(payload);
-    
+
     console.log(`[SendCommand] Tipo: ${this.connectionStatus.type}, esp32Serial.isConnected: ${esp32Serial.isConnected()}, Payload: ${jsonString}`);
-    
+
     // 🔧 FIX: Se connectionStatus é 'none' mas esp32Serial está conectado (conexão feita externamente),
     // usar esp32Serial diretamente. Isso resolve o bug onde botões de UI não enviavam comandos.
     if (this.connectionStatus.type === 'none' && esp32Serial.isConnected()) {
       console.log('[SendCommand] Usando esp32Serial (Web Serial conectado externamente)');
       return esp32Serial.sendRaw(jsonString);
     }
-    
+
     switch (this.connectionStatus.type) {
       case 'bluetooth':
         // 🆕 Envia JSON completo (não apenas o nome do comando)
@@ -1643,7 +1741,7 @@ class ESP32CommunicationService {
   async disconnect(): Promise<void> {
     // Parar heartbeat primeiro
     this.stopHeartbeat();
-    
+
     if (
       this.connectionStatus.type === 'bluetooth' &&
       this.connectionStatus.deviceId
@@ -1682,7 +1780,7 @@ class ESP32CommunicationService {
     this.connectedDevice = null;
     this.esp32IpAddress = '';
     this.serialPort = null;
-    
+
     this.notifyConnectionChange();
     console.log('[Disconnect] Desconectado');
   }
@@ -1805,6 +1903,32 @@ class ESP32CommunicationService {
   async beep(times: number = 1): Promise<boolean> {
     // 🔧 CORREÇÃO: Usar sendCommand unificado
     return this.sendCommand('beep', { times });
+  }
+
+  /**
+   * Configurar multiplas torneiras — envia set_config com pins + calibration
+   * Firmware deve responder com: {"type":"config_applied","applied":true,"tapsVersion":X}
+   * Persiste no NVS do ESP32 e aplica imediatamente.
+   */
+  async configureMultipleTaps(taps: TapConfig[]): Promise<boolean> {
+    console.log('[ESP32] Configurando multiplas torneiras:', taps.length);
+
+    // Mapear camelCase (Kiosk/Admin) -> snake_case (Firmware)
+    const mappedTaps = taps.map(tap => {
+      const cal = tap.calibration as any;
+      const pulsosPorLitro = cal?.pulsesPerLiter ??
+        (cal?.mlPerPulse ? Math.round(1000 / cal.mlPerPulse) : undefined);
+
+      return {
+        id: tap.id,
+        valve_pin: tap.valvePin ?? (tap as any).valve_pin,
+        sensor_pin: tap.sensorPin ?? (tap as any).sensor_pin,
+        pulsos_por_litro: pulsosPorLitro,
+        ml_por_segundo: cal?.mlPerSecond ?? cal?.flowRate,
+      };
+    });
+
+    return this.sendCommand('set_config', { taps: mappedTaps });
   }
 }
 

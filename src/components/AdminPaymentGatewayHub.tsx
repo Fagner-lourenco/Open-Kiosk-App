@@ -6,11 +6,18 @@ import { CreditCard, Info } from "lucide-react";
 import { usePaymentGateway } from "@/context/PaymentGatewayContext";
 import { useTranslation } from "@/i18n";
 
+/**
+ * Provider display labels (canonical format only)
+ *
+ * NOTE: Only canonical 'mercado_pago' is shown to users.
+ * Legacy 'mercadopago' is automatically converted to 'mercado_pago'
+ * by normalizeProvider() before reaching this component, ensuring
+ * users always see consistent canonical naming.
+ */
 const PROVIDER_LABELS: Record<string, string> = {
   none: "Nenhum",
   pagbank: "PagBank",
   mercado_pago: "Mercado Pago",
-  mercadopago: "Mercado Pago (legado)",
 };
 
 const formatEnabledMethods = (methods: { cash: boolean; pix: boolean; credit: boolean; debit: boolean }) => {

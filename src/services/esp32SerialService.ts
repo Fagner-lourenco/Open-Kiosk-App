@@ -100,6 +100,7 @@ class ESP32SerialService {
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private isReading = false;
   private readBuffer = '';
+  private connectingPromise: Promise<boolean> | null = null;
 
   // Callbacks para eventos
   private messageCallbacks: ESP32MessageCallback[] = [];
@@ -133,19 +134,52 @@ class ESP32SerialService {
    * Abre o seletor de porta do navegador
    */
   async connect(): Promise<boolean> {
-    if (!this.isSupported()) {
-      console.error('[ESP32] Web Serial API não suportada neste navegador');
-      return false;
+    // 🛡️ Guard contra chamadas simultâneas
+    if (this.connectingPromise) {
+      console.log('[ESP32] Já existe uma tentativa de conexão em curso, aguardando...');
+      return this.connectingPromise;
     }
 
-    if (this.isConnected()) {
-      console.log('[ESP32] Já conectado');
-      return true;
-    }
+    this.connectingPromise = (async () => {
+      try {
+        if (!this.isSupported()) {
+          console.error('[ESP32] Web Serial API não suportada neste navegador');
+          return false;
+        }
 
+        if (this.isConnected()) {
+          console.log('[ESP32] Já conectado');
+          return true;
+        }
+
+        // Solicitar porta ao usuário
+        const port = await navigator.serial.requestPort();
+        return await this.openPort(port);
+      } catch (error) {
+        console.error('[ESP32] Erro de conexão:', error);
+        return false;
+      } finally {
+        this.connectingPromise = null;
+      }
+    })();
+
+    return this.connectingPromise;
+  }
+
+  /**
+   * Abre uma porta específica e configura canais
+   */
+  private async openPort(port: SerialPort): Promise<boolean> {
     try {
-      // Solicitar porta ao usuário
-      const port = await navigator.serial.requestPort();
+      // Se a porta já estiver aberta, fechá-la antes (previne NetworkError)
+      if (port.readable || port.writable) {
+        console.log('[ESP32] Fechando porta já aberta/bloqueada...');
+        try {
+          await port.close();
+        } catch (e) {
+          console.warn('[ESP32] Erro ao fechar porta:', e);
+        }
+      }
 
       // Abrir com baud rate do firmware
       await port.open({ baudRate: 115200 });
@@ -157,7 +191,7 @@ class ESP32SerialService {
         throw new Error('Não foi possível criar writer para a porta');
       }
 
-      console.log('[ESP32] ✅ Conectado via USB Serial');
+      console.log('[ESP32] ✅ Porta aberta com sucesso');
 
       // Iniciar leitura contínua em background
       this.startReading();
@@ -167,7 +201,7 @@ class ESP32SerialService {
 
       return true;
     } catch (error) {
-      console.error('[ESP32] Erro ao conectar:', error);
+      console.error('[ESP32] Erro ao abrir porta:', error);
       return false;
     }
   }
@@ -194,79 +228,66 @@ class ESP32SerialService {
    * Retorna true se conseguiu reconectar
    */
   async tryAutoReconnect(): Promise<boolean> {
-    if (!this.isSupported()) {
-      console.log('[ESP32] Web Serial API não suportada');
-      return false;
+    // 🛡️ Guard contra chamadas simultâneas
+    if (this.connectingPromise) {
+      console.log('[ESP32] Já existe uma tentativa de conexão (auto) em curso');
+      return this.connectingPromise;
     }
 
-    if (this.isConnected()) {
-      console.log('[ESP32] Já conectado');
-      return true;
-    }
-
-    try {
-      const ports = await this.getAuthorizedPorts();
-
-      if (ports.length === 0) {
-        console.log('[ESP32] Nenhuma porta autorizada encontrada');
-        return false;
+    this.connectingPromise = (async () => {
+      // 🔧 v4.0.6: Removido isSupported duplicado - openPort já verifica porta
+      if (this.isConnected()) {
+        console.log('[ESP32] Já conectado');
+        return true;
       }
 
-      console.log(`[ESP32] 🔍 Encontrada(s) ${ports.length} porta(s) autorizada(s), tentando reconectar...`);
+      try {
+        const ports = await this.getAuthorizedPorts();
 
-      // Tentar cada porta até encontrar uma que funcione
-      for (const port of ports) {
-        try {
-          // Verificar se a porta já está aberta
-          if (port.readable || port.writable) {
-            console.log('[ESP32] Porta já aberta, fechando...');
-            try {
-              await port.close();
-            } catch {
-              // Ignorar erro ao fechar
-            }
-          }
-
-          // Tentar abrir a porta
-          await port.open({ baudRate: 115200 });
-
-          this.port = port;
-          this.writer = port.writable?.getWriter() || null;
-
-          if (!this.writer) {
-            throw new Error('Não foi possível criar writer para a porta');
-          }
-
-          console.log('[ESP32] ✅ Reconectado automaticamente via USB Serial');
-
-          // Iniciar leitura contínua em background
-          this.startReading();
-
-          // Notificar listeners
-          this.notifyConnection(true);
-
-          // Enviar ping para verificar conexão
-          setTimeout(() => {
-            this.ping().then(success => {
-              if (success) {
-                console.log('[ESP32] 📡 Ping confirmado - conexão ativa');
-              }
-            });
-          }, 500);
-
-          return true;
-        } catch (portError) {
-          console.log('[ESP32] Porta não disponível:', portError);
-          // Continuar para próxima porta
+        if (ports.length === 0) {
+          console.log('[ESP32] Nenhuma porta autorizada encontrada');
+          return false;
         }
-      }
 
-      console.log('[ESP32] Nenhuma porta autorizada estava disponível');
-      return false;
-    } catch (error) {
-      console.error('[ESP32] Erro na reconexão automática:', error);
-      return false;
-    }
+        console.log(`[ESP32] 🔍 Encontrada(s) ${ports.length} porta(s) autorizada(s), tentando reconectar...`);
+
+        // Tentar cada porta até encontrar uma que funcione
+        for (const port of ports) {
+          try {
+            console.log('[ESP32] Tentando porta serial autorizada...');
+
+            // Tentar abrir a porta usando helper unificado (trata fechamento prévio)
+            const opened = await this.openPort(port);
+            if (opened) {
+              console.log('[ESP32] ✅ Reconectado automaticamente via USB Serial');
+
+              // Enviar ping para verificar conexão
+              setTimeout(() => {
+                this.ping().then(success => {
+                  if (success) {
+                    console.log('[ESP32] 📡 Ping confirmado - conexão ativa');
+                  }
+                });
+              }, 500);
+
+              return true;
+            }
+          } catch (portError) {
+            console.log('[ESP32] Porta não disponível na auto-reconexão:', portError);
+            // Continuar para próxima porta
+          }
+        }
+
+        return false;
+      } catch (error) {
+        console.error('[ESP32] Erro na reconexão automática:', error);
+        return false;
+      } finally {
+        this.connectingPromise = null;
+      }
+    })();
+
+    return this.connectingPromise;
   }
 
   /**

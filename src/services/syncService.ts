@@ -24,7 +24,7 @@ import {
 } from './cacheService';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
 import { storeSubPath, StoreSubcollection } from '@/lib/pathResolver';
-import { doc, setDoc, deleteDoc, getDoc, serverTimestamp, increment, FieldValue } from 'firebase/firestore';
+import { doc, setDoc, deleteDoc, getDoc, updateDoc, serverTimestamp, increment, runTransaction } from 'firebase/firestore';
 
 // Configurações de sync
 const SYNC_CONFIG = {
@@ -174,8 +174,55 @@ const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
       docRef = doc(db, item.collection, item.docId);
     }
 
+    // Colecoes imutaveis: servingSessions e wastageEvents — deny update nas rules
+    const IMMUTABLE_COLLECTIONS = ['servingSessions', 'wastageEvents'];
+    const isImmutable = IMMUTABLE_COLLECTIONS.includes(item.collection);
+
     switch (item.operation) {
-      case 'create':
+      case 'create': {
+        const payload = reconstructFirestoreTypes(item.data);
+
+        if (isImmutable) {
+          // Colecoes imutaveis: usa transaction para create-if-absent atomico.
+          // Se doc ja existe → sucesso (idempotencia limpa, sem PERMISSION_DENIED).
+          // Nao injeta _lastSyncId/_syncedAt para nao poluir eventos imutaveis.
+          await runTransaction(db, async (txn) => {
+            const snap = await txn.get(docRef);
+            if (snap.exists()) {
+              console.log(`[SyncService] Immutable doc already exists for ${item.docId}, skipping (idempotent)`);
+              return; // transaction succeeds, doc untouched
+            }
+            txn.set(docRef, payload as object);
+          });
+        } else {
+          // Colecoes mutaveis (orders, etc.): create-if-absent.
+          // Se doc ja existe (retry ou race), NAO sobrescrever payload —
+          // apenas marca sync metadata para dedup de retries futuros.
+          const existingSnap = await getDoc(docRef);
+          if (existingSnap.exists()) {
+            const existingData = existingSnap.data() as { _lastSyncId?: string };
+            if (existingData?._lastSyncId === item.id) {
+              console.log(`[SyncService] Skipping already synced create ${item.docId}`);
+              return true;
+            }
+            // Doc existe com outro syncId (ou sem syncId): outro processo criou.
+            // Atualiza apenas metadata de sync, nao toca no payload do pedido.
+            await updateDoc(docRef, {
+              _syncedAt: serverTimestamp(),
+              _lastSyncId: item.id,
+            });
+            console.log(`[SyncService] Doc ${item.docId} already exists, stamped sync metadata only`);
+            return true;
+          }
+          await setDoc(docRef, {
+            ...(payload as object),
+            _syncedAt: serverTimestamp(),
+            _lastSyncId: item.id,
+          });
+        }
+        break;
+      }
+
       case 'update': {
         // Idempotencia: evita reaplicar a mesma operacao se ja foi sincronizada
         const existingSnap = await getDoc(docRef);
@@ -183,11 +230,6 @@ const processSyncItem = async (item: SyncQueueItem): Promise<boolean> => {
           const existingData = existingSnap.data() as { _lastSyncId?: string };
           if (existingData?._lastSyncId === item.id) {
             console.log(`[SyncService] Skipping already synced item ${item.id}`);
-            return true;
-          }
-          // Para create, se o documento ja existe, consideramos sincronizado
-          if (item.operation === 'create') {
-            console.log(`[SyncService] Document already exists for create ${item.docId}, skipping`);
             return true;
           }
         }

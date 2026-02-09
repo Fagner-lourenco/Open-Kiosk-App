@@ -43,7 +43,10 @@
     "failed": "Falhou",
     "pending": "Pendente",
     "running": "Executando",
-    "passRate": "Taxa de Aprovação"
+    "passRate": "Taxa de Aprovação",
+    "sync": "Sincronizado",
+    "localOnly": "Local apenas",
+    "notConfigured": "Não configurado"
   },
   "tests": {
     "testExecution": "Execução de Testes",
@@ -624,7 +627,15 @@
     "storeDetails": "Dados da Loja",
     "storeDetailsDescription": "Para editar estas informações, acesse o Admin Web",
     "storeEmail": "E-mail",
-    "storeDescription": "Descrição"
+    "storeDescription": "Descrição",
+    "kioskBehavior": "Comportamento do Kiosk",
+    "kioskBehaviorDescription": "Controle as restrições e o tempo de espera do terminal",
+    "kioskModeSoftwareDescription": "Habilita restrições de interface e navegação forçada no quiosque.",
+    "kioskModeNative": "Lock Task Mode (Android)",
+    "kioskModeNativeDescription": "Bloqueia o dispositivo neste aplicativo em nível de sistema.",
+    "inactivityTimeout": "Tempo de Inatividade",
+    "inactivityTimeoutDescription": "Tempo sem interação para exibir a tela de atração (10-300s).",
+    "attractTimeoutUpdated": "Tempo de inatividade atualizado"
   },
   "inventory": {
       "managementTitle": "Gestão de estoque",
@@ -797,7 +808,14 @@
     "lastConnectionCleared": "Última conexão removida",
     "bleRequiresGesture": "Bluetooth requer ação manual no navegador",
     "autoConnectSettings": "Configurações de Autoconexão",
-    "enableAutoConnect": "Habilitar autoconexão ao iniciar"
+    "enableAutoConnect": "Habilitar autoconexão ao iniciar",
+    "hardwareStatus": "ESP32 e Hardware",
+    "firmware": "Firmware",
+    "macAddress": "Endereço MAC",
+    "ipAddress": "Endereço IP",
+    "lastSync": "Última Sincronização",
+    "kioskHealth": "Status do Kiosk (visto por último)",
+    "kioskInactive": "Kiosk Inativo"
   },
   "esp32Dispenser": {
     "title": "Dispensador ESP32",

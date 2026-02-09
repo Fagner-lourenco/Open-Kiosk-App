@@ -42,6 +42,15 @@ export interface ResolvedPaymentConfig {
  * @param gatewayConfig - Configuração do Firestore (opcional)
  * @returns Configuração resolvida com todos os campos
  */
+/**
+ * Normaliza formato de payment provider (legacy → canonical)
+ *
+ * Converte legacy 'mercadopago' para canonical 'mercado_pago'.
+ * Esta é a primeira linha de defesa para backward-compatibility com dados antigos.
+ *
+ * @param provider - Valor do Firestore (pode estar em formato legado)
+ * @returns Canonical PaymentProvider
+ */
 const normalizeProvider = (provider?: PaymentProvider): PaymentProvider => {
   if (!provider) return 'mercado_pago';
   if (provider === 'mercadopago') return 'mercado_pago';
