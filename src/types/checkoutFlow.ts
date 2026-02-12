@@ -4,6 +4,7 @@ export type ProcessingStage =
   | "payment_approved"
   | "recording_sale"
   | "dispensing"
+  | "dispense_failed"
   | "ready_pickup"
   | "complete"
   | "error";

@@ -1,5 +1,5 @@
 import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { runTransaction, collection, doc, serverTimestamp, Timestamp, increment, updateDoc } from 'firebase/firestore';
+import { runTransaction, collection, doc, serverTimestamp, Timestamp, increment, updateDoc, getDoc } from 'firebase/firestore';
 import { enqueueSync } from './syncService';
 import { cacheGet, STORES, CachedProduct } from './cacheService';
 import { CartItem, Product } from '@/types/product';
@@ -409,8 +409,27 @@ class SalesService {
       updateData.status = 'dispensing';
     }
 
+    // KIO-17 fix: validate state transition via transaction to prevent race conditions
+    const VALID_TRANSITIONS: Record<string, string[]> = {
+      pending: ['dispensing'],
+      dispensing: ['dispensed', 'failed_dispense'],
+    };
+
     try {
-      await updateDoc(docRef, updateData);
+      const db = getFirebaseDb();
+      await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(docRef);
+        if (!snap.exists()) {
+          throw new Error(`[SalesService] Order ${orderNumber} not found`);
+        }
+        const currentStatus = snap.data()?.dispenseStatus || 'pending';
+        const allowed = VALID_TRANSITIONS[currentStatus];
+        if (allowed && !allowed.includes(dispenseStatus)) {
+          console.warn(`[SalesService] Invalid dispense transition: ${currentStatus} -> ${dispenseStatus}, skipping`);
+          return;
+        }
+        transaction.update(docRef, updateData);
+      });
       console.log(`[SalesService] Dispense status updated: ${orderNumber} -> ${dispenseStatus}`);
     } catch (error) {
       console.error(`[SalesService] Failed to update dispense status for ${orderNumber}:`, error);

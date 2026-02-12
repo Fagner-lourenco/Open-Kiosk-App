@@ -3,7 +3,7 @@
  * Fluxos: Login → Seleção → Pagamento → Dispensa → Recibo
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 

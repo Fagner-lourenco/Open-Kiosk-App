@@ -64,6 +64,9 @@ export interface HardwareStatus {
   numTaps?: number;
   taps?: TapStatusReport[];
   hardwareId?: string;
+  // KIO-07: finish types and tap config from pong
+  finishTypes?: string[];
+  tapsConfig?: unknown[];
   
   // Impressora
   printerConnected: boolean;

@@ -12,7 +12,7 @@
  * - DeviceHeartbeatService (monitoramento de dispositivos)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 
 // ============================================================================
 // GRUPO 1: VOICE SEARCH (Busca por Voz)

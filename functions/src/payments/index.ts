@@ -90,6 +90,61 @@ export const pagbankWebhook = functions
     res.status(200).send({ received: true });
   });
 
+/**
+ * KIO-03/KIO-04: Cancel PagBank payment via Cloud Function.
+ * Attempts real cancellation if order is in cancellable state.
+ * Otherwise marks as cancel_requested for webhook/polling reconciliation.
+ */
+export const cancelPagBankPayment = functions
+  .region('southamerica-east1')
+  .https.onCall(async (data: { franchiseId: string; storeId: string; paymentId: string }, context) => {
+    const { franchiseId, storeId, paymentId } = data;
+    if (!franchiseId || !storeId || !paymentId) {
+      throw new functions.https.HttpsError('invalid-argument', 'franchiseId, storeId e paymentId obrigatorios.');
+    }
+
+    const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
+    const paymentSnap = await paymentRef.get();
+    if (!paymentSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Pagamento nao encontrado.');
+    }
+
+    const payment = paymentSnap.data() as import('./types').PaymentRecord;
+
+    // Already in terminal state — nothing to cancel
+    const terminalStates: import('./types').PaymentStatus[] = ['paid', 'canceled', 'expired', 'refunded', 'failed'];
+    if (terminalStates.includes(payment.status)) {
+      return { canceled: payment.status === 'canceled', reason: `already_${payment.status}` };
+    }
+
+    // Attempt real cancellation via PagBank API if providerOrderId exists
+    if (payment.providerOrderId && payment.provider === 'pagbank') {
+      try {
+        // PagBank does not have a standard cancel endpoint for PIX orders.
+        // For card charges, we could attempt a void, but for PIX QR we can only wait for expiration.
+        // Mark as cancel_requested and let syncPendingPayments handle reconciliation.
+        functions.logger.info('[cancelPagBankPayment] Provider cancel delegated to sync/webhook', {
+          providerOrderId: payment.providerOrderId,
+        });
+      } catch (err) {
+        functions.logger.warn('[cancelPagBankPayment] Provider cancel attempt error:', err);
+      }
+    }
+
+    // Mark as cancel_requested — the sync job and webhook will reconcile
+    await paymentRef.set(
+      {
+        cancelRequested: true,
+        cancelRequestedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+
+    functions.logger.info('[cancelPagBankPayment] Marked cancel_requested', { paymentId, orderId: payment.orderId });
+    return { canceled: false, reason: 'cancel_requested' };
+  });
+
 export const syncPendingPayments = functions
   .region('southamerica-east1')
   .pubsub

@@ -1,7 +1,7 @@
 /**
  * Tests for operational schemas (ERP Vertical de Chopp)
  */
-import { describe, it, expect } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect disponíveis globalmente
 import {
   TapOperationalStateSchema,
   KegSchema,

@@ -3,6 +3,9 @@ apply plugin: 'com.android.application'
 android {
     namespace = "com.openkiosk.app"
     compileSdk = rootProject.ext.compileSdkVersion
+    buildFeatures {
+        buildConfig true
+    }
     defaultConfig {
         applicationId "com.openkiosk.app"
         minSdkVersion rootProject.ext.minSdkVersion
@@ -10,6 +13,8 @@ android {
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        // AND-03: PIN de manutenção via BuildConfig (override via gradle.properties ou CI)
+        buildConfigField "String", "MAINTENANCE_PIN", "\"${project.findProperty('MAINTENANCE_PIN') ?: '159357'}\""
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61

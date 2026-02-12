@@ -3,7 +3,7 @@
  * Foco: Interações, validações de entrada, UX flows
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 
 // ============================================================
 // COMPONENTS: LOGIN & AUTENTICAÇÃO

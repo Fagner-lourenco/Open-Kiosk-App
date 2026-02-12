@@ -12,7 +12,7 @@
  * - usePermissions (permissões RBAC)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 import { renderHook, act, waitFor } from '@testing-library/react';
 
 // ============================================================================

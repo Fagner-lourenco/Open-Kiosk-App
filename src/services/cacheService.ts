@@ -32,6 +32,7 @@ export const STORES = {
   PRODUCTS: 'products',
   VIDEOS: 'videos',
   SYNC_QUEUE: 'syncQueue',
+  SYNC_DLQ: 'syncDLQ',  // KIO-11: Dead Letter Queue for failed sync items
   TAPS: 'taps',  // Configuração de torneiras
   FAILED_DISPENSES: 'failedDispenses',  // Recuperação de dispenses falhados
 } as const;

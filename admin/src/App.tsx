@@ -90,11 +90,10 @@ function PermissionGuard({
 }: ProtectedRouteProps) {
   const permissionContext = useContext(PermissionContext);
   
-  // Se não tiver contexto de permissão, permite (fallback seguro para evitar crash)
-  // Isso pode acontecer durante loading inicial
+  // ADM-01 fix: fail-closed — se contexto não disponível, bloqueia acesso
   if (!permissionContext) {
-    console.warn('[PermissionGuard] PermissionContext not available, allowing access');
-    return <>{children}</>;
+    console.warn('[PermissionGuard] PermissionContext not available, blocking access (fail-closed)');
+    return null; // Renderiza nada enquanto contexto carrega
   }
   
   const { can, canAll, canAny } = permissionContext;

@@ -11,7 +11,7 @@
  * IMPORTANTE: estes testes NÃO fazem chamadas de rede.
  * Eles validam a compatibilidade de tipos e dados entre as camadas.
  */
-import { describe, it, expect } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect disponíveis globalmente
 import {
   GATEWAY_REGISTRY,
   getAvailableGateways,

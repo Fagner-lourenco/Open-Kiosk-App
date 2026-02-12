@@ -3,7 +3,7 @@
  * Cenários: Reconexão, conflitos de dados, recovery
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 
 // ============================================================
 // OFFLINE MODE TESTES

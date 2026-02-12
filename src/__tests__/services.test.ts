@@ -3,7 +3,7 @@
  * Foco: Lógica de negócio, integração com APIs externas
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 import type { Timestamp } from 'firebase/firestore';
 
 // ============================================================

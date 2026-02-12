@@ -1,10 +1,14 @@
 /**
  * Setup de Testes - Configuração Global Vitest
  * Executado antes de todos os testes
+ *
+ * NOTA: NÃO importar { vi, expect, afterEach, ... } de 'vitest' aqui.
+ * Com globals: true no vitest.config.ts, essas APIs são globais.
+ * Importar diretamente no setupFile causa "failed to find the runner"
+ * no vitest >=4.x.
  */
 
-import { expect, afterEach, beforeEach, vi } from 'vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup } from '@testing-library/react/pure';
 
 // ============================================================
 // LIMPEZA PÓS-TESTE

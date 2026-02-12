@@ -260,32 +260,36 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     // 🔧 CORREÇÃO: Filtrar pongs repetidos (menos de 5s entre eles)
     if (response.type === 'pong') {
       const now = Date.now();
-      if (now - lastPongTimeRef.current < 5000) {
-        // Pong muito recente, não logar (mas ainda processar)
-        console.log('[ESP32Context] Pong recebido (não logado - muito frequente)');
-        return;
-      }
+      const skipLog = now - lastPongTimeRef.current < 5000;
       lastPongTimeRef.current = now;
+      // KIO-09 fix: removed early return — pong data (num_taps, ip, etc.) must always be processed
 
       // 🆕 Atualizar status remoto com dados do pong (ip, firmware_version, mac, num_taps)
-      hardwareStatusService.updateStatus({
-        esp32Connected: true,
-        lastSyncAt: new Date(),
-        ...(response.ip ? { esp32Ip: response.ip } : {}),
-        ...(response.mac ? { macAddress: response.mac } : {}),
-        ...(response.firmware_version ? { firmwareVersion: response.firmware_version } : {}),
-        ...(response.num_taps ? { numTaps: response.num_taps } : {}),
-      });
+      if (!skipLog) {
+        hardwareStatusService.updateStatus({
+          esp32Connected: true,
+          lastSyncAt: new Date(),
+          ...(response.ip ? { esp32Ip: response.ip } : {}),
+          ...(response.mac ? { macAddress: response.mac } : {}),
+          ...(response.firmware_version ? { firmwareVersion: response.firmware_version } : {}),
+          ...(response.num_taps ? { numTaps: response.num_taps } : {}),
+          // KIO-07: capture finish_types and taps config from pong
+          ...(response.finish_types ? { finishTypes: response.finish_types } : {}),
+          ...(response.taps ? { tapsConfig: response.taps } : {}),
+        });
+      }
     }
 
-    console.log('[ESP32Context] Resposta recebida:', response);
+    if (response.type !== 'pong' || !skipLog) {
+      console.debug('[ESP32Context] Resposta recebida:', response);
+    }
 
     // Adicionar ao log persistente
     addLog('received', JSON.stringify(response), response);
 
     // 🆕 Multi-Tap: Processar num_taps de QUALQUER resposta que inclua
     if (response.num_taps !== undefined && response.num_taps > 0) {
-      console.log('[ESP32Context] 🚰 num_taps detectado:', response.num_taps);
+      console.debug('[ESP32Context] 🚰 num_taps detectado:', response.num_taps);
       setNumTaps(response.num_taps);
     }
 
@@ -306,16 +310,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       if (response.percent !== undefined || response.flow_started !== undefined ||
         (response.ml !== undefined && response.target !== undefined)) {
         responseType = 'progress';
-        console.log('[ESP32Context] Tipo detectado por campos: progress');
+        console.debug('[ESP32Context] Tipo detectado por campos: progress');
       } else if (response.stage !== undefined) {
         responseType = 'status';
-        console.log('[ESP32Context] Tipo detectado por campos: status');
+        console.debug('[ESP32Context] Tipo detectado por campos: status');
       } else if (response.pulses !== undefined && response.duration_ms !== undefined) {
         responseType = response.ml_calculated !== undefined ? 'flow_test' : 'calibration';
-        console.log('[ESP32Context] Tipo detectado por campos:', responseType);
+        console.debug('[ESP32Context] Tipo detectado por campos:', responseType);
       } else if (response.timestamp !== undefined && Object.keys(response).length <= 2) {
         responseType = 'pong';
-        console.log('[ESP32Context] Tipo detectado por campos: pong');
+        console.debug('[ESP32Context] Tipo detectado por campos: pong');
       }
     }
 
@@ -549,7 +553,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // ============================================
 
   const updateConnectionStatus = useCallback((newStatus: ConnectionStatus) => {
-    console.log('[ESP32Context] updateConnectionStatus recebido:', JSON.stringify(newStatus));
+    console.debug('[ESP32Context] updateConnectionStatus recebido:', JSON.stringify(newStatus));
     setStatus(newStatus);
 
     // Persistir status no Firestore para monitoramento remoto (Admin)
@@ -575,7 +579,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         heartbeatRef.current = null;
       }
     }
-  }, []);
+  }, [storeSettings]); // KIO-10 fix: storeSettings dependency to avoid stale closure on heartbeat interval
 
   // 🆕 Força sincronização do status de conexão com o serviço
   const refreshConnectionStatus = useCallback(() => {
@@ -867,8 +871,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         }
       }
 
+      // KIO-13 fix: esp32Service.disconnect() already closes USB/BLE/Serial internally;
+      // calling esp32Serial.disconnect() separately caused double-close race conditions.
       await esp32Service.disconnect();
-      await esp32Serial.disconnect();
 
       updateConnectionStatus({ connected: false, type: 'none' });
       setIsDispensing(false);

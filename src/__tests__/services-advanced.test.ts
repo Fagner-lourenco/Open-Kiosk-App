@@ -12,7 +12,7 @@
  * - StoreSettingsService (configurações de loja)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect, vi disponíveis globalmente
 
 // ============================================================================
 // GRUPO 1: SYNC SERVICE (Sincronização Offline)

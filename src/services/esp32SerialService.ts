@@ -62,6 +62,8 @@ export interface ESP32Response {
   tapId?: number;
   num_taps?: number;
   taps?: unknown[];
+  // KIO-07: finish types reported in pong (firmware v4.1+)
+  finish_types?: string[];
   // 🆕 Identificação do hardware
   chip_id?: string;
   hardware_id?: string;

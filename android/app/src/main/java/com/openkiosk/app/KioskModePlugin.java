@@ -14,16 +14,27 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 /**
  * Plugin Capacitor para controlar o modo Kiosk (Lock Task) do Android
  * Permite que o JavaScript inicie/pare o Lock Task Mode
+ *
+ * AND-01: exitLockTask agora exige PIN de manutenção para evitar saída não-autorizada.
  */
 @CapacitorPlugin(name = "KioskMode")
 public class KioskModePlugin extends Plugin {
 
+    // AND-01 + AND-03: PIN via BuildConfig — override via gradle.properties ou CI
+    private static final String MAINTENANCE_PIN = BuildConfig.MAINTENANCE_PIN;
+
     /**
      * Sair do Lock Task Mode (modo kiosk)
-     * Chamado quando admin autenticado quer sair do modo kiosk
+     * AND-01: Exige PIN de manutenção para autorizar saída
      */
     @PluginMethod
     public void exitLockTask(PluginCall call) {
+        String pin = call.getString("pin", "");
+        if (!MAINTENANCE_PIN.equals(pin)) {
+            call.reject("PIN de manutenção inválido");
+            return;
+        }
+
         Activity activity = getActivity();
         
         if (activity == null) {

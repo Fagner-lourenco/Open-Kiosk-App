@@ -298,7 +298,14 @@ export const processQueue = async (): Promise<void> => {
         item.retryCount++;
 
         if (item.retryCount >= SYNC_CONFIG.MAX_RETRY_COUNT) {
-          console.warn(`[SyncService] Max retries reached for ${item.id}, removing from queue`);
+          // KIO-11 fix: move to Dead Letter Queue instead of discarding
+          console.warn(`[SyncService] Max retries reached for ${item.id}, moving to DLQ`);
+          const dlqItem = {
+            ...item,
+            failedAt: Date.now(),
+            lastError: `Max retries (${SYNC_CONFIG.MAX_RETRY_COUNT}) exceeded`,
+          };
+          await cacheSet(STORES.SYNC_DLQ, dlqItem);
           toRemove.push(item.id);
         } else {
           toRetry.push(item);

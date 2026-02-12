@@ -96,10 +96,11 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;  // 15 segundos
 const HEARTBEAT_FAIL_THRESHOLD = 3;           // 3 falhas = desconexÃ£o
 const SUPERVISOR_HEALTHCHECK_INTERVAL_MS = 7000;
 const SUPERVISOR_HEALTHCHECK_FAIL_THRESHOLD = 2;
-const SUPERVISOR_BASE_DELAY_MS = 1200;
+// KIO-14 fix: increased base delay and reduced attempts to prevent reconnect storm
+const SUPERVISOR_BASE_DELAY_MS = 2000;
 const SUPERVISOR_MAX_DELAY_MS = 60000;
 const SUPERVISOR_BACKOFF_JITTER_RATIO = 0.35;
-const SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS = 20;
+const SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS = 10;
 const USB_NATIVE_CONNECT_TIMEOUT_MS = 8000;
 const USB_ENUMERATION_TIMEOUT_MS = 3000;
 const ESP32_USB_VENDOR_IDS = new Set<number>([
@@ -2440,6 +2441,10 @@ class ESP32CommunicationService {
       return false;
     }
 
+    // KIO-15 fix: AbortController with 8s timeout to prevent hanging on unreachable ESP32
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
     try {
       const response = await fetch(`http://${this.esp32IpAddress}/command`, {
         method: 'POST',
@@ -2447,9 +2452,10 @@ class ESP32CommunicationService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          action,  // CORRIGIDO: era 'command', agora 'action' (compatÃ­vel com firmware)
+          action,
           ...data,
         }),
+        signal: controller.signal,
       });
 
       if (response.ok) {
@@ -2461,8 +2467,14 @@ class ESP32CommunicationService {
       console.error('[WiFi] Erro na resposta:', response.status);
       return false;
     } catch (error) {
-      console.error('[WiFi] Erro ao enviar comando:', error);
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        console.error('[WiFi] Timeout (8s) ao enviar comando:', action);
+      } else {
+        console.error('[WiFi] Erro ao enviar comando:', error);
+      }
       return false;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 

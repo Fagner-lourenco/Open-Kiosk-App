@@ -692,13 +692,25 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
 
   const handleCancelPayment = async () => {
     if (isPagBank) {
+      // KIO-04 fix: Cancel PagBank remotely via Cloud Function (not local-only)
       cleanupPagBankListener();
+      const cancelPaymentId = pagbankPaymentId;
       setPagbankStatus('canceled');
-      setPagbankError('Pagamento cancelado localmente');
+      setPagbankError(null);
       setPaymentProcessed(false);
+
+      // Fire-and-forget remote cancel — best effort
+      if (cancelPaymentId) {
+        paymentService.cancelPagBankPayment(cancelPaymentId).then(result => {
+          console.log('[Checkout] PagBank cancel result:', result);
+        }).catch(err => {
+          console.warn('[Checkout] PagBank remote cancel failed (cancel_requested fallback):', err);
+        });
+      }
+
       toast({
         title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
-        description: 'O pagamento foi cancelado no kiosk. O gateway continuará aguardando até expirar.',
+        description: 'Cancelamento solicitado ao gateway.',
         variant: 'default',
       });
       return;

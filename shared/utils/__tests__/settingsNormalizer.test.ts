@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+// globals: true no vitest.config.ts — describe, it, expect disponíveis globalmente
 import {
   normalizeLanguage,
   normalizeStoreSettings,

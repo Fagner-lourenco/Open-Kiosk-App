@@ -110,6 +110,8 @@ export interface PaymentRecord {
   providerPaymentId?: string;
   customer?: PaymentCustomer;
   cardLast4?: string;
+  cancelRequested?: boolean;
+  cancelRequestedAt?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
   error?: string;

@@ -743,6 +743,60 @@ class PaymentService {
     this.clearLastTerminalOrder();
     console.log('[PaymentService] Terminal liberado para nova ordem');
   }
+
+  // ===== PAGBANK CANCELLATION (KIO-03/KIO-04 fix) =====
+
+  /**
+   * Cancelar pagamento PagBank via Cloud Function.
+   * Se cancelamento real não for suportado pelo provider, marca como
+   * `cancel_requested` no Firestore para reconciliação via webhook/polling.
+   *
+   * @param paymentId - ID do documento em franchises/{fid}/stores/{sid}/payments/{pid}
+   * @param options - storeId/franchiseId (opcionais, usa contexto atual se ausentes)
+   */
+  async cancelPagBankPayment(
+    paymentId: string,
+    options?: { storeId?: string; franchiseId?: string }
+  ): Promise<{ canceled: boolean; reason?: string }> {
+    const storeId = options?.storeId || getCurrentStoreId();
+    const franchiseId = options?.franchiseId || getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId || !paymentId) {
+      console.warn('[PaymentService] cancelPagBankPayment: missing ids', { paymentId, storeId, franchiseId });
+      return { canceled: false, reason: 'missing_ids' };
+    }
+
+    try {
+      const app = getFirebaseApp();
+      const functions = getFunctions(app, 'southamerica-east1');
+      const cancelFn = httpsCallable<
+        { franchiseId: string; storeId: string; paymentId: string },
+        { canceled: boolean; reason?: string }
+      >(functions, 'cancelPagBankPayment');
+
+      const result = await cancelFn({ franchiseId, storeId, paymentId });
+      console.log('[PaymentService] PagBank cancel result:', result.data);
+      return result.data;
+    } catch (error) {
+      // Fallback: marcar localmente como cancel_requested
+      // O webhook/polling deverá detectar e reconciliar
+      console.warn('[PaymentService] cancelPagBankPayment Cloud Function failed, marking cancel_requested:', error);
+      try {
+        const db = getFirebaseDb();
+        const paymentRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'payments', paymentId);
+        const { updateDoc } = await import('firebase/firestore');
+        await updateDoc(paymentRef, {
+          cancelRequested: true,
+          cancelRequestedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        return { canceled: false, reason: 'cancel_requested_locally' };
+      } catch (fbErr) {
+        console.error('[PaymentService] Failed to mark cancel_requested in Firestore:', fbErr);
+        return { canceled: false, reason: 'error' };
+      }
+    }
+  }
 }
 
 export const paymentService = new PaymentService();

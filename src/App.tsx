@@ -117,30 +117,30 @@ const AppContent = () => {
     const hash = currentHash;
     const path = window.location.pathname;
 
-    // Lista de rotas que DEFINITIVAMENTE são de administração ou sistema
-    const isAdminRoute = hash.includes('/admin') ||
-      path.includes('/admin') ||
-      hash.startsWith('#/login') ||
-      hash.startsWith('#/invite') ||
-      hash.startsWith('#/store-select');
+    // KIO-06 fix: detectar kiosk por rotas explícitas (não por exclusão)
+    const isKioskRoute = hash === '' ||
+      hash === '#/' ||
+      hash.startsWith('#/shop') ||
+      hash.startsWith('#/checkout') ||
+      hash.startsWith('#/payment') ||
+      hash.startsWith('#/attract');
 
-    return !isAdminRoute;
+    return isKioskRoute;
   }, [currentHash]);
 
-  // Bloquear back button em plataformas nativas (Android/iOS)
+  // KIO-08 fix: Bloquear back button apenas em modo kiosk
   useEffect(() => {
-    if (!Capacitor.isNativePlatform()) return;
+    if (!Capacitor.isNativePlatform() || !isKiosk) return;
 
-    const backButtonListener = CapacitorApp.addListener('backButton', ({ canGoBack }) => {
-      // Bloquear completamente o back button em modo kiosk
-      console.log('[Kiosk] Back button bloqueado');
-      // Não fazer nada - não navegar, não sair
+    const backButtonListener = CapacitorApp.addListener('backButton', () => {
+      // Bloquear back button apenas em modo kiosk
+      console.debug('[Kiosk] Back button bloqueado');
     });
 
     return () => {
       backButtonListener.then(listener => listener.remove());
     };
-  }, []);
+  }, [isKiosk]);
 
   // Listener para visibilitychange - trata transições background/foreground no Android
   useEffect(() => {

@@ -6,7 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle } from "lucide-react";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle, RefreshCw, PhoneCall } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { useESP32 } from "@/context/ESP32Context";
@@ -410,11 +410,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
 
     if (isPagBank) {
+      // KIO-03 fix: Cancel PagBank remotely via Cloud Function (not local-only)
       cleanupPagBankListener();
+      const cancelPaymentId = pagbankPaymentId;
       setPagbankPaymentId(null);
       setPagbankStatus('canceled');
       setPagbankQrCodeText(null);
-      setPagbankError('Pagamento cancelado localmente');
+      setPagbankError(null);
       setIsProcessing(false);
       updateProcessingStage("idle");
       setMaxInactivityTime(60);
@@ -422,9 +424,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       moveToStep(2);
       saleRecordedRef.current = false;
       recordedOrderRef.current = null;
+
+      // Fire-and-forget remote cancel — best effort
+      if (cancelPaymentId) {
+        paymentService.cancelPagBankPayment(cancelPaymentId).then(result => {
+          console.log('[DrinkQR] PagBank cancel result:', result);
+        }).catch(err => {
+          console.warn('[DrinkQR] PagBank remote cancel failed (cancel_requested fallback):', err);
+        });
+      }
+
       toast({
         title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
-        description: 'O pagamento foi cancelado no kiosk. O gateway continuará aguardando até expirar.',
+        description: 'Cancelamento solicitado ao gateway.',
         variant: 'default',
       });
       return;
@@ -479,6 +491,75 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     resetInactivityTimer();
     moveToStep(2);
   };
+
+  // KIO-02: Retry dispense para pedidos já pagos com dispense falhado
+  const dispenseRetryCountRef = useRef(0);
+  const MAX_DISPENSE_RETRIES = 2;
+
+  const handleRetryDispense = useCallback(async () => {
+    if (!product || !selectedSize || !orderNumberRef.current) return;
+    if (dispenseRetryCountRef.current >= MAX_DISPENSE_RETRIES) {
+      toast({
+        title: t('checkout.dispenserWarning'),
+        description: 'Número máximo de tentativas atingido. Procure um atendente.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    dispenseRetryCountRef.current += 1;
+    updateProcessingStage("dispensing");
+
+    try {
+      const releaseSuccess = await esp32ReleaseDrink(
+        orderNumberRef.current,
+        selectedSize.ml,
+        quantity,
+        selectedSize.label,
+        selectedTapId
+      );
+
+      if (releaseSuccess) {
+        // Sucesso no retry — concluir fluxo
+        await salesService.updateOrderDispenseStatus(orderNumberRef.current, 'dispensed', getCurrentStoreId())
+          .catch(e => console.warn('[DrinkMP] Falha ao atualizar status dispensed:', e));
+        updateProcessingStage("ready_pickup");
+
+        const subtotal = selectedSize.price * quantity;
+        const taxRate = (storeSettings?.taxPercentage || 0) / 100;
+        const taxAmount = subtotal * taxRate;
+        const totalAmount = subtotal + taxAmount;
+
+        onComplete({
+          orderNumber: orderNumberRef.current,
+          drinkData: {
+            product,
+            sizeKey: selectedSize.key,
+            sizeLabel: selectedSize.label,
+            mlPerUnit: selectedSize.ml,
+            price: selectedSize.price,
+            quantity,
+            totalAmount,
+          },
+        });
+        updateProcessingStage("complete");
+        setIsProcessing(false);
+        setTimeout(() => { onCancel(); }, 1500);
+      } else {
+        // Retry falhou novamente
+        await salesService.updateOrderDispenseStatus(orderNumberRef.current, 'failed_dispense', getCurrentStoreId())
+          .catch(e => console.warn('[DrinkMP] Falha ao atualizar status failed:', e));
+        updateProcessingStage("dispense_failed");
+        toast({
+          title: t('checkout.dispenserWarning'),
+          description: `Tentativa ${dispenseRetryCountRef.current}/${MAX_DISPENSE_RETRIES} falhou.`,
+          variant: 'destructive',
+        });
+      }
+    } catch (err) {
+      console.error('[DrinkMP] Retry dispense error:', err);
+      updateProcessingStage("dispense_failed");
+    }
+  }, [product, selectedSize, quantity, selectedTapId, esp32ReleaseDrink, onComplete, onCancel, storeSettings, t, toast, updateProcessingStage, setIsProcessing]);
 
   // Função para processar etapas pós-pagamento (venda, dispensing, etc)
   const finishPaymentFlow = async (orderNumber: string) => {
@@ -574,38 +655,44 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         });
       }
 
-      // STEP 4: Complete the order
-      // Show "ready_pickup" only when dispense command succeeded
+      // STEP 4: Complete the order — ONLY if dispense succeeded (KIO-02 fix)
       if (dispenseSucceeded) {
         updateProcessingStage("ready_pickup");
+
+        onComplete({
+          orderNumber,
+          drinkData: {
+            product,
+            sizeKey: selectedSize.key,
+            sizeLabel: selectedSize.label,
+            mlPerUnit: selectedSize.ml,
+            price: selectedSize.price,
+            quantity,
+            totalAmount,
+          },
+        });
+
+        // Limpar timeout de emergência
+        if (emergencyTimeoutRef.current) {
+          clearTimeout(emergencyTimeoutRef.current);
+          emergencyTimeoutRef.current = null;
+        }
+
+        // Mostrar sucesso e finalizar
+        updateProcessingStage("complete");
+        setTimerActive(false);
+        setIsProcessing(false);
+        setTimeout(() => {
+          onCancel();
+        }, 1500);
+      } else {
+        // KIO-02: Dispense falhou — NÃO chamar onComplete.
+        // Entrar em estado "dispense_failed" para o cliente ver opções.
+        console.warn(`[DrinkMP] Dispense failed for order ${orderNumber}. Blocking onComplete.`);
+        updateProcessingStage("dispense_failed");
+        setTimerActive(false);
+        // NÃO chamar setIsProcessing(false) — manter no step 3 com UI de falha
       }
-
-      onComplete({
-        orderNumber,
-        drinkData: {
-          product,
-          sizeKey: selectedSize.key,
-          sizeLabel: selectedSize.label,
-          mlPerUnit: selectedSize.ml,
-          price: selectedSize.price,
-          quantity,
-          totalAmount,
-        },
-      });
-
-      // Limpar timeout de emergência
-      if (emergencyTimeoutRef.current) {
-        clearTimeout(emergencyTimeoutRef.current);
-        emergencyTimeoutRef.current = null;
-      }
-
-      // Mostrar sucesso e finalizar
-      updateProcessingStage("complete");
-      setTimerActive(false);
-      setIsProcessing(false);
-      setTimeout(() => {
-        onCancel();
-      }, 1500);
     } catch (error) {
       console.error("Error in finishPaymentFlow:", error);
       // If sale was already recorded, persist failure for recovery/compensation
@@ -741,6 +828,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           }
 
           if (payment.status === 'paid') {
+            // KIO-03: Block delivery if cancel was requested before payment arrived
+            if ((payment as any).cancelRequested) {
+              console.warn('[DrinkPagBank] Payment arrived after cancel_requested — blocking delivery. Needs refund.');
+              toast({
+                title: 'Pagamento após cancelamento',
+                description: 'O pagamento foi recebido após o cancelamento. Um estorno será processado.',
+                variant: 'destructive',
+              });
+              cleanupPagBankListener();
+              setIsProcessing(false);
+              updateProcessingStage("idle");
+              moveToStep(2);
+              return;
+            }
             toast({
               title: t('checkout.paymentApprovedToast'),
               description: t('checkout.paymentConfirmedSuccess'),
@@ -1683,6 +1784,54 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                     <div className="bg-amber-600 h-2 rounded-full w-2/3 animate-pulse"></div>
                   </div>
                 </>
+              )}
+
+              {/* KIO-02: UI de falha de dispense — sem sair do modal */}
+              {flowState.processingStage === "dispense_failed" && (
+                <div className="flex flex-col items-center gap-4 py-4 w-full max-w-sm mx-auto">
+                  <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
+                    <AlertTriangle className="w-8 h-8 text-red-600" />
+                  </div>
+                  <p className="text-red-700 font-semibold text-lg text-center">
+                    {t('checkout.dispenserWarning') || 'Falha na entrega'}
+                  </p>
+                  <p className="text-sm text-gray-600 text-center">
+                    Seu pagamento foi confirmado. A bebida não foi liberada.
+                    {orderNumberRef.current && (
+                      <span className="block mt-1 font-mono text-xs text-gray-400">
+                        Pedido: {orderNumberRef.current}
+                      </span>
+                    )}
+                  </p>
+                  <div className="flex flex-col gap-3 w-full mt-2">
+                    {dispenseRetryCountRef.current < MAX_DISPENSE_RETRIES && (
+                      <Button
+                        onClick={handleRetryDispense}
+                        className="w-full h-14 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-base touch-manipulation"
+                      >
+                        <RefreshCw className="w-5 h-5 mr-2" />
+                        Tentar novamente ({MAX_DISPENSE_RETRIES - dispenseRetryCountRef.current} restante{MAX_DISPENSE_RETRIES - dispenseRetryCountRef.current !== 1 ? 's' : ''})
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        toast({
+                          title: 'Suporte notificado',
+                          description: `Pedido ${orderNumberRef.current || ''} registrado para atendimento.`,
+                          variant: 'default',
+                        });
+                        // Fechar modal — pedido fica como failed_dispense no Firestore para reconciliação admin
+                        setIsProcessing(false);
+                        onCancel();
+                      }}
+                      className="w-full h-14 text-base touch-manipulation"
+                    >
+                      <PhoneCall className="w-5 h-5 mr-2" />
+                      Chamar suporte
+                    </Button>
+                  </div>
+                </div>
               )}
 
               {flowState.processingStage === "ready_pickup" && (

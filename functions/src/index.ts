@@ -57,3 +57,6 @@ export { resetTapDailyCounters } from './erp/resetTapDailyCounters';
 export { consolidatePaymentGatewayConfig, rollbackPaymentGatewayConfig } from './migrations/consolidatePaymentGatewayConfig';
 export { unifyStoreSettings } from './migrations/unifyStoreSettings';
 export { migrateDispensersToTaps } from './migrations/migrateDispensersToTaps';
+
+// Cleanup triggers (ADM-03/ADM-05)
+export { onDeleteStore } from './cleanup/onDeleteStore';

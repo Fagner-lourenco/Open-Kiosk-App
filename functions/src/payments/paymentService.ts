@@ -169,6 +169,39 @@ export const createPaymentIntent = async (
     throw new functions.https.HttpsError('failed-precondition', 'PagBank publicKey nao configurado.');
   }
 
+  // ====================================================================
+  // KIO-18: Idempotency — deduplicate by orderId before creating new payment
+  // If an active (non-terminal) payment already exists for this orderId,
+  // return it instead of creating a duplicate.
+  // ====================================================================
+  if (data.orderId) {
+    const existingSnap = await storeRef
+      .collection('payments')
+      .where('orderId', '==', data.orderId)
+      .where('status', 'in', ['pending', 'paid'])
+      .limit(1)
+      .get();
+
+    if (!existingSnap.empty) {
+      const existingDoc = existingSnap.docs[0];
+      const existingPayment = existingDoc.data() as PaymentRecord;
+      functions.logger.info('[payments] Idempotency hit — returning existing payment', {
+        paymentId: existingDoc.id,
+        orderId: data.orderId,
+        status: existingPayment.status,
+      });
+      return {
+        paymentId: existingDoc.id,
+        provider: existingPayment.provider,
+        method: existingPayment.method,
+        status: existingPayment.status,
+        pix: existingPayment.pix,
+        providerOrderId: existingPayment.providerOrderId,
+        providerPaymentId: existingPayment.providerPaymentId,
+      };
+    }
+  }
+
   const paymentRef = storeRef.collection('payments').doc();
   const referenceId = buildReferenceId(franchiseId, storeId, paymentRef.id);
   const expiresAt =
@@ -292,11 +325,29 @@ export const syncPendingPaymentsForPagBank = async (): Promise<void> => {
       const statusResult = await provider.getPaymentStatus?.(payment);
       if (!statusResult) continue;
       if (statusResult.status !== payment.status) {
-        await updatePaymentStatus(doc.ref, statusResult.status, {
+        // KIO-03/KIO-04: If cancel was requested but provider says paid,
+        // mark as paid_after_cancel for admin reconciliation (requires manual refund).
+        const isCancelRequested = !!(payment as any).cancelRequested;
+        const newStatus = (isCancelRequested && statusResult.status === 'paid')
+          ? 'paid' as PaymentStatus  // still mark as paid — but flag for refund
+          : statusResult.status;
+
+        const extraUpdate: Record<string, unknown> = {
           providerOrderId: statusResult.providerOrderId,
           providerPaymentId: statusResult.providerPaymentId,
           pix: statusResult.pix,
-        });
+        };
+
+        if (isCancelRequested && statusResult.status === 'paid') {
+          extraUpdate.requiresRefund = true;
+          extraUpdate.cancelRequestedBeforePayment = true;
+          functions.logger.warn('[payments] Payment arrived AFTER cancel_requested — needs refund', {
+            paymentId: doc.id,
+            orderId: payment.orderId,
+          });
+        }
+
+        await updatePaymentStatus(doc.ref, newStatus, extraUpdate);
       }
     } catch (error) {
       functions.logger.warn('[payments] sync pending failed', {
