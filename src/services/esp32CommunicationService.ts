@@ -144,6 +144,9 @@ class ESP32CommunicationService {
   private bleReceiveBuffer: string = '';
   private usbReceiveBuffer: string = '';
 
+  // 🆕 Flag para inicialização idempotente do BleClient (WEB)
+  private bleInitialized: boolean = false;
+
   // ============================================
   // UTILITÁRIOS
   // ============================================
@@ -700,9 +703,31 @@ class ESP32CommunicationService {
   }
 
   /**
+   * 🔧 Inicializa BleClient de forma idempotente (evita múltiplas inicializações)
+   * Necessário no WEB para popular o mapa interno do BleClient
+   */
+  private async ensureBleInitialized(): Promise<boolean> {
+    if (this.bleInitialized) {
+      return true;
+    }
+    try {
+      await BleClient.initialize({
+        androidNeverForLocation: false,
+      });
+      this.bleInitialized = true;
+      console.log('[BLE] ✅ BleClient inicializado (idempotente)');
+      return true;
+    } catch (error) {
+      console.error('[BLE] ❌ Falha ao inicializar BleClient:', error);
+      return false;
+    }
+  }
+
+  /**
    * Escaneia dispositivos Bluetooth
-   * Nota: No navegador desktop, requestLEScan não é suportado.
-   * Usamos requestDevice que abre um picker do browser.
+   * 🔧 CORREÇÃO WEB: Agora usa BleClient.requestDevice() no navegador
+   * para garantir que o dispositivo entre no mapa interno do BleClient.
+   * Isso evita o erro "Device not found" ao conectar.
    */
   async scanBluetoothDevices(timeout: number = 5000): Promise<ESP32Device[]> {
     const devices: ESP32Device[] = [];
@@ -710,38 +735,38 @@ class ESP32CommunicationService {
     try {
       // Verificar se está no navegador web
       if (this.isWeb()) {
-        // No navegador, usar Web Bluetooth API com picker
-        if ('bluetooth' in navigator) {
-          try {
-            console.log('[BLE] Abrindo picker de dispositivos Bluetooth...');
-            // 🆕 Tentar filtro por UUID primeiro, depois por nome
-            const device = await (navigator as any).bluetooth.requestDevice({
-              filters: [
-                { services: [ESP32_SERVICE_UUID] },
-                { namePrefix: 'Kiosk' },
-                { namePrefix: 'ESP32' },
-              ],
-              optionalServices: [ESP32_SERVICE_UUID],
-            });
+        // 🔧 CORREÇÃO: Inicializar BleClient primeiro (idempotente)
+        const initialized = await this.ensureBleInitialized();
+        if (!initialized) {
+          console.warn('[BLE WEB] BleClient não inicializado, abortando scan');
+          return devices;
+        }
 
-            if (device) {
-              devices.push({
-                id: device.id,
-                name: device.name || 'ESP32 Bluetooth',
-                type: 'bluetooth',
-              });
-              console.log('[BLE] Dispositivo selecionado:', device.name);
-            }
-          } catch (pickerError: any) {
-            // Usuário cancelou o picker
-            if (pickerError.name === 'NotFoundError') {
-              console.log('[BLE] Picker cancelado ou nenhum dispositivo selecionado');
-            } else {
-              console.warn('[BLE] Erro no picker:', pickerError);
-            }
+        // 🔧 CORREÇÃO: Usar BleClient.requestDevice() ao invés de navigator.bluetooth
+        // Isso garante que o dispositivo seja adicionado ao mapa interno do BleClient
+        try {
+          console.log('[BLE WEB] Abrindo picker via BleClient.requestDevice()...');
+          const device = await BleClient.requestDevice({
+            services: [ESP32_SERVICE_UUID],
+            namePrefix: 'Kiosk',
+            optionalServices: [ESP32_SERVICE_UUID],
+          });
+
+          if (device && device.deviceId) {
+            devices.push({
+              id: device.deviceId,
+              name: device.name || 'ESP32 Bluetooth',
+              type: 'bluetooth',
+            });
+            console.log('[BLE WEB] ✅ Dispositivo selecionado:', device.name, '| deviceId:', device.deviceId);
           }
-        } else {
-          console.warn('[BLE] Web Bluetooth API não disponível neste navegador');
+        } catch (pickerError: any) {
+          // Usuário cancelou o picker ou erro
+          if (pickerError.message?.includes('cancelled') || pickerError.message?.includes('NotFoundError') || pickerError.name === 'NotFoundError') {
+            console.log('[BLE WEB] ⚠️ Picker cancelado pelo usuário');
+          } else {
+            console.warn('[BLE WEB] ❌ Erro no picker:', pickerError);
+          }
         }
         return devices;
       }
@@ -807,10 +832,107 @@ class ESP32CommunicationService {
 
   /**
    * Conecta via Bluetooth
-   * 🆕 CORRIGIDO: Agora configura notifications para receber respostas do ESP32
+   * 🔧 WEB FIX: Garante inicialização e popula mapa via getDevices/requestDevice
+   * 🆕 Configura notifications para receber respostas do ESP32
    */
   async connectBluetooth(deviceId: string, deviceName?: string): Promise<boolean> {
     try {
+      // 🔧 CORREÇÃO WEB: Inicializar BleClient e garantir dispositivo no mapa
+      if (this.isWeb()) {
+        const initialized = await this.ensureBleInitialized();
+        if (!initialized) {
+          console.error('[BLE WEB] ❌ Falha ao inicializar BleClient');
+          return false;
+        }
+
+        // Tentar repopular o mapa interno com o deviceId salvo
+        if (deviceId) {
+          console.log('[BLE WEB] 🔍 Tentando getDevices({ deviceIds: ["' + deviceId + '"] })...');
+          try {
+            const knownDevices = await BleClient.getDevices([deviceId]);
+            console.log('[BLE WEB] getDevices retornou:', knownDevices.length, 'dispositivo(s)');
+            
+            if (knownDevices.length === 0) {
+              // Dispositivo não está no mapa, precisa de requestDevice
+              console.log('[BLE WEB] ⚠️ Dispositivo não encontrado no mapa, abrindo picker...');
+              try {
+                const device = await BleClient.requestDevice({
+                  services: [ESP32_SERVICE_UUID],
+                  namePrefix: 'Kiosk',
+                  optionalServices: [ESP32_SERVICE_UUID],
+                });
+                if (device && device.deviceId) {
+                  deviceId = device.deviceId;
+                  deviceName = device.name || deviceName;
+                  console.log('[BLE WEB] ✅ Novo dispositivo selecionado:', deviceName, '| deviceId:', deviceId);
+                } else {
+                  console.log('[BLE WEB] ❌ Nenhum dispositivo selecionado');
+                  return false;
+                }
+              } catch (pickerError: any) {
+                if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
+                  console.log('[BLE WEB] ⚠️ Picker cancelado, não tentando conectar');
+                } else {
+                  console.error('[BLE WEB] ❌ Erro no picker:', pickerError);
+                }
+                return false;
+              }
+            } else {
+              console.log('[BLE WEB] ✅ Dispositivo encontrado no mapa via getDevices');
+            }
+          } catch (getDevicesError) {
+            console.warn('[BLE WEB] getDevices falhou, tentando requestDevice:', getDevicesError);
+            try {
+              const device = await BleClient.requestDevice({
+                services: [ESP32_SERVICE_UUID],
+                namePrefix: 'Kiosk',
+                optionalServices: [ESP32_SERVICE_UUID],
+              });
+              if (device && device.deviceId) {
+                deviceId = device.deviceId;
+                deviceName = device.name || deviceName;
+                console.log('[BLE WEB] ✅ Dispositivo via fallback requestDevice:', deviceName);
+              } else {
+                return false;
+              }
+            } catch (pickerError: any) {
+              if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
+                console.log('[BLE WEB] ⚠️ Picker cancelado');
+              } else {
+                console.error('[BLE WEB] ❌ Erro no picker:', pickerError);
+              }
+              return false;
+            }
+          }
+        } else {
+          // Sem deviceId, precisa de requestDevice
+          console.log('[BLE WEB] Sem deviceId salvo, abrindo picker...');
+          try {
+            const device = await BleClient.requestDevice({
+              services: [ESP32_SERVICE_UUID],
+              namePrefix: 'Kiosk',
+              optionalServices: [ESP32_SERVICE_UUID],
+            });
+            if (device && device.deviceId) {
+              deviceId = device.deviceId;
+              deviceName = device.name || 'ESP32 Bluetooth';
+              console.log('[BLE WEB] ✅ Dispositivo selecionado:', deviceName, '| deviceId:', deviceId);
+            } else {
+              console.log('[BLE WEB] ❌ Nenhum dispositivo selecionado');
+              return false;
+            }
+          } catch (pickerError: any) {
+            if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
+              console.log('[BLE WEB] ⚠️ Picker cancelado');
+            } else {
+              console.error('[BLE WEB] ❌ Erro no picker:', pickerError);
+            }
+            return false;
+          }
+        }
+      }
+
+      console.log('[BLE] 🔌 Conectando ao deviceId:', deviceId);
       await BleClient.connect(deviceId, (disconnectedDeviceId) => {
         console.log('[BLE] Dispositivo desconectado:', disconnectedDeviceId);
         this.connectionStatus = { connected: false, type: 'none' };
@@ -1016,42 +1138,43 @@ class ESP32CommunicationService {
 
   /**
    * Conecta via USB Serial
+   * No Android, redireciona para connectUSBNative() (plugin Capacitor)
+   * Na Web, usa Web Serial API (navigator.serial)
    * @param baudRate Baudrate (padrão: 115200 conforme firmware v2.0)
    */
   async connectUSB(baudRate: number = DEFAULT_BAUDRATE): Promise<boolean> {
-    const webSerial = getWebSerial();
-    if (!webSerial) {
-      console.error('[USB] Web Serial API não disponível');
-      return false;
+    // 🔧 FIX: No Android, redirecionar para implementação nativa (USB OTG)
+    if (this.isAndroid()) {
+      console.log('[ESP32][USB] Plataforma Android detectada, usando connectUSBNative()');
+      return this.connectUSBNative();
     }
 
+    // 🔧 FIX C1+H1: Na Web, delegar para esp32SerialService (fonte única de verdade)
+    // Isso evita split-brain de estado (duas portas abertas) e garante leitura contínua.
+    console.log('[ESP32][USB] Plataforma Web, delegando para esp32SerialService.connect()');
     try {
-      // Abrir seletor de porta
-      const port: SerialPort = await webSerial.requestPort();
+      const success = await esp32Serial.connect();
+      if (success) {
+        // Sincronizar estado do CommunicationService com a conexão do SerialService
+        this.connectionStatus = {
+          connected: true,
+          type: 'usb',
+          deviceId: 'usb-serial',
+          deviceName: 'USB Serial (Web)',
+        };
 
-      // Abrir porta com baud rate
-      await port.open({ baudRate });
+        this.setLastConnection({
+          type: 'usb',
+          deviceId: 'usb-serial',
+          deviceName: 'USB Serial (Web)',
+        });
 
-      this.serialPort = port;
-      this.connectionStatus = {
-        connected: true,
-        type: 'usb',
-        deviceId: 'usb-serial',
-        deviceName: 'USB Serial',
-      };
-
-      // Salvar última conexão
-      this.setLastConnection({
-        type: 'usb',
-        deviceId: 'usb-serial',
-        deviceName: 'USB Serial',
-      });
-
-      this.notifyConnectionChange();
-      console.log('[USB] Conectado à porta serial (baudRate:', baudRate, ')');
-      return true;
+        this.notifyConnectionChange();
+        console.log('[ESP32][USB] Conectado via Web Serial (delegado a esp32SerialService)');
+      }
+      return success;
     } catch (error) {
-      console.error('[USB] Erro ao conectar:', error);
+      console.error('[ESP32][USB] Erro ao conectar via Web Serial:', error);
       return false;
     }
   }
@@ -1357,10 +1480,23 @@ class ESP32CommunicationService {
             }
           }
 
-          // Se o buffer ficou muito grande (mais de 2KB), algo está errado - limpar
+          // Se o buffer ficou muito grande (mais de 2KB), tentar extrair dados antes de limpar
           if (this.usbReceiveBuffer.length > 2048) {
-            console.warn('[USB OTG] Buffer muito grande, limpando:', this.usbReceiveBuffer.length);
-            this.usbReceiveBuffer = '';
+            console.warn('[ESP32][USB] Buffer muito grande (' + this.usbReceiveBuffer.length + ' bytes), tentando extrair JSONs...');
+            // 🔧 FIX M2: Tentar extrair JSONs completos do buffer antes de descartar
+            const { jsons, remainder } = this.extractCompleteJsons(this.usbReceiveBuffer);
+            for (const json of jsons) {
+              this.usbDataListeners.forEach(listener => {
+                try { listener(json); } catch (e) { console.error('[ESP32][USB] Erro em listener (recovery):', e); }
+              });
+            }
+            // Se ainda sobrou muito, descartar
+            if (remainder.length > 2048) {
+              console.warn('[ESP32][USB] Descartando remainder excessivo:', remainder.length);
+              this.usbReceiveBuffer = '';
+            } else {
+              this.usbReceiveBuffer = remainder;
+            }
           }
         });
 

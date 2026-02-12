@@ -6,12 +6,16 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+firebase-debug.log*
+firestore-debug.log*
 
 node_modules/
 dist/
 dist-ssr/
 build/
 coverage/
+coverage.json
+lint_report.json
 *.local
 
 # Framework/build outputs
@@ -67,8 +71,15 @@ android/**/local.properties
 
 # Firebase
 .firebase/
+functions/.runtimeconfig.json
+
+# Firebase Functions build output
+functions/lib/
 
 # Python
 .venv/
 __pycache__/
 *.pyc
+
+# Temporary tool folders
+tmpclaude-*/

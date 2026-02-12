@@ -413,17 +413,20 @@ export function ESP32DispenserPanel() {
   // AÇÕES DE CONEXÃO - USB
   // ============================================
 
-  // Conexão USB Web Serial (para navegador desktop)
+  // 🔧 FIX H1: Conexão USB unificada — usa esp32Service.connectUSB() que detecta plataforma
+  // e delega para o serviço correto (Web Serial ou USB OTG nativo).
+  // NÃO chamar esp32Serial.connect() diretamente (evita split-brain de porta).
   const handleConnectUSB = async () => {
     setIsConnecting(true);
     try {
-      const success = await esp32Serial.connect();
+      const success = await esp32Service.connectUSB();
       if (success) {
         toast({
           title: `✅ ${t('esp32.connected')}`,
           description: t('esp32Dispenser.connectedUsb'),
         });
-        setTimeout(() => esp32Serial.ping(), 500);
+        // Ping via o serviço correto (CommunicationService resolve internamente)
+        setTimeout(() => esp32Service.ping(), 500);
       } else {
         toast({
           title: `❌ ${t('esp32.connectionFailed')}`,
@@ -974,7 +977,7 @@ export function ESP32DispenserPanel() {
                   {!isConnected ? (
                     <>
                       <Button 
-                        onClick={handleConnectUSBNative} 
+                        onClick={handleConnectUSB} 
                         disabled={isConnecting} 
                         className="w-full"
                       >

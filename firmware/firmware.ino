@@ -32,17 +32,17 @@
  * CONEXÕES (XIAO ESP32S3 - MULTI-TAP):
  * ────────────────────────────────────────────────────────
  * │ ⚠️ MAPEAMENTO OFICIAL XIAO ESP32S3:                  │
- * │   D3=GPIO4, D4=GPIO5, D5=GPIO6, D8=GPIO7, D10=GPIO10 │
+ * │   D2=GPIO3, D3=GPIO4, D4=GPIO5, D5=GPIO6             │
  * │   D6=TX(GPIO43), D7=RX(GPIO44) - NÃO USAR!           │
  * │   USER_LED interno = GPIO21                          │
  * ├──────────────────────────────────────────────────────┤
- * │ Tap 0 (Torneira 1)                                   │
- * │   GPIO 5 (D4):  Válvula 0 (via módulo relé)          │
- * │   GPIO 6 (D5):  Sensor de fluxo 0                    │
+ * │ Tap 0 (Torneira 1) - Conectores PCB                  │
+ * │   GPIO 5 (D4):  CARGA1 - Válvula 0 (via relé)        │
+ * │   GPIO 3 (D2):  SENSOR1 - Sensor de fluxo 0          │
  * ├──────────────────────────────────────────────────────┤
- * │ Tap 1 (Torneira 2)                                   │
- * │   GPIO 4 (D3):  Válvula 1 (via módulo relé)          │
- * │   GPIO 7 (D8):  Sensor de fluxo 1                    │
+ * │ Tap 1 (Torneira 2) - Conectores PCB                  │
+ * │   GPIO 6 (D5):  CARGA2 - Válvula 1 (via relé)        │
+ * │   GPIO 4 (D3):  SENSOR2 - Sensor de fluxo 1          │
  * ├──────────────────────────────────────────────────────┤
  * │ Compartilhado                                        │
  * │   GPIO21: LED indicador (USER_LED interno)           │
@@ -107,15 +107,16 @@ const char* MDNS_HOSTNAME = "kiosk-bier";  // Acessar via http://kiosk-bier.loca
 const int NUM_TAPS = 2;
 
 // ----- PINOS DO HARDWARE (MULTI-TAP) -----
-// XIAO ESP32S3: Pinos D0-D10 disponíveis
+// XIAO ESP32S3: Pinos D2=GPIO3, D3=GPIO4, D4=GPIO5, D5=GPIO6
+// PCB Sinais: SENSOR1, SENSOR2, CARGA1, CARGA2
 // 
-// Tap 0 (Torneira 1) - Configuração original
-const int VALVE_PIN_0 = 5;        // GPIO5 = D4 no XIAO
-const int FLOW_SENSOR_PIN_0 = 6;  // GPIO6 = D5 no XIAO
+// Tap 0 (Torneira 1) - Conectores SENSOR1 e CARGA1
+const int VALVE_PIN_0 = 5;        // GPIO5 (D4) = CARGA1 - Válvula/Relé
+const int FLOW_SENSOR_PIN_0 = 3;  // GPIO3 (D2) = SENSOR1 - Sensor de fluxo
 //
-// Tap 1 (Torneira 2) - Nova torneira
-const int VALVE_PIN_1 = 4;        // GPIO4 = D3 no XIAO
-const int FLOW_SENSOR_PIN_1 = 7;  // GPIO7 = D8 no XIAO
+// Tap 1 (Torneira 2) - Conectores SENSOR2 e CARGA2
+const int VALVE_PIN_1 = 6;        // GPIO6 (D5) = CARGA2 - Válvula/Relé
+const int FLOW_SENSOR_PIN_1 = 4;  // GPIO4 (D3) = SENSOR2 - Sensor de fluxo
 //
 // LED compartilhado
 // XIAO ESP32S3: GPIO21 = USER_LED interno da placa

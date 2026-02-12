@@ -720,6 +720,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
       switch (device.type) {
         case 'usb':
+          // 🔧 FIX: connectUSB() agora detecta plataforma internamente
           success = await esp32Service.connectUSB();
           break;
         case 'wifi':
@@ -754,12 +755,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     setLastError(null);
 
     try {
+      // 🔧 FIX C1: connectUSB() agora é o único ponto de conexão USB.
+      // Na Web, ele delega internamente para esp32SerialService.connect().
+      // No Android, ele delega para connectUSBNative().
+      // NÃO chamar esp32Serial.connect() separadamente (dupla invocação).
       const success = await esp32Service.connectUSB();
 
       if (success) {
-        // Iniciar leitura serial
-        await esp32Serial.connect();
-
         toast({
           title: 'ESP32 Conectado',
           description: 'Conectado via USB Serial',

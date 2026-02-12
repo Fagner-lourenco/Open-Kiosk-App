@@ -45,8 +45,9 @@ const UartPortSelector = ({ onPortSelected, onPrintRequested, showPrintButton = 
   const handleConnect = async () => {
     setLoading(true);
     try {
-      // Usar serviço unificado via esp32Serial
-      const connected = await esp32Serial.connect();
+      // 🔧 FIX H1: Usar Context (connectUSB) em vez de esp32Serial direto.
+      // Isso garante fonte única de verdade e detecta plataforma (Web vs Android).
+      const connected = await connectUSB();
       if (connected) {
         onPortSelected?.(comPortInput.trim() || 'USB Serial');
         toast({
