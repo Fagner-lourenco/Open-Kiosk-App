@@ -19,7 +19,7 @@
  */
 
 const DB_NAME = 'kiosk_cache';
-const DB_VERSION = 1;
+const DB_VERSION = 3;
 
 // Flag para indicar se IndexedDB está realmente funcional
 let indexedDBAvailable: boolean | null = null;
@@ -33,6 +33,7 @@ export const STORES = {
   VIDEOS: 'videos',
   SYNC_QUEUE: 'syncQueue',
   TAPS: 'taps',  // Configuração de torneiras
+  FAILED_DISPENSES: 'failedDispenses',  // Recuperação de dispenses falhados
 } as const;
 
 type StoreName = typeof STORES[keyof typeof STORES];
@@ -131,6 +132,18 @@ const initDB = (): Promise<IDBDatabase> => {
         const syncStore = db.createObjectStore(STORES.SYNC_QUEUE, { keyPath: 'id' });
         syncStore.createIndex('createdAt', 'createdAt', { unique: false });
         syncStore.createIndex('collection', 'collection', { unique: false });
+      }
+
+      // Failed dispenses store (reconciliação de pagou-mas-não-dispensou)
+      if (!db.objectStoreNames.contains(STORES.FAILED_DISPENSES)) {
+        const failedStore = db.createObjectStore(STORES.FAILED_DISPENSES, { keyPath: 'id' });
+        failedStore.createIndex('timestamp', 'timestamp', { unique: false });
+      }
+
+      // Taps configuration store
+      if (!db.objectStoreNames.contains(STORES.TAPS)) {
+        const tapsStore = db.createObjectStore(STORES.TAPS, { keyPath: 'id' });
+        tapsStore.createIndex('storeId', 'storeId', { unique: false });
       }
     };
   });

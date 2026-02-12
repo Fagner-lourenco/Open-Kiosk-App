@@ -22,6 +22,9 @@ public class MainActivity extends BridgeActivity {
 
     private Handler relaunchHandler = new Handler(Looper.getMainLooper());
     private static final int RELAUNCH_DELAY_MS = 500;
+    // Evita bring-to-front durante diálogos do sistema (ex.: permissão USB),
+    // mantendo relaunch agressivo apenas quando usuário tenta sair do app.
+    private volatile boolean userInitiatedLeave = false;
     
     // Throttle para evitar ANR - controla tempo mínimo entre chamadas de bringAppToFront
     private long lastBringToFrontTime = 0;
@@ -40,6 +43,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        userInitiatedLeave = false;
         enableImmersiveMode();
     }
 
@@ -48,7 +52,7 @@ public class MainActivity extends BridgeActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             enableImmersiveMode();
-        } else {
+        } else if (userInitiatedLeave) {
             // Se perder foco, tentar retomar imediatamente
             relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
         }
@@ -57,14 +61,25 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onPause() {
         super.onPause();
-        // Re-lançar app se for para background
-        relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
+        // Re-lançar app se o usuário tentar sair para background
+        if (userInitiatedLeave) {
+            relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
+        }
     }
 
     @Override
     public void onStop() {
         super.onStop();
-        // Último recurso: tentar voltar ao foreground
+        // Último recurso quando saída foi iniciada pelo usuário
+        if (userInitiatedLeave) {
+            relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
+        }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        userInitiatedLeave = true;
         relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
     }
 

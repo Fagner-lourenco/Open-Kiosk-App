@@ -1,4 +1,4 @@
-import { ConnectionStatus } from '@/services/esp32CommunicationService';
+import { ConnectionStatus, ConnectionSupervisorStatus } from '@/services/esp32CommunicationService';
 import { ESP32Response } from '@/services/esp32SerialService';
 
 // 🆕 Multi-Tap: Status de cada torneira
@@ -53,6 +53,7 @@ export interface ESP32Settings {
 export interface ESP32State {
     // Status de conexão
     status: ConnectionStatus;
+    supervisorStatus: ConnectionSupervisorStatus;
     isConnecting: boolean;
     lastError: string | null;
 
@@ -84,6 +85,7 @@ export interface ESP32ContextValue extends ESP32State {
     connectUSB: () => Promise<boolean>;
     connectWifi: (ip: string) => Promise<boolean>;
     disconnect: () => Promise<void>;
+    reconnectNow: (reason?: string) => Promise<boolean>;
 
     // 🆕 Força sincronização do status de conexão com o serviço
     refreshConnectionStatus: () => void;

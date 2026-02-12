@@ -7,13 +7,15 @@
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
-import esp32Service, { ConnectionStatus, ConnectionType, ESP32Device, getESP32WiFiIP } from '@/services/esp32CommunicationService';
+import esp32Service, { ConnectionStatus, ConnectionType, ConnectionSupervisorStatus, ESP32Device, getESP32WiFiIP } from '@/services/esp32CommunicationService';
 import esp32Serial, { ESP32Response } from '@/services/esp32SerialService';
 import { useStoreContext } from '@/context/StoreContext';
 import { useStoreSettings } from '@/hooks/useStoreSettings';
 import { getCurrentFranchiseId, getCurrentStoreId } from '@/services/firebase';
 import { hardwareStatusService } from '@/services/hardwareStatusService';
 import { persistSession } from '@/services/servingSessionService';
+import { salesService } from '@/services/salesService';
+import { persistFailedDispense, reconcileOnStartup } from '@/services/dispenseRecoveryService';
 import { useToast } from '@/hooks/use-toast';
 import {
   TapStatus,
@@ -30,6 +32,28 @@ import {
 // ============================================
 
 const ESP32Context = createContext<ESP32ContextValue | null>(null);
+
+// Helper: retry Firestore updates with exponential backoff, persist locally on final failure
+async function updateDispenseStatusWithRetry(
+  orderId: string,
+  status: 'dispensing' | 'dispensed' | 'failed_dispense',
+  maxRetries: number = 3
+): Promise<void> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await salesService.updateOrderDispenseStatus(orderId, status);
+      return;
+    } catch (err) {
+      console.error(`[ESP32Context] Firestore update attempt ${attempt}/${maxRetries} failed:`, err);
+      if (attempt === maxRetries) {
+        // All retries failed - persist locally for reconciliation on next startup
+        await persistFailedDispense(orderId, `firestore_update_failed_${status}`);
+        return;
+      }
+      await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+    }
+  }
+}
 
 // ============================================
 // PROVIDER
@@ -51,6 +75,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
   // Estado
   const [status, setStatus] = useState<ConnectionStatus>({ connected: false, type: 'none' });
+  const [supervisorStatus, setSupervisorStatus] = useState<ConnectionSupervisorStatus>(esp32Service.getConnectionSupervisorStatus());
   const [isConnecting, setIsConnecting] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
   const [isDispensing, setIsDispensing] = useState(false);
@@ -69,6 +94,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // ServingSession: capture progress ref for persistence before state clear
   const currentProgressRef = useRef<ESP32DispensingProgress | null>(null);
   const dispensingStartedAtRef = useRef<Date | null>(null);
+
+  // Dispense timeout: marca como failed_dispense se ESP32 não responder
+  const dispenseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const DISPENSE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
+
+  // Concurrency guard: prevent double dispense
+  const isReleasingRef = useRef<boolean>(false);
 
   // ✅ Taps Configuration Sync Logic
   const { taps: storeTaps, tapsVersion, reportTapApplied } = useStoreContext();
@@ -89,7 +121,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         console.log('[ESP32Context] Loaded appliedVersion:', appliedVersionRef.current);
       }
     }
-  }, []);
+  }, [storeSettings?.esp32HeartbeatIntervalMs]);
 
   // 2. Sync effect: Detect version changes or connection
   useEffect(() => {
@@ -350,6 +382,12 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         }
 
         if (response.stage === 'completed' || response.stage === 'error') {
+          // Limpar timeout de segurança
+          if (dispenseTimeoutRef.current) {
+            clearTimeout(dispenseTimeoutRef.current);
+            dispenseTimeoutRef.current = null;
+          }
+
           // Persist ServingSession BEFORE clearing state
           const progressSnapshot = currentProgressRef.current;
           if (progressSnapshot && progressSnapshot.orderId) {
@@ -361,6 +399,15 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             }).catch((err) => {
               console.error('[ESP32Context] Failed to persist serving session:', err);
             });
+
+            // Atualizar status do pedido no Firestore
+            const dispenseResult = response.stage === 'completed' ? 'dispensed' : 'failed_dispense';
+            updateDispenseStatusWithRetry(progressSnapshot.orderId, dispenseResult);
+
+            // Se falhou, persistir localmente para reconciliação
+            if (response.stage === 'error') {
+              persistFailedDispense(progressSnapshot.orderId, response.error || 'esp32_error');
+            }
           }
 
           setIsDispensing(false);
@@ -544,6 +591,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   useEffect(() => {
     // Listener para mudanças de conexão
     const unsubConnectionChange = esp32Service.setOnConnectionChange(updateConnectionStatus);
+    const unsubSupervisor = esp32Service.addConnectionSupervisorListener((nextStatus) => {
+      setSupervisorStatus(nextStatus);
+    });
 
     // Listener para respostas Serial/USB (JSON parsed)
     const unsubscribeMessage = esp32Serial.onMessage(handleESP32Response);
@@ -617,46 +667,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     // Verificar conexão inicial
     const initialStatus = esp32Service.getConnectionStatus();
+    esp32Service.activateConnectionSupervisor(autoReconnect);
     if (initialStatus.connected) {
       updateConnectionStatus(initialStatus);
-    } else if (autoReconnect) {
-      // Tentar reconexão automática USB se não conectado
-      // Pequeno delay para garantir que a página carregou
-      const reconnectTimer = setTimeout(async () => {
-        console.log('[ESP32Context] Tentando reconexão automática USB...');
-        addLog('info', '🔄 Tentando reconexão automática...');
-
-        const reconnected = await esp32Serial.tryAutoReconnect();
-        if (reconnected) {
-          console.log('[ESP32Context] ✅ Reconexão automática bem-sucedida');
-          addLog('info', '✅ Reconexão automática bem-sucedida');
-          toast({
-            title: '✅ Reconectado',
-            description: 'ESP32 reconectado automaticamente via USB',
-          });
-        } else {
-          console.log('[ESP32Context] Reconexão automática falhou - conecte manualmente');
-          addLog('info', '⚠️ Reconexão automática falhou - conecte manualmente');
-        }
-      }, 500);
-
-      return () => {
-        if (typeof unsubConnectionChange === 'function') unsubConnectionChange();
-        if (typeof unsubBleData === 'function') unsubBleData();
-        if (typeof unsubUsbData === 'function') unsubUsbData();
-        unsubscribeMessage();
-        unsubscribeRaw();
-        unsubscribeConnection();
-        clearTimeout(reconnectTimer);
-
-        if (heartbeatRef.current) {
-          clearInterval(heartbeatRef.current);
-        }
-      };
     }
 
     return () => {
       if (typeof unsubConnectionChange === 'function') unsubConnectionChange();
+      unsubSupervisor();
       if (typeof unsubBleData === 'function') unsubBleData();
       if (typeof unsubUsbData === 'function') unsubUsbData();
       unsubscribeMessage();
@@ -710,6 +728,40 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       clearInterval(pollInterval);
     };
   }, [isDispensing, status.type, status.connected, handleESP32Response]);
+
+  // Reconcile failed dispenses on startup
+  useEffect(() => {
+    reconcileOnStartup()
+      .then(() => console.log('[ESP32Context] Dispense reconciliation completed'))
+      .catch(err => console.error('[ESP32Context] Dispense reconciliation error:', err));
+  }, []);
+
+  // Em foreground, forçar tentativa rápida de reconexão para Android/BLE após background/lock
+  useEffect(() => {
+    if (!autoReconnect) return;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+
+      const currentStatus = esp32Service.getConnectionStatus();
+      if (!currentStatus.connected) {
+        void esp32Service.reconnectNow('app_foreground_resume');
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
+  }, [autoReconnect]);
+
+  // Cleanup dispenseTimeoutRef on unmount
+  useEffect(() => {
+    return () => {
+      if (dispenseTimeoutRef.current) {
+        clearTimeout(dispenseTimeoutRef.current);
+        dispenseTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const connect = useCallback(async (device: ESP32Device): Promise<boolean> => {
     setIsConnecting(true);
@@ -804,12 +856,24 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
   const disconnect = useCallback(async (): Promise<void> => {
     try {
+      // If dispense is in progress, persist failure before clearing state
+      const activeProgress = currentProgressRef.current;
+      if (activeProgress && activeProgress.orderId) {
+        console.error('[ESP32Context] Disconnect during active dispense:', activeProgress.orderId);
+        await persistFailedDispense(activeProgress.orderId, 'disconnect_during_dispense');
+        if (dispenseTimeoutRef.current) {
+          clearTimeout(dispenseTimeoutRef.current);
+          dispenseTimeoutRef.current = null;
+        }
+      }
+
       await esp32Service.disconnect();
       await esp32Serial.disconnect();
 
       updateConnectionStatus({ connected: false, type: 'none' });
       setIsDispensing(false);
       setCurrentProgress(null);
+      currentProgressRef.current = null;
 
       toast({
         title: 'Desconectado',
@@ -819,6 +883,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       console.error('[ESP32Context] Erro ao desconectar:', error);
     }
   }, [toast]);
+
+  const reconnectNow = useCallback(async (reason: string = 'context_manual_reconnect'): Promise<boolean> => {
+    addLog('info', `🔄 Reconnect solicitado (${reason})`);
+    return esp32Service.reconnectNow(reason);
+  }, [addLog]);
 
   // ============================================
   // MÉTODOS DE COMANDO
@@ -835,6 +904,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     sizeLabel: string = 'Padrão',
     tapId: number = selectedTapId  // 🆕 Multi-Tap: usa tap selecionado por padrão
   ): Promise<boolean> => {
+    // Concurrency guard - prevent double dispense
+    if (isReleasingRef.current) {
+      console.warn('[ESP32Context] releaseDrink already in progress, ignoring');
+      return false;
+    }
+    isReleasingRef.current = true;
+
+    try {
     console.log('[ESP32Context] releaseDrink chamado:', { orderId, mlPerUnit, quantity, sizeLabel, tapId });
     console.log('[ESP32Context] Status atual:', status);
 
@@ -884,6 +961,41 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       setStatus(esp32Service.getConnectionStatus());
     }
 
+    // Verificar conexão real antes de dispensar (previne stale state BLE/USB)
+    const isReallyConnected = await esp32Service.verifyConnection(3000);
+    if (!isReallyConnected) {
+      console.error('[ESP32Context] Verificação de conexão falhou (stale state?)');
+      addLog('error', 'Conexão BLE/USB stale - verificação falhou');
+
+      // Tentar reconectar uma vez
+      const lastConn = esp32Service.getLastConnection();
+      if (lastConn) {
+        try {
+          await esp32Service.connect({
+            id: lastConn.deviceId || 'auto',
+            name: lastConn.deviceName || 'ESP32',
+            type: lastConn.type,
+            ipAddress: lastConn.ipAddress,
+          });
+        } catch (e) {
+          console.error('[ESP32Context] Reconexão após verify falhou:', e);
+        }
+      }
+
+      // Verificar de novo após reconexão
+      const retryConnected = await esp32Service.verifyConnection(3000);
+      if (!retryConnected) {
+        console.error('[ESP32Context] Verificação falhou mesmo após reconexão');
+        addLog('error', '❌ ESP32 não respondeu ao ping - conexão perdida');
+        toast({
+          title: 'Conexão Instável',
+          description: 'ESP32 não respondeu. Verifique a conexão.',
+          variant: 'destructive',
+        });
+        return false;
+      }
+    }
+
     // Preparar UI para dispensação
     setIsDispensing(true);
     dispensingStartedAtRef.current = new Date(); // capture start time for ServingSession
@@ -918,9 +1030,27 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       if (success) {
         console.log(`[ESP32Context] ✅ Comando de dispensação enviado via ${status.type} (Tap ${tapId})`);
         addLog('info', `✅ Comando enviado via ${status.type} (Tap ${tapId})`);
+
+        // Iniciar timeout de segurança: se ESP32 não responder em 5min, marcar como falha
+        if (dispenseTimeoutRef.current) {
+          clearTimeout(dispenseTimeoutRef.current);
+        }
+        dispenseTimeoutRef.current = setTimeout(async () => {
+          const progressSnap = currentProgressRef.current;
+          if (progressSnap && progressSnap.orderId === orderId) {
+            console.error(`[ESP32Context] Dispense timeout para ${orderId} - sem resposta do ESP32`);
+            addLog('error', `Timeout: ESP32 não respondeu para ${orderId}`);
+            await updateDispenseStatusWithRetry(orderId, 'failed_dispense');
+            await persistFailedDispense(orderId, 'timeout');
+            setIsDispensing(false);
+            setCurrentProgress(null);
+            currentProgressRef.current = null;
+          }
+        }, DISPENSE_TIMEOUT_MS);
       } else {
         console.error('[ESP32Context] ❌ Falha ao enviar comando de dispensação');
         addLog('error', '❌ Falha ao enviar comando');
+        await persistFailedDispense(orderId, 'command_failed');
         setIsDispensing(false);
         setCurrentProgress(null);
       }
@@ -929,11 +1059,15 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     } catch (error) {
       console.error('[ESP32Context] Erro ao dispensar:', error);
       addLog('error', `Erro: ${error instanceof Error ? error.message : 'Desconhecido'}`);
+      await persistFailedDispense(orderId, 'exception');
       setIsDispensing(false);
       setCurrentProgress(null);
       return false;
     }
-  }, [status, selectedTapId, addLog, toast]);
+    } finally {
+      isReleasingRef.current = false;
+    }
+  }, [status, selectedTapId, addLog, toast, DISPENSE_TIMEOUT_MS]);
 
   const ping = useCallback(async (): Promise<boolean> => {
     return esp32Service.ping();
@@ -1014,6 +1148,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   const value: ESP32ContextValue = {
     // Estado
     status,
+    supervisorStatus,
     isConnecting,
     lastError,
     isDispensing,
@@ -1030,6 +1165,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     connectUSB,
     connectWifi,
     disconnect,
+    reconnectNow,
     refreshConnectionStatus,
 
     // Comandos

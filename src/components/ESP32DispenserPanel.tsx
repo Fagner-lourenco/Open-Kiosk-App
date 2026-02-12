@@ -94,7 +94,8 @@ interface DispensingState {
 export function ESP32DispenserPanel() {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logContainerRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
   const { settings } = useStoreSettings();
   
   // === USAR CONTEXTO GLOBAL PARA ESTADO PERSISTENTE ===
@@ -380,9 +381,18 @@ export function ESP32DispenserPanel() {
     return () => unsubscribe();
   }, [addResponseListener, toast, t, setDispensing, setIsBusy, setCurrentAction]);
 
-  // Auto-scroll do log
+  const updateLogAutoScrollPreference = useCallback(() => {
+    const container = logContainerRef.current;
+    if (!container) return;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    shouldAutoScrollRef.current = distanceFromBottom <= 48;
+  }, []);
+
+  // Auto-scroll do log: so quando o usuario ja esta no fim
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = logContainerRef.current;
+    if (!container || !shouldAutoScrollRef.current) return;
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [logs]);
 
   // ============================================
@@ -1022,18 +1032,18 @@ export function ESP32DispenserPanel() {
                     <Button 
                       onClick={async () => {
                         setIsConnecting(true);
-                        addLog('info', '🔄 Tentando reconexão automática...');
+                        addLog('info', '🔄 Tentando reconexão via supervisor global...');
                         try {
-                          const success = await esp32Serial.tryAutoReconnect();
+                          const success = await forceReconnect();
                           if (success) {
                             toast({
                               title: '✅ Reconectado',
-                              description: 'ESP32 reconectado automaticamente',
+                              description: 'ESP32 reconectado pelo supervisor',
                             });
                           } else {
                             toast({
-                              title: '⚠️ Sem porta autorizada',
-                              description: 'Use "Conectar USB" para selecionar a porta',
+                              title: '⚠️ Reconexão em andamento',
+                              description: 'Supervisor ativo tentando reconectar automaticamente',
                               variant: 'destructive',
                             });
                           }
@@ -1041,11 +1051,11 @@ export function ESP32DispenserPanel() {
                           setIsConnecting(false);
                         }
                       }} 
-                      disabled={isConnecting} 
+                      disabled={isConnecting || isReconnecting} 
                       variant="outline"
                       className="w-full"
                     >
-                      {isConnecting ? (
+                      {isConnecting || isReconnecting ? (
                         <>
                           <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                           Reconectando...
@@ -1538,7 +1548,11 @@ export function ESP32DispenserPanel() {
           </div>
 
           {/* Log */}
-          <div className="bg-gray-900 text-gray-100 rounded-lg p-3 h-64 overflow-y-auto font-mono text-xs">
+          <div
+            ref={logContainerRef}
+            onScroll={updateLogAutoScrollPreference}
+            className="bg-gray-900 text-gray-100 rounded-lg p-3 h-64 overflow-y-auto font-mono text-xs"
+          >
             {logs.length === 0 ? (
               <span className="text-gray-500">{t('esp32Dispenser.awaitingCommunication')}</span>
             ) : (
@@ -1561,7 +1575,6 @@ export function ESP32DispenserPanel() {
                 </div>
               ))
             )}
-            <div ref={logEndRef} />
           </div>
         </CardContent>
       </Card>

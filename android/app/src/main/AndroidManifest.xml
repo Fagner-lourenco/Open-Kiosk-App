@@ -26,6 +26,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Abre o app quando um USB serial OTG compatível for conectado -->
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
+
         </activity>
 
         <provider
@@ -61,7 +70,6 @@
     
     <!-- USB Host (para OTG) -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
-    <uses-permission android:name="android.permission.USB_PERMISSION" />
     
     <!-- Keep Screen On (para kiosk mode) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />

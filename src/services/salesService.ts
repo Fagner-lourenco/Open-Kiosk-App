@@ -1,11 +1,12 @@
 import { getFirebaseDb, getStoreCollection, getStoreDoc, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { runTransaction, collection, doc, serverTimestamp, Timestamp, increment } from 'firebase/firestore';
+import { runTransaction, collection, doc, serverTimestamp, Timestamp, increment, updateDoc } from 'firebase/firestore';
 import { enqueueSync } from './syncService';
 import { cacheGet, STORES, CachedProduct } from './cacheService';
 import { CartItem, Product } from '@/types/product';
 import { PaymentMethod, SaleTimingData } from '@/types/sales';
 import { deviceHeartbeatService } from './deviceHeartbeatService';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
+import type { DispenseStatus } from '@/types/payments';
 
 class SalesService {
   private calculateSaleTimingData(now: Date): SaleTimingData {
@@ -120,11 +121,13 @@ class SalesService {
       deviceId,
       paymentMethod,
       ...timingData,
-      status: 'completed' as const,
+      status: 'paid_pending_dispense' as const,
       paymentStatus: 'paid' as const,
+      dispenseStatus: 'pending' as DispenseStatus,
       createdAt: { _type: 'serverTimestamp' },
       paidAt: { _type: 'serverTimestamp' },
-      completedAt: { _type: 'serverTimestamp' },
+      completedAt: null,
+      dispensedAt: null,
       lastSync: { _type: 'serverTimestamp' },
       notes: 'Offline Sale',
       items: cartItems.map((item) => {
@@ -315,12 +318,15 @@ class SalesService {
         ...timingData,
 
         // ======= CAMPOS DE STATUS PARA SINCRONIZAÇÃO COM ADMIN =======
-        // Vendas do Kiosk são self-service: já estão completas e pagas
-        status: 'completed' as const,
+        // Vendas do Kiosk: pagamento confirmado, dispense pendente
+        // Status sera atualizado para 'completed' quando ESP32 confirmar dispense
+        status: 'paid_pending_dispense' as const,
         paymentStatus: 'paid' as const,
+        dispenseStatus: 'pending' as DispenseStatus,
         createdAt: serverTimestamp(),          // Timestamp Firebase de criação
         paidAt: serverTimestamp(),             // Momento do pagamento
-        completedAt: serverTimestamp(),        // Momento da conclusão
+        completedAt: null,                    // Preenchido apos dispense confirmado
+        dispensedAt: null,                    // Preenchido apos dispense confirmado
         lastSync: serverTimestamp(),           // Momento da sincronização
         notes: '',                              // Campo para observações futuras
         // ==============================================================
@@ -368,6 +374,48 @@ class SalesService {
 
       return newDocRef.id;
     });
+  }
+
+  /**
+   * Atualiza o status de dispense de um pedido.
+   * Chamado pelo fluxo de dispensacao para transicionar:
+   *   pending -> dispensing -> dispensed | failed_dispense
+   */
+  async updateOrderDispenseStatus(
+    orderNumber: string,
+    dispenseStatus: 'dispensing' | 'dispensed' | 'failed_dispense',
+    storeId?: string
+  ): Promise<void> {
+    const effectiveStoreId = storeId || getCurrentStoreId();
+    if (!effectiveStoreId) {
+      throw new Error('[SalesService] storeId obrigatorio para atualizar dispense status');
+    }
+
+    const salesRef = getStoreCollection(effectiveStoreId, 'orders');
+    const docRef = doc(salesRef, orderNumber);
+
+    const updateData: Record<string, unknown> = {
+      dispenseStatus,
+      updatedAt: serverTimestamp(),
+    };
+
+    if (dispenseStatus === 'dispensed') {
+      updateData.status = 'completed';
+      updateData.dispensedAt = serverTimestamp();
+      updateData.completedAt = serverTimestamp();
+    } else if (dispenseStatus === 'failed_dispense') {
+      updateData.status = 'failed_dispense';
+    } else if (dispenseStatus === 'dispensing') {
+      updateData.status = 'dispensing';
+    }
+
+    try {
+      await updateDoc(docRef, updateData);
+      console.log(`[SalesService] Dispense status updated: ${orderNumber} -> ${dispenseStatus}`);
+    } catch (error) {
+      console.error(`[SalesService] Failed to update dispense status for ${orderNumber}:`, error);
+      throw error;
+    }
   }
 }
 

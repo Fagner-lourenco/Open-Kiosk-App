@@ -1,12 +1,10 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart, ArrowLeft, WifiOff } from "lucide-react";
+import { ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { useNavigate } from "react-router-dom";
 import { useESP32 } from "@/context/ESP32Context";
 import { useToast } from "@/hooks/use-toast";
-import ProductGrid from "@/components/ProductGrid";
 import Cart from "@/components/Cart";
 import VoiceSearchButton from "@/components/VoiceSearchButton";
 import OnScreenKeyboard from "@/components/OnScreenKeyboard";
@@ -39,8 +37,7 @@ type DrinkCheckoutResult = {
 const INITIAL_LOAD_LIMIT = 50;
 
 const Shop = () => {
-  const navigate = useNavigate();
-  const { products, loading, updateProduct } = useFirebaseProducts();
+  const { products, loading } = useFirebaseProducts();
   const { settings } = useStoreSettings();
   const { t } = useTranslation();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
@@ -57,8 +54,11 @@ const Shop = () => {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
 
   // 🔒 PRODUÇÃO: Verificar conexão ESP32 antes de checkout de bebida
-  const { status: esp32Status, ping } = useESP32();
+  const { status: esp32Status, supervisorStatus } = useESP32();
   const { toast } = useToast();
+
+  const lastOkAgeMs = supervisorStatus.lastOkAt ? Date.now() - supervisorStatus.lastOkAt : Number.POSITIVE_INFINITY;
+  const isEsp32Healthy = esp32Status.connected && lastOkAgeMs <= 30000;
 
   // Kiosk idle overlay (suppressed when any modal/overlay is active)
   const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible || isCheckoutOpen;
@@ -134,18 +134,13 @@ const Shop = () => {
   const addToCart = async (product: Product) => {
     // Bebida: verificar conexão ESP32 antes de abrir checkout
     if (product.isDrink) {
-      // 🔒 PRODUÇÃO: Verificar se dispenser está online
-      if (!esp32Status.connected) {
-        // Tentar ping rápido para confirmar
-        const isOnline = await ping();
-        if (!isOnline) {
-          toast({
-            title: '⚠️ Máquina Offline',
-            description: 'O dispenser de bebidas não está disponível no momento. Por favor, tente novamente em alguns instantes.',
-            variant: 'destructive',
-          });
-          return;
-        }
+      if (!isEsp32Healthy) {
+        toast({
+          title: 'Sistema temporariamente indisponível',
+          description: 'Tente novamente em instantes.',
+          variant: 'destructive',
+        });
+        return;
       }
 
       setSelectedDrink(product);
@@ -285,6 +280,14 @@ const Shop = () => {
         </div>
       </div>
 
+      {!isEsp32Healthy && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+            <p className="text-sm font-medium text-red-700">Sistema temporariamente indisponível</p>
+          </div>
+        </div>
+      )}
+
       {/* Products with improved image sizing */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
@@ -327,12 +330,18 @@ const Shop = () => {
 
                   <Button
                     onClick={() => addToCart(product)}
-                    disabled={product.isDrink ? (product.totalMlAvailable || 0) <= 0 : (product.stock || 0) <= 0}
+                    disabled={product.isDrink
+                      ? (product.totalMlAvailable || 0) <= 0 || !isEsp32Healthy
+                      : (product.stock || 0) <= 0}
                     className="w-full text-sm py-2"
                     size="sm"
                   >
                     {product.isDrink
-                      ? ((product.totalMlAvailable || 0) <= 0 ? t('shop.outOfStock') : t('shop.selectSize'))
+                      ? ((product.totalMlAvailable || 0) <= 0
+                        ? t('shop.outOfStock')
+                        : (!isEsp32Healthy
+                          ? 'Sistema temporariamente indisponível'
+                          : t('shop.selectSize')))
                       : ((product.stock || 0) <= 0 ? t('shop.outOfStock') : t('shop.addToCart'))}
                   </Button>
                 </div>
@@ -396,6 +405,7 @@ const Shop = () => {
         subtitle={t('shop.touchToStart')}
         attractVideoConfig={settings?.attractVideoConfig}
       />
+
     </div>
   );
 };

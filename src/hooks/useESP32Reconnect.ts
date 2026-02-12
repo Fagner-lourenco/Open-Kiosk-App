@@ -14,13 +14,13 @@ export interface UseESP32ReconnectOptions {
   /** Habilitar reconexão automática (padrão: true) */
   enabled?: boolean;
 
-  /** Número máximo de tentativas (padrão: 5) */
+  /** Número máximo de tentativas (compatibilidade legada, supervisor usa retry contínuo) */
   maxAttempts?: number;
 
-  /** Delay base em ms (padrão: 1000) */
+  /** Delay base em ms (compatibilidade legada) */
   baseDelayMs?: number;
 
-  /** Delay máximo em ms (padrão: 30000) */
+  /** Delay máximo em ms (compatibilidade legada) */
   maxDelayMs?: number;
 
   /** Callback quando reconectar */
@@ -49,9 +49,6 @@ export function useESP32Reconnect(
 ): UseESP32ReconnectResult {
   const {
     enabled = true,
-    maxAttempts = 5,
-    baseDelayMs = 1000,
-    maxDelayMs = 30000,
     onReconnected,
     onReconnectFailed,
     showToasts = true,
@@ -79,11 +76,7 @@ export function useESP32Reconnect(
     }
 
     try {
-      const success = await esp32Service.reconnectWithBackoff(
-        maxAttempts,
-        baseDelayMs,
-        maxDelayMs
-      );
+      const success = await esp32Service.reconnectNow('hook_force_reconnect');
 
       if (success) {
         const status = esp32Service.getConnectionStatus();
@@ -101,13 +94,10 @@ export function useESP32Reconnect(
       } else {
         if (showToasts) {
           toast({
-            title: '❌ ' + t('esp32.reconnectFailed'),
-            description: t('esp32.reconnectFailedDescription', { attempts: maxAttempts }),
-            variant: 'destructive',
+            title: '🔄 ' + t('esp32.reconnecting'),
+            description: t('esp32.connectionLost'),
           });
         }
-
-        onReconnectFailed?.();
         return false;
       }
     } catch (error) {
@@ -119,9 +109,6 @@ export function useESP32Reconnect(
     }
   }, [
     isReconnecting,
-    maxAttempts,
-    baseDelayMs,
-    maxDelayMs,
     onReconnected,
     onReconnectFailed,
     showToasts,
@@ -155,14 +142,17 @@ export function useESP32Reconnect(
     };
   }, [enabled, attemptReconnect]);
 
-  // Registrar callback para falha de heartbeat
+  // Sincronizar estado visual com supervisor global
   useEffect(() => {
     if (!enabled) return;
-
-    // O heartbeat é gerenciado pelo painel/componente que inicia a conexão
-    // Este hook apenas reage às mudanças de status
-
-  }, [enabled]);
+    return esp32Service.addConnectionSupervisorListener((supervisor) => {
+      setAttemptCount(supervisor.attempt);
+      setIsReconnecting(supervisor.state === 'reconnecting' || supervisor.state === 'persistent_failure');
+      if (supervisor.state === 'persistent_failure') {
+        onReconnectFailed?.();
+      }
+    });
+  }, [enabled, onReconnectFailed]);
 
   return {
     isReconnecting,

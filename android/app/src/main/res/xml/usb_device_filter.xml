@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Espressif ESP32-S2/S3 USB/JTAG -->
+    <usb-device vendor-id="12346" />
+
+    <!-- CP210x USB-UART -->
+    <usb-device vendor-id="4292" />
+
+    <!-- CH340/CH341 USB-UART -->
+    <usb-device vendor-id="6790" />
+
+    <!-- FTDI USB-UART -->
+    <usb-device vendor-id="1027" />
+</resources>

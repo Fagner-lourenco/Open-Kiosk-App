@@ -6,7 +6,26 @@ export type PaymentStatus =
   | 'failed'
   | 'canceled'
   | 'expired'
-  | 'refunded';
+  | 'refunded'
+  | 'paid_pending_dispense'
+  | 'dispensed'
+  | 'failed_needs_compensation';
+
+export type OrderStatus =
+  | 'pending'
+  | 'paid_pending_dispense'
+  | 'dispensing'
+  | 'completed'
+  | 'failed_dispense'
+  | 'compensation_pending'
+  | 'compensated';
+
+export type DispenseStatus =
+  | 'pending'
+  | 'dispensing'
+  | 'dispensed'
+  | 'failed'
+  | 'failed_dispense';
 
 export interface PaymentCustomer {
   name: string;
