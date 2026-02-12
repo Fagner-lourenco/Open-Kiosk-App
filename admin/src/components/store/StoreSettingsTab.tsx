@@ -26,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Trash2, Droplets, Printer, Plus, X, Activity, Video, CheckCircle, XCircle } from 'lucide-react';
+import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Trash2, Droplets, Printer, Plus, X, Activity, Video, CheckCircle, XCircle, Info } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 import { validateVideoUrl, type ValidationResult } from '@/utils/videoUrlValidator';
@@ -34,6 +34,7 @@ import { VideoUploader } from './VideoUploader';
 import { toDualWritePayload } from '../../../../shared/utils/settingsNormalizer';
 import type { AttractVideoConfig } from '../../../../shared/types/store';
 import type { PaymentGatewayConfig, PaymentProvider, PaymentEnvironment, EnabledPaymentMethods } from '@/types/store';
+import { getAvailableGateways, getGatewayById, getGatewayStatusBadge } from '@shared/config/gateways';
 
 // Interface para status de hardware em tempo real (do Firestore)
 interface HardwareStatus {
@@ -883,15 +884,23 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
 
   type PaymentGatewayConfigUpdate = Omit<Partial<PaymentGatewayConfig>, 'enabledMethods' | 'providers'> & {
     enabledMethods?: Partial<EnabledPaymentMethods>;
-    providers?: {
-      pagbank?: Partial<NonNullable<PaymentGatewayConfig['providers']>['pagbank']>;
-      mercadopago?: Partial<NonNullable<PaymentGatewayConfig['providers']>['mercadopago']>;
-    };
+    providers?: Record<string, Record<string, unknown>>;
   };
 
   const updatePaymentGatewayConfig = (partial: PaymentGatewayConfigUpdate) => {
     if (!settings) return;
     const current = settings.paymentGatewayConfig || normalizePaymentGatewayConfig(settings);
+
+    // Deep-merge dinâmico de providers (suporta qualquer gateway do registry)
+    const mergedProviders: Record<string, Record<string, unknown>> = {
+      ...(current.providers as Record<string, Record<string, unknown>> || {}),
+    };
+    if (partial.providers) {
+      for (const [key, value] of Object.entries(partial.providers)) {
+        mergedProviders[key] = { ...(mergedProviders[key] || {}), ...value };
+      }
+    }
+
     const next: PaymentGatewayConfig = {
       ...current,
       ...partial,
@@ -899,18 +908,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         ...current.enabledMethods,
         ...(partial.enabledMethods || {}),
       },
-      providers: {
-        ...current.providers,
-        ...partial.providers,
-        pagbank: {
-          ...current.providers?.pagbank,
-          ...partial.providers?.pagbank,
-        },
-        mercadopago: {
-          ...current.providers?.mercadopago,
-          ...partial.providers?.mercadopago,
-        },
-      },
+      providers: mergedProviders as PaymentGatewayConfig['providers'],
     };
     handleChange('paymentGatewayConfig', next);
   };
@@ -1085,7 +1083,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         </CardContent>
       </Card>
 
-      {/* Pagamentos (Modelo Canônico) */}
+      {/* Pagamentos (Modelo Canônico — plug-and-play via Gateway Registry) */}
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -1098,11 +1096,20 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 Configure o provedor e os métodos habilitados
               </CardDescription>
             </div>
-            {gatewayConfig.provider !== 'none' && (
-              <Badge variant={gatewayConfig.configuredAt ? 'default' : 'secondary'}>
-                {gatewayConfig.configuredAt ? 'Configurado' : 'Pendente'}
-              </Badge>
-            )}
+            {gatewayConfig.provider !== 'none' && (() => {
+              const gwDef = getGatewayById(gatewayConfig.provider);
+              const statusBadge = gwDef ? getGatewayStatusBadge(gwDef.status) : null;
+              return (
+                <div className="flex items-center gap-2">
+                  {statusBadge && (
+                    <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+                  )}
+                  <Badge variant={gatewayConfig.configuredAt ? 'default' : 'secondary'}>
+                    {gatewayConfig.configuredAt ? 'Configurado' : 'Pendente'}
+                  </Badge>
+                </div>
+              );
+            })()}
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -1120,8 +1127,18 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Nenhum</SelectItem>
-                  <SelectItem value="mercado_pago">Mercado Pago</SelectItem>
-                  <SelectItem value="pagbank">PagBank</SelectItem>
+                  {getAvailableGateways().map((gw) => {
+                    const badge = getGatewayStatusBadge(gw.status);
+                    return (
+                      <SelectItem
+                        key={gw.id}
+                        value={gw.id}
+                        disabled={gw.status === 'coming_soon'}
+                      >
+                        {gw.displayName}{gw.status !== 'stable' ? ` (${badge.label})` : ''}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
@@ -1220,96 +1237,51 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 </div>
               )}
 
-              {gatewayConfig.provider === 'pagbank' && (
-                <div className="space-y-3">
-                  <Label className="text-base font-medium">PagBank</Label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <Label>Client ID</Label>
-                      <Input
-                        value={gatewayConfig.providers?.pagbank?.clientId || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { pagbank: { clientId: e.target.value } },
-                        })}
-                        placeholder="Client ID (PagBank)"
-                      />
-                    </div>
-                    <div>
-                      <Label>Merchant ID</Label>
-                      <Input
-                        value={gatewayConfig.providers?.pagbank?.merchantId || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { pagbank: { merchantId: e.target.value } },
-                        })}
-                        placeholder="Merchant ID (opcional)"
-                      />
-                    </div>
-                    <div>
-                      <Label>Public Key</Label>
-                      <Input
-                        value={gatewayConfig.providers?.pagbank?.publicKey || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { pagbank: { publicKey: e.target.value } },
-                        })}
-                        placeholder="Public Key (opcional)"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-500">
-                    Segredos (client secret / tokens) não são salvos no Firestore. Configure via env vars nas Functions.
-                  </p>
-                </div>
-              )}
+              {/* Campos específicos do gateway — renderização dinâmica via Gateway Registry */}
+              {(() => {
+                const gwDef = getGatewayById(gatewayConfig.provider);
+                if (!gwDef) return null;
+                const fsKey = gwDef.firestoreKey as keyof NonNullable<PaymentGatewayConfig['providers']>;
+                const providerData = (gatewayConfig.providers as Record<string, Record<string, string> | undefined>)?.[fsKey] || {};
 
-              {gatewayConfig.provider === 'mercado_pago' && (
-                <div className="space-y-3">
-                  <Label className="text-base font-medium">Mercado Pago</Label>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <Label>User ID</Label>
-                      <Input
-                        value={gatewayConfig.providers?.mercadopago?.userId || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { mercadopago: { userId: e.target.value } },
-                        })}
-                        placeholder="ID do usuário no gateway"
-                      />
+                return (
+                  <div className="space-y-3">
+                    <Label className="text-base font-medium">{gwDef.displayName}</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {gwDef.configFields.map((field) => (
+                        <div key={field.key}>
+                          <Label>{field.label}{field.required ? ' *' : ''}</Label>
+                          <Input
+                            type={field.type === 'password' ? 'password' : 'text'}
+                            value={providerData[field.key] || ''}
+                            onChange={(e) => updatePaymentGatewayConfig({
+                              providers: { [fsKey]: { [field.key]: e.target.value } },
+                            })}
+                            placeholder={field.placeholder}
+                          />
+                          {field.helpText && (
+                            <p className="text-xs text-gray-500 mt-1">{field.helpText}</p>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <Label>External POS ID</Label>
-                      <Input
-                        value={gatewayConfig.providers?.mercadopago?.externalPosId || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { mercadopago: { externalPosId: e.target.value } },
-                        })}
-                        placeholder="Ex: KIOSK-001"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">Identificador único do terminal</p>
-                    </div>
-                    <div>
-                      <Label>Store ID (Gateway)</Label>
-                      <Input
-                        value={gatewayConfig.providers?.mercadopago?.storeId || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { mercadopago: { storeId: e.target.value } },
-                        })}
-                        placeholder="ID da loja no gateway"
-                      />
-                    </div>
-                    <div>
-                      <Label>Terminal ID</Label>
-                      <Input
-                        value={gatewayConfig.providers?.mercadopago?.terminalId || ''}
-                        onChange={(e) => updatePaymentGatewayConfig({
-                          providers: { mercadopago: { terminalId: e.target.value } },
-                        })}
-                        placeholder="Ex: GERTEC_MP35P__12345"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">ID do terminal físico para pagamentos com cartão</p>
-                    </div>
+
+                    {/* Notas informativas do gateway */}
+                    {gwDef.adminNotes && gwDef.adminNotes.length > 0 && (
+                      <Alert className="border-blue-200 bg-blue-50">
+                        <Info className="h-4 w-4 text-blue-600" />
+                        <AlertDescription className="text-blue-800 text-xs space-y-1">
+                          {gwDef.adminNotes.map((note, i) => (
+                            <p key={i} className={note.startsWith('  ') ? 'font-mono text-xs ml-2' : ''}>
+                              {note}
+                            </p>
+                          ))}
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               <div className="flex gap-3 pt-2">
                 <Button

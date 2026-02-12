@@ -47,8 +47,8 @@ const PIN_HASH_KEY = 'openKiosk_pinHash';
 /** Chave para sessão offline */
 const OFFLINE_SESSION_KEY = 'openKiosk_offlineSession';
 
-/** Duração padrão da sessão offline (30 minutos) */
-const DEFAULT_OFFLINE_SESSION_DURATION = 30 * 60 * 1000;
+/** Duração padrão da sessão offline (7 dias) para garantir operação contínua */
+const DEFAULT_OFFLINE_SESSION_DURATION = 7 * 24 * 60 * 60 * 1000;
 
 /** Número de iterações para PBKDF2 */
 const PBKDF2_ITERATIONS = 100000;
@@ -127,8 +127,22 @@ class AuthService {
             const authUser = await this.buildAuthenticatedUser(firebaseUser);
             this.setCurrentUser(authUser);
           } catch (error) {
-            console.error('[AuthService] Erro ao construir usuário:', error);
-            this.setCurrentUser(null);
+            console.error('[AuthService] Erro ao construir usuário completo, tentando fallback Auth-only:', error);
+            // Fallback: usa apenas dados do Firebase Auth + cache offline
+            // Não deve deslogar o usuário se o Auth está válido
+            try {
+              const fallbackUser = await this.buildAuthenticatedUserFromAuth(firebaseUser);
+              this.setCurrentUser(fallbackUser);
+            } catch (fallbackError) {
+              console.error('[AuthService] Fallback também falhou:', fallbackError);
+              // Tenta usar sessão offline cacheada como último recurso
+              const offlineSession = this.getValidOfflineSession();
+              if (offlineSession) {
+                this.setCurrentUser(this.offlineSessionToUser(offlineSession));
+              } else {
+                this.setCurrentUser(null);
+              }
+            }
           }
         } else {
           // Verifica se há sessão offline válida
@@ -163,9 +177,16 @@ class AuthService {
    * Login com email e senha
    */
   async loginWithEmail(email: string, password: string): Promise<AuthResult> {
+    let credential: Awaited<ReturnType<typeof signInWithEmailAndPassword>> | null = null;
+    
     try {
       const auth = getFirebaseAuth();
-      const credential = await signInWithEmailAndPassword(auth, email, password);
+      credential = await signInWithEmailAndPassword(auth, email, password);
+      
+      // Força refresh do token para garantir que o Firestore SDK
+      // reconheça o auth imediatamente (crítico no Android/WebView)
+      await credential.user.getIdToken(true);
+      
       const user = await this.buildAuthenticatedUser(credential.user);
       
       // Atualiza lastLoginAt no Firestore
@@ -175,6 +196,21 @@ class AuthService {
     } catch (error: unknown) {
       const firebaseError = error as { code?: string; message?: string };
       const errorCode = firebaseError.code || 'unknown';
+      
+      // Erros de Firestore pós-login (permission-denied, unavailable)
+      // não devem impedir o login — o Auth já foi bem-sucedido
+      if (credential && (
+          errorCode === 'permission-denied' || 
+          firebaseError.message?.includes('Missing or insufficient permissions') ||
+          firebaseError.message?.includes('permission'))) {
+        console.warn('[AuthService] Firestore access failed post-login, building user from Auth only');
+        try {
+          const fallbackUser = await this.buildAuthenticatedUserFromAuth(credential.user);
+          return { success: true, user: fallbackUser };
+        } catch {
+          // Se até o fallback falhar, continue para o error handling normal
+        }
+      }
       
       // Se estiver offline, tenta fallback para PIN
       if (errorCode === 'auth/network-request-failed') {
@@ -499,6 +535,43 @@ class AuthService {
     this.authStateListeners.forEach((listener) => listener(user));
   }
 
+  /**
+   * Constrói AuthenticatedUser apenas com dados do Firebase Auth (sem Firestore).
+   * Fallback usado quando Firestore está inacessível pós-login (race condition Android).
+   */
+  private async buildAuthenticatedUserFromAuth(firebaseUser: FirebaseUser): Promise<AuthenticatedUser> {
+    const tokenResult = await getIdTokenResult(firebaseUser);
+    const customClaims = tokenResult.claims as {
+      franchiseId?: string;
+      role?: UserRole;
+      storeAccess?: string[];
+    };
+
+    // Tenta carregar dados cacheados offline
+    const cachedSession = this.getValidOfflineSession();
+
+    const authUser: AuthenticatedUser = {
+      id: firebaseUser.uid,
+      uid: firebaseUser.uid,
+      email: firebaseUser.email || '',
+      displayName: firebaseUser.displayName || cachedSession?.displayName || 'Usuário',
+      isActive: true,
+      createdAt: new Date(),
+      lastLoginAt: new Date(),
+      defaultFranchiseId: cachedSession?.franchiseId || customClaims.franchiseId,
+      defaultStoreId: cachedSession?.storeId,
+      accessToken: tokenResult.token,
+      customClaims: {
+        franchiseId: customClaims.franchiseId,
+        role: customClaims.role || cachedSession?.role,
+        storeAccess: customClaims.storeAccess || cachedSession?.storeAccess,
+      },
+    };
+
+    this.cacheUserForOffline(authUser);
+    return authUser;
+  }
+
   private async buildAuthenticatedUser(firebaseUser: FirebaseUser): Promise<AuthenticatedUser> {
     // Obtém claims customizadas
     const tokenResult = await getIdTokenResult(firebaseUser);
@@ -508,12 +581,34 @@ class AuthService {
       storeAccess?: string[];
     };
 
-    // Busca dados do usuário no Firestore
+    // Busca dados do usuário no Firestore com retry para Android WebView timing
     const userPath = globalCollectionPath('users');
-    
     const db = getFirebaseDb();
-    const userDoc = await getDoc(doc(db, userPath, firebaseUser.uid));
-    const userData = userDoc.exists() ? (userDoc.data() as Partial<User>) : {};
+    
+    let userData: Partial<User> = {};
+    try {
+      const userDoc = await getDoc(doc(db, userPath, firebaseUser.uid));
+      userData = userDoc.exists() ? (userDoc.data() as Partial<User>) : {};
+    } catch (firestoreError: unknown) {
+      const fsErr = firestoreError as { code?: string; message?: string };
+      
+      // Se for permission-denied, tenta uma vez após pequeno delay
+      // (race condition: Firestore SDK não sincronizou o token ainda)
+      if (fsErr.code === 'permission-denied' || 
+          fsErr.message?.includes('Missing or insufficient permissions')) {
+        console.warn('[AuthService] Firestore getDoc failed (likely token sync delay), retrying...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+          const userDoc = await getDoc(doc(db, userPath, firebaseUser.uid));
+          userData = userDoc.exists() ? (userDoc.data() as Partial<User>) : {};
+        } catch (retryError) {
+          console.warn('[AuthService] Retry also failed, proceeding without Firestore user data:', retryError);
+          // Continua sem dados do Firestore — usa Auth + cache
+        }
+      } else {
+        console.warn('[AuthService] Firestore user read failed, proceeding without:', fsErr.message);
+      }
+    }
 
     const authUser: AuthenticatedUser = {
       id: firebaseUser.uid,

@@ -19,7 +19,6 @@ const {
   mockIsInitialized,
   mockInitialize,
   mockIsOfflineMode,
-  mockIsFranchiseMode,
 } = vi.hoisted(() => ({
   mockOnAuthStateChange: vi.fn(() => () => { }),
   mockLoginWithEmail: vi.fn(),
@@ -28,7 +27,6 @@ const {
   mockIsInitialized: vi.fn(() => true),
   mockInitialize: vi.fn(),
   mockIsOfflineMode: vi.fn(() => false),
-  mockIsFranchiseMode: vi.fn(() => false),
 }));
 
 vi.mock('@/services/authService', () => ({
@@ -43,10 +41,6 @@ vi.mock('@/services/authService', () => ({
   },
 }));
 
-vi.mock('@/lib/pathResolver', () => ({
-  isFranchiseMode: mockIsFranchiseMode,
-}));
-
 import { AuthContextProvider, useAuth } from '@/context/AuthContext';
 
 // Componente de teste
@@ -58,7 +52,6 @@ const TestConsumer = () => {
     isLoading,
     sessionTimeout,
     authError,
-    setIsAuthenticated,
     setSessionTimeout,
     logout,
     loginWithEmail,
@@ -74,7 +67,6 @@ const TestConsumer = () => {
       <span data-testid="loading">{isLoading.toString()}</span>
       <span data-testid="timeout">{sessionTimeout}</span>
       <span data-testid="error">{authError || 'null'}</span>
-      <button onClick={() => setIsAuthenticated(true)}>Set Auth</button>
       <button onClick={() => setSessionTimeout(60)}>Set Timeout</button>
       <button onClick={logout}>Logout</button>
       <button onClick={() => loginWithEmail('test@test.com', 'pass')}>Login Email</button>
@@ -87,7 +79,6 @@ const TestConsumer = () => {
 describe('AuthContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsFranchiseMode.mockReturnValue(false);
   });
 
   describe('AuthContextProvider', () => {
@@ -154,9 +145,10 @@ describe('AuthContext', () => {
     });
   });
 
-  describe('setIsAuthenticated', () => {
-    it('atualiza estado de autenticação', async () => {
+  describe('loginWithPin', () => {
+    it('marca autenticado quando PIN e valido', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
+      mockLoginWithPin.mockResolvedValue({ success: true });
 
       render(
         <AuthContextProvider>
@@ -166,7 +158,7 @@ describe('AuthContext', () => {
 
       expect(screen.getByTestId('authenticated').textContent).toBe('false');
 
-      await user.click(screen.getByText('Set Auth'));
+      await user.click(screen.getByText('Login PIN'));
 
       await waitFor(() => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
@@ -197,6 +189,7 @@ describe('AuthContext', () => {
   describe('logout', () => {
     it('reseta estado de autenticação', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
+      mockLoginWithPin.mockResolvedValue({ success: true });
 
       render(
         <AuthContextProvider>
@@ -205,7 +198,7 @@ describe('AuthContext', () => {
       );
 
       // Primeiro autentica
-      await user.click(screen.getByText('Set Auth'));
+      await user.click(screen.getByText('Login PIN'));
       await waitFor(() => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
       });
@@ -219,9 +212,8 @@ describe('AuthContext', () => {
     });
   });
 
-  describe('modo franquia', () => {
-    it('inicializa authService em modo franquia', () => {
-      mockIsFranchiseMode.mockReturnValue(true);
+  describe('initialize', () => {
+    it('inicializa authService quando nao esta inicializado', () => {
       mockIsInitialized.mockReturnValue(false);
 
       render(
@@ -234,8 +226,6 @@ describe('AuthContext', () => {
     });
 
     it('registra listener de auth state', () => {
-      mockIsFranchiseMode.mockReturnValue(true);
-
       render(
         <AuthContextProvider>
           <TestConsumer />
@@ -266,9 +256,8 @@ describe('AuthContext', () => {
   });
 
   describe('loginWithPin', () => {
-    it('chama authService.loginWithPin em modo franquia', async () => {
+    it('chama authService.loginWithPin', async () => {
       const user = (await import('@testing-library/user-event')).default.setup();
-      mockIsFranchiseMode.mockReturnValue(true);
       mockLoginWithPin.mockResolvedValue({ success: true });
 
       render(
@@ -283,10 +272,22 @@ describe('AuthContext', () => {
         expect(mockLoginWithPin).toHaveBeenCalledWith('123456');
       });
     });
+  });
 
-    it('marca autenticado via PIN em modo legado sem chamar authService', async () => {
-      const user = (await import('@testing-library/user-event')).default.setup();
-      mockIsFranchiseMode.mockReturnValue(false);
+  describe('inactivity timer', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('faz logout apos timeout em modo admin', async () => {
+      const user = (await import('@testing-library/user-event')).default.setup({
+        advanceTimers: vi.advanceTimersByTime,
+      });
+      mockLoginWithPin.mockResolvedValue({ success: true });
 
       render(
         <AuthContextProvider>
@@ -300,8 +301,77 @@ describe('AuthContext', () => {
         expect(screen.getByTestId('authenticated').textContent).toBe('true');
       });
 
-      // Não deve chamar authService em modo legado
-      expect(mockLoginWithPin).not.toHaveBeenCalled();
+      await act(async () => {
+        vi.advanceTimersByTime(30 * 60 * 1000);
+      });
+
+      await waitFor(() => {
+        expect(mockLogout).toHaveBeenCalled();
+      });
+    });
+
+    it('nao faz logout em modo kiosk', async () => {
+      const user = (await import('@testing-library/user-event')).default.setup({
+        advanceTimers: vi.advanceTimersByTime,
+      });
+      mockLoginWithPin.mockResolvedValue({ success: true });
+
+      render(
+        <AuthContextProvider isKiosk>
+          <TestConsumer />
+        </AuthContextProvider>
+      );
+
+      await user.click(screen.getByText('Login PIN'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('authenticated').textContent).toBe('true');
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(30 * 60 * 1000);
+      });
+
+      expect(mockLogout).not.toHaveBeenCalled();
+    });
+
+    it('reativa timer ao sair do kiosk', async () => {
+      const user = (await import('@testing-library/user-event')).default.setup({
+        advanceTimers: vi.advanceTimersByTime,
+      });
+      mockLoginWithPin.mockResolvedValue({ success: true });
+
+      const { rerender } = render(
+        <AuthContextProvider isKiosk>
+          <TestConsumer />
+        </AuthContextProvider>
+      );
+
+      await user.click(screen.getByText('Login PIN'));
+
+      await waitFor(() => {
+        expect(screen.getByTestId('authenticated').textContent).toBe('true');
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(30 * 60 * 1000);
+      });
+
+      expect(mockLogout).not.toHaveBeenCalled();
+
+      rerender(
+        <AuthContextProvider isKiosk={false}>
+          <TestConsumer />
+        </AuthContextProvider>
+      );
+
+      await act(async () => {
+        vi.advanceTimersByTime(30 * 60 * 1000);
+      });
+
+      await waitFor(() => {
+        expect(mockLogout).toHaveBeenCalled();
+      });
     });
   });
 
@@ -323,3 +393,7 @@ describe('AuthContext', () => {
     });
   });
 });
+function afterEach(arg0: () => void) {
+  throw new Error('Function not implemented.');
+}
+

@@ -121,7 +121,8 @@ const AppContent = () => {
     const isAdminRoute = hash.includes('/admin') ||
       path.includes('/admin') ||
       hash.startsWith('#/login') ||
-      hash.startsWith('#/invite');
+      hash.startsWith('#/invite') ||
+      hash.startsWith('#/store-select');
 
     return !isAdminRoute;
   }, [currentHash]);
@@ -169,7 +170,7 @@ const AppContent = () => {
       isKiosk={isKiosk}
       storeId={storeId}
     >
-      <AuthContextProvider>
+      <AuthContextProvider isKiosk={isKiosk}>
         <AuthGate isStoreLoading={loading}>
           <StoreProvider initialStoreId={storeId}>
             <PaymentGatewayProvider>

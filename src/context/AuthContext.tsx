@@ -71,9 +71,10 @@ export const useAuth = (): AuthContextType => {
 
 interface AuthContextProviderProps {
   children: ReactNode;
+  isKiosk?: boolean;
 }
 
-export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ children }) => {
+export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ children, isKiosk = false }) => {
   // Estado Firebase
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -130,7 +131,7 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
     }
 
     // Apenas contar se está autenticado
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || isKiosk) return;
 
     // Novo timer
     inactivityTimerRef.current = setTimeout(() => {
@@ -148,13 +149,18 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
       // Navegar para landing page
       window.location.hash = '/';
     }, sessionTimeout * 60 * 1000);
-  }, [isAuthenticated, sessionTimeout]);
+  }, [isAuthenticated, isKiosk, sessionTimeout]);
 
   /**
    * Detectar interação do usuário e resetar timer de inatividade
    */
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || isKiosk) {
+      if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+      }
+      return;
+    }
 
     const events = ['mousedown', 'keydown', 'touchstart', 'click'];
 
@@ -179,7 +185,7 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
         clearTimeout(inactivityTimerRef.current);
       }
     };
-  }, [isAuthenticated, sessionTimeout, resetInactivityTimer]);
+  }, [isAuthenticated, isKiosk, sessionTimeout, resetInactivityTimer]);
 
   // ==========================================================================
   // ACTIONS
