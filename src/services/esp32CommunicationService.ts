@@ -116,6 +116,8 @@ const SUPERVISOR_BACKOFF_JITTER_RATIO = 0.35;
 const SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS = 10;
 const USB_NATIVE_CONNECT_TIMEOUT_MS = 8000;
 const USB_ENUMERATION_TIMEOUT_MS = 3000;
+const USB_ERROR_COOLDOWN_MS = 3000; // Cooldown após erro USB antes de tentar reconectar
+const BLE_DISCONNECT_SUPPRESS_MS = 6000; // Janela para ignorar callback BLE após disconnect intencional
 const ESP32_USB_VENDOR_IDS = new Set<number>([
   0x303A, // Espressif
   0x10C4, // Silicon Labs (CP210x)
@@ -240,6 +242,9 @@ class ESP32CommunicationService {
   private usbPollTimer: ReturnType<typeof setInterval> | null = null;
   private lastUsbPollDeviceCount: number = 0;
   private earlyUsbInitDone: boolean = false;
+  private lastUsbErrorAt: number = 0;
+  private usbPromotionInFlight: boolean = false;
+  private suppressBleDisconnectUntil: number = 0;
 
   // ============================================
   // UTILITÃRIOS
@@ -426,13 +431,22 @@ class ESP32CommunicationService {
       // Caminho A (SÍNCRONO): window.Capacitor.addListener('UsbSerial', eventName, callback)
       // Este é o caminho gerado pelo JSExport.java que chama cap.nativeCallback() diretamente
       if (typeof cap.addListener === 'function') {
-        const callbackId = cap.addListener('UsbSerial', eventName, listener);
-        console.log(`[USB OTG] Listener "${eventName}" registrado via Capacitor.addListener (sync), callbackId:`, callbackId);
+        const callbackHandle = cap.addListener('UsbSerial', eventName, listener);
+        console.log(`[USB OTG] Listener "${eventName}" registrado via Capacitor.addListener (sync), callbackId:`, callbackHandle);
         return {
           remove: async () => {
             try {
-              if (typeof cap.removeListener === 'function') {
-                cap.removeListener('UsbSerial', callbackId);
+              const resolvedHandle = await Promise.resolve(callbackHandle);
+              if (resolvedHandle && typeof resolvedHandle.remove === 'function') {
+                await resolvedHandle.remove();
+                return;
+              }
+
+              if (
+                typeof cap.removeListener === 'function' &&
+                (typeof callbackHandle === 'string' || typeof callbackHandle === 'number')
+              ) {
+                cap.removeListener('UsbSerial', callbackHandle);
               }
             } catch (e) {
               console.warn(`[USB OTG] Erro ao remover listener "${eventName}":`, e);
@@ -605,6 +619,14 @@ class ESP32CommunicationService {
         : JSON.stringify(payload);
       console.error('[USB OTG] EVENT error:', errorMessage);
 
+      // Debounce: evitar loops error→reconnect→error rápidos
+      const now = Date.now();
+      if (now - this.lastUsbErrorAt < USB_ERROR_COOLDOWN_MS) {
+        console.log(`[USB] Error event ignorado (cooldown ${USB_ERROR_COOLDOWN_MS}ms)`);
+        return;
+      }
+      this.lastUsbErrorAt = now;
+
       if (this.connectionStatus.type === 'usb' && this.connectionStatus.connected) {
         this.handleConnectionDropped('usb_native_error_event');
       }
@@ -716,701 +738,754 @@ class ESP32CommunicationService {
    * se necessário. Garante exclusividade: USB > BLE > WiFi.
    */
   private async promoteUSBTransport(): Promise<boolean> {
+    // Guard contra chamadas concorrentes (attached + poll + checkForAlreadyAttached)
+    if (this.usbPromotionInFlight) {
+      console.log('[USB] promoteUSBTransport já em andamento, ignorando chamada duplicada');
+      return false;
+    }
+
     // Se já está conectado via USB, nada a fazer
     if (this.connectionStatus.connected && this.connectionStatus.type === 'usb') {
       console.log('[USB] Já conectado via USB, ignorando promoção');
       return true;
     }
 
-    // Se USB não está na lista de prioridade, não promover
-    const order = this.connectionOrder || ['usb', 'wifi', 'bluetooth'];
-    if (!order.includes('usb')) {
-      console.log('[USB] USB não está na ordem de prioridade, ignorando promoção');
+    // Cooldown após erro USB recente
+    const timeSinceError = Date.now() - this.lastUsbErrorAt;
+    if (this.lastUsbErrorAt > 0 && timeSinceError < USB_ERROR_COOLDOWN_MS) {
+      console.log(`[USB] Cooldown ativo (${USB_ERROR_COOLDOWN_MS - timeSinceError}ms restantes), ignorando promoção`);
       return false;
     }
 
-    // USB tem maior prioridade que o transporte atual?
-    const usbPriority = order.indexOf('usb');
-    const currentType = this.connectionStatus.type;
-    if (this.connectionStatus.connected && currentType !== 'none') {
-      const currentPriority = order.indexOf(currentType);
-      // currentPriority == -1 (não encontrado) ou > usbPriority → USB tem prioridade
-      if (currentPriority !== -1 && currentPriority <= usbPriority) {
-        console.log(`[USB] Transporte atual (${currentType}) tem prioridade igual ou maior que USB, ignorando`);
+    this.usbPromotionInFlight = true;
+    try {
+
+      // Se USB não está na lista de prioridade, não promover
+      const order = this.connectionOrder || ['usb', 'wifi', 'bluetooth'];
+      if (!order.includes('usb')) {
+        console.log('[USB] USB não está na ordem de prioridade, ignorando promoção');
         return false;
       }
 
-      // Desconectar transporte atual para promover USB
-      console.log(`[ESP32Supervisor] transport_switch — desconectando ${currentType} para promover USB`);
-      this.manualDisconnectRequested = false; // Não é manual, é promoção
-      await this.disconnectCurrentTransportOnly();
-    }
+      // USB tem maior prioridade que o transporte atual?
+      let previousTransportType = 'none';
+      let previousDeviceId: string | undefined;
 
-    try {
-      const success = await this.connectUSBNative(USB_NATIVE_CONNECT_TIMEOUT_MS);
-      if (success) {
-        console.log('[USB] connect_success — USB promovido como transporte ativo');
-        this.logSupervisor('transport_switch', { from: currentType, to: 'usb', reason: 'usb_promotion' });
-        return true;
+      if (this.connectionStatus.connected && currentType !== 'none') {
+        const currentPriority = order.indexOf(currentType);
+        // currentPriority == -1 (não encontrado) ou > usbPriority → USB tem prioridade
+        if (currentPriority !== -1 && currentPriority <= usbPriority) {
+          console.log(`[USB] Transporte atual (${currentType}) tem prioridade igual ou maior que USB, ignorando`);
+          this.usbPromotionInFlight = false;
+          return false;
+        }
+
+        // Salvar estado anterior para fallback ou cleanup posterior
+        previousTransportType = currentType;
+        previousDeviceId = this.connectionStatus.deviceId;
+        console.log(`[ESP32Supervisor] Transport switch detectado: ${currentType} -> USB. Tentando conectar USB antes de desconectar...`);
       }
-      console.warn('[USB] connect_fail — falha ao conectar USB, mantendo transporte anterior');
-      return false;
+
+      // TRY-COMMIT: Tentar conectar USB PRIMEIRO
+      const success = await this.connectUSBNative(USB_NATIVE_CONNECT_TIMEOUT_MS);
+
+      if (success) {
+        console.log('[USB] connect_success — USB conectado com sucesso! Finalizando troca de transporte...');
+
+        // COMMIT: Agora sim desconectamos o transporte anterior (se houver e não for o mesmo USB)
+        if (previousTransportType !== 'none' && previousTransportType !== 'usb') {
+          console.log(`[ESP32Supervisor] Limpando transporte anterior (${previousTransportType})...`);
+          try {
+            if (previousTransportType === 'bluetooth' && previousDeviceId) {
+              // Desconectar BLE explicitamente sem afetar o estado atual (que já é USB)
+              this.suppressBleDisconnectUntil = Date.now() + BLE_DISCONNECT_SUPPRESS_MS;
+              await BleClient.disconnect(previousDeviceId);
+              console.log('[ESP32Supervisor] OLD BLE desconectado pós-promoção USB');
+            } else if (previousTransportType === 'wifi') {
+              // WiFi não precisa de disconnect explícito além de limpar estado, mas o estado já é USB
+            }
+          } catch (cleanupError) {
+            console.warn('[ESP32Supervisor] Aviso ao limpar transporte anterior:', cleanupError);
+          }
+        }
+
+        this.logSupervisor('transport_switch_success', { from: previousTransportType, to: 'usb' });
+        return true;
+      } else {
+        console.warn('[USB] connect_fail — falha ao conectar USB. Mantendo transporte anterior:', previousTransportType);
+
+        // ROLLBACK (implícito): O estado connectionStatus não foi alterado por connectUSBNative (pois falhou)
+        // O transporte anterior (BLE/WiFi) continua ativo e intocado.
+
+        // Marcar erro para ativar cooldown e evitar loop imediato
+        this.lastUsbErrorAt = Date.now();
+
+        this.logSupervisor('transport_switch_failed', { from: previousTransportType, target: 'usb' });
+        return false;
+      }
+
     } catch (error) {
       console.warn('[USB] connect_fail — erro ao conectar USB:', error);
+      this.lastUsbErrorAt = Date.now();
       return false;
+    } finally {
+      this.usbPromotionInFlight = false;
     }
+  }
+}
   }
 
   /**
    * Desconecta o transporte atual sem marcar como disconnect manual.
    * Usado internamente para promoção de transporte (ex: BLE→USB).
    */
-  private async disconnectCurrentTransportOnly(): Promise<void> {
-    this.stopHeartbeat();
-    this.stopSupervisorHealthCheck();
+  private async disconnectCurrentTransportOnly(): Promise < void> {
+  this.stopHeartbeat();
+  this.stopSupervisorHealthCheck();
 
-    if (
-      this.connectionStatus.type === 'bluetooth' &&
+  if(
+    this.connectionStatus.type === 'bluetooth' &&
       this.connectionStatus.deviceId
     ) {
-      try {
-        await BleClient.disconnect(this.connectionStatus.deviceId);
-        console.log('[ESP32Supervisor] BLE desconectado para promoção de transporte');
-      } catch (error) {
-        console.warn('[ESP32Supervisor] Erro ao desconectar BLE para promoção:', error);
-      }
-    }
+  try {
+    this.suppressBleDisconnectUntil = Date.now() + BLE_DISCONNECT_SUPPRESS_MS;
+    await BleClient.disconnect(this.connectionStatus.deviceId);
+    console.log('[ESP32Supervisor] BLE desconectado para promoção de transporte');
+  } catch (error) {
+    console.warn('[ESP32Supervisor] Erro ao desconectar BLE para promoção:', error);
+  }
+}
 
-    if (this.connectionStatus.type === 'wifi') {
-      console.log('[ESP32Supervisor] WiFi desconectado para promoção de transporte');
-    }
+if (this.connectionStatus.type === 'wifi') {
+  console.log('[ESP32Supervisor] WiFi desconectado para promoção de transporte');
+}
 
-    this.connectionStatus = { connected: false, type: 'none' };
-    this.connectedDevice = null;
-    this.notifyConnectionChange();
+this.connectionStatus = { connected: false, type: 'none' };
+this.connectedDevice = null;
+this.notifyConnectionChange();
   }
 
-  private async fetchNativeUSBDevices(plugin: any): Promise<NativeUSBDeviceDescriptor[]> {
-    try {
-      const result = await this.withTimeout(
-        Promise.resolve(plugin.connectedDevices()),
-        USB_ENUMERATION_TIMEOUT_MS,
-        'USB_ENUMERATION_TIMEOUT',
-        '[USB OTG] Enumeration timeout em connectedDevices'
-      );
-      return this.extractNativeUSBDevices(result);
-    } catch (error) {
-      if (!this.isApiMismatchError(error)) {
-        throw error;
-      }
-
-      const fallbackResult = await this.withTimeout(
-        Promise.resolve(plugin.getDevices()),
-        USB_ENUMERATION_TIMEOUT_MS,
-        'USB_ENUMERATION_TIMEOUT',
-        '[USB OTG] Enumeration timeout em getDevices'
-      );
-      return this.extractNativeUSBDevices(fallbackResult);
+  private async fetchNativeUSBDevices(plugin: any): Promise < NativeUSBDeviceDescriptor[] > {
+  try {
+    const result = await this.withTimeout(
+      Promise.resolve(plugin.connectedDevices()),
+      USB_ENUMERATION_TIMEOUT_MS,
+      'USB_ENUMERATION_TIMEOUT',
+      '[USB OTG] Enumeration timeout em connectedDevices'
+    );
+    return this.extractNativeUSBDevices(result);
+  } catch(error) {
+    if (!this.isApiMismatchError(error)) {
+      throw error;
     }
+
+    const fallbackResult = await this.withTimeout(
+      Promise.resolve(plugin.getDevices()),
+      USB_ENUMERATION_TIMEOUT_MS,
+      'USB_ENUMERATION_TIMEOUT',
+      '[USB OTG] Enumeration timeout em getDevices'
+    );
+    return this.extractNativeUSBDevices(fallbackResult);
   }
+}
 
-  // ============================================
-  // DETECÃ‡ÃƒO DE PLATAFORMA
-  // ============================================
+// ============================================
+// DETECÃ‡ÃƒO DE PLATAFORMA
+// ============================================
 
-  isAndroid(): boolean {
-    return Capacitor.getPlatform() === 'android';
+isAndroid(): boolean {
+  return Capacitor.getPlatform() === 'android';
+}
+
+isWeb(): boolean {
+  return Capacitor.getPlatform() === 'web';
+}
+
+/**
+ * Inicialização precoce: registra listeners USB nativos ANTES do React montar.
+ * Chamado imediatamente quando o singleton é criado (module load time).
+ * Isso garante que eventos 'attached'/'detached' do plugin nativo sejam capturados
+ * mesmo se dispararem antes do ESP32Context montar.
+ */
+initEarlyUSBListeners(): void {
+  if(this.earlyUsbInitDone || !this.isAndroid()) return;
+  this.earlyUsbInitDone = true;
+
+  console.log('[USB] Inicialização precoce: registrando listeners USB via caminho SÍNCRONO...');
+
+  // CRÍTICO: NÃO esperar ensureUsbSerialPluginLoaded()!
+  // Registrar listeners via window.Capacitor.addListener DIRETAMENTE.
+  // Isso funciona porque o JSExport auto-gera os bindings síncronos
+  // que já estão disponíveis quando o WebView carrega.
+  try {
+    // ensureNativeUSBPluginListeners agora usa window.Capacitor.addListener (sync)
+    // e NÃO requer o plugin ESM para registrar listeners
+    void this.ensureNativeUSBPluginListeners();
+    console.log('[USB] ✅ Listeners USB registrados na inicialização precoce (SYNC)');
+  } catch(error) {
+    console.warn('[USB] Falha na inicialização precoce:', error);
   }
-
-  isWeb(): boolean {
-    return Capacitor.getPlatform() === 'web';
-  }
-
-  /**
-   * Inicialização precoce: registra listeners USB nativos ANTES do React montar.
-   * Chamado imediatamente quando o singleton é criado (module load time).
-   * Isso garante que eventos 'attached'/'detached' do plugin nativo sejam capturados
-   * mesmo se dispararem antes do ESP32Context montar.
-   */
-  initEarlyUSBListeners(): void {
-    if (this.earlyUsbInitDone || !this.isAndroid()) return;
-    this.earlyUsbInitDone = true;
-
-    console.log('[USB] Inicialização precoce: registrando listeners USB via caminho SÍNCRONO...');
-
-    // CRÍTICO: NÃO esperar ensureUsbSerialPluginLoaded()!
-    // Registrar listeners via window.Capacitor.addListener DIRETAMENTE.
-    // Isso funciona porque o JSExport auto-gera os bindings síncronos
-    // que já estão disponíveis quando o WebView carrega.
-    try {
-      // ensureNativeUSBPluginListeners agora usa window.Capacitor.addListener (sync)
-      // e NÃO requer o plugin ESM para registrar listeners
-      void this.ensureNativeUSBPluginListeners();
-      console.log('[USB] ✅ Listeners USB registrados na inicialização precoce (SYNC)');
-    } catch (error) {
-      console.warn('[USB] Falha na inicialização precoce:', error);
-    }
 
     // Iniciar polling como backup — sempre, independente dos listeners
     this.startUSBDevicePolling();
 
-    // Carregar plugin ESM em background (necessário para connectedDevices, open, write, etc.)
-    ensureUsbSerialPluginLoaded().catch((error) => {
-      console.warn('[USB] Falha ao carregar plugin ESM em background:', error);
-    });
+  // Carregar plugin ESM em background (necessário para connectedDevices, open, write, etc.)
+  ensureUsbSerialPluginLoaded().catch((error) => {
+    console.warn('[USB] Falha ao carregar plugin ESM em background:', error);
+  });
+}
+
+// ============================================
+// PERSISTÃŠNCIA DE CONEXÃƒO
+// ============================================
+
+/**
+ * Salva informaÃ§Ãµes da Ãºltima conexÃ£o bem-sucedida
+ */
+setLastConnection(info: Omit<LastConnectionInfo, 'timestamp'>): void {
+  const data: LastConnectionInfo = {
+    ...info,
+    timestamp: Date.now(),
+  };
+  try {
+    localStorage.setItem(LAST_CONNECTION_KEY, JSON.stringify(data));
+    console.log('[ESP32] Ãšltima conexÃ£o salva:', data);
+  } catch(error) {
+    console.warn('[ESP32] Erro ao salvar Ãºltima conexÃ£o:', error);
   }
+}
 
-  // ============================================
-  // PERSISTÃŠNCIA DE CONEXÃƒO
-  // ============================================
-
-  /**
-   * Salva informaÃ§Ãµes da Ãºltima conexÃ£o bem-sucedida
-   */
-  setLastConnection(info: Omit<LastConnectionInfo, 'timestamp'>): void {
-    const data: LastConnectionInfo = {
-      ...info,
-      timestamp: Date.now(),
-    };
-    try {
-      localStorage.setItem(LAST_CONNECTION_KEY, JSON.stringify(data));
-      console.log('[ESP32] Ãšltima conexÃ£o salva:', data);
-    } catch (error) {
-      console.warn('[ESP32] Erro ao salvar Ãºltima conexÃ£o:', error);
+/**
+ * Recupera informaÃ§Ãµes da Ãºltima conexÃ£o
+ */
+getLastConnection(): LastConnectionInfo | null {
+  try {
+    const data = localStorage.getItem(LAST_CONNECTION_KEY);
+    if (data) {
+      return JSON.parse(data);
     }
+  } catch (error) {
+    console.warn('[ESP32] Erro ao ler Ãºltima conexÃ£o:', error);
   }
+  return null;
+}
 
-  /**
-   * Recupera informaÃ§Ãµes da Ãºltima conexÃ£o
-   */
-  getLastConnection(): LastConnectionInfo | null {
-    try {
-      const data = localStorage.getItem(LAST_CONNECTION_KEY);
-      if (data) {
-        return JSON.parse(data);
-      }
-    } catch (error) {
-      console.warn('[ESP32] Erro ao ler Ãºltima conexÃ£o:', error);
-    }
-    return null;
+/**
+ * Limpa informaÃ§Ãµes de Ãºltima conexÃ£o
+ */
+clearLastConnection(): void {
+  try {
+    localStorage.removeItem(LAST_CONNECTION_KEY);
+    console.log('[ESP32] Ãšltima conexÃ£o removida');
+  } catch(error) {
+    console.warn('[ESP32] Erro ao limpar Ãºltima conexÃ£o:', error);
   }
+}
 
-  /**
-   * Limpa informaÃ§Ãµes de Ãºltima conexÃ£o
-   */
-  clearLastConnection(): void {
-    try {
-      localStorage.removeItem(LAST_CONNECTION_KEY);
-      console.log('[ESP32] Ãšltima conexÃ£o removida');
-    } catch (error) {
-      console.warn('[ESP32] Erro ao limpar Ãºltima conexÃ£o:', error);
-    }
-  }
+// ============================================
+// CALLBACK DE EVENTOS
+// ============================================
 
-  // ============================================
-  // CALLBACK DE EVENTOS
-  // ============================================
+/**
+ * Registra callback para mudanÃ§as de conexÃ£o
+ * @returns FunÃ§Ã£o para remover o listener
+ */
+setOnConnectionChange(callback: ConnectionEventCallback | null): (() => void) | void {
+  if(!callback) return;
+  this.connectionListeners.add(callback);
+  return() => this.connectionListeners.delete(callback);
+}
 
-  /**
-   * Registra callback para mudanÃ§as de conexÃ£o
-   * @returns FunÃ§Ã£o para remover o listener
-   */
-  setOnConnectionChange(callback: ConnectionEventCallback | null): (() => void) | void {
-    if (!callback) return;
-    this.connectionListeners.add(callback);
-    return () => this.connectionListeners.delete(callback);
-  }
+/**
+ * Adiciona listener para mudanÃ§as de conexÃ£o
+ */
+addConnectionListener(callback: ConnectionEventCallback): () => void {
+  this.connectionListeners.add(callback);
+  return() => this.connectionListeners.delete(callback);
+}
 
-  /**
-   * Adiciona listener para mudanÃ§as de conexÃ£o
-   */
-  addConnectionListener(callback: ConnectionEventCallback): () => void {
-    this.connectionListeners.add(callback);
-    return () => this.connectionListeners.delete(callback);
-  }
+/**
+ * ðŸ†• Registra callback para dados recebidos via BLE
+ * @returns FunÃ§Ã£o para remover o listener
+ */
+setOnBleDataReceived(callback: ((data: string) => void) | null): (() => void) | void {
+  if(!callback) return;
+  this.bleDataListeners.add(callback);
+  return() => this.bleDataListeners.delete(callback);
+}
 
-  /**
-   * ðŸ†• Registra callback para dados recebidos via BLE
-   * @returns FunÃ§Ã£o para remover o listener
-   */
-  setOnBleDataReceived(callback: ((data: string) => void) | null): (() => void) | void {
-    if (!callback) return;
-    this.bleDataListeners.add(callback);
-    return () => this.bleDataListeners.delete(callback);
-  }
+/**
+ * ðŸ†• Adiciona listener para dados BLE
+ */
+addBleDataListener(callback: (data: string) => void): () => void {
+  this.bleDataListeners.add(callback);
+  return() => this.bleDataListeners.delete(callback);
+}
 
-  /**
-   * ðŸ†• Adiciona listener para dados BLE
-   */
-  addBleDataListener(callback: (data: string) => void): () => void {
-    this.bleDataListeners.add(callback);
-    return () => this.bleDataListeners.delete(callback);
-  }
+/**
+ * ðŸ†• Registra callback para dados recebidos via USB OTG
+ * @returns FunÃ§Ã£o para remover o listener
+ */
+setOnUsbDataReceived(callback: ((data: string) => void) | null): (() => void) | void {
+  if(!callback) return;
+  this.usbDataListeners.add(callback);
+  return() => this.usbDataListeners.delete(callback);
+}
 
-  /**
-   * ðŸ†• Registra callback para dados recebidos via USB OTG
-   * @returns FunÃ§Ã£o para remover o listener
-   */
-  setOnUsbDataReceived(callback: ((data: string) => void) | null): (() => void) | void {
-    if (!callback) return;
-    this.usbDataListeners.add(callback);
-    return () => this.usbDataListeners.delete(callback);
-  }
-
-  /**
-   * ðŸ†• Adiciona listener para dados USB OTG
-   */
-  addUsbDataListener(callback: (data: string) => void): () => void {
-    this.usbDataListeners.add(callback);
-    return () => this.usbDataListeners.delete(callback);
-  }
+/**
+ * ðŸ†• Adiciona listener para dados USB OTG
+ */
+addUsbDataListener(callback: (data: string) => void): () => void {
+  this.usbDataListeners.add(callback);
+  return() => this.usbDataListeners.delete(callback);
+}
 
   /**
    * Notifica mudanÃ§a de conexÃ£o
    */
   private notifyConnectionChange(): void {
-    console.log('[ESP32Service] notifyConnectionChange chamado, status:', JSON.stringify(this.connectionStatus));
-    console.log(`[ESP32Service] Notificando ${this.connectionListeners.size} listeners`);
+  console.log('[ESP32Service] notifyConnectionChange chamado, status:', JSON.stringify(this.connectionStatus));
+  console.log(`[ESP32Service] Notificando ${this.connectionListeners.size} listeners`);
 
-    this.connectionListeners.forEach(listener => {
-      try {
-        listener(this.connectionStatus);
-      } catch (error) {
-        console.error('[ESP32Service] Erro em listener de conexÃ£o:', error);
-      }
-    });
-  }
-
-  addConnectionSupervisorListener(callback: ConnectionSupervisorCallback): () => void {
-    this.supervisorListeners.add(callback);
-    callback(this.supervisorStatus);
-    return () => this.supervisorListeners.delete(callback);
-  }
-
-  getConnectionSupervisorStatus(): ConnectionSupervisorStatus {
-    return this.supervisorStatus;
-  }
-
-  /**
-   * Define a ordem de prioridade de conexão usada pelo supervisor.
-   */
-  setConnectionOrder(order: ConnectionType[]): void {
-    this.connectionOrder = order;
-    console.log('[Supervisor] connectionOrder atualizado:', order);
-  }
-
-  activateConnectionSupervisor(autoReconnect: boolean = true): void {
-    this.ensureSerialInboundObserver();
-    this.updateSupervisorStatus({ active: true });
-
-    if (this.connectionStatus.connected) {
-      this.handleConnectionEstablished('supervisor_activate');
-      return;
+  this.connectionListeners.forEach(listener => {
+    try {
+      listener(this.connectionStatus);
+    } catch (error) {
+      console.error('[ESP32Service] Erro em listener de conexÃ£o:', error);
     }
+  });
+}
 
-    this.stopSupervisorHealthCheck();
+addConnectionSupervisorListener(callback: ConnectionSupervisorCallback): () => void {
+  this.supervisorListeners.add(callback);
+  callback(this.supervisorStatus);
+  return() => this.supervisorListeners.delete(callback);
+}
 
-    if (this.isAndroid()) {
-      // CRÍTICO: Registrar listeners USB ANTES de tentar autoConnect
-      // para evitar race condition onde 'attached' dispara antes dos listeners JS
-      console.log('[ESP32Supervisor] Inicializando listeners USB nativos (caminho SÍNCRONO)...');
-      // Registrar listeners via caminho síncrono — NÃO depende do plugin ESM
-      try {
-        void this.ensureNativeUSBPluginListeners();
-        console.log('[ESP32Supervisor] Listeners USB registrados (SYNC)');
-      } catch (error) {
-        console.warn('[USB] Falha ao inicializar listeners nativos:', error);
-      }
-      // Iniciar polling USB como backup dos event listeners
-      this.startUSBDevicePolling();
-      if (autoReconnect && !this.connectionStatus.connected) {
-        this.scheduleReconnect('supervisor_activate', true);
-      }
-    } else {
-      if (autoReconnect) {
-        this.scheduleReconnect('supervisor_activate', true);
-      }
-    }
+getConnectionSupervisorStatus(): ConnectionSupervisorStatus {
+  return this.supervisorStatus;
+}
+
+/**
+ * Define a ordem de prioridade de conexão usada pelo supervisor.
+ */
+setConnectionOrder(order: ConnectionType[]): void {
+  this.connectionOrder = order;
+  console.log('[Supervisor] connectionOrder atualizado:', order);
+}
+
+activateConnectionSupervisor(autoReconnect: boolean = true): void {
+  this.ensureSerialInboundObserver();
+  this.updateSupervisorStatus({ active: true });
+
+  if(this.connectionStatus.connected) {
+  this.handleConnectionEstablished('supervisor_activate');
+  return;
+}
+
+this.stopSupervisorHealthCheck();
+
+if (this.isAndroid()) {
+  // CRÍTICO: Registrar listeners USB ANTES de tentar autoConnect
+  // para evitar race condition onde 'attached' dispara antes dos listeners JS
+  console.log('[ESP32Supervisor] Inicializando listeners USB nativos (caminho SÍNCRONO)...');
+  // Registrar listeners via caminho síncrono — NÃO depende do plugin ESM
+  try {
+    void this.ensureNativeUSBPluginListeners();
+    console.log('[ESP32Supervisor] Listeners USB registrados (SYNC)');
+  } catch (error) {
+    console.warn('[USB] Falha ao inicializar listeners nativos:', error);
+  }
+  // Iniciar polling USB como backup dos event listeners
+  this.startUSBDevicePolling();
+  if (autoReconnect && !this.connectionStatus.connected) {
+    this.scheduleReconnect('supervisor_activate', true);
+  }
+} else {
+  if (autoReconnect) {
+    this.scheduleReconnect('supervisor_activate', true);
+  }
+}
   }
 
-  deactivateConnectionSupervisor(reason: string = 'manual_deactivate'): void {
-    this.clearSupervisorReconnectTimer();
-    this.stopSupervisorHealthCheck();
-    this.stopUSBDevicePolling();
-    this.resolvePendingPingWaiters(false);
-    this.updateSupervisorStatus({
-      active: false,
-      state: 'idle',
-      attempt: 0,
-      nextDelayMs: 0,
-      reason,
-      consecutiveHealthFailures: 0,
-      transport: this.connectionStatus.type,
-      deviceId: this.connectionStatus.deviceId,
-    });
-  }
+deactivateConnectionSupervisor(reason: string = 'manual_deactivate'): void {
+  this.clearSupervisorReconnectTimer();
+  this.stopSupervisorHealthCheck();
+  this.stopUSBDevicePolling();
+  this.resolvePendingPingWaiters(false);
+  this.updateSupervisorStatus({
+    active: false,
+    state: 'idle',
+    attempt: 0,
+    nextDelayMs: 0,
+    reason,
+    consecutiveHealthFailures: 0,
+    transport: this.connectionStatus.type,
+    deviceId: this.connectionStatus.deviceId,
+  });
+}
 
-  async reconnectNow(reason: string = 'manual_reconnect_now'): Promise<boolean> {
-    this.manualDisconnectRequested = false;
-    this.updateSupervisorStatus({
-      active: true,
-      state: 'reconnecting',
-      reason,
-      nextDelayMs: 0,
-      attempt: Math.max(1, this.supervisorStatus.attempt + 1),
-    });
+  async reconnectNow(reason: string = 'manual_reconnect_now'): Promise < boolean > {
+  this.manualDisconnectRequested = false;
+  this.updateSupervisorStatus({
+    active: true,
+    state: 'reconnecting',
+    reason,
+    nextDelayMs: 0,
+    attempt: Math.max(1, this.supervisorStatus.attempt + 1),
+  });
 
-    this.clearSupervisorReconnectTimer();
-    return this.runReconnectAttempt(reason);
-  }
+  this.clearSupervisorReconnectTimer();
+  return this.runReconnectAttempt(reason);
+}
 
   private notifySupervisorStatus(): void {
-    this.supervisorListeners.forEach((listener) => {
-      try {
-        listener(this.supervisorStatus);
-      } catch (error) {
-        console.error('[ESP32Supervisor] Erro em listener:', error);
-      }
-    });
-  }
+  this.supervisorListeners.forEach((listener) => {
+    try {
+      listener(this.supervisorStatus);
+    } catch (error) {
+      console.error('[ESP32Supervisor] Erro em listener:', error);
+    }
+  });
+}
 
   private updateSupervisorStatus(patch: Partial<ConnectionSupervisorStatus>): void {
-    this.supervisorStatus = {
-      ...this.supervisorStatus,
-      ...patch,
-    };
-    this.notifySupervisorStatus();
-  }
+  this.supervisorStatus = {
+    ...this.supervisorStatus,
+    ...patch,
+  };
+  this.notifySupervisorStatus();
+}
 
   private logSupervisor(event: string, extra: Record<string, unknown> = {}): void {
-    const payload = {
-      event,
-      transport: this.supervisorStatus.transport,
-      deviceId: this.supervisorStatus.deviceId || this.connectionStatus.deviceId || 'unknown',
-      attempt: this.supervisorStatus.attempt,
-      reason: this.supervisorStatus.reason,
-      lastOkAt: this.supervisorStatus.lastOkAt,
-      ...extra,
-    };
-    console.log('[ESP32Supervisor]', JSON.stringify(payload));
-  }
+  const payload = {
+    event,
+    transport: this.supervisorStatus.transport,
+    deviceId: this.supervisorStatus.deviceId || this.connectionStatus.deviceId || 'unknown',
+    attempt: this.supervisorStatus.attempt,
+    reason: this.supervisorStatus.reason,
+    lastOkAt: this.supervisorStatus.lastOkAt,
+    ...extra,
+  };
+  console.log('[ESP32Supervisor]', JSON.stringify(payload));
+}
 
   private ensureSerialInboundObserver(): void {
-    if (this.serialMessageUnsubscribe) return;
+  if(this.serialMessageUnsubscribe) return;
 
-    this.serialMessageUnsubscribe = esp32Serial.onMessage((message) => {
-      this.observeInboundPayload(message);
-    });
-  }
+  this.serialMessageUnsubscribe = esp32Serial.onMessage((message) => {
+    this.observeInboundPayload(message);
+  });
+}
 
   private resolvePendingPingWaiters(ok: boolean): void {
-    if (this.pendingPingWaiters.size === 0) return;
+  if(this.pendingPingWaiters.size === 0) return;
 
-    this.pendingPingWaiters.forEach((waiter) => {
-      try {
-        waiter(ok);
-      } catch (error) {
-        console.error('[ESP32Supervisor] Erro em ping waiter:', error);
-      }
-    });
-    this.pendingPingWaiters.clear();
-  }
+  this.pendingPingWaiters.forEach((waiter) => {
+    try {
+      waiter(ok);
+    } catch (error) {
+      console.error('[ESP32Supervisor] Erro em ping waiter:', error);
+    }
+  });
+  this.pendingPingWaiters.clear();
+}
 
   private notifyInboundHealthSignal(source: string): void {
-    this.lastInboundAt = Date.now();
-    this.logSupervisor('inbound_signal', { source });
-    this.resolvePendingPingWaiters(true);
-  }
+  this.lastInboundAt = Date.now();
+  this.logSupervisor('inbound_signal', { source });
+  this.resolvePendingPingWaiters(true);
+}
 
   private observeInboundPayload(payload: string | ESP32Response): void {
-    if (typeof payload === 'string') {
-      const line = payload.trim();
-      if (!line) return;
-      this.notifyInboundHealthSignal('raw_line');
-      return;
-    }
+  if(typeof payload === 'string') {
+  const line = payload.trim();
+  if (!line) return;
+  this.notifyInboundHealthSignal('raw_line');
+  return;
+}
 
-    if (payload && typeof payload === 'object') {
-      this.notifyInboundHealthSignal('json_message');
-    }
+if (payload && typeof payload === 'object') {
+  this.notifyInboundHealthSignal('json_message');
+}
   }
 
   private startSupervisorHealthCheck(): void {
-    if (this.supervisorHealthInterval) {
-      clearInterval(this.supervisorHealthInterval);
-    }
+  if(this.supervisorHealthInterval) {
+  clearInterval(this.supervisorHealthInterval);
+}
 
-    this.supervisorHealthInterval = setInterval(async () => {
-      if (!this.supervisorStatus.active || !this.connectionStatus.connected) {
-        return;
-      }
+this.supervisorHealthInterval = setInterval(async () => {
+  if (!this.supervisorStatus.active || !this.connectionStatus.connected) {
+    return;
+  }
 
-      const healthy = await this.verifyConnection(2500);
-      if (healthy) {
-        this.markConnectionHealthy('healthcheck_ok');
-        return;
-      }
+  const healthy = await this.verifyConnection(2500);
+  if (healthy) {
+    this.markConnectionHealthy('healthcheck_ok');
+    return;
+  }
 
-      const nextFailures = this.supervisorStatus.consecutiveHealthFailures + 1;
-      this.updateSupervisorStatus({ consecutiveHealthFailures: nextFailures });
-      this.logSupervisor('healthcheck_failed', { consecutiveHealthFailures: nextFailures });
+  const nextFailures = this.supervisorStatus.consecutiveHealthFailures + 1;
+  this.updateSupervisorStatus({ consecutiveHealthFailures: nextFailures });
+  this.logSupervisor('healthcheck_failed', { consecutiveHealthFailures: nextFailures });
 
-      if (nextFailures >= SUPERVISOR_HEALTHCHECK_FAIL_THRESHOLD) {
-        this.handleConnectionDropped('healthcheck_threshold_reached');
-      }
-    }, SUPERVISOR_HEALTHCHECK_INTERVAL_MS);
+  if (nextFailures >= SUPERVISOR_HEALTHCHECK_FAIL_THRESHOLD) {
+    this.handleConnectionDropped('healthcheck_threshold_reached');
+  }
+}, SUPERVISOR_HEALTHCHECK_INTERVAL_MS);
   }
 
   private stopSupervisorHealthCheck(): void {
-    if (this.supervisorHealthInterval) {
-      clearInterval(this.supervisorHealthInterval);
-      this.supervisorHealthInterval = null;
-    }
+  if(this.supervisorHealthInterval) {
+  clearInterval(this.supervisorHealthInterval);
+  this.supervisorHealthInterval = null;
+}
   }
 
   private markConnectionHealthy(reason: string): void {
-    this.updateSupervisorStatus({
-      state: 'connected',
-      attempt: 0,
-      nextDelayMs: 0,
-      reason,
-      lastOkAt: Date.now(),
-      consecutiveHealthFailures: 0,
-      transport: this.connectionStatus.type,
-      deviceId: this.connectionStatus.deviceId,
-    });
-  }
+  this.updateSupervisorStatus({
+    state: 'connected',
+    attempt: 0,
+    nextDelayMs: 0,
+    reason,
+    lastOkAt: Date.now(),
+    consecutiveHealthFailures: 0,
+    transport: this.connectionStatus.type,
+    deviceId: this.connectionStatus.deviceId,
+  });
+}
 
   private clearSupervisorReconnectTimer(): void {
-    if (this.supervisorReconnectTimer) {
-      clearTimeout(this.supervisorReconnectTimer);
-      this.supervisorReconnectTimer = null;
-    }
+  if(this.supervisorReconnectTimer) {
+  clearTimeout(this.supervisorReconnectTimer);
+  this.supervisorReconnectTimer = null;
+}
   }
 
   private computeReconnectDelay(attempt: number): number {
-    const expDelay = Math.min(
-      SUPERVISOR_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt - 1)),
-      SUPERVISOR_MAX_DELAY_MS
-    );
-    const jitter = expDelay * SUPERVISOR_BACKOFF_JITTER_RATIO * Math.random();
-    return Math.floor(expDelay + jitter);
-  }
+  const expDelay = Math.min(
+    SUPERVISOR_BASE_DELAY_MS * Math.pow(2, Math.max(0, attempt - 1)),
+    SUPERVISOR_MAX_DELAY_MS
+  );
+  const jitter = expDelay * SUPERVISOR_BACKOFF_JITTER_RATIO * Math.random();
+  return Math.floor(expDelay + jitter);
+}
 
   private scheduleReconnect(reason: string, immediate: boolean = false): void {
-    if (!this.supervisorStatus.active || this.manualDisconnectRequested) {
-      return;
-    }
-    if (this.connectionStatus.connected || this.supervisorReconnectInFlight || this.supervisorReconnectTimer) {
-      return;
-    }
+  if(!this.supervisorStatus.active || this.manualDisconnectRequested) {
+  return;
+}
+if (this.connectionStatus.connected || this.supervisorReconnectInFlight || this.supervisorReconnectTimer) {
+  return;
+}
 
-    const nextAttempt = Math.max(1, this.supervisorStatus.attempt + 1);
-    const nextDelayMs = immediate ? 0 : this.computeReconnectDelay(nextAttempt);
-    const nextState = nextAttempt >= SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS
-      ? 'persistent_failure'
-      : 'reconnecting';
+const nextAttempt = Math.max(1, this.supervisorStatus.attempt + 1);
+const nextDelayMs = immediate ? 0 : this.computeReconnectDelay(nextAttempt);
+const nextState = nextAttempt >= SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS
+  ? 'persistent_failure'
+  : 'reconnecting';
 
-    this.updateSupervisorStatus({
-      state: nextState,
-      reason,
-      attempt: nextAttempt,
-      nextDelayMs,
-      transport: this.connectionStatus.type,
-      deviceId: this.connectionStatus.deviceId,
-    });
+this.updateSupervisorStatus({
+  state: nextState,
+  reason,
+  attempt: nextAttempt,
+  nextDelayMs,
+  transport: this.connectionStatus.type,
+  deviceId: this.connectionStatus.deviceId,
+});
 
-    this.logSupervisor('reconnect_scheduled', { nextDelayMs });
+this.logSupervisor('reconnect_scheduled', { nextDelayMs });
 
-    this.supervisorReconnectTimer = setTimeout(() => {
-      this.supervisorReconnectTimer = null;
-      void this.runReconnectAttempt(reason);
-    }, nextDelayMs);
+this.supervisorReconnectTimer = setTimeout(() => {
+  this.supervisorReconnectTimer = null;
+  void this.runReconnectAttempt(reason);
+}, nextDelayMs);
   }
 
-  private async runReconnectAttempt(reason: string): Promise<boolean> {
-    if (this.supervisorReconnectInFlight) {
-      return false;
+  private async runReconnectAttempt(reason: string): Promise < boolean > {
+  if(this.supervisorReconnectInFlight) {
+  return false;
+}
+
+this.supervisorReconnectInFlight = true;
+this.clearSupervisorReconnectTimer();
+this.updateSupervisorStatus({ state: 'reconnecting', reason, nextDelayMs: 0 });
+this.logSupervisor('reconnect_attempt_start');
+
+try {
+  const lastConnection = this.getLastConnection();
+
+  // 1) Tentar reconectar à última conexão conhecida
+  if (lastConnection) {
+    const success = await this.tryReconnectLastConnection(lastConnection);
+    if (success) {
+      this.logSupervisor('reconnect_attempt_success');
+      return true;
     }
-
-    this.supervisorReconnectInFlight = true;
-    this.clearSupervisorReconnectTimer();
-    this.updateSupervisorStatus({ state: 'reconnecting', reason, nextDelayMs: 0 });
-    this.logSupervisor('reconnect_attempt_start');
-
-    try {
-      const lastConnection = this.getLastConnection();
-
-      // 1) Tentar reconectar à última conexão conhecida
-      if (lastConnection) {
-        const success = await this.tryReconnectLastConnection(lastConnection);
-        if (success) {
-          this.logSupervisor('reconnect_attempt_success');
-          return true;
-        }
-        this.logSupervisor('reconnect_last_failed_trying_order');
-      } else {
-        this.logSupervisor('reconnect_missing_last_connection_trying_order');
-      }
-
-      // 2) Fallback: tentar na ordem de prioridade configurada
-      const result = await this.autoConnectPreferredOrder(this.connectionOrder);
-      if (result !== 'none') {
-        this.logSupervisor('reconnect_preferred_order_success', { transport: result });
-        return true;
-      }
-
-      this.logSupervisor('reconnect_attempt_failed');
-      this.scheduleReconnect('attempt_failed', false);
-      return false;
-    } catch (error) {
-      this.logSupervisor('reconnect_attempt_error', {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      this.scheduleReconnect('attempt_error', false);
-      return false;
-    } finally {
-      this.supervisorReconnectInFlight = false;
-    }
+    this.logSupervisor('reconnect_last_failed_trying_order');
+  } else {
+    this.logSupervisor('reconnect_missing_last_connection_trying_order');
   }
 
-  private async tryReconnectLastConnection(lastConnection: LastConnectionInfo): Promise<boolean> {
-    switch (lastConnection.type) {
+  // 2) Fallback: tentar na ordem de prioridade configurada
+  const result = await this.autoConnectPreferredOrder(this.connectionOrder);
+  if (result !== 'none') {
+    this.logSupervisor('reconnect_preferred_order_success', { transport: result });
+    return true;
+  }
+
+  this.logSupervisor('reconnect_attempt_failed');
+  this.scheduleReconnect('attempt_failed', false);
+  return false;
+} catch (error) {
+  this.logSupervisor('reconnect_attempt_error', {
+    error: error instanceof Error ? error.message : String(error),
+  });
+  this.scheduleReconnect('attempt_error', false);
+  return false;
+} finally {
+  this.supervisorReconnectInFlight = false;
+}
+  }
+
+  private async tryReconnectLastConnection(lastConnection: LastConnectionInfo): Promise < boolean > {
+  switch(lastConnection.type) {
       case 'usb': {
-        if (this.isAndroid()) {
-          return this.autoConnectUSBNative();
-        }
-        const webReconnect = await esp32Serial.tryAutoReconnect();
-        if (webReconnect) return true;
-        return this.autoConnectUSBIfAuthorized();
-      }
-      case 'wifi': {
-        if (!lastConnection.ipAddress) return false;
-        return this.connectWifi(lastConnection.ipAddress);
-      }
-      case 'bluetooth': {
-        if (lastConnection.deviceId) {
-          const byId = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
-          if (byId) return true;
-        }
-        if (this.isAndroid()) {
-          return this.autoConnectBluetoothByName(lastConnection.deviceName || ESP32_DEVICE_NAME);
-        }
-        return false;
-      }
-      default:
-        return false;
+    if (this.isAndroid()) {
+      return this.autoConnectUSBNative();
     }
+    const webReconnect = await esp32Serial.tryAutoReconnect();
+    if (webReconnect) return true;
+    return this.autoConnectUSBIfAuthorized();
+  }
+      case 'wifi': {
+    if (!lastConnection.ipAddress) return false;
+    return this.connectWifi(lastConnection.ipAddress);
+  }
+      case 'bluetooth': {
+    if (lastConnection.deviceId) {
+      const byId = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
+      if (byId) return true;
+    }
+    if (this.isAndroid()) {
+      return this.autoConnectBluetoothByName(lastConnection.deviceName || ESP32_DEVICE_NAME);
+    }
+    return false;
+  }
+      default:
+  return false;
+}
   }
 
   private handleConnectionEstablished(reason: string): void {
-    this.manualDisconnectRequested = false;
-    this.clearSupervisorReconnectTimer();
-    this.markConnectionHealthy(reason);
-    this.startSupervisorHealthCheck();
-    this.logSupervisor('connection_established');
-  }
+  this.manualDisconnectRequested = false;
+  this.clearSupervisorReconnectTimer();
+  this.markConnectionHealthy(reason);
+  this.startSupervisorHealthCheck();
+  this.logSupervisor('connection_established');
+}
 
   private handleConnectionDropped(reason: string): void {
-    this.stopHeartbeat();
-    this.stopSupervisorHealthCheck();
-    this.resolvePendingPingWaiters(false);
+  this.stopHeartbeat();
+  this.stopSupervisorHealthCheck();
+  this.resolvePendingPingWaiters(false);
 
-    if (this.connectionStatus.type !== 'none' || this.connectionStatus.connected) {
-      this.connectionStatus = { connected: false, type: 'none' };
-      this.connectedDevice = null;
-      this.notifyConnectionChange();
-    }
+  if(this.connectionStatus.type !== 'none' || this.connectionStatus.connected) {
+  this.connectionStatus = { connected: false, type: 'none' };
+  this.connectedDevice = null;
+  this.notifyConnectionChange();
+}
 
-    if (this.manualDisconnectRequested) {
-      this.updateSupervisorStatus({
-        state: 'idle',
-        reason,
-        attempt: 0,
-        nextDelayMs: 0,
-        transport: 'none',
-        deviceId: undefined,
-        consecutiveHealthFailures: 0,
-      });
-      this.logSupervisor('connection_dropped_manual');
+if (this.manualDisconnectRequested) {
+  this.updateSupervisorStatus({
+    state: 'idle',
+    reason,
+    attempt: 0,
+    nextDelayMs: 0,
+    transport: 'none',
+    deviceId: undefined,
+    consecutiveHealthFailures: 0,
+  });
+  this.logSupervisor('connection_dropped_manual');
+  return;
+}
+
+this.updateSupervisorStatus({
+  state: 'reconnecting',
+  reason,
+  transport: 'none',
+  deviceId: undefined,
+  consecutiveHealthFailures: 0,
+});
+this.logSupervisor('connection_dropped');
+this.scheduleReconnect(reason, true);
+  }
+
+// ============================================
+// HEARTBEAT (MONITORAMENTO DE CONEXÃƒO)
+// ============================================
+
+/**
+ * Inicia heartbeat para monitorar conexÃ£o
+ * @param intervalMs Intervalo entre pings (padrÃ£o: 15s)
+ * @param onFail Callback quando heartbeat falhar N vezes consecutivas
+ */
+startHeartbeat(
+  intervalMs: number = DEFAULT_HEARTBEAT_INTERVAL_MS,
+  onFail ?: HeartbeatFailCallback
+): void {
+  this.stopHeartbeat(); // Limpar intervalo anterior
+  this.heartbeatFailCount = 0;
+  this.onHeartbeatFail = onFail || null;
+
+  console.log(`[Heartbeat] Iniciando com intervalo de ${intervalMs}ms`);
+
+  this.heartbeatInterval = setInterval(async () => {
+    if (!this.connectionStatus.connected) {
+      console.log('[Heartbeat] NÃ£o conectado, parando heartbeat');
+      this.stopHeartbeat();
       return;
     }
 
-    this.updateSupervisorStatus({
-      state: 'reconnecting',
-      reason,
-      transport: 'none',
-      deviceId: undefined,
-      consecutiveHealthFailures: 0,
-    });
-    this.logSupervisor('connection_dropped');
-    this.scheduleReconnect(reason, true);
-  }
-
-  // ============================================
-  // HEARTBEAT (MONITORAMENTO DE CONEXÃƒO)
-  // ============================================
-
-  /**
-   * Inicia heartbeat para monitorar conexÃ£o
-   * @param intervalMs Intervalo entre pings (padrÃ£o: 15s)
-   * @param onFail Callback quando heartbeat falhar N vezes consecutivas
-   */
-  startHeartbeat(
-    intervalMs: number = DEFAULT_HEARTBEAT_INTERVAL_MS,
-    onFail?: HeartbeatFailCallback
-  ): void {
-    this.stopHeartbeat(); // Limpar intervalo anterior
-    this.heartbeatFailCount = 0;
-    this.onHeartbeatFail = onFail || null;
-
-    console.log(`[Heartbeat] Iniciando com intervalo de ${intervalMs}ms`);
-
-    this.heartbeatInterval = setInterval(async () => {
-      if (!this.connectionStatus.connected) {
-        console.log('[Heartbeat] NÃ£o conectado, parando heartbeat');
-        this.stopHeartbeat();
-        return;
-      }
-
-      try {
-        const success = await this.ping();
-        if (success) {
-          this.heartbeatFailCount = 0;
-          console.log('[Heartbeat] Ping OK');
-        } else {
-          this.heartbeatFailCount++;
-          console.warn(`[Heartbeat] Ping falhou (${this.heartbeatFailCount}/${HEARTBEAT_FAIL_THRESHOLD})`);
-        }
-      } catch (error) {
+    try {
+      const success = await this.ping();
+      if (success) {
+        this.heartbeatFailCount = 0;
+        console.log('[Heartbeat] Ping OK');
+      } else {
         this.heartbeatFailCount++;
-        console.warn(`[Heartbeat] Erro no ping (${this.heartbeatFailCount}/${HEARTBEAT_FAIL_THRESHOLD}):`, error);
+        console.warn(`[Heartbeat] Ping falhou (${this.heartbeatFailCount}/${HEARTBEAT_FAIL_THRESHOLD})`);
       }
-
-      // Verificar limite de falhas
-      if (this.heartbeatFailCount >= HEARTBEAT_FAIL_THRESHOLD) {
-        console.error('[Heartbeat] Limite de falhas atingido, conexÃ£o considerada perdida');
-
-        // Notificar callback
-        if (this.onHeartbeatFail) {
-          this.onHeartbeatFail(this.heartbeatFailCount);
-        }
-
-        this.handleConnectionDropped('legacy_heartbeat_threshold');
-      }
-    }, intervalMs);
-  }
-
-  /**
-   * Para o heartbeat
-   */
-  stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-      console.log('[Heartbeat] Parado');
+    } catch (error) {
+      this.heartbeatFailCount++;
+      console.warn(`[Heartbeat] Erro no ping (${this.heartbeatFailCount}/${HEARTBEAT_FAIL_THRESHOLD}):`, error);
     }
-    this.heartbeatFailCount = 0;
+
+    // Verificar limite de falhas
+    if (this.heartbeatFailCount >= HEARTBEAT_FAIL_THRESHOLD) {
+      console.error('[Heartbeat] Limite de falhas atingido, conexÃ£o considerada perdida');
+
+      // Notificar callback
+      if (this.onHeartbeatFail) {
+        this.onHeartbeatFail(this.heartbeatFailCount);
+      }
+
+      this.handleConnectionDropped('legacy_heartbeat_threshold');
+    }
+  }, intervalMs);
+}
+
+/**
+ * Para o heartbeat
+ */
+stopHeartbeat(): void {
+  if(this.heartbeatInterval) {
+  clearInterval(this.heartbeatInterval);
+  this.heartbeatInterval = null;
+  console.log('[Heartbeat] Parado');
+}
+this.heartbeatFailCount = 0;
   }
 
   // ============================================
@@ -1421,49 +1496,49 @@ class ESP32CommunicationService {
    * Tenta conectar via USB usando portas previamente autorizadas (sem gesto)
    * @returns true se conectou com sucesso
    */
-  async autoConnectUSBIfAuthorized(): Promise<boolean> {
-    const webSerial = getWebSerial();
-    if (!webSerial) {
-      console.log('[AutoConnect USB] Web Serial API nÃ£o disponÃ­vel');
-      return false;
-    }
+  async autoConnectUSBIfAuthorized(): Promise < boolean > {
+  const webSerial = getWebSerial();
+  if(!webSerial) {
+    console.log('[AutoConnect USB] Web Serial API nÃ£o disponÃ­vel');
+    return false;
+  }
 
     try {
-      const ports = await webSerial.getPorts();
-      if (ports.length === 0) {
-        console.log('[AutoConnect USB] Nenhuma porta previamente autorizada');
-        return false;
-      }
+    const ports = await webSerial.getPorts();
+    if(ports.length === 0) {
+  console.log('[AutoConnect USB] Nenhuma porta previamente autorizada');
+  return false;
+}
 
-      console.log(`[AutoConnect USB] ${ports.length} porta(s) autorizada(s) encontrada(s)`);
+console.log(`[AutoConnect USB] ${ports.length} porta(s) autorizada(s) encontrada(s)`);
 
-      // Tentar a primeira porta disponÃ­vel
-      const port = ports[0];
-      await port.open({ baudRate: DEFAULT_BAUDRATE });
+// Tentar a primeira porta disponÃ­vel
+const port = ports[0];
+await port.open({ baudRate: DEFAULT_BAUDRATE });
 
-      this.serialPort = port;
-      this.connectionStatus = {
-        connected: true,
-        type: 'usb',
-        deviceId: 'usb-serial',
-        deviceName: 'USB Serial (Auto)',
-      };
+this.serialPort = port;
+this.connectionStatus = {
+  connected: true,
+  type: 'usb',
+  deviceId: 'usb-serial',
+  deviceName: 'USB Serial (Auto)',
+};
 
-      // Salvar conexÃ£o
-      this.setLastConnection({
-        type: 'usb',
-        deviceId: 'usb-serial',
-        deviceName: 'USB Serial (Auto)',
-      });
+// Salvar conexÃ£o
+this.setLastConnection({
+  type: 'usb',
+  deviceId: 'usb-serial',
+  deviceName: 'USB Serial (Auto)',
+});
 
-      this.notifyConnectionChange();
-      this.handleConnectionEstablished('auto_connect_usb_authorized');
-      console.log('[AutoConnect USB] Conectado com sucesso');
-      return true;
+this.notifyConnectionChange();
+this.handleConnectionEstablished('auto_connect_usb_authorized');
+console.log('[AutoConnect USB] Conectado com sucesso');
+return true;
     } catch (error) {
-      console.warn('[AutoConnect USB] Falha ao conectar:', error);
-      return false;
-    }
+  console.warn('[AutoConnect USB] Falha ao conectar:', error);
+  return false;
+}
   }
 
   /**
@@ -1472,66 +1547,66 @@ class ESP32CommunicationService {
    * @returns Tipo de conexÃ£o estabelecida ou 'none' se falhou
    */
   async autoConnectPreferredOrder(
-    order: ConnectionType[] = ['usb', 'wifi', 'bluetooth']
-  ): Promise<ConnectionType> {
-    console.log('[AutoConnect] Tentando ordem:', order);
-    const lastConnection = this.getLastConnection();
+  order: ConnectionType[] = ['usb', 'wifi', 'bluetooth']
+): Promise < ConnectionType > {
+  console.log('[AutoConnect] Tentando ordem:', order);
+  const lastConnection = this.getLastConnection();
 
-    for (const protocol of order) {
-      console.log(`[AutoConnect] Tentando ${protocol}...`);
+  for(const protocol of order) {
+    console.log(`[AutoConnect] Tentando ${protocol}...`);
 
-      try {
-        let success = false;
+    try {
+      let success = false;
 
-        switch (protocol) {
-          case 'usb':
-            // No Android, usar USB OTG nativo; na web, usar Web Serial
-            if (Capacitor.isNativePlatform()) {
-              success = await this.autoConnectUSBNative();
-            } else {
-              success = await this.autoConnectUSBIfAuthorized();
+      switch (protocol) {
+        case 'usb':
+          // No Android, usar USB OTG nativo; na web, usar Web Serial
+          if (Capacitor.isNativePlatform()) {
+            success = await this.autoConnectUSBNative();
+          } else {
+            success = await this.autoConnectUSBIfAuthorized();
+          }
+          break;
+
+        case 'wifi':
+          // ðŸ†• Tentar IP salvo OU IP padrÃ£o do ESP32
+          const wifiIp = lastConnection?.ipAddress || ESP32_DEFAULT_IP;
+          console.log(`[AutoConnect WiFi] Tentando IP: ${wifiIp}`);
+          success = await this.connectWifi(wifiIp);
+          break;
+
+        case 'bluetooth':
+          // ðŸ†• BLE auto-connect: tentar por deviceId salvo OU scan por nome
+          if (this.isAndroid()) {
+            if (lastConnection?.deviceId && lastConnection.type === 'bluetooth') {
+              // Tentar reconectar ao dispositivo salvo
+              console.log('[AutoConnect BLE] Tentando deviceId salvo:', lastConnection.deviceId);
+              success = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
             }
-            break;
 
-          case 'wifi':
-            // ðŸ†• Tentar IP salvo OU IP padrÃ£o do ESP32
-            const wifiIp = lastConnection?.ipAddress || ESP32_DEFAULT_IP;
-            console.log(`[AutoConnect WiFi] Tentando IP: ${wifiIp}`);
-            success = await this.connectWifi(wifiIp);
-            break;
-
-          case 'bluetooth':
-            // ðŸ†• BLE auto-connect: tentar por deviceId salvo OU scan por nome
-            if (this.isAndroid()) {
-              if (lastConnection?.deviceId && lastConnection.type === 'bluetooth') {
-                // Tentar reconectar ao dispositivo salvo
-                console.log('[AutoConnect BLE] Tentando deviceId salvo:', lastConnection.deviceId);
-                success = await this.connectBluetooth(lastConnection.deviceId, lastConnection.deviceName);
-              }
-
-              if (!success) {
-                // ðŸ†• Fallback: Scan e conectar pelo nome "Kiosk_Bier"
-                console.log(`[AutoConnect BLE] Procurando dispositivo "${ESP32_DEVICE_NAME}"...`);
-                success = await this.autoConnectBluetoothByName(ESP32_DEVICE_NAME);
-              }
-            } else if (this.isWeb()) {
-              console.log('[AutoConnect BLE] Requer gesto do usuÃ¡rio no navegador');
+            if (!success) {
+              // ðŸ†• Fallback: Scan e conectar pelo nome "Kiosk_Bier"
+              console.log(`[AutoConnect BLE] Procurando dispositivo "${ESP32_DEVICE_NAME}"...`);
+              success = await this.autoConnectBluetoothByName(ESP32_DEVICE_NAME);
             }
-            break;
-        }
-
-        if (success) {
-          console.log(`[AutoConnect] Sucesso via ${protocol}`);
-          return protocol;
-        }
-      } catch (error) {
-        console.warn(`[AutoConnect] Falha em ${protocol}:`, error);
+          } else if (this.isWeb()) {
+            console.log('[AutoConnect BLE] Requer gesto do usuÃ¡rio no navegador');
+          }
+          break;
       }
+
+      if (success) {
+        console.log(`[AutoConnect] Sucesso via ${protocol}`);
+        return protocol;
+      }
+    } catch (error) {
+      console.warn(`[AutoConnect] Falha em ${protocol}:`, error);
     }
+  }
 
     console.log('[AutoConnect] Nenhum protocolo conseguiu conectar');
-    return 'none';
-  }
+  return 'none';
+}
 
   /**
    * Tenta reconectar ao Ãºltimo dispositivo com backoff exponencial
@@ -1540,47 +1615,47 @@ class ESP32CommunicationService {
    * @param maxDelayMs Delay mÃ¡ximo em ms (padrÃ£o: 30000)
    */
   async reconnectWithBackoff(
-    maxAttempts: number = 0,
-    baseDelayMs: number = 1000,
-    maxDelayMs: number = 30000
-  ): Promise<boolean> {
-    const lastConnection = this.getLastConnection();
-    if (!lastConnection) {
-      console.warn('[Reconnect] Nenhuma conexÃ£o anterior salva');
-      return false;
-    }
+  maxAttempts: number = 0,
+  baseDelayMs: number = 1000,
+  maxDelayMs: number = 30000
+): Promise < boolean > {
+  const lastConnection = this.getLastConnection();
+  if(!lastConnection) {
+    console.warn('[Reconnect] Nenhuma conexÃ£o anterior salva');
+    return false;
+  }
 
     const infinite = maxAttempts <= 0;
-    const attemptsLabel = infinite ? 'infinito' : String(maxAttempts);
-    console.log(`[Reconnect] Tentando reconectar a ${lastConnection.type} (max ${attemptsLabel} tentativas)`);
+  const attemptsLabel = infinite ? 'infinito' : String(maxAttempts);
+  console.log(`[Reconnect] Tentando reconectar a ${lastConnection.type} (max ${attemptsLabel} tentativas)`);
 
-    let attempt = 1;
-    while (infinite || attempt <= maxAttempts) {
-      const baseDelay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
-      const jitter = Math.floor(baseDelay * SUPERVISOR_BACKOFF_JITTER_RATIO * Math.random());
-      const delay = baseDelay + jitter;
-      console.log(`[Reconnect] Tentativa ${attempt}/${attemptsLabel} (delay: ${delay}ms)`);
+  let attempt = 1;
+  while(infinite || attempt <= maxAttempts) {
+  const baseDelay = Math.min(baseDelayMs * Math.pow(2, attempt - 1), maxDelayMs);
+  const jitter = Math.floor(baseDelay * SUPERVISOR_BACKOFF_JITTER_RATIO * Math.random());
+  const delay = baseDelay + jitter;
+  console.log(`[Reconnect] Tentativa ${attempt}/${attemptsLabel} (delay: ${delay}ms)`);
 
-      try {
-        const success = await this.tryReconnectLastConnection(lastConnection);
-        if (success) {
-          console.log(`[Reconnect] Sucesso na tentativa ${attempt}`);
-          return true;
-        }
-      } catch (error) {
-        console.warn(`[Reconnect] Tentativa ${attempt} falhou:`, error);
-      }
-
-      if (!infinite && attempt >= maxAttempts) {
-        break;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, delay));
-      attempt++;
+  try {
+    const success = await this.tryReconnectLastConnection(lastConnection);
+    if (success) {
+      console.log(`[Reconnect] Sucesso na tentativa ${attempt}`);
+      return true;
     }
+  } catch (error) {
+    console.warn(`[Reconnect] Tentativa ${attempt} falhou:`, error);
+  }
 
-    console.error(`[Reconnect] Falha apÃ³s ${attemptsLabel} tentativas`);
-    return false;
+  if (!infinite && attempt >= maxAttempts) {
+    break;
+  }
+
+  await new Promise(resolve => setTimeout(resolve, delay));
+  attempt++;
+}
+
+console.error(`[Reconnect] Falha apÃ³s ${attemptsLabel} tentativas`);
+return false;
   }
 
   // ============================================
@@ -1590,19 +1665,19 @@ class ESP32CommunicationService {
   /**
    * Inicializa Bluetooth (verifica permissÃµes no Android)
    */
-  async initBluetooth(): Promise<boolean> {
-    try {
-      // Inicializar BLE com opÃ§Ãµes especÃ­ficas para Android
-      await BleClient.initialize({
-        androidNeverForLocation: false, // Precisa de localizaÃ§Ã£o para scan BLE no Android
-      });
-      console.log('[BLE] Inicializado com sucesso');
-      return true;
-    } catch (error) {
-      console.error('[BLE] Erro ao inicializar:', error);
-      return false;
-    }
+  async initBluetooth(): Promise < boolean > {
+  try {
+    // Inicializar BLE com opÃ§Ãµes especÃ­ficas para Android
+    await BleClient.initialize({
+      androidNeverForLocation: false, // Precisa de localizaÃ§Ã£o para scan BLE no Android
+    });
+    console.log('[BLE] Inicializado com sucesso');
+    return true;
+  } catch(error) {
+    console.error('[BLE] Erro ao inicializar:', error);
+    return false;
   }
+}
 
   /**
    * ðŸ†• Auto-conecta ao Bluetooth procurando pelo nome do dispositivo
@@ -1610,96 +1685,96 @@ class ESP32CommunicationService {
    * @param deviceName Nome do dispositivo para procurar (padrÃ£o: Kiosk_Bier)
    * @param timeout Tempo mÃ¡ximo de scan em ms
    */
-  async autoConnectBluetoothByName(deviceName: string = ESP32_DEVICE_NAME, timeout: number = 8000): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) {
-      console.log('[AutoConnect BLE] DisponÃ­vel apenas em plataformas nativas');
-      return false;
-    }
+  async autoConnectBluetoothByName(deviceName: string = ESP32_DEVICE_NAME, timeout: number = 8000): Promise < boolean > {
+  if(!Capacitor.isNativePlatform()) {
+  console.log('[AutoConnect BLE] DisponÃ­vel apenas em plataformas nativas');
+  return false;
+}
 
-    try {
-      console.log(`[AutoConnect BLE] Inicializando scan para "${deviceName}"...`);
+try {
+  console.log(`[AutoConnect BLE] Inicializando scan para "${deviceName}"...`);
 
-      // Inicializar BLE
-      await BleClient.initialize({
-        androidNeverForLocation: false,
-      });
+  // Inicializar BLE
+  await BleClient.initialize({
+    androidNeverForLocation: false,
+  });
 
-      // VariÃ¡vel para armazenar o dispositivo encontrado
-      let foundDevice: ESP32Device | null = null;
+  // VariÃ¡vel para armazenar o dispositivo encontrado
+  let foundDevice: ESP32Device | null = null;
 
-      // Scan por dispositivos
-      console.log('[AutoConnect BLE] Iniciando scan...');
+  // Scan por dispositivos
+  console.log('[AutoConnect BLE] Iniciando scan...');
 
-      await BleClient.requestLEScan(
-        { allowDuplicates: false },
-        (result) => {
-          const name = result.device.name || '';
-          console.log(`[AutoConnect BLE] Encontrado: "${name}" (${result.device.deviceId})`);
+  await BleClient.requestLEScan(
+    { allowDuplicates: false },
+    (result) => {
+      const name = result.device.name || '';
+      console.log(`[AutoConnect BLE] Encontrado: "${name}" (${result.device.deviceId})`);
 
-          // Procurar pelo nome exato ou parcial
-          if (name.toLowerCase().includes(deviceName.toLowerCase()) ||
-            name.toLowerCase().includes('kiosk') ||
-            name.toLowerCase().includes('bier')) {
-            if (!foundDevice) {
-              foundDevice = {
-                id: result.device.deviceId,
-                name: name,
-                type: 'bluetooth',
-                rssi: result.rssi,
-              };
-              console.log(`[AutoConnect BLE] âœ… Dispositivo alvo encontrado: ${name}`);
-            }
-          }
-        }
-      );
-
-      // Aguardar scan ou parar se encontrou
-      const startTime = Date.now();
-      while (!foundDevice && (Date.now() - startTime) < timeout) {
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-
-      await BleClient.stopLEScan();
-      console.log('[AutoConnect BLE] Scan finalizado');
-
-      if (foundDevice) {
-        console.log(`[AutoConnect BLE] Tentando conectar a ${foundDevice.name}...`);
-        const success = await this.connectBluetooth(foundDevice.id, foundDevice.name);
-
-        if (success) {
-          console.log('[AutoConnect BLE] âœ… Conectado com sucesso!');
-          return true;
+      // Procurar pelo nome exato ou parcial
+      if (name.toLowerCase().includes(deviceName.toLowerCase()) ||
+        name.toLowerCase().includes('kiosk') ||
+        name.toLowerCase().includes('bier')) {
+        if (!foundDevice) {
+          foundDevice = {
+            id: result.device.deviceId,
+            name: name,
+            type: 'bluetooth',
+            rssi: result.rssi,
+          };
+          console.log(`[AutoConnect BLE] âœ… Dispositivo alvo encontrado: ${name}`);
         }
       }
-
-      console.log('[AutoConnect BLE] Nenhum dispositivo compatÃ­vel encontrado');
-      return false;
-
-    } catch (error) {
-      console.error('[AutoConnect BLE] Erro:', error);
-      return false;
     }
+  );
+
+  // Aguardar scan ou parar se encontrou
+  const startTime = Date.now();
+  while (!foundDevice && (Date.now() - startTime) < timeout) {
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+
+  await BleClient.stopLEScan();
+  console.log('[AutoConnect BLE] Scan finalizado');
+
+  if (foundDevice) {
+    console.log(`[AutoConnect BLE] Tentando conectar a ${foundDevice.name}...`);
+    const success = await this.connectBluetooth(foundDevice.id, foundDevice.name);
+
+    if (success) {
+      console.log('[AutoConnect BLE] âœ… Conectado com sucesso!');
+      return true;
+    }
+  }
+
+  console.log('[AutoConnect BLE] Nenhum dispositivo compatÃ­vel encontrado');
+  return false;
+
+} catch (error) {
+  console.error('[AutoConnect BLE] Erro:', error);
+  return false;
+}
   }
 
   /**
    * ðŸ”§ Inicializa BleClient de forma idempotente (evita mÃºltiplas inicializaÃ§Ãµes)
    * NecessÃ¡rio no WEB para popular o mapa interno do BleClient
    */
-  private async ensureBleInitialized(): Promise<boolean> {
-    if (this.bleInitialized) {
-      return true;
-    }
-    try {
-      await BleClient.initialize({
-        androidNeverForLocation: false,
-      });
-      this.bleInitialized = true;
-      console.log('[BLE] âœ… BleClient inicializado (idempotente)');
-      return true;
-    } catch (error) {
-      console.error('[BLE] âŒ Falha ao inicializar BleClient:', error);
-      return false;
-    }
+  private async ensureBleInitialized(): Promise < boolean > {
+  if(this.bleInitialized) {
+  return true;
+}
+try {
+  await BleClient.initialize({
+    androidNeverForLocation: false,
+  });
+  this.bleInitialized = true;
+  console.log('[BLE] âœ… BleClient inicializado (idempotente)');
+  return true;
+} catch (error) {
+  console.error('[BLE] âŒ Falha ao inicializar BleClient:', error);
+  return false;
+}
   }
 
   /**
@@ -1708,105 +1783,105 @@ class ESP32CommunicationService {
    * para garantir que o dispositivo entre no mapa interno do BleClient.
    * Isso evita o erro "Device not found" ao conectar.
    */
-  async scanBluetoothDevices(timeout: number = 5000): Promise<ESP32Device[]> {
-    const devices: ESP32Device[] = [];
+  async scanBluetoothDevices(timeout: number = 5000): Promise < ESP32Device[] > {
+  const devices: ESP32Device[] = [];
 
-    try {
-      // Verificar se estÃ¡ no navegador web
-      if (this.isWeb()) {
-        // ðŸ”§ CORREÃ‡ÃƒO: Inicializar BleClient primeiro (idempotente)
-        const initialized = await this.ensureBleInitialized();
-        if (!initialized) {
-          console.warn('[BLE WEB] BleClient nÃ£o inicializado, abortando scan');
-          return devices;
-        }
+  try {
+    // Verificar se estÃ¡ no navegador web
+    if(this.isWeb()) {
+  // ðŸ”§ CORREÃ‡ÃƒO: Inicializar BleClient primeiro (idempotente)
+  const initialized = await this.ensureBleInitialized();
+  if (!initialized) {
+    console.warn('[BLE WEB] BleClient nÃ£o inicializado, abortando scan');
+    return devices;
+  }
 
-        // ðŸ”§ CORREÃ‡ÃƒO: Usar BleClient.requestDevice() ao invÃ©s de navigator.bluetooth
-        // Isso garante que o dispositivo seja adicionado ao mapa interno do BleClient
-        try {
-          console.log('[BLE WEB] Abrindo picker via BleClient.requestDevice()...');
-          const device = await BleClient.requestDevice({
-            services: [ESP32_SERVICE_UUID],
-            namePrefix: 'Kiosk',
-            optionalServices: [ESP32_SERVICE_UUID],
-          });
+  // ðŸ”§ CORREÃ‡ÃƒO: Usar BleClient.requestDevice() ao invÃ©s de navigator.bluetooth
+  // Isso garante que o dispositivo seja adicionado ao mapa interno do BleClient
+  try {
+    console.log('[BLE WEB] Abrindo picker via BleClient.requestDevice()...');
+    const device = await BleClient.requestDevice({
+      services: [ESP32_SERVICE_UUID],
+      namePrefix: 'Kiosk',
+      optionalServices: [ESP32_SERVICE_UUID],
+    });
 
-          if (device && device.deviceId) {
-            devices.push({
-              id: device.deviceId,
-              name: device.name || 'ESP32 Bluetooth',
-              type: 'bluetooth',
-            });
-            console.log('[BLE WEB] âœ… Dispositivo selecionado:', device.name, '| deviceId:', device.deviceId);
-          }
-        } catch (pickerError: any) {
-          // UsuÃ¡rio cancelou o picker ou erro
-          if (pickerError.message?.includes('cancelled') || pickerError.message?.includes('NotFoundError') || pickerError.name === 'NotFoundError') {
-            console.log('[BLE WEB] âš ï¸ Picker cancelado pelo usuÃ¡rio');
-          } else {
-            console.warn('[BLE WEB] âŒ Erro no picker:', pickerError);
-          }
-        }
-        return devices;
-      }
-
-      // No Android/nativo, usar Capacitor BLE
-      console.log('[BLE] Iniciando scan no Android...');
-
-      // Inicializar BLE com permissÃµes
-      await BleClient.initialize({
-        androidNeverForLocation: false,
+    if (device && device.deviceId) {
+      devices.push({
+        id: device.deviceId,
+        name: device.name || 'ESP32 Bluetooth',
+        type: 'bluetooth',
       });
-
-      // ðŸ†• ESTRATÃ‰GIA: Fazer scan SEM filtro de UUID para encontrar todos os dispositivos BLE
-      // Depois filtramos por nome (mais confiÃ¡vel com dispositivos com PIN)
-      console.log('[BLE] Iniciando scan geral (sem filtro UUID)...');
-      console.log('[BLE] Procurando dispositivos com nome contendo: kiosk, esp32, bier');
-
-      await BleClient.requestLEScan(
-        {
-          allowDuplicates: false,
-          // ðŸ†• NÃƒO filtrar por serviÃ§o UUID - dispositivos com PIN podem nÃ£o anunciar
-        },
-        (result) => {
-          const deviceName = result.device.name || '';
-          const deviceId = result.device.deviceId;
-
-          // Log TODOS os dispositivos encontrados (para debug)
-          if (deviceName) {
-            console.log(`[BLE] Dispositivo: "${deviceName}" (${deviceId}) RSSI: ${result.rssi}`);
-          }
-
-          // Filtrar por nome que contenha "Kiosk", "ESP32" ou "Bier"
-          const nameLower = deviceName.toLowerCase();
-          if (nameLower.includes('kiosk') ||
-            nameLower.includes('esp32') ||
-            nameLower.includes('bier')) {
-            const device: ESP32Device = {
-              id: deviceId,
-              name: deviceName,
-              type: 'bluetooth',
-              rssi: result.rssi,
-            };
-
-            if (!devices.find((d) => d.id === device.id)) {
-              devices.push(device);
-              console.log(`[BLE] âœ… ENCONTRADO: "${deviceName}" (${deviceId}) RSSI: ${result.rssi}`);
-            }
-          }
-        }
-      );
-
-      // Aguardar scan (tempo maior para dispositivos com PIN)
-      await new Promise((resolve) => setTimeout(resolve, timeout));
-      await BleClient.stopLEScan();
-
-      console.log(`[BLE] Scan finalizado. ${devices.length} dispositivo(s) compatÃ­vel(is) encontrado(s).`);
-      return devices;
-    } catch (error) {
-      console.error('[BLE] Erro no scan:', error);
-      return devices;
+      console.log('[BLE WEB] âœ… Dispositivo selecionado:', device.name, '| deviceId:', device.deviceId);
     }
+  } catch (pickerError: any) {
+    // UsuÃ¡rio cancelou o picker ou erro
+    if (pickerError.message?.includes('cancelled') || pickerError.message?.includes('NotFoundError') || pickerError.name === 'NotFoundError') {
+      console.log('[BLE WEB] âš ï¸ Picker cancelado pelo usuÃ¡rio');
+    } else {
+      console.warn('[BLE WEB] âŒ Erro no picker:', pickerError);
+    }
+  }
+  return devices;
+}
+
+// No Android/nativo, usar Capacitor BLE
+console.log('[BLE] Iniciando scan no Android...');
+
+// Inicializar BLE com permissÃµes
+await BleClient.initialize({
+  androidNeverForLocation: false,
+});
+
+// ðŸ†• ESTRATÃ‰GIA: Fazer scan SEM filtro de UUID para encontrar todos os dispositivos BLE
+// Depois filtramos por nome (mais confiÃ¡vel com dispositivos com PIN)
+console.log('[BLE] Iniciando scan geral (sem filtro UUID)...');
+console.log('[BLE] Procurando dispositivos com nome contendo: kiosk, esp32, bier');
+
+await BleClient.requestLEScan(
+  {
+    allowDuplicates: false,
+    // ðŸ†• NÃƒO filtrar por serviÃ§o UUID - dispositivos com PIN podem nÃ£o anunciar
+  },
+  (result) => {
+    const deviceName = result.device.name || '';
+    const deviceId = result.device.deviceId;
+
+    // Log TODOS os dispositivos encontrados (para debug)
+    if (deviceName) {
+      console.log(`[BLE] Dispositivo: "${deviceName}" (${deviceId}) RSSI: ${result.rssi}`);
+    }
+
+    // Filtrar por nome que contenha "Kiosk", "ESP32" ou "Bier"
+    const nameLower = deviceName.toLowerCase();
+    if (nameLower.includes('kiosk') ||
+      nameLower.includes('esp32') ||
+      nameLower.includes('bier')) {
+      const device: ESP32Device = {
+        id: deviceId,
+        name: deviceName,
+        type: 'bluetooth',
+        rssi: result.rssi,
+      };
+
+      if (!devices.find((d) => d.id === device.id)) {
+        devices.push(device);
+        console.log(`[BLE] âœ… ENCONTRADO: "${deviceName}" (${deviceId}) RSSI: ${result.rssi}`);
+      }
+    }
+  }
+);
+
+// Aguardar scan (tempo maior para dispositivos com PIN)
+await new Promise((resolve) => setTimeout(resolve, timeout));
+await BleClient.stopLEScan();
+
+console.log(`[BLE] Scan finalizado. ${devices.length} dispositivo(s) compatÃ­vel(is) encontrado(s).`);
+return devices;
+    } catch (error) {
+  console.error('[BLE] Erro no scan:', error);
+  return devices;
+}
   }
 
   /**
@@ -1814,304 +1889,308 @@ class ESP32CommunicationService {
    * ðŸ”§ WEB FIX: Garante inicializaÃ§Ã£o e popula mapa via getDevices/requestDevice
    * ðŸ†• Configura notifications para receber respostas do ESP32
    */
-  async connectBluetooth(deviceId: string, deviceName?: string): Promise<boolean> {
-    try {
-      // ðŸ”§ CORREÃ‡ÃƒO WEB: Inicializar BleClient e garantir dispositivo no mapa
-      if (this.isWeb()) {
-        const initialized = await this.ensureBleInitialized();
-        if (!initialized) {
-          console.error('[BLE WEB] âŒ Falha ao inicializar BleClient');
-          return false;
-        }
+  async connectBluetooth(deviceId: string, deviceName ?: string): Promise < boolean > {
+  try {
+    // ðŸ”§ CORREÃ‡ÃƒO WEB: Inicializar BleClient e garantir dispositivo no mapa
+    if(this.isWeb()) {
+  const initialized = await this.ensureBleInitialized();
+  if (!initialized) {
+    console.error('[BLE WEB] âŒ Falha ao inicializar BleClient');
+    return false;
+  }
 
-        // Tentar repopular o mapa interno com o deviceId salvo
-        if (deviceId) {
-          console.log('[BLE WEB] ðŸ” Tentando getDevices({ deviceIds: ["' + deviceId + '"] })...');
-          try {
-            const knownDevices = await BleClient.getDevices([deviceId]);
-            console.log('[BLE WEB] getDevices retornou:', knownDevices.length, 'dispositivo(s)');
-            
-            if (knownDevices.length === 0) {
-              // Dispositivo nÃ£o estÃ¡ no mapa, precisa de requestDevice
-              console.log('[BLE WEB] âš ï¸ Dispositivo nÃ£o encontrado no mapa, abrindo picker...');
-              try {
-                const device = await BleClient.requestDevice({
-                  services: [ESP32_SERVICE_UUID],
-                  namePrefix: 'Kiosk',
-                  optionalServices: [ESP32_SERVICE_UUID],
-                });
-                if (device && device.deviceId) {
-                  deviceId = device.deviceId;
-                  deviceName = device.name || deviceName;
-                  console.log('[BLE WEB] âœ… Novo dispositivo selecionado:', deviceName, '| deviceId:', deviceId);
-                } else {
-                  console.log('[BLE WEB] âŒ Nenhum dispositivo selecionado');
-                  return false;
-                }
-              } catch (pickerError: any) {
-                if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
-                  console.log('[BLE WEB] âš ï¸ Picker cancelado, nÃ£o tentando conectar');
-                } else {
-                  console.error('[BLE WEB] âŒ Erro no picker:', pickerError);
-                }
-                return false;
-              }
-            } else {
-              console.log('[BLE WEB] âœ… Dispositivo encontrado no mapa via getDevices');
-            }
-          } catch (getDevicesError) {
-            console.warn('[BLE WEB] getDevices falhou, tentando requestDevice:', getDevicesError);
-            try {
-              const device = await BleClient.requestDevice({
-                services: [ESP32_SERVICE_UUID],
-                namePrefix: 'Kiosk',
-                optionalServices: [ESP32_SERVICE_UUID],
-              });
-              if (device && device.deviceId) {
-                deviceId = device.deviceId;
-                deviceName = device.name || deviceName;
-                console.log('[BLE WEB] âœ… Dispositivo via fallback requestDevice:', deviceName);
-              } else {
-                return false;
-              }
-            } catch (pickerError: any) {
-              if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
-                console.log('[BLE WEB] âš ï¸ Picker cancelado');
-              } else {
-                console.error('[BLE WEB] âŒ Erro no picker:', pickerError);
-              }
-              return false;
-            }
-          }
-        } else {
-          // Sem deviceId, precisa de requestDevice
-          console.log('[BLE WEB] Sem deviceId salvo, abrindo picker...');
-          try {
-            const device = await BleClient.requestDevice({
-              services: [ESP32_SERVICE_UUID],
-              namePrefix: 'Kiosk',
-              optionalServices: [ESP32_SERVICE_UUID],
-            });
-            if (device && device.deviceId) {
-              deviceId = device.deviceId;
-              deviceName = device.name || 'ESP32 Bluetooth';
-              console.log('[BLE WEB] âœ… Dispositivo selecionado:', deviceName, '| deviceId:', deviceId);
-            } else {
-              console.log('[BLE WEB] âŒ Nenhum dispositivo selecionado');
-              return false;
-            }
-          } catch (pickerError: any) {
-            if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
-              console.log('[BLE WEB] âš ï¸ Picker cancelado');
-            } else {
-              console.error('[BLE WEB] âŒ Erro no picker:', pickerError);
-            }
+  // Tentar repopular o mapa interno com o deviceId salvo
+  if (deviceId) {
+    console.log('[BLE WEB] ðŸ” Tentando getDevices({ deviceIds: ["' + deviceId + '"] })...');
+    try {
+      const knownDevices = await BleClient.getDevices([deviceId]);
+      console.log('[BLE WEB] getDevices retornou:', knownDevices.length, 'dispositivo(s)');
+
+      if (knownDevices.length === 0) {
+        // Dispositivo nÃ£o estÃ¡ no mapa, precisa de requestDevice
+        console.log('[BLE WEB] âš ï¸ Dispositivo nÃ£o encontrado no mapa, abrindo picker...');
+        try {
+          const device = await BleClient.requestDevice({
+            services: [ESP32_SERVICE_UUID],
+            namePrefix: 'Kiosk',
+            optionalServices: [ESP32_SERVICE_UUID],
+          });
+          if (device && device.deviceId) {
+            deviceId = device.deviceId;
+            deviceName = device.name || deviceName;
+            console.log('[BLE WEB] âœ… Novo dispositivo selecionado:', deviceName, '| deviceId:', deviceId);
+          } else {
+            console.log('[BLE WEB] âŒ Nenhum dispositivo selecionado');
             return false;
           }
-        }
-      }
-
-      console.log('[BLE] ðŸ”Œ Conectando ao deviceId:', deviceId);
-      await BleClient.connect(deviceId, (disconnectedDeviceId) => {
-        console.log('[BLE] Dispositivo desconectado:', disconnectedDeviceId);
-        this.handleConnectionDropped('ble_disconnect_callback');
-      });
-
-      // ðŸ†• CORREÃ‡ÃƒO: Solicitar MTU maior para evitar fragmentaÃ§Ã£o de JSON
-      // O MTU padrÃ£o do BLE Ã© ~23 bytes, mas nossos JSONs podem ter 150+ bytes
-      try {
-        const bleClientAny = BleClient as any;
-        if (typeof bleClientAny.requestMtu === 'function') {
-          const mtu = await bleClientAny.requestMtu(deviceId, 512);
-          console.log('[BLE] MTU negociado:', mtu);
-        } else {
-          console.warn('[BLE] requestMtu nÃ£o disponÃ­vel nesta versÃ£o do plugin');
-        }
-      } catch (mtuError) {
-        console.warn('[BLE] NÃ£o foi possÃ­vel aumentar MTU (continuando com padrÃ£o):', mtuError);
-      }
-
-      // ðŸ†• Limpar buffer ao conectar
-      this.bleReceiveBuffer = '';
-
-      // ðŸ†• Configurar notifications para receber respostas do ESP32
-      try {
-        await BleClient.startNotifications(
-          deviceId,
-          ESP32_SERVICE_UUID,
-          ESP32_CHARACTERISTIC_UUID,
-          (value: DataView) => {
-            // Decodificar dados recebidos
-            const decoder = new TextDecoder();
-            const chunk = decoder.decode(value.buffer);
-            console.log('[BLE] Chunk recebido (' + chunk.length + ' bytes):', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
-
-            // ðŸ†• Adicionar ao buffer e processar linhas completas
-            this.bleReceiveBuffer += chunk;
-
-            // Processar linhas completas (terminadas em \n)
-            const lines = this.bleReceiveBuffer.split('\n');
-            // Manter Ãºltima linha incompleta no buffer
-            this.bleReceiveBuffer = lines.pop() || '';
-
-            // Processar cada linha completa
-            for (const line of lines) {
-              const trimmed = line.trim();
-              this.observeInboundPayload(trimmed);
-              if (trimmed && this.bleDataListeners.size > 0) {
-                console.log('[BLE] Linha completa:', trimmed);
-                this.bleDataListeners.forEach(listener => {
-                  try {
-                    listener(trimmed);
-                  } catch (error) {
-                    console.error('[BLE] Erro em listener de dados:', error);
-                  }
-                });
-              }
-            }
-
-            // ðŸ”§ CORREÃ‡ÃƒO v4.0.6: Se o buffer ficou muito grande, processar parcialmente
-            // usando parser que suporta JSON aninhado
-            if (this.bleReceiveBuffer.length > 4096) {
-              console.warn('[BLE] Buffer muito grande (' + this.bleReceiveBuffer.length + '), tentando processar...');
-
-              // ðŸ”§ v4.0.6: Extrair JSONs completos (suporta aninhamento)
-              const extractedJsons = this.extractCompleteJsons(this.bleReceiveBuffer);
-
-              if (extractedJsons.jsons.length > 0) {
-                for (const jsonStr of extractedJsons.jsons) {
-                  if (this.bleDataListeners.size > 0) {
-                    console.log('[BLE] JSON extraÃ­do do buffer grande:', jsonStr.substring(0, 50));
-                    this.bleDataListeners.forEach(listener => {
-                      try {
-                        listener(jsonStr);
-                      } catch (error) {
-                        console.error('[BLE] Erro em listener de dados:', error);
-                      }
-                    });
-                  }
-                }
-                // Manter apenas o resto do buffer apÃ³s os JSONs extraÃ­dos
-                this.bleReceiveBuffer = extractedJsons.remainder;
-              } else {
-                // Se nÃ£o encontrou JSON, manter apenas os Ãºltimos 1KB
-                console.warn('[BLE] Nenhum JSON encontrado, truncando buffer para 1KB');
-                this.bleReceiveBuffer = this.bleReceiveBuffer.substring(this.bleReceiveBuffer.length - 1024);
-              }
-            }
+        } catch (pickerError: any) {
+          if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
+            console.log('[BLE WEB] âš ï¸ Picker cancelado, nÃ£o tentando conectar');
+          } else {
+            console.error('[BLE WEB] âŒ Erro no picker:', pickerError);
           }
-        );
-        console.log('[BLE] Notifications configuradas com sucesso');
-      } catch (notifyError) {
-        console.warn('[BLE] NÃ£o foi possÃ­vel configurar notifications:', notifyError);
-        // Continuar mesmo sem notifications (alguns ESP32 nÃ£o suportam)
+          return false;
+        }
+      } else {
+        console.log('[BLE WEB] âœ… Dispositivo encontrado no mapa via getDevices');
       }
-
-      this.connectionStatus = {
-        connected: true,
-        type: 'bluetooth',
-        deviceId: deviceId,
-        deviceName: deviceName || 'ESP32 Bluetooth',
-      };
-
-      // Salvar Ãºltima conexÃ£o
-      this.setLastConnection({
-        type: 'bluetooth',
-        deviceId: deviceId,
-        deviceName: deviceName || 'ESP32 Bluetooth',
+    } catch (getDevicesError) {
+      console.warn('[BLE WEB] getDevices falhou, tentando requestDevice:', getDevicesError);
+      try {
+        const device = await BleClient.requestDevice({
+          services: [ESP32_SERVICE_UUID],
+          namePrefix: 'Kiosk',
+          optionalServices: [ESP32_SERVICE_UUID],
+        });
+        if (device && device.deviceId) {
+          deviceId = device.deviceId;
+          deviceName = device.name || deviceName;
+          console.log('[BLE WEB] âœ… Dispositivo via fallback requestDevice:', deviceName);
+        } else {
+          return false;
+        }
+      } catch (pickerError: any) {
+        if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
+          console.log('[BLE WEB] âš ï¸ Picker cancelado');
+        } else {
+          console.error('[BLE WEB] âŒ Erro no picker:', pickerError);
+        }
+        return false;
+      }
+    }
+  } else {
+    // Sem deviceId, precisa de requestDevice
+    console.log('[BLE WEB] Sem deviceId salvo, abrindo picker...');
+    try {
+      const device = await BleClient.requestDevice({
+        services: [ESP32_SERVICE_UUID],
+        namePrefix: 'Kiosk',
+        optionalServices: [ESP32_SERVICE_UUID],
       });
-
-      this.notifyConnectionChange();
-      this.handleConnectionEstablished('connect_bluetooth_success');
-      console.log('[BLE] Conectado ao dispositivo:', deviceId);
-      return true;
-    } catch (error) {
-      console.error('[BLE] Erro ao conectar:', error);
+      if (device && device.deviceId) {
+        deviceId = device.deviceId;
+        deviceName = device.name || 'ESP32 Bluetooth';
+        console.log('[BLE WEB] âœ… Dispositivo selecionado:', deviceName, '| deviceId:', deviceId);
+      } else {
+        console.log('[BLE WEB] âŒ Nenhum dispositivo selecionado');
+        return false;
+      }
+    } catch (pickerError: any) {
+      if (pickerError.message?.includes('cancelled') || pickerError.name === 'NotFoundError') {
+        console.log('[BLE WEB] âš ï¸ Picker cancelado');
+      } else {
+        console.error('[BLE WEB] âŒ Erro no picker:', pickerError);
+      }
       return false;
     }
+  }
+}
+
+console.log('[BLE] ðŸ”Œ Conectando ao deviceId:', deviceId);
+await BleClient.connect(deviceId, (disconnectedDeviceId) => {
+  if (Date.now() < this.suppressBleDisconnectUntil) {
+    console.log('[BLE] Callback de desconexão ignorado (promoção USB):', disconnectedDeviceId);
+    return;
+  }
+  console.log('[BLE] Dispositivo desconectado:', disconnectedDeviceId);
+  this.handleConnectionDropped('ble_disconnect_callback');
+});
+
+// ðŸ†• CORREÃ‡ÃƒO: Solicitar MTU maior para evitar fragmentaÃ§Ã£o de JSON
+// O MTU padrÃ£o do BLE Ã© ~23 bytes, mas nossos JSONs podem ter 150+ bytes
+try {
+  const bleClientAny = BleClient as any;
+  if (typeof bleClientAny.requestMtu === 'function') {
+    const mtu = await bleClientAny.requestMtu(deviceId, 512);
+    console.log('[BLE] MTU negociado:', mtu);
+  } else {
+    console.warn('[BLE] requestMtu nÃ£o disponÃ­vel nesta versÃ£o do plugin');
+  }
+} catch (mtuError) {
+  console.warn('[BLE] NÃ£o foi possÃ­vel aumentar MTU (continuando com padrÃ£o):', mtuError);
+}
+
+// ðŸ†• Limpar buffer ao conectar
+this.bleReceiveBuffer = '';
+
+// ðŸ†• Configurar notifications para receber respostas do ESP32
+try {
+  await BleClient.startNotifications(
+    deviceId,
+    ESP32_SERVICE_UUID,
+    ESP32_CHARACTERISTIC_UUID,
+    (value: DataView) => {
+      // Decodificar dados recebidos
+      const decoder = new TextDecoder();
+      const chunk = decoder.decode(value.buffer);
+      console.log('[BLE] Chunk recebido (' + chunk.length + ' bytes):', chunk.substring(0, 50) + (chunk.length > 50 ? '...' : ''));
+
+      // ðŸ†• Adicionar ao buffer e processar linhas completas
+      this.bleReceiveBuffer += chunk;
+
+      // Processar linhas completas (terminadas em \n)
+      const lines = this.bleReceiveBuffer.split('\n');
+      // Manter Ãºltima linha incompleta no buffer
+      this.bleReceiveBuffer = lines.pop() || '';
+
+      // Processar cada linha completa
+      for (const line of lines) {
+        const trimmed = line.trim();
+        this.observeInboundPayload(trimmed);
+        if (trimmed && this.bleDataListeners.size > 0) {
+          console.log('[BLE] Linha completa:', trimmed);
+          this.bleDataListeners.forEach(listener => {
+            try {
+              listener(trimmed);
+            } catch (error) {
+              console.error('[BLE] Erro em listener de dados:', error);
+            }
+          });
+        }
+      }
+
+      // ðŸ”§ CORREÃ‡ÃƒO v4.0.6: Se o buffer ficou muito grande, processar parcialmente
+      // usando parser que suporta JSON aninhado
+      if (this.bleReceiveBuffer.length > 4096) {
+        console.warn('[BLE] Buffer muito grande (' + this.bleReceiveBuffer.length + '), tentando processar...');
+
+        // ðŸ”§ v4.0.6: Extrair JSONs completos (suporta aninhamento)
+        const extractedJsons = this.extractCompleteJsons(this.bleReceiveBuffer);
+
+        if (extractedJsons.jsons.length > 0) {
+          for (const jsonStr of extractedJsons.jsons) {
+            if (this.bleDataListeners.size > 0) {
+              console.log('[BLE] JSON extraÃ­do do buffer grande:', jsonStr.substring(0, 50));
+              this.bleDataListeners.forEach(listener => {
+                try {
+                  listener(jsonStr);
+                } catch (error) {
+                  console.error('[BLE] Erro em listener de dados:', error);
+                }
+              });
+            }
+          }
+          // Manter apenas o resto do buffer apÃ³s os JSONs extraÃ­dos
+          this.bleReceiveBuffer = extractedJsons.remainder;
+        } else {
+          // Se nÃ£o encontrou JSON, manter apenas os Ãºltimos 1KB
+          console.warn('[BLE] Nenhum JSON encontrado, truncando buffer para 1KB');
+          this.bleReceiveBuffer = this.bleReceiveBuffer.substring(this.bleReceiveBuffer.length - 1024);
+        }
+      }
+    }
+  );
+  console.log('[BLE] Notifications configuradas com sucesso');
+} catch (notifyError) {
+  console.warn('[BLE] NÃ£o foi possÃ­vel configurar notifications:', notifyError);
+  // Continuar mesmo sem notifications (alguns ESP32 nÃ£o suportam)
+}
+
+this.connectionStatus = {
+  connected: true,
+  type: 'bluetooth',
+  deviceId: deviceId,
+  deviceName: deviceName || 'ESP32 Bluetooth',
+};
+
+// Salvar Ãºltima conexÃ£o
+this.setLastConnection({
+  type: 'bluetooth',
+  deviceId: deviceId,
+  deviceName: deviceName || 'ESP32 Bluetooth',
+});
+
+this.notifyConnectionChange();
+this.handleConnectionEstablished('connect_bluetooth_success');
+console.log('[BLE] Conectado ao dispositivo:', deviceId);
+return true;
+    } catch (error) {
+  console.error('[BLE] Erro ao conectar:', error);
+  return false;
+}
   }
 
   /**
    * Envia comando via Bluetooth
    */
-  async sendBluetoothCommand(command: string): Promise<boolean> {
-    if (
+  async sendBluetoothCommand(command: string): Promise < boolean > {
+  if(
       !this.connectionStatus.connected ||
-      this.connectionStatus.type !== 'bluetooth'
+    this.connectionStatus.type !== 'bluetooth'
     ) {
-      console.error('[BLE] NÃ£o conectado');
-      return false;
-    }
+  console.error('[BLE] NÃ£o conectado');
+  return false;
+}
 
-    try {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(command + '\n');
+try {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(command + '\n');
 
-      await BleClient.write(
-        this.connectionStatus.deviceId!,
-        ESP32_SERVICE_UUID,
-        ESP32_CHARACTERISTIC_UUID,
-        new DataView(data.buffer)
-      );
+  await BleClient.write(
+    this.connectionStatus.deviceId!,
+    ESP32_SERVICE_UUID,
+    ESP32_CHARACTERISTIC_UUID,
+    new DataView(data.buffer)
+  );
 
-      console.log('[BLE] Comando enviado:', command);
-      return true;
-    } catch (error) {
-      console.error('[BLE] Erro ao enviar comando:', error);
-      return false;
-    }
+  console.log('[BLE] Comando enviado:', command);
+  return true;
+} catch (error) {
+  console.error('[BLE] Erro ao enviar comando:', error);
+  return false;
+}
   }
 
-  // ============================================
-  // USB SERIAL (WEB SERIAL API)
-  // ============================================
+// ============================================
+// USB SERIAL (WEB SERIAL API)
+// ============================================
 
-  /**
-   * Verifica se Web Serial API estÃ¡ disponÃ­vel
-   */
-  hasWebSerialAPI(): boolean {
-    return getWebSerial() !== undefined;
-  }
+/**
+ * Verifica se Web Serial API estÃ¡ disponÃ­vel
+ */
+hasWebSerialAPI(): boolean {
+  return getWebSerial() !== undefined;
+}
 
   /**
    * Lista portas USB disponÃ­veis
    * Tenta Web Serial API primeiro, depois fallback
    */
-  async scanUSBDevices(): Promise<ESP32Device[]> {
-    const devices: ESP32Device[] = [];
-    const webSerial = getWebSerial();
+  async scanUSBDevices(): Promise < ESP32Device[] > {
+  const devices: ESP32Device[] = [];
+  const webSerial = getWebSerial();
 
-    if (webSerial) {
-      try {
-        const ports = await webSerial.getPorts();
+  if(webSerial) {
+    try {
+      const ports = await webSerial.getPorts();
 
-        ports.forEach((port: SerialPort, index: number) => {
-          devices.push({
-            id: `usb-${index}`,
-            name: `Porta USB ${index + 1}`,
-            type: 'usb',
-          });
+      ports.forEach((port: SerialPort, index: number) => {
+        devices.push({
+          id: `usb-${index}`,
+          name: `Porta USB ${index + 1}`,
+          type: 'usb',
         });
+      });
 
-        console.log('[USB] Portas Web Serial encontradas:', ports.length);
-      } catch (error) {
-        console.warn('[USB] Erro ao listar Web Serial:', error);
-      }
-    } else {
-      console.log('[USB] Web Serial API nÃ£o disponÃ­vel - tente conectar um dispositivo USB');
+      console.log('[USB] Portas Web Serial encontradas:', ports.length);
+    } catch (error) {
+      console.warn('[USB] Erro ao listar Web Serial:', error);
     }
+  } else {
+    console.log('[USB] Web Serial API nÃ£o disponÃ­vel - tente conectar um dispositivo USB');
+  }
 
     // No Android com Capacitor, o USB Ã© detectado via permissÃµes
-    if (this.isAndroid()) {
-      devices.push({
-        id: 'android-usb',
-        name: 'ConexÃ£o USB Android (OTG)',
-        type: 'usb',
-      });
-      console.log('[USB] Dispositivo USB Android adicionado');
-    }
+    if(this.isAndroid()) {
+  devices.push({
+    id: 'android-usb',
+    name: 'ConexÃ£o USB Android (OTG)',
+    type: 'usb',
+  });
+  console.log('[USB] Dispositivo USB Android adicionado');
+}
 
-    return devices;
+return devices;
   }
 
   /**
@@ -2120,115 +2199,115 @@ class ESP32CommunicationService {
    * Na Web, usa Web Serial API (navigator.serial)
    * @param baudRate Baudrate (padrÃ£o: 115200 conforme firmware v2.0)
    */
-  async connectUSB(baudRate: number = DEFAULT_BAUDRATE): Promise<boolean> {
-    // ðŸ”§ FIX: No Android, redirecionar para implementaÃ§Ã£o nativa (USB OTG)
-    if (this.isAndroid()) {
-      console.log('[ESP32][USB] Plataforma Android detectada, usando connectUSBNative()');
-      return this.connectUSBNative();
-    }
+  async connectUSB(baudRate: number = DEFAULT_BAUDRATE): Promise < boolean > {
+  // ðŸ”§ FIX: No Android, redirecionar para implementaÃ§Ã£o nativa (USB OTG)
+  if(this.isAndroid()) {
+  console.log('[ESP32][USB] Plataforma Android detectada, usando connectUSBNative()');
+  return this.connectUSBNative();
+}
 
-    // ðŸ”§ FIX C1+H1: Na Web, delegar para esp32SerialService (fonte Ãºnica de verdade)
-    // Isso evita split-brain de estado (duas portas abertas) e garante leitura contÃ­nua.
-    console.log('[ESP32][USB] Plataforma Web, delegando para esp32SerialService.connect()');
-    try {
-      const success = await esp32Serial.connect();
-      if (success) {
-        // Sincronizar estado do CommunicationService com a conexÃ£o do SerialService
-        this.connectionStatus = {
-          connected: true,
-          type: 'usb',
-          deviceId: 'usb-serial',
-          deviceName: 'USB Serial (Web)',
-        };
+// ðŸ”§ FIX C1+H1: Na Web, delegar para esp32SerialService (fonte Ãºnica de verdade)
+// Isso evita split-brain de estado (duas portas abertas) e garante leitura contÃ­nua.
+console.log('[ESP32][USB] Plataforma Web, delegando para esp32SerialService.connect()');
+try {
+  const success = await esp32Serial.connect();
+  if (success) {
+    // Sincronizar estado do CommunicationService com a conexÃ£o do SerialService
+    this.connectionStatus = {
+      connected: true,
+      type: 'usb',
+      deviceId: 'usb-serial',
+      deviceName: 'USB Serial (Web)',
+    };
 
-        this.setLastConnection({
-          type: 'usb',
-          deviceId: 'usb-serial',
-          deviceName: 'USB Serial (Web)',
-        });
+    this.setLastConnection({
+      type: 'usb',
+      deviceId: 'usb-serial',
+      deviceName: 'USB Serial (Web)',
+    });
 
-        this.notifyConnectionChange();
-        this.handleConnectionEstablished('connect_usb_web_success');
-        console.log('[ESP32][USB] Conectado via Web Serial (delegado a esp32SerialService)');
-      }
-      return success;
-    } catch (error) {
-      console.error('[ESP32][USB] Erro ao conectar via Web Serial:', error);
-      return false;
-    }
+    this.notifyConnectionChange();
+    this.handleConnectionEstablished('connect_usb_web_success');
+    console.log('[ESP32][USB] Conectado via Web Serial (delegado a esp32SerialService)');
+  }
+  return success;
+} catch (error) {
+  console.error('[ESP32][USB] Erro ao conectar via Web Serial:', error);
+  return false;
+}
   }
 
   /**
    * Envia comando via USB Serial
    * ðŸ”§ FIX: Usa esp32Serial como fallback quando serialPort local nÃ£o estÃ¡ disponÃ­vel
    */
-  async sendUSBCommand(command: string): Promise<boolean> {
-    // ðŸ”§ FIX: Se serialPort local nÃ£o estÃ¡ disponÃ­vel, usar esp32Serial (conectado via ESP32Context)
-    if ((!this.serialPort || !this.serialPort.writable) && esp32Serial.isConnected()) {
-      console.log('[USB] Usando esp32Serial como fallback para enviar comando');
-      return esp32Serial.sendRaw(command);
-    }
+  async sendUSBCommand(command: string): Promise < boolean > {
+  // ðŸ”§ FIX: Se serialPort local nÃ£o estÃ¡ disponÃ­vel, usar esp32Serial (conectado via ESP32Context)
+  if((!this.serialPort || !this.serialPort.writable) && esp32Serial.isConnected()) {
+  console.log('[USB] Usando esp32Serial como fallback para enviar comando');
+  return esp32Serial.sendRaw(command);
+}
 
-    if (!this.serialPort || !this.serialPort.writable) {
-      console.error('[USB] Porta nÃ£o aberta e esp32Serial nÃ£o conectado');
-      return false;
-    }
+if (!this.serialPort || !this.serialPort.writable) {
+  console.error('[USB] Porta nÃ£o aberta e esp32Serial nÃ£o conectado');
+  return false;
+}
 
-    const writer = this.serialPort.writable.getWriter();
-    try {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(command + '\n');
+const writer = this.serialPort.writable.getWriter();
+try {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(command + '\n');
 
-      await writer.write(data);
+  await writer.write(data);
 
-      console.log('[USB] Comando enviado:', command);
-      return true;
-    } catch (error) {
-      console.error('[USB] Erro ao enviar:', error);
-      return false;
-    } finally {
-      // Garantir que o lock seja sempre liberado
-      writer.releaseLock();
-    }
+  console.log('[USB] Comando enviado:', command);
+  return true;
+} catch (error) {
+  console.error('[USB] Erro ao enviar:', error);
+  return false;
+} finally {
+  // Garantir que o lock seja sempre liberado
+  writer.releaseLock();
+}
   }
 
   /**
    * LÃª dados da porta USB
    */
-  async readUSBData(): Promise<string | null> {
-    if (!this.serialPort || !this.serialPort.readable) {
-      return null;
-    }
+  async readUSBData(): Promise < string | null > {
+  if(!this.serialPort || !this.serialPort.readable) {
+  return null;
+}
 
-    const reader = this.serialPort.readable.getReader();
-    try {
-      const { value } = await reader.read();
+const reader = this.serialPort.readable.getReader();
+try {
+  const { value } = await reader.read();
 
-      if (value) {
-        const decoder = new TextDecoder();
-        return decoder.decode(value);
-      }
-      return null;
-    } catch (error) {
-      console.error('[USB] Erro ao ler dados:', error);
-      return null;
-    } finally {
-      // Garantir que o lock seja sempre liberado
-      reader.releaseLock();
-    }
+  if (value) {
+    const decoder = new TextDecoder();
+    return decoder.decode(value);
+  }
+  return null;
+} catch (error) {
+  console.error('[USB] Erro ao ler dados:', error);
+  return null;
+} finally {
+  // Garantir que o lock seja sempre liberado
+  reader.releaseLock();
+}
   }
 
-  // ============================================
-  // WIFI (HTTP)
-  // ============================================
+// ============================================
+// WIFI (HTTP)
+// ============================================
 
-  /**
-   * Configura IP do ESP32 para conexÃ£o WiFi
-   */
-  setESP32IpAddress(ip: string): void {
-    this.esp32IpAddress = ip;
-    console.log('[WiFi] IP do ESP32 configurado:', ip);
-  }
+/**
+ * Configura IP do ESP32 para conexÃ£o WiFi
+ */
+setESP32IpAddress(ip: string): void {
+  this.esp32IpAddress = ip;
+  console.log('[WiFi] IP do ESP32 configurado:', ip);
+}
 
   /**
    * Escaneia rede para encontrar ESP32
@@ -2236,93 +2315,93 @@ class ESP32CommunicationService {
    * NOTA: No navegador, CORS bloqueia requests diretos. 
    * Funciona melhor no Android nativo ou com CORS habilitado no ESP32.
    */
-  async scanWifiDevices(baseIp: string = '192.168.1'): Promise<ESP32Device[]> {
-    const devices: ESP32Device[] = [];
+  async scanWifiDevices(baseIp: string = '192.168.1'): Promise < ESP32Device[] > {
+  const devices: ESP32Device[] = [];
 
-    // No navegador web, CORS impede scan de rede
-    // Apenas mostrar mensagem informativa
-    if (this.isWeb()) {
-      console.warn('[WiFi] Scan de rede limitado no navegador devido a CORS.');
-      console.log('[WiFi] Use conexÃ£o manual com IP ou execute no app Android.');
-      // Retornar lista vazia - usuÃ¡rio deve usar conexÃ£o manual
-      return devices;
-    }
+  // No navegador web, CORS impede scan de rede
+  // Apenas mostrar mensagem informativa
+  if(this.isWeb()) {
+  console.warn('[WiFi] Scan de rede limitado no navegador devido a CORS.');
+  console.log('[WiFi] Use conexÃ£o manual com IP ou execute no app Android.');
+  // Retornar lista vazia - usuÃ¡rio deve usar conexÃ£o manual
+  return devices;
+}
 
-    const BATCH_SIZE = 25; // Processa 25 IPs por vez
-    const TIMEOUT_PER_IP = 300; // 300ms timeout por IP
+const BATCH_SIZE = 25; // Processa 25 IPs por vez
+const TIMEOUT_PER_IP = 300; // 300ms timeout por IP
 
-    // Processar em batches para nÃ£o sobrecarregar
-    for (let batch = 0; batch < Math.ceil(254 / BATCH_SIZE); batch++) {
-      const startIp = batch * BATCH_SIZE + 1;
-      const endIp = Math.min(startIp + BATCH_SIZE - 1, 254);
-      const batchPromises: Promise<void>[] = [];
+// Processar em batches para nÃ£o sobrecarregar
+for (let batch = 0; batch < Math.ceil(254 / BATCH_SIZE); batch++) {
+  const startIp = batch * BATCH_SIZE + 1;
+  const endIp = Math.min(startIp + BATCH_SIZE - 1, 254);
+  const batchPromises: Promise<void>[] = [];
 
-      for (let i = startIp; i <= endIp; i++) {
-        const ip = `${baseIp}.${i}`;
-        const promise = this.checkESP32AtIp(ip, TIMEOUT_PER_IP)
-          .then((isESP32) => {
-            if (isESP32) {
-              devices.push({
-                id: ip,
-                name: `ESP32 @ ${ip}`,
-                type: 'wifi',
-                ipAddress: ip,
-              });
-            }
-          })
-          .catch(() => { }); // Ignorar erros de conexÃ£o
+  for (let i = startIp; i <= endIp; i++) {
+    const ip = `${baseIp}.${i}`;
+    const promise = this.checkESP32AtIp(ip, TIMEOUT_PER_IP)
+      .then((isESP32) => {
+        if (isESP32) {
+          devices.push({
+            id: ip,
+            name: `ESP32 @ ${ip}`,
+            type: 'wifi',
+            ipAddress: ip,
+          });
+        }
+      })
+      .catch(() => { }); // Ignorar erros de conexÃ£o
 
-        batchPromises.push(promise);
-      }
+    batchPromises.push(promise);
+  }
 
-      // Aguardar batch com timeout global de 5s
-      await Promise.race([
-        Promise.all(batchPromises),
-        new Promise((resolve) => setTimeout(resolve, 5000)),
-      ]);
+  // Aguardar batch com timeout global de 5s
+  await Promise.race([
+    Promise.all(batchPromises),
+    new Promise((resolve) => setTimeout(resolve, 5000)),
+  ]);
 
-      // Se jÃ¡ encontrou algum dispositivo, retornar mais cedo
-      if (devices.length > 0 && batch > 2) {
-        console.log('[WiFi] Dispositivo encontrado, interrompendo scan');
-        break;
-      }
-    }
+  // Se jÃ¡ encontrou algum dispositivo, retornar mais cedo
+  if (devices.length > 0 && batch > 2) {
+    console.log('[WiFi] Dispositivo encontrado, interrompendo scan');
+    break;
+  }
+}
 
-    return devices;
+return devices;
   }
 
   /**
    * Verifica se hÃ¡ ESP32 em um IP especÃ­fico
    * NOTA: No navegador, CORS pode bloquear. Funciona no Android nativo.
    */
-  private async checkESP32AtIp(ip: string, timeoutMs: number = 500): Promise<boolean> {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  private async checkESP32AtIp(ip: string, timeoutMs: number = 500): Promise < boolean > {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-      const response = await fetch(`http://${ip}/status`, {
-        method: 'GET',
-        signal: controller.signal,
-        // Tentar sem CORS primeiro (retorna opaque response mas nÃ£o erro)
-        mode: this.isWeb() ? 'no-cors' : 'cors',
-      });
+    const response = await fetch(`http://${ip}/status`, {
+      method: 'GET',
+      signal: controller.signal,
+      // Tentar sem CORS primeiro (retorna opaque response mas nÃ£o erro)
+      mode: this.isWeb() ? 'no-cors' : 'cors',
+    });
 
-      clearTimeout(timeout);
+    clearTimeout(timeout);
 
       // No modo no-cors, nÃ£o podemos ler o corpo, mas se nÃ£o deu erro, pode ser um dispositivo
-      if (this.isWeb()) {
-        // Apenas verificar se nÃ£o houve erro de rede
-        return response.type === 'opaque' || response.ok;
-      }
+      if(this.isWeb()) {
+  // Apenas verificar se nÃ£o houve erro de rede
+  return response.type === 'opaque' || response.ok;
+}
 
-      if (response.ok) {
-        const data = await response.json();
-        return data.device === 'ESP32' || data.type === 'kiosk-controller';
-      }
-      return false;
+if (response.ok) {
+  const data = await response.json();
+  return data.device === 'ESP32' || data.type === 'kiosk-controller';
+}
+return false;
     } catch {
-      return false;
-    }
+  return false;
+}
   }
 
   // ============================================
@@ -2334,340 +2413,365 @@ class ESP32CommunicationService {
    * Usado pelo hook de autoconexÃ£o
    * @returns true se conectou com sucesso
    */
-  async autoConnectUSBNative(): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) {
-      console.log('[AutoConnect USB OTG] NÃ£o Ã© plataforma nativa');
-      return false;
-    }
+  async autoConnectUSBNative(): Promise < boolean > {
+  if(!Capacitor.isNativePlatform()) {
+  console.log('[AutoConnect USB OTG] NÃ£o Ã© plataforma nativa');
+  return false;
+}
 
-    try {
-      await ensureUsbSerialPluginLoaded();
-      const plugin = getUsbSerialPlugin();
-      if (!plugin) {
-        console.log('[AutoConnect USB OTG] Plugin nÃ£o disponÃ­vel');
-        return false;
-      }
+try {
+  await ensureUsbSerialPluginLoaded();
+  const plugin = getUsbSerialPlugin();
+  if (!plugin) {
+    console.log('[AutoConnect USB OTG] Plugin nÃ£o disponÃ­vel');
+    return false;
+  }
 
-      await this.ensureNativeUSBPluginListeners(plugin);
+  await this.ensureNativeUSBPluginListeners(plugin);
 
-      const devices = await this.fetchNativeUSBDevices(plugin);
-      this.logNativeUSBDevices('auto_connect_probe', devices);
-      if (devices.length === 0) {
-        console.log('[AutoConnect USB OTG] Nenhum dispositivo USB encontrado');
-        return false;
-      }
+  const devices = await this.fetchNativeUSBDevices(plugin);
+  this.logNativeUSBDevices('auto_connect_probe', devices);
+  if (devices.length === 0) {
+    console.log('[AutoConnect USB OTG] Nenhum dispositivo USB encontrado');
+    return false;
+  }
 
-      console.log(`[AutoConnect USB OTG] ${devices.length} dispositivo(s) encontrado(s)`);
+  console.log(`[AutoConnect USB OTG] ${devices.length} dispositivo(s) encontrado(s)`);
 
-      return await this.connectUSBNative(USB_NATIVE_CONNECT_TIMEOUT_MS);
-    } catch (error) {
-      console.warn('[AutoConnect USB OTG] Falha:', error);
-      return false;
-    }
+  return await this.connectUSBNative(USB_NATIVE_CONNECT_TIMEOUT_MS);
+} catch (error) {
+  console.warn('[AutoConnect USB OTG] Falha:', error);
+  return false;
+}
   }
 
   /**
    * Conecta via USB OTG nativo no Android usando capacitor-usb-serial-plugin
    * @returns true se conectou com sucesso
    */
-  async connectUSBNative(timeoutMs: number = USB_NATIVE_CONNECT_TIMEOUT_MS): Promise<boolean> {
-    if (!Capacitor.isNativePlatform()) {
-      console.warn('[USB OTG] DisponÃ­vel apenas em plataformas nativas (Android/iOS)');
-      return false;
+  async connectUSBNative(timeoutMs: number = USB_NATIVE_CONNECT_TIMEOUT_MS): Promise < boolean > {
+  if(!Capacitor.isNativePlatform()) {
+  console.warn('[USB OTG] Disponível apenas em plataformas nativas (Android/iOS)');
+  return false;
+}
+
+// Cooldown após erro USB recente — aguardar antes de tentar reconectar
+const timeSinceError = Date.now() - this.lastUsbErrorAt;
+if (this.lastUsbErrorAt > 0 && timeSinceError < USB_ERROR_COOLDOWN_MS) {
+  console.log(`[USB OTG] Cooldown ativo (${USB_ERROR_COOLDOWN_MS - timeSinceError}ms restantes)`);
+  return false;
+}
+
+if (this.nativeUsbConnectPromise) {
+  return this.nativeUsbConnectPromise;
+}
+
+this.nativeUsbConnectPromise = (async () => {
+  try {
+    // 🔧 PR2 FIX: Remove auto-disconnect to support Try-Commit pattern
+    // The transport switch logic is now handled by promoteUSBTransport
+    // if (this.connectionStatus.connected && this.connectionStatus.type !== 'usb') {
+    //   console.log(`[USB OTG] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar USB`);
+    //   await this.disconnect();
+    // }
+
+    await ensureUsbSerialPluginLoaded();
+    const plugin = getUsbSerialPlugin();
+    if (!plugin) {
+      throw new USBNativeConnectionError(
+        'USB_PLUGIN_UNAVAILABLE',
+        'Plugin USB Serial nÃ£o instalado ou nÃ£o compatÃ­vel'
+      );
     }
 
-    if (this.nativeUsbConnectPromise) {
-      return this.nativeUsbConnectPromise;
+    await this.ensureNativeUSBPluginListeners(plugin);
+
+    console.log('[USB OTG] Buscando dispositivos USB...');
+    const devices = await this.fetchNativeUSBDevices(plugin);
+    this.logNativeUSBDevices('connect_attempt', devices);
+
+    if (devices.length === 0) {
+      throw new USBNativeConnectionError(
+        'USB_NO_DEVICE',
+        'Nenhum dispositivo USB encontrado para conexÃ£o'
+      );
     }
 
-    this.nativeUsbConnectPromise = (async () => {
+    const targetDevice = this.selectPreferredNativeUSBDevice(devices);
+    if (!targetDevice) {
+      throw new USBNativeConnectionError('USB_NO_DEVICE', 'Nenhum dispositivo USB elegÃ­vel encontrado');
+    }
+
+    const devicesBeforeOpen = await this.fetchNativeUSBDevices(plugin);
+    const targetStillPresent = devicesBeforeOpen.some((device) => (
+      device.deviceId === targetDevice.deviceId &&
+      device.portNum === targetDevice.portNum
+    ));
+    if (!targetStillPresent) {
+      throw new USBNativeConnectionError(
+        'USB_NO_DEVICE',
+        '[USB OTG] Dispositivo removido antes de iniciar openSerial'
+      );
+    }
+
+    console.log('[USB OTG] open/connect iniciado:', JSON.stringify({
+      deviceId: targetDevice.deviceId,
+      vendorId: targetDevice.vendorId,
+      productId: targetDevice.productId,
+      productName: targetDevice.productName,
+      portNum: targetDevice.portNum,
+    }));
+
+    let resolveConnected: () => void = () => { };
+    let rejectConnected: (error: Error) => void = () => { };
+    const connectedPromise = new Promise<void>((resolve, reject) => {
+      resolveConnected = resolve;
+      rejectConnected = reject;
+    });
+
+    let isSettled = false;
+    const settleConnected = (fn: () => void) => {
+      if (isSettled) return;
+      isSettled = true;
+      fn();
+    };
+
+    const timeoutId = setTimeout(() => {
+      settleConnected(() => rejectConnected(
+        new USBNativeConnectionError(
+          'USB_OPEN_TIMEOUT',
+          `[USB OTG] Timeout (${timeoutMs}ms) aguardando permissÃ£o/abertura de porta`
+        )
+      ));
+    }, timeoutMs);
+
+    const tempHandles: USBPluginListenerHandle[] = [];
+    try {
+      const connectedHandle = this.addNativeUSBListenerSync('connected', (payload: any) => {
+        const connectedDevice = this.normalizeNativeUSBDevice(payload);
+        console.log('[USB OTG] EVENT connected:', JSON.stringify(connectedDevice ?? payload));
+
+        if (connectedDevice && connectedDevice.deviceId !== targetDevice.deviceId) {
+          return;
+        }
+
+        settleConnected(() => resolveConnected());
+      });
+      if (connectedHandle) tempHandles.push(connectedHandle);
+
+      const errorHandle = this.addNativeUSBListenerSync('error', (payload: any) => {
+        const errorMessage = typeof payload?.error === 'string'
+          ? payload.error
+          : JSON.stringify(payload);
+        settleConnected(() => rejectConnected(
+          new USBNativeConnectionError(
+            'USB_OPEN_FAILED',
+            `[USB OTG] Erro durante abertura: ${errorMessage}`,
+            payload
+          )
+        ));
+      });
+      if (errorHandle) tempHandles.push(errorHandle);
+
+      const openSerialOptions = {
+        deviceId: targetDevice.deviceId,
+        portNum: targetDevice.portNum,
+        baudRate: DEFAULT_BAUDRATE,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 0,
+      };
+
+      let openResult: any;
       try {
-        // 🔧 PR2: Desconectar transporte anterior se estiver conectado em outro tipo
-        if (this.connectionStatus.connected && this.connectionStatus.type !== 'usb') {
-          console.log(`[USB OTG] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar USB`);
-          await this.disconnect();
+        openResult = await this.withTimeout(
+          Promise.resolve(plugin.openSerial(openSerialOptions)),
+          timeoutMs,
+          'USB_OPEN_TIMEOUT',
+          '[USB OTG] Open call timeout em openSerial'
+        );
+      } catch (error) {
+        if (!this.isApiMismatchError(error)) {
+          throw error;
         }
-
-        await ensureUsbSerialPluginLoaded();
-        const plugin = getUsbSerialPlugin();
-        if (!plugin) {
-          throw new USBNativeConnectionError(
-            'USB_PLUGIN_UNAVAILABLE',
-            'Plugin USB Serial nÃ£o instalado ou nÃ£o compatÃ­vel'
-          );
-        }
-
-        await this.ensureNativeUSBPluginListeners(plugin);
-
-        console.log('[USB OTG] Buscando dispositivos USB...');
-        const devices = await this.fetchNativeUSBDevices(plugin);
-        this.logNativeUSBDevices('connect_attempt', devices);
-
-        if (devices.length === 0) {
-          throw new USBNativeConnectionError(
-            'USB_NO_DEVICE',
-            'Nenhum dispositivo USB encontrado para conexÃ£o'
-          );
-        }
-
-        const targetDevice = this.selectPreferredNativeUSBDevice(devices);
-        if (!targetDevice) {
-          throw new USBNativeConnectionError('USB_NO_DEVICE', 'Nenhum dispositivo USB elegÃ­vel encontrado');
-        }
-
-        console.log('[USB OTG] open/connect iniciado:', JSON.stringify({
-          deviceId: targetDevice.deviceId,
-          vendorId: targetDevice.vendorId,
-          productId: targetDevice.productId,
-          productName: targetDevice.productName,
-          portNum: targetDevice.portNum,
-        }));
-
-        let resolveConnected: () => void = () => { };
-        let rejectConnected: (error: Error) => void = () => { };
-        const connectedPromise = new Promise<void>((resolve, reject) => {
-          resolveConnected = resolve;
-          rejectConnected = reject;
-        });
-
-        let isSettled = false;
-        const settleConnected = (fn: () => void) => {
-          if (isSettled) return;
-          isSettled = true;
-          fn();
-        };
-
-        const timeoutId = setTimeout(() => {
-          settleConnected(() => rejectConnected(
-            new USBNativeConnectionError(
-              'USB_OPEN_TIMEOUT',
-              `[USB OTG] Timeout (${timeoutMs}ms) aguardando permissÃ£o/abertura de porta`
-            )
-          ));
-        }, timeoutMs);
-
-        const tempHandles: USBPluginListenerHandle[] = [];
-        try {
-          const connectedHandle = this.addNativeUSBListenerSync('connected', (payload: any) => {
-            const connectedDevice = this.normalizeNativeUSBDevice(payload);
-            console.log('[USB OTG] EVENT connected:', JSON.stringify(connectedDevice ?? payload));
-
-            if (connectedDevice && connectedDevice.deviceId !== targetDevice.deviceId) {
-              return;
-            }
-
-            settleConnected(() => resolveConnected());
-          });
-          if (connectedHandle) tempHandles.push(connectedHandle);
-
-          const errorHandle = this.addNativeUSBListenerSync('error', (payload: any) => {
-            const errorMessage = typeof payload?.error === 'string'
-              ? payload.error
-              : JSON.stringify(payload);
-            settleConnected(() => rejectConnected(
-              new USBNativeConnectionError(
-                'USB_OPEN_FAILED',
-                `[USB OTG] Erro durante abertura: ${errorMessage}`,
-                payload
-              )
-            ));
-          });
-          if (errorHandle) tempHandles.push(errorHandle);
-
-          const openSerialOptions = {
+        openResult = await this.withTimeout(
+          Promise.resolve(plugin.open({
             deviceId: targetDevice.deviceId,
-            portNum: targetDevice.portNum,
             baudRate: DEFAULT_BAUDRATE,
             dataBits: 8,
             stopBits: 1,
             parity: 0,
-          };
+          })),
+          timeoutMs,
+          'USB_OPEN_TIMEOUT',
+          '[USB OTG] Open call timeout em open'
+        );
+      }
 
-          let openResult: any;
-          try {
-            openResult = await this.withTimeout(
-              Promise.resolve(plugin.openSerial(openSerialOptions)),
-              timeoutMs,
-              'USB_OPEN_TIMEOUT',
-              '[USB OTG] Open call timeout em openSerial'
-            );
-          } catch (error) {
-            if (!this.isApiMismatchError(error)) {
-              throw error;
-            }
-            openResult = await this.withTimeout(
-              Promise.resolve(plugin.open({
-                deviceId: targetDevice.deviceId,
-                baudRate: DEFAULT_BAUDRATE,
-                dataBits: 8,
-                stopBits: 1,
-                parity: 0,
-              })),
-              timeoutMs,
-              'USB_OPEN_TIMEOUT',
-              '[USB OTG] Open call timeout em open'
-            );
-          }
+      const openSucceeded = (
+        openResult === undefined ||
+        openResult === null ||
+        openResult.success === undefined ||
+        Boolean(openResult.success)
+      );
+      if (!openSucceeded) {
+        throw new USBNativeConnectionError(
+          'USB_OPEN_FAILED',
+          '[USB OTG] Plugin retornou falha ao abrir porta',
+          openResult
+        );
+      }
 
-          const openSucceeded = (
-            openResult === undefined ||
-            openResult === null ||
-            openResult.success === undefined ||
-            Boolean(openResult.success)
-          );
-          if (!openSucceeded) {
-            throw new USBNativeConnectionError(
-              'USB_OPEN_FAILED',
-              '[USB OTG] Plugin retornou falha ao abrir porta',
-              openResult
-            );
-          }
+      if (tempHandles.length > 0) {
+        await connectedPromise;
+      }
+    } finally {
+      clearTimeout(timeoutId);
+      await Promise.all(tempHandles.map((handle) => handle.remove().catch(() => undefined)));
+    }
 
-          if (tempHandles.length > 0) {
-            await connectedPromise;
-          }
-        } finally {
-          clearTimeout(timeoutId);
-          await Promise.all(tempHandles.map((handle) => handle.remove().catch(() => undefined)));
-        }
+    // Limpar buffer ao conectar
+    this.usbReceiveBuffer = '';
 
-        // Limpar buffer ao conectar
-        this.usbReceiveBuffer = '';
+    this.connectionStatus = {
+      connected: true,
+      type: 'usb',
+      deviceId: String(targetDevice.deviceId),
+      deviceName: `USB OTG (${targetDevice.productName || 'ESP32'})`,
+    };
 
-        this.connectionStatus = {
-          connected: true,
-          type: 'usb',
-          deviceId: String(targetDevice.deviceId),
-          deviceName: `USB OTG (${targetDevice.productName || 'ESP32'})`,
-        };
+    this.connectedDevice = {
+      id: String(targetDevice.deviceId),
+      name: `USB OTG (${targetDevice.productName || 'ESP32'})`,
+      type: 'usb',
+    };
 
-        this.connectedDevice = {
-          id: String(targetDevice.deviceId),
-          name: `USB OTG (${targetDevice.productName || 'ESP32'})`,
-          type: 'usb',
-        };
+    this.setLastConnection({
+      type: 'usb',
+      deviceId: String(targetDevice.deviceId),
+      deviceName: `USB OTG (${targetDevice.productName || 'ESP32'})`,
+    });
 
-        this.setLastConnection({
-          type: 'usb',
-          deviceId: String(targetDevice.deviceId),
-          deviceName: `USB OTG (${targetDevice.productName || 'ESP32'})`,
-        });
+    this.notifyConnectionChange();
+    this.handleConnectionEstablished('connect_usb_native_success');
+    console.log('[USB OTG] Conectado com sucesso ao ESP32');
+    return true;
+  } catch (error) {
+    // Marcar timestamp de erro para ativar cooldown
+    this.lastUsbErrorAt = Date.now();
 
-        this.notifyConnectionChange();
-        this.handleConnectionEstablished('connect_usb_native_success');
-        console.log('[USB OTG] Conectado com sucesso ao ESP32');
-        return true;
-      } catch (error) {
-        const message = this.errorToString(error);
-        const lowered = message.toLowerCase();
-        const typedError = error instanceof USBNativeConnectionError
-          ? error
-          : new USBNativeConnectionError(
-            lowered.includes('permission') ? 'USB_PERMISSION_DENIED'
+    const message = this.errorToString(error);
+    const lowered = message.toLowerCase();
+    const typedError = error instanceof USBNativeConnectionError
+      ? error
+      : new USBNativeConnectionError(
+        lowered.includes('permission') ? 'USB_PERMISSION_DENIED'
+          : lowered.includes('device not found') ? 'USB_NO_DEVICE'
+            : lowered.includes('connectionfailed:devicenotfound') ? 'USB_NO_DEVICE'
               : lowered.includes('timeout') ? 'USB_OPEN_TIMEOUT'
                 : lowered.includes('driver') ? 'USB_NO_DRIVER'
                   : 'USB_OPEN_FAILED',
-            message,
-            error
-          );
+        message,
+        error
+      );
 
-        console.error('[USB OTG] Erro ao conectar:', {
-          code: typedError.code,
-          message: typedError.message,
-          stack: typedError.stack,
-          details: typedError.details,
-        });
-        throw typedError;
-      }
-    })();
+    console.error('[USB OTG] Erro ao conectar:', {
+      code: typedError.code,
+      message: typedError.message,
+      stack: typedError.stack,
+      details: typedError.details,
+    });
+    throw typedError;
+  }
+})();
 
-    try {
-      return await this.nativeUsbConnectPromise;
-    } finally {
-      this.nativeUsbConnectPromise = null;
-    }
+try {
+  return await this.nativeUsbConnectPromise;
+} finally {
+  this.nativeUsbConnectPromise = null;
+}
   }
 
   /**
    * Lista dispositivos USB disponÃ­veis no Android
    * @returns Array de dispositivos USB
    */
-  async listUSBNativeDevices(): Promise<ESP32Device[]> {
-    if (!Capacitor.isNativePlatform()) {
-      return [];
-    }
+  async listUSBNativeDevices(): Promise < ESP32Device[] > {
+  if(!Capacitor.isNativePlatform()) {
+  return [];
+}
 
-    try {
-      await ensureUsbSerialPluginLoaded();
-      const plugin = getUsbSerialPlugin();
-      if (!plugin) return [];
+try {
+  await ensureUsbSerialPluginLoaded();
+  const plugin = getUsbSerialPlugin();
+  if (!plugin) return [];
 
-      const devices = await this.fetchNativeUSBDevices(plugin);
-      this.logNativeUSBDevices('list_devices', devices);
-      return devices.map((device) => ({
-        id: String(device.deviceId),
-        name: device.productName || `USB Device (${device.vendorId}:${device.productId})`,
-        type: 'usb' as ConnectionType,
-      }));
-    } catch (error) {
-      console.error('[USB OTG] Erro ao listar dispositivos:', error);
-      return [];
-    }
+  const devices = await this.fetchNativeUSBDevices(plugin);
+  this.logNativeUSBDevices('list_devices', devices);
+  return devices.map((device) => ({
+    id: String(device.deviceId),
+    name: device.productName || `USB Device (${device.vendorId}:${device.productId})`,
+    type: 'usb' as ConnectionType,
+  }));
+} catch (error) {
+  console.error('[USB OTG] Erro ao listar dispositivos:', error);
+  return [];
+}
   }
 
   /**
    * Envia comando via USB OTG nativo
    * @param command - Comando a enviar (serÃ¡ convertido para JSON)
    */
-  async sendUSBNativeCommand(command: string | object): Promise<boolean> {
-    if (!Capacitor.isNativePlatform() || this.connectionStatus.type !== 'usb') {
-      console.warn('[USB OTG] NÃ£o conectado via USB nativo');
-      return false;
+  async sendUSBNativeCommand(command: string | object): Promise < boolean > {
+  if(!Capacitor.isNativePlatform() || this.connectionStatus.type !== 'usb') {
+  console.warn('[USB OTG] NÃ£o conectado via USB nativo');
+  return false;
+}
+
+try {
+  await ensureUsbSerialPluginLoaded();
+  const plugin = getUsbSerialPlugin();
+  if (!plugin) return false;
+
+  const data = typeof command === 'string'
+    ? command
+    : JSON.stringify(command);
+
+  console.log('[USB OTG] write iniciado:', JSON.stringify({ bytes: data.length }));
+
+  try {
+    await this.withTimeout(
+      Promise.resolve(plugin.writeSerial({ data: data + '\n' })),
+      3000,
+      'USB_WRITE_TIMEOUT',
+      '[USB OTG] Timeout em writeSerial'
+    );
+  } catch (error) {
+    if (!this.isApiMismatchError(error)) {
+      throw error;
     }
 
-    try {
-      await ensureUsbSerialPluginLoaded();
-      const plugin = getUsbSerialPlugin();
-      if (!plugin) return false;
+    await this.withTimeout(
+      Promise.resolve(plugin.write({ value: data + '\n' })),
+      3000,
+      'USB_WRITE_TIMEOUT',
+      '[USB OTG] Timeout em write'
+    );
+  }
 
-      const data = typeof command === 'string'
-        ? command
-        : JSON.stringify(command);
-
-      console.log('[USB OTG] write iniciado:', JSON.stringify({ bytes: data.length }));
-
-      try {
-        await this.withTimeout(
-          Promise.resolve(plugin.writeSerial({ data: data + '\n' })),
-          3000,
-          'USB_WRITE_TIMEOUT',
-          '[USB OTG] Timeout em writeSerial'
-        );
-      } catch (error) {
-        if (!this.isApiMismatchError(error)) {
-          throw error;
-        }
-
-        await this.withTimeout(
-          Promise.resolve(plugin.write({ value: data + '\n' })),
-          3000,
-          'USB_WRITE_TIMEOUT',
-          '[USB OTG] Timeout em write'
-        );
-      }
-
-      console.log('[USB OTG] write concluÃ­do');
-      return true;
-    } catch (error) {
-      const message = this.errorToString(error);
-      const code = message.toLowerCase().includes('timeout') ? 'USB_WRITE_TIMEOUT' : 'USB_WRITE_FAILED';
-      console.error('[USB OTG] Erro ao enviar comando:', {
-        code,
-        message,
-        stack: error instanceof Error ? error.stack : undefined,
-      });
-      return false;
-    }
+  console.log('[USB OTG] write concluÃ­do');
+  return true;
+} catch (error) {
+  const message = this.errorToString(error);
+  const code = message.toLowerCase().includes('timeout') ? 'USB_WRITE_TIMEOUT' : 'USB_WRITE_FAILED';
+  console.error('[USB OTG] Erro ao enviar comando:', {
+    code,
+    message,
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+  return false;
+}
   }
 
   // ============================================
@@ -2679,103 +2783,103 @@ class ESP32CommunicationService {
    * NOTA: No navegador, CORS pode impedir verificaÃ§Ã£o. 
    * Assumimos conexÃ£o e deixamos falhar nos comandos.
    */
-  async connectWifi(ipAddress: string): Promise<boolean> {
-    const TIMEOUT_MS = 5000;
+  async connectWifi(ipAddress: string): Promise < boolean > {
+  const TIMEOUT_MS = 5000;
 
+  try {
+    // 🔧 PR2: Desconectar transporte anterior se estiver conectado em outro tipo
+    if(this.connectionStatus.connected && this.connectionStatus.type !== 'wifi') {
+  console.log(`[WiFi] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar WiFi`);
+  await this.disconnect();
+}
+
+this.esp32IpAddress = ipAddress;
+
+console.log(`[WiFi] Tentando conectar ao ESP32 em ${ipAddress}...`);
+
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+// No Android nativo, usar mode 'cors' normal (nÃ£o tem restriÃ§Ã£o CORS)
+// Na web, usar 'no-cors' porque CORS bloqueia
+const fetchMode = this.isWeb() ? 'no-cors' : 'cors';
+
+console.log(`[WiFi] Usando modo fetch: ${fetchMode} (plataforma: ${Capacitor.getPlatform()})`);
+
+// Tentar verificar conexÃ£o
+const response = await fetch(`http://${ipAddress}/status`, {
+  method: 'GET',
+  signal: controller.signal,
+  mode: fetchMode,
+  headers: {
+    'Accept': 'application/json',
+  },
+});
+
+clearTimeout(timeout);
+
+console.log(`[WiFi] Resposta recebida: status=${response.status}, type=${response.type}`);
+
+// No navegador com no-cors, nÃ£o podemos verificar resposta (opaque)
+// No Android nativo, podemos verificar normalmente
+let isConnected = false;
+
+if (this.isWeb()) {
+  // Na web, opaque response significa que chegou (mas nÃ£o podemos ler)
+  isConnected = response.type === 'opaque' || response.ok;
+} else {
+  // No Android, verificar resposta normalmente
+  isConnected = response.ok;
+
+  if (response.ok) {
     try {
-      // 🔧 PR2: Desconectar transporte anterior se estiver conectado em outro tipo
-      if (this.connectionStatus.connected && this.connectionStatus.type !== 'wifi') {
-        console.log(`[WiFi] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar WiFi`);
-        await this.disconnect();
-      }
-
-      this.esp32IpAddress = ipAddress;
-
-      console.log(`[WiFi] Tentando conectar ao ESP32 em ${ipAddress}...`);
-
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-      // No Android nativo, usar mode 'cors' normal (nÃ£o tem restriÃ§Ã£o CORS)
-      // Na web, usar 'no-cors' porque CORS bloqueia
-      const fetchMode = this.isWeb() ? 'no-cors' : 'cors';
-
-      console.log(`[WiFi] Usando modo fetch: ${fetchMode} (plataforma: ${Capacitor.getPlatform()})`);
-
-      // Tentar verificar conexÃ£o
-      const response = await fetch(`http://${ipAddress}/status`, {
-        method: 'GET',
-        signal: controller.signal,
-        mode: fetchMode,
-        headers: {
-          'Accept': 'application/json',
-        },
-      });
-
-      clearTimeout(timeout);
-
-      console.log(`[WiFi] Resposta recebida: status=${response.status}, type=${response.type}`);
-
-      // No navegador com no-cors, nÃ£o podemos verificar resposta (opaque)
-      // No Android nativo, podemos verificar normalmente
-      let isConnected = false;
-
-      if (this.isWeb()) {
-        // Na web, opaque response significa que chegou (mas nÃ£o podemos ler)
-        isConnected = response.type === 'opaque' || response.ok;
-      } else {
-        // No Android, verificar resposta normalmente
-        isConnected = response.ok;
-
-        if (response.ok) {
-          try {
-            const data = await response.json();
-            console.log('[WiFi] Dados do ESP32:', data);
-          } catch (e) {
-            console.log('[WiFi] Resposta nÃ£o Ã© JSON, mas conexÃ£o OK');
-          }
-        }
-      }
-
-      if (isConnected) {
-        this.connectionStatus = {
-          connected: true,
-          type: 'wifi',
-          deviceId: ipAddress,
-          deviceName: `ESP32 @ ${ipAddress}`,
-        };
-
-        this.connectedDevice = {
-          id: ipAddress,
-          name: `ESP32 @ ${ipAddress}`,
-          type: 'wifi',
-          ipAddress: ipAddress,
-        };
-
-        // Salvar Ãºltima conexÃ£o
-        this.setLastConnection({
-          type: 'wifi',
-          ipAddress: ipAddress,
-          deviceName: `ESP32 @ ${ipAddress}`,
-        });
-
-        this.notifyConnectionChange();
-        this.handleConnectionEstablished('connect_wifi_success');
-        console.log('[WiFi] Conectado ao ESP32:', ipAddress);
-        return true;
-      }
-
-      console.warn('[WiFi] ESP32 nÃ£o respondeu em:', ipAddress);
-      return false;
-    } catch (error: any) {
-      // Timeout ou erro de rede
-      if (error.name === 'AbortError') {
-        console.error('[WiFi] Timeout ao conectar:', ipAddress);
-      } else {
-        console.error('[WiFi] Erro ao conectar:', error.message || error);
-      }
-      return false;
+      const data = await response.json();
+      console.log('[WiFi] Dados do ESP32:', data);
+    } catch (e) {
+      console.log('[WiFi] Resposta nÃ£o Ã© JSON, mas conexÃ£o OK');
     }
+  }
+}
+
+if (isConnected) {
+  this.connectionStatus = {
+    connected: true,
+    type: 'wifi',
+    deviceId: ipAddress,
+    deviceName: `ESP32 @ ${ipAddress}`,
+  };
+
+  this.connectedDevice = {
+    id: ipAddress,
+    name: `ESP32 @ ${ipAddress}`,
+    type: 'wifi',
+    ipAddress: ipAddress,
+  };
+
+  // Salvar Ãºltima conexÃ£o
+  this.setLastConnection({
+    type: 'wifi',
+    ipAddress: ipAddress,
+    deviceName: `ESP32 @ ${ipAddress}`,
+  });
+
+  this.notifyConnectionChange();
+  this.handleConnectionEstablished('connect_wifi_success');
+  console.log('[WiFi] Conectado ao ESP32:', ipAddress);
+  return true;
+}
+
+console.warn('[WiFi] ESP32 nÃ£o respondeu em:', ipAddress);
+return false;
+    } catch (error: any) {
+  // Timeout ou erro de rede
+  if (error.name === 'AbortError') {
+    console.error('[WiFi] Timeout ao conectar:', ipAddress);
+  } else {
+    console.error('[WiFi] Erro ao conectar:', error.message || error);
+  }
+  return false;
+}
   }
 
   /**
@@ -2784,157 +2888,157 @@ class ESP32CommunicationService {
    * @param data - Dados adicionais para o comando
    */
   async sendWifiCommand(
-    action: string,
-    data?: object
-  ): Promise<boolean> {
-    if (!this.esp32IpAddress) {
-      console.error('[WiFi] IP do ESP32 nÃ£o configurado');
-      return false;
-    }
+  action: string,
+  data ?: object
+): Promise < boolean > {
+  if(!this.esp32IpAddress) {
+  console.error('[WiFi] IP do ESP32 nÃ£o configurado');
+  return false;
+}
 
-    // KIO-15 fix: AbortController with 8s timeout to prevent hanging on unreachable ESP32
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+// KIO-15 fix: AbortController with 8s timeout to prevent hanging on unreachable ESP32
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    try {
-      const response = await fetch(`http://${this.esp32IpAddress}/command`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          action,
-          ...data,
-        }),
-        signal: controller.signal,
-      });
+try {
+  const response = await fetch(`http://${this.esp32IpAddress}/command`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      action,
+      ...data,
+    }),
+    signal: controller.signal,
+  });
 
-      if (response.ok) {
-        const result = await response.json();
-        console.log('[WiFi] Comando enviado:', action, '| Resposta:', result);
-        return true;
-      }
-
-      console.error('[WiFi] Erro na resposta:', response.status);
-      return false;
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        console.error('[WiFi] Timeout (8s) ao enviar comando:', action);
-      } else {
-        console.error('[WiFi] Erro ao enviar comando:', error);
-      }
-      return false;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+  if (response.ok) {
+    const result = await response.json();
+    console.log('[WiFi] Comando enviado:', action, '| Resposta:', result);
+    return true;
   }
 
-  // ============================================
-  // INTERFACE UNIFICADA
-  // ============================================
-
-  /**
-   * Retorna status da conexÃ£o atual
-   */
-  getConnectionStatus(): ConnectionStatus {
-    // ðŸ”§ FIX: Se connectionStatus local Ã© 'none' mas esp32Serial estÃ¡ conectado,
-    // retornar o estado real da conexÃ£o USB
-    if (this.connectionStatus.type === 'none' && esp32Serial.isConnected()) {
-      return {
-        connected: true,
-        type: 'usb',
-        deviceName: 'ESP32 (Web Serial)',
-      };
-    }
-    return this.connectionStatus;
+  console.error('[WiFi] Erro na resposta:', response.status);
+  return false;
+} catch (error) {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    console.error('[WiFi] Timeout (8s) ao enviar comando:', action);
+  } else {
+    console.error('[WiFi] Erro ao enviar comando:', error);
+  }
+  return false;
+} finally {
+  clearTimeout(timeoutId);
+}
   }
 
-  /**
-   * ðŸ”§ Sincroniza estado de conexÃ£o USB quando esp32Serial conecta externamente.
-   * Deve ser chamado pelo ESP32Context quando esp32Serial.onConnectionChange dispara.
-   * Isso garante que sendCommand() funcione mesmo quando a conexÃ£o foi feita pelo esp32Serial.
-   */
-  syncExternalUSBConnection(connected: boolean): void {
-    if (connected && esp32Serial.isConnected()) {
-      console.log('[ESP32Service] Sincronizando conexÃ£o USB externa (esp32Serial)');
-      this.connectionStatus = {
-        connected: true,
-        type: 'usb',
-        deviceName: 'ESP32 (Web Serial)',
-      };
-      this.connectedDevice = {
-        id: 'web-serial',
-        name: 'ESP32 (Web Serial)',
-        type: 'usb',
-      };
-      // Salvar como Ãºltima conexÃ£o
-      this.setLastConnection({
-        type: 'usb',
-        deviceId: 'web-serial',
-        deviceName: 'ESP32 (Web Serial)',
-      });
-      this.notifyConnectionChange();
-      this.handleConnectionEstablished('sync_external_usb_connected');
-    } else if (!connected && this.connectionStatus.type === 'usb') {
-      console.log('[ESP32Service] DesconexÃ£o USB externa detectada');
-      this.handleConnectionDropped('sync_external_usb_disconnected');
-    }
+// ============================================
+// INTERFACE UNIFICADA
+// ============================================
+
+/**
+ * Retorna status da conexÃ£o atual
+ */
+getConnectionStatus(): ConnectionStatus {
+  // ðŸ”§ FIX: Se connectionStatus local Ã© 'none' mas esp32Serial estÃ¡ conectado,
+  // retornar o estado real da conexÃ£o USB
+  if (this.connectionStatus.type === 'none' && esp32Serial.isConnected()) {
+    return {
+      connected: true,
+      type: 'usb',
+      deviceName: 'ESP32 (Web Serial)',
+    };
+  }
+  return this.connectionStatus;
+}
+
+/**
+ * ðŸ”§ Sincroniza estado de conexÃ£o USB quando esp32Serial conecta externamente.
+ * Deve ser chamado pelo ESP32Context quando esp32Serial.onConnectionChange dispara.
+ * Isso garante que sendCommand() funcione mesmo quando a conexÃ£o foi feita pelo esp32Serial.
+ */
+syncExternalUSBConnection(connected: boolean): void {
+  if(connected && esp32Serial.isConnected()) {
+  console.log('[ESP32Service] Sincronizando conexÃ£o USB externa (esp32Serial)');
+  this.connectionStatus = {
+    connected: true,
+    type: 'usb',
+    deviceName: 'ESP32 (Web Serial)',
+  };
+  this.connectedDevice = {
+    id: 'web-serial',
+    name: 'ESP32 (Web Serial)',
+    type: 'usb',
+  };
+  // Salvar como Ãºltima conexÃ£o
+  this.setLastConnection({
+    type: 'usb',
+    deviceId: 'web-serial',
+    deviceName: 'ESP32 (Web Serial)',
+  });
+  this.notifyConnectionChange();
+  this.handleConnectionEstablished('sync_external_usb_connected');
+} else if (!connected && this.connectionStatus.type === 'usb') {
+  console.log('[ESP32Service] DesconexÃ£o USB externa detectada');
+  this.handleConnectionDropped('sync_external_usb_disconnected');
+}
   }
 
   /**
    * Escaneia todos os tipos de dispositivos
    */
-  async scanAllDevices(): Promise<ESP32Device[]> {
-    const allDevices: ESP32Device[] = [];
+  async scanAllDevices(): Promise < ESP32Device[] > {
+  const allDevices: ESP32Device[] = [];
 
-    // Scan Bluetooth
-    if (this.isAndroid()) {
-      try {
-        const bleDevices = await this.scanBluetoothDevices();
-        allDevices.push(...bleDevices);
-      } catch (error) {
-        console.warn('[Scan] Bluetooth nÃ£o disponÃ­vel:', error);
-      }
-    }
+  // Scan Bluetooth
+  if(this.isAndroid()) {
+  try {
+    const bleDevices = await this.scanBluetoothDevices();
+    allDevices.push(...bleDevices);
+  } catch (error) {
+    console.warn('[Scan] Bluetooth nÃ£o disponÃ­vel:', error);
+  }
+}
 
-    // Scan USB (Web Serial API)
-    try {
-      const usbDevices = await this.scanUSBDevices();
-      allDevices.push(...usbDevices);
-    } catch (error) {
-      console.warn('[Scan] USB nÃ£o disponÃ­vel:', error);
-    }
+// Scan USB (Web Serial API)
+try {
+  const usbDevices = await this.scanUSBDevices();
+  allDevices.push(...usbDevices);
+} catch (error) {
+  console.warn('[Scan] USB nÃ£o disponÃ­vel:', error);
+}
 
-    // Scan WiFi
-    try {
-      const wifiDevices = await this.scanWifiDevices();
-      allDevices.push(...wifiDevices);
-    } catch (error) {
-      console.warn('[Scan] WiFi scan falhou:', error);
-    }
+// Scan WiFi
+try {
+  const wifiDevices = await this.scanWifiDevices();
+  allDevices.push(...wifiDevices);
+} catch (error) {
+  console.warn('[Scan] WiFi scan falhou:', error);
+}
 
-    return allDevices;
+return allDevices;
   }
 
   /**
    * Conecta a um dispositivo (auto-detecta tipo)
    */
-  async connect(device: ESP32Device): Promise<boolean> {
-    switch (device.type) {
+  async connect(device: ESP32Device): Promise < boolean > {
+  switch(device.type) {
       case 'bluetooth':
-        return this.connectBluetooth(device.id);
+  return this.connectBluetooth(device.id);
       case 'wifi':
-        return this.connectWifi(device.ipAddress || device.id);
+  return this.connectWifi(device.ipAddress || device.id);
       case 'usb':
-        // Usar driver nativo no Android, Web Serial na web
-        if (Capacitor.isNativePlatform()) {
-          return this.connectUSBNative();
-        }
-        return this.connectUSB();
+  // Usar driver nativo no Android, Web Serial na web
+  if (Capacitor.isNativePlatform()) {
+    return this.connectUSBNative();
+  }
+  return this.connectUSB();
       default:
-        console.error('[Connect] Tipo de conexÃ£o nÃ£o suportado:', device.type);
-        return false;
-    }
+  console.error('[Connect] Tipo de conexÃ£o nÃ£o suportado:', device.type);
+  return false;
+}
   }
 
   /**
@@ -2942,55 +3046,55 @@ class ESP32CommunicationService {
    * ðŸ†• GUARD: Falha rÃ¡pido se nÃ£o conectado
    */
   private canSendCommand(): boolean {
-    return this.connectionStatus.type !== 'none' || esp32Serial.isConnected();
-  }
+  return this.connectionStatus.type !== 'none' || esp32Serial.isConnected();
+}
 
   /**
    * Verifica conexÃ£o real (transport-agnostic).
    * Envia ping com timeout curto e retorna true somente se o dispositivo responder.
    * Previne stale state onde connectionStatus diz "conectado" mas BLE/USB jÃ¡ desconectou.
    */
-  async verifyConnection(timeoutMs: number = 3000): Promise<boolean> {
-    if (this.connectionStatus.type === 'none' && !esp32Serial.isConnected()) {
-      return false;
-    }
+  async verifyConnection(timeoutMs: number = 3000): Promise < boolean > {
+  if(this.connectionStatus.type === 'none' && !esp32Serial.isConnected()) {
+  return false;
+}
 
-    try {
-      if (this.connectionStatus.type === 'wifi') {
-        return this.ping();
-      }
+try {
+  if (this.connectionStatus.type === 'wifi') {
+    return this.ping();
+  }
 
-      const recentInboundMs = this.lastInboundAt ? (Date.now() - this.lastInboundAt) : Number.POSITIVE_INFINITY;
-      if (recentInboundMs <= 2000) {
-        return true;
-      }
+  const recentInboundMs = this.lastInboundAt ? (Date.now() - this.lastInboundAt) : Number.POSITIVE_INFINITY;
+  if (recentInboundMs <= 2000) {
+    return true;
+  }
 
-      let waiter: ((ok: boolean) => void) | null = null;
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      const ackPromise = new Promise<boolean>((resolve) => {
-        waiter = (ok: boolean) => {
-          if (timeoutId) clearTimeout(timeoutId);
-          if (waiter) this.pendingPingWaiters.delete(waiter);
-          resolve(ok);
-        };
-        this.pendingPingWaiters.add(waiter);
-        timeoutId = setTimeout(() => {
-          if (waiter) this.pendingPingWaiters.delete(waiter);
-          resolve(false);
-        }, timeoutMs);
-      });
+  let waiter: ((ok: boolean) => void) | null = null;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const ackPromise = new Promise<boolean>((resolve) => {
+    waiter = (ok: boolean) => {
+      if (timeoutId) clearTimeout(timeoutId);
+      if (waiter) this.pendingPingWaiters.delete(waiter);
+      resolve(ok);
+    };
+    this.pendingPingWaiters.add(waiter);
+    timeoutId = setTimeout(() => {
+      if (waiter) this.pendingPingWaiters.delete(waiter);
+      resolve(false);
+    }, timeoutMs);
+  });
 
-      const pingSent = await this.ping();
-      if (!pingSent) {
-        if (timeoutId) clearTimeout(timeoutId);
-        if (waiter) this.pendingPingWaiters.delete(waiter);
-        return false;
-      }
+  const pingSent = await this.ping();
+  if (!pingSent) {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (waiter) this.pendingPingWaiters.delete(waiter);
+    return false;
+  }
 
-      return await ackPromise;
-    } catch {
-      return false;
-    }
+  return await ackPromise;
+} catch {
+  return false;
+}
   }
 
   /**
@@ -2998,128 +3102,128 @@ class ESP32CommunicationService {
    * ðŸ†• CORRIGIDO: Agora formata JSON completo para todos os protocolos
    * ðŸ”§ FIX: Verifica esp32Serial.isConnected() como fallback quando connectionStatus Ã© 'none'
    */
-  async sendCommand(command: string, data?: object): Promise<boolean> {
-    // ðŸ”§ GUARD: Falha rÃ¡pido se nÃ£o conectado
-    if (!this.canSendCommand()) {
-      console.error(`[SendCommand] âŒ Device not connected - cannot send: ${command}`);
-      return false;
+  async sendCommand(command: string, data ?: object): Promise < boolean > {
+  // ðŸ”§ GUARD: Falha rÃ¡pido se nÃ£o conectado
+  if(!this.canSendCommand()) {
+  console.error(`[SendCommand] âŒ Device not connected - cannot send: ${command}`);
+  return false;
+}
+
+// Construir payload JSON completo com action + parÃ¢metros
+const payload = data ? { action: command, ...data } : { action: command };
+const jsonString = JSON.stringify(payload);
+
+console.log(`[SendCommand] Tipo: ${this.connectionStatus.type}, esp32Serial.isConnected: ${esp32Serial.isConnected()}, Payload: ${jsonString}`);
+
+// ðŸ”§ FIX: Se connectionStatus Ã© 'none' mas esp32Serial estÃ¡ conectado (conexÃ£o feita externamente),
+// usar esp32Serial diretamente. Isso resolve o bug onde botÃµes de UI nÃ£o enviavam comandos.
+if (this.connectionStatus.type === 'none' && esp32Serial.isConnected()) {
+  console.log('[SendCommand] Usando esp32Serial (Web Serial conectado externamente)');
+  return esp32Serial.sendRaw(jsonString);
+}
+
+switch (this.connectionStatus.type) {
+  case 'bluetooth':
+    // ðŸ†• Envia JSON completo (nÃ£o apenas o nome do comando)
+    return this.sendBluetoothCommand(jsonString);
+  case 'wifi':
+    return this.sendWifiCommand(command, data);
+  case 'usb':
+    // Usar driver nativo no Android, Web Serial na web
+    if (Capacitor.isNativePlatform()) {
+      // ðŸ†• Envia JSON completo
+      return this.sendUSBNativeCommand(jsonString);
     }
-
-    // Construir payload JSON completo com action + parÃ¢metros
-    const payload = data ? { action: command, ...data } : { action: command };
-    const jsonString = JSON.stringify(payload);
-
-    console.log(`[SendCommand] Tipo: ${this.connectionStatus.type}, esp32Serial.isConnected: ${esp32Serial.isConnected()}, Payload: ${jsonString}`);
-
-    // ðŸ”§ FIX: Se connectionStatus Ã© 'none' mas esp32Serial estÃ¡ conectado (conexÃ£o feita externamente),
-    // usar esp32Serial diretamente. Isso resolve o bug onde botÃµes de UI nÃ£o enviavam comandos.
-    if (this.connectionStatus.type === 'none' && esp32Serial.isConnected()) {
-      console.log('[SendCommand] Usando esp32Serial (Web Serial conectado externamente)');
-      return esp32Serial.sendRaw(jsonString);
-    }
-
-    switch (this.connectionStatus.type) {
-      case 'bluetooth':
-        // ðŸ†• Envia JSON completo (nÃ£o apenas o nome do comando)
-        return this.sendBluetoothCommand(jsonString);
-      case 'wifi':
-        return this.sendWifiCommand(command, data);
-      case 'usb':
-        // Usar driver nativo no Android, Web Serial na web
-        if (Capacitor.isNativePlatform()) {
-          // ðŸ†• Envia JSON completo
-          return this.sendUSBNativeCommand(jsonString);
-        }
-        // ðŸ†• Envia JSON completo
-        return this.sendUSBCommand(jsonString);
-      default:
-        console.error('[Send] Nenhuma conexÃ£o ativa (connectionStatus.type:', this.connectionStatus.type, ', esp32Serial:', esp32Serial.isConnected(), ')');
-        return false;
-    }
+    // ðŸ†• Envia JSON completo
+    return this.sendUSBCommand(jsonString);
+  default:
+    console.error('[Send] Nenhuma conexÃ£o ativa (connectionStatus.type:', this.connectionStatus.type, ', esp32Serial:', esp32Serial.isConnected(), ')');
+    return false;
+}
   }
 
   /**
    * Desconecta do dispositivo atual
    */
-  async disconnect(): Promise<void> {
-    this.manualDisconnectRequested = true;
-    this.clearSupervisorReconnectTimer();
-    this.stopSupervisorHealthCheck();
-    this.resolvePendingPingWaiters(false);
+  async disconnect(): Promise < void> {
+  this.manualDisconnectRequested = true;
+  this.clearSupervisorReconnectTimer();
+  this.stopSupervisorHealthCheck();
+  this.resolvePendingPingWaiters(false);
 
-    // Parar heartbeat primeiro
-    this.stopHeartbeat();
+  // Parar heartbeat primeiro
+  this.stopHeartbeat();
 
-    if (
-      this.connectionStatus.type === 'bluetooth' &&
+  if(
+    this.connectionStatus.type === 'bluetooth' &&
       this.connectionStatus.deviceId
     ) {
-      try {
-        await BleClient.disconnect(this.connectionStatus.deviceId);
-      } catch (error) {
-        console.warn('[Disconnect] Erro ao desconectar BLE:', error);
-      }
-    }
+  try {
+    await BleClient.disconnect(this.connectionStatus.deviceId);
+  } catch (error) {
+    console.warn('[Disconnect] Erro ao desconectar BLE:', error);
+  }
+}
 
-    if (this.connectionStatus.type === 'usb') {
-      // Desconectar USB OTG nativo no Android
-      if (Capacitor.isNativePlatform()) {
+if (this.connectionStatus.type === 'usb') {
+  // Desconectar USB OTG nativo no Android
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await ensureUsbSerialPluginLoaded();
+      const plugin = getUsbSerialPlugin();
+      if (plugin) {
         try {
-          await ensureUsbSerialPluginLoaded();
-          const plugin = getUsbSerialPlugin();
-          if (plugin) {
-            try {
-              await this.withTimeout(
-                Promise.resolve(plugin.closeSerial()),
-                3000,
-                'USB_CLOSE_TIMEOUT',
-                '[USB OTG] Timeout em closeSerial'
-              );
-            } catch (error) {
-              if (!this.isApiMismatchError(error)) {
-                throw error;
-              }
-
-              await this.withTimeout(
-                Promise.resolve(plugin.close()),
-                3000,
-                'USB_CLOSE_TIMEOUT',
-                '[USB OTG] Timeout em close'
-              );
-            }
-            console.log('[USB OTG] ConexÃ£o fechada');
+          await this.withTimeout(
+            Promise.resolve(plugin.closeSerial()),
+            3000,
+            'USB_CLOSE_TIMEOUT',
+            '[USB OTG] Timeout em closeSerial'
+          );
+        } catch (error) {
+          if (!this.isApiMismatchError(error)) {
+            throw error;
           }
-        } catch (error) {
-          console.warn('[Disconnect] Erro ao fechar USB OTG:', error);
+
+          await this.withTimeout(
+            Promise.resolve(plugin.close()),
+            3000,
+            'USB_CLOSE_TIMEOUT',
+            '[USB OTG] Timeout em close'
+          );
         }
+        console.log('[USB OTG] ConexÃ£o fechada');
       }
-      // Desconectar Web Serial na web
-      if (this.serialPort) {
-        try {
-          await this.serialPort.close();
-        } catch (error) {
-          console.warn('[Disconnect] Erro ao fechar USB:', error);
-        }
-      }
+    } catch (error) {
+      console.warn('[Disconnect] Erro ao fechar USB OTG:', error);
     }
+  }
+  // Desconectar Web Serial na web
+  if (this.serialPort) {
+    try {
+      await this.serialPort.close();
+    } catch (error) {
+      console.warn('[Disconnect] Erro ao fechar USB:', error);
+    }
+  }
+}
 
-    this.connectionStatus = { connected: false, type: 'none' };
-    this.connectedDevice = null;
-    this.esp32IpAddress = '';
-    this.serialPort = null;
+this.connectionStatus = { connected: false, type: 'none' };
+this.connectedDevice = null;
+this.esp32IpAddress = '';
+this.serialPort = null;
 
-    this.notifyConnectionChange();
-    this.updateSupervisorStatus({
-      state: 'idle',
-      attempt: 0,
-      nextDelayMs: 0,
-      reason: 'manual_disconnect',
-      transport: 'none',
-      deviceId: undefined,
-      consecutiveHealthFailures: 0,
-    });
-    this.logSupervisor('manual_disconnect');
-    console.log('[Disconnect] Desconectado');
+this.notifyConnectionChange();
+this.updateSupervisorStatus({
+  state: 'idle',
+  attempt: 0,
+  nextDelayMs: 0,
+  reason: 'manual_disconnect',
+  transport: 'none',
+  deviceId: undefined,
+  consecutiveHealthFailures: 0,
+});
+this.logSupervisor('manual_disconnect');
+console.log('[Disconnect] Desconectado');
   }
 
   // ============================================
@@ -3132,43 +3236,43 @@ class ESP32CommunicationService {
    * Formato compatÃ­vel com firmware: {"action":"release_drink","orderId":"...","mlPerUnit":...,"quantity":...,"sizeLabel":"..."}
    */
   async dispenseDrink(
-    orderId: string,
-    mlPerUnit: number,
-    quantity: number = 1,
-    sizeLabel: string = 'PadrÃ£o',
-    tapId: number = 0  // ðŸ†• Multi-Tap
-  ): Promise<boolean> {
-    // ðŸ”§ CORREÃ‡ÃƒO: NÃ£o fazer JSON.stringify aqui - sendCommand jÃ¡ faz internamente
-    return this.sendCommand('release_drink', {
-      orderId,
-      mlPerUnit,
-      quantity,
-      sizeLabel,
-      tapId,
-    });
-  }
+  orderId: string,
+  mlPerUnit: number,
+  quantity: number = 1,
+  sizeLabel: string = 'PadrÃ£o',
+  tapId: number = 0  // ðŸ†• Multi-Tap
+): Promise < boolean > {
+  // ðŸ”§ CORREÃ‡ÃƒO: NÃ£o fazer JSON.stringify aqui - sendCommand jÃ¡ faz internamente
+  return this.sendCommand('release_drink', {
+    orderId,
+    mlPerUnit,
+    quantity,
+    sizeLabel,
+    tapId,
+  });
+}
 
   /**
    * Ping/Pong para testar conexÃ£o
    * Formato compatÃ­vel com firmware: {"action":"ping"}
    */
-  async ping(): Promise<boolean> {
-    // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado (ele detecta tipo de conexÃ£o automaticamente)
-    return this.sendCommand('ping');
-  }
+  async ping(): Promise < boolean > {
+  // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado (ele detecta tipo de conexÃ£o automaticamente)
+  return this.sendCommand('ping');
+}
 
   /**
    * @deprecated NÃ£o implementado no firmware atual. Reservado para expansÃ£o futura.
    */
   async printReceipt(_receiptData: {
-    orderId: string;
-    items: Array<{ name: string; quantity: number; price: number }>;
-    total: number;
-    paymentMethod: string;
-  }): Promise<boolean> {
-    console.warn('[ESP32] printReceipt nÃ£o estÃ¡ implementado no firmware');
-    return false;
-  }
+  orderId: string;
+  items: Array<{ name: string; quantity: number; price: number }>;
+  total: number;
+  paymentMethod: string;
+}): Promise < boolean > {
+  console.warn('[ESP32] printReceipt nÃ£o estÃ¡ implementado no firmware');
+  return false;
+}
 
   // ============================================
   // NOVOS MÃ‰TODOS (Firmware v2.1+)
@@ -3178,22 +3282,22 @@ class ESP32CommunicationService {
    * Salvar calibraÃ§Ã£o no NVS do ESP32
    * ðŸ†• Multi-Tap: tapId opcional (default 0)
    */
-  async saveCalibration(pulsosPorLitro: number, mlPorSegundo: number, tapId: number = 0): Promise<boolean> {
-    // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado
-    return this.sendCommand('save_calibration', {
-      pulsos_por_litro: pulsosPorLitro,
-      ml_por_segundo: mlPorSegundo,
-      tapId,
-    });
-  }
+  async saveCalibration(pulsosPorLitro: number, mlPorSegundo: number, tapId: number = 0): Promise < boolean > {
+  // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado
+  return this.sendCommand('save_calibration', {
+    pulsos_por_litro: pulsosPorLitro,
+    ml_por_segundo: mlPorSegundo,
+    tapId,
+  });
+}
 
   /**
    * Obter configuraÃ§Ãµes atuais do ESP32
    */
-  async getSettings(): Promise<boolean> {
-    // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado
-    return this.sendCommand('get_settings');
-  }
+  async getSettings(): Promise < boolean > {
+  // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado
+  return this.sendCommand('get_settings');
+}
 
   // ðŸ”§ v4.0.6: startWifiPortal() e resetWifi() REMOVIDOS
   // Essas funÃ§Ãµes foram removidas do firmware v3.0+ (Access Point fixo)
@@ -3202,26 +3306,26 @@ class ESP32CommunicationService {
   /**
    * Obter status do ESP32
    */
-  async getESP32Status(): Promise<object | null> {
-    if (this.connectionStatus.type === 'wifi' && this.esp32IpAddress) {
-      try {
-        const response = await fetch(`http://${this.esp32IpAddress}/status`);
-        if (response.ok) {
-          return response.json();
-        }
-      } catch (error) {
-        console.error('[Status] Erro:', error);
-      }
+  async getESP32Status(): Promise < object | null > {
+  if(this.connectionStatus.type === 'wifi' && this.esp32IpAddress) {
+  try {
+    const response = await fetch(`http://${this.esp32IpAddress}/status`);
+    if (response.ok) {
+      return response.json();
     }
+  } catch (error) {
+    console.error('[Status] Erro:', error);
+  }
+}
 
-    // Para Serial/Bluetooth, enviar ping e aguardar pong
-    if (this.connectionStatus.type === 'bluetooth' || this.connectionStatus.type === 'usb') {
-      await this.ping();
-      // Nota: Resposta virÃ¡ via callback ou leitura assÃ­ncrona
-      return { connected: true, type: this.connectionStatus.type };
-    }
+// Para Serial/Bluetooth, enviar ping e aguardar pong
+if (this.connectionStatus.type === 'bluetooth' || this.connectionStatus.type === 'usb') {
+  await this.ping();
+  // Nota: Resposta virÃ¡ via callback ou leitura assÃ­ncrona
+  return { connected: true, type: this.connectionStatus.type };
+}
 
-    return null;
+return null;
   }
 
   /**
@@ -3229,44 +3333,44 @@ class ESP32CommunicationService {
    * Formato compatÃ­vel com firmware: {"action":"calibrate","duration":5000,"tapId":0}
    * ðŸ†• Multi-Tap: tapId opcional (default 0)
    */
-  async calibratePump(durationMs: number = 5000, tapId: number = 0): Promise<boolean> {
-    // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado + suporte multi-tap
-    return this.sendCommand('calibrate', { duration: durationMs, tapId });
-  }
+  async calibratePump(durationMs: number = 5000, tapId: number = 0): Promise < boolean > {
+  // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado + suporte multi-tap
+  return this.sendCommand('calibrate', { duration: durationMs, tapId });
+}
 
   /**
    * Beep/Alerta sonoro (precisa ser implementado no firmware)
    */
-  async beep(times: number = 1): Promise<boolean> {
-    // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado
-    return this.sendCommand('beep', { times });
-  }
+  async beep(times: number = 1): Promise < boolean > {
+  // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado
+  return this.sendCommand('beep', { times });
+}
 
   /**
    * Configurar multiplas torneiras â€” envia set_config com pins + calibration
    * Firmware deve responder com: {"type":"config_applied","applied":true,"tapsVersion":X}
    * Persiste no NVS do ESP32 e aplica imediatamente.
    */
-  async configureMultipleTaps(taps: TapConfig[]): Promise<boolean> {
-    console.log('[ESP32] Configurando multiplas torneiras:', taps.length);
+  async configureMultipleTaps(taps: TapConfig[]): Promise < boolean > {
+  console.log('[ESP32] Configurando multiplas torneiras:', taps.length);
 
-    // Mapear camelCase (Kiosk/Admin) -> snake_case (Firmware)
-    const mappedTaps = taps.map(tap => {
-      const cal = tap.calibration as any;
-      const pulsosPorLitro = cal?.pulsesPerLiter ??
-        (cal?.mlPerPulse ? Math.round(1000 / cal.mlPerPulse) : undefined);
+  // Mapear camelCase (Kiosk/Admin) -> snake_case (Firmware)
+  const mappedTaps = taps.map(tap => {
+    const cal = tap.calibration as any;
+    const pulsosPorLitro = cal?.pulsesPerLiter ??
+      (cal?.mlPerPulse ? Math.round(1000 / cal.mlPerPulse) : undefined);
 
-      return {
-        id: tap.id,
-        valve_pin: tap.valvePin ?? (tap as any).valve_pin,
-        sensor_pin: tap.sensorPin ?? (tap as any).sensor_pin,
-        pulsos_por_litro: pulsosPorLitro,
-        ml_por_segundo: cal?.mlPerSecond ?? cal?.flowRate,
-      };
-    });
+    return {
+      id: tap.id,
+      valve_pin: tap.valvePin ?? (tap as any).valve_pin,
+      sensor_pin: tap.sensorPin ?? (tap as any).sensor_pin,
+      pulsos_por_litro: pulsosPorLitro,
+      ml_por_segundo: cal?.mlPerSecond ?? cal?.flowRate,
+    };
+  });
 
-    return this.sendCommand('set_config', { taps: mappedTaps });
-  }
+  return this.sendCommand('set_config', { taps: mappedTaps });
+}
 }
 
 // Singleton
