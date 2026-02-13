@@ -1,89 +1,18 @@
 
 [1m[46m RUN [49m[22m [36mv4.0.17 [39m[90md:/Open-Kiosk-App[39m
 
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-06: detecção kiosk por rotas explícitas[2m > [22mdeve detectar rotas kiosk corretamente[32m 2[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-06: detecção kiosk por rotas explícitas[2m > [22mdeve NÃO detectar rotas admin como kiosk[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-06: detecção kiosk por rotas explícitas[2m > [22mrota desconhecida NÃO deve ser kiosk (fail-safe)[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-08: back button gated por isKiosk[2m > [22mdeve bloquear back button em modo kiosk nativo[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-08: back button gated por isKiosk[2m > [22mNÃO deve bloquear em modo admin nativo[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-08: back button gated por isKiosk[2m > [22mNÃO deve bloquear em web (não nativo)[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-14: reconnect backoff parameters[2m > [22mbase delay deve ser >= 2s para evitar storms[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-14: reconnect backoff parameters[2m > [22mpersistent failure deve ser <= 10 tentativas[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-14: reconnect backoff parameters[2m > [22mprogressão exponencial deve atingir max em ~6 tentativas[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-17: state machine de dispense status[2m > [22mdeve permitir pending → dispensing[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-17: state machine de dispense status[2m > [22mdeve permitir dispensing → dispensed[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-17: state machine de dispense status[2m > [22mdeve permitir dispensing → failed_dispense[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-17: state machine de dispense status[2m > [22mdeve bloquear pending → dispensed (skip)[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-17: state machine de dispense status[2m > [22mdeve bloquear dispensed → dispensing (rollback)[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-17: state machine de dispense status[2m > [22mdeve bloquear transições de estados terminais[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-07: pong handler processa finishTypes e taps[2m > [22mdeve extrair finishTypes do pong[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-07: pong handler processa finishTypes e taps[2m > [22mdeve extrair taps config do pong[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-07: pong handler processa finishTypes e taps[2m > [22mnão deve processar dados de tipos não-pong[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-16: network security config cobre IPs dinâmicos[2m > [22mbase-config cleartext deve ser true para IoT local[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase2-fixes.test.ts[2m > [22mKIO-16: network security config cobre IPs dinâmicos[2m > [22mdomínios Firebase devem forçar HTTPS[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-02: finishPaymentFlow dispense guard[2m > [22mdeve chamar onComplete quando dispense sucede[32m 3[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-02: finishPaymentFlow dispense guard[2m > [22mNÃO deve chamar onComplete quando dispense falha (P0 critical)[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-02: finishPaymentFlow dispense guard[2m > [22mretry de dispense chama onComplete somente se succeed[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-02: ProcessingStage type validation[2m > [22mdispense_failed é um estágio válido[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-03/04: PagBank cancelamento remoto[2m > [22mcancelPagBankPayment chama Cloud Function com ids corretos[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-03/04: PagBank cancelamento remoto[2m > [22mretorna missing_ids se paymentId vazio[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-03/04: PagBank cancelamento remoto[2m > [22mbloqueia entrega se cancelRequested=true no snapshot do pagamento[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-03/04: PagBank cancelamento remoto[2m > [22mpermite entrega se cancelRequested=false/undefined[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-18: createPayment idempotência[2m > [22mretorna pagamento existente quando orderId já existe com status pending[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-18: createPayment idempotência[2m > [22mretorna pagamento existente quando orderId já existe com status paid[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-18: createPayment idempotência[2m > [22mcria novo pagamento quando orderId não existe[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-18: createPayment idempotência[2m > [22mcria novo pagamento quando orderId existia mas em status terminal (canceled/failed)[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase0-fixes.test.ts[2m > [22mKIO-18: createPayment idempotência[2m > [22mchamadas duplicadas com mesmo orderId retornam mesmo paymentId[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mADM-01: PermissionGuard fail-closed[2m > [22mdeve bloquear acesso quando contexto é null (fail-closed)[32m 2[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mADM-01: PermissionGuard fail-closed[2m > [22mdeve renderizar children quando contexto existe e permissão é válida[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mADM-01: PermissionGuard fail-closed[2m > [22mdeve redirecionar quando permissão é negada[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mADM-01: PermissionGuard fail-closed[2m > [22mdeve renderizar sem permissão requerida e contexto disponível[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-09: pong handler processa dados[2m > [22mdeve processar dados do pong mesmo com throttle de log[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-09: pong handler processa dados[2m > [22mdeve processar E logar quando tempo suficiente passou[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-09: pong handler processa dados[2m > [22mnão deve processar dados para tipos não-pong[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-10: updateConnectionStatus usa storeSettings atualizado[2m > [22mdeve usar intervalo customizado do storeSettings[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-10: updateConnectionStatus usa storeSettings atualizado[2m > [22mdeve usar fallback de 60s quando settings é null[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-10: updateConnectionStatus usa storeSettings atualizado[2m > [22mnão deve iniciar heartbeat quando desconectado[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-11: sync items esgotados vão para DLQ[2m > [22mdeve mover item para DLQ quando atinge MAX_RETRY_COUNT[32m 2[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-11: sync items esgotados vão para DLQ[2m > [22mdeve manter item para retry quando abaixo do limite[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-11: sync items esgotados vão para DLQ[2m > [22mdeve processar mix de itens retry e DLQ corretamente[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-15: sendWifiCommand timeout com AbortController[2m > [22mdeve retornar false com errorType no_ip sem IP configurado[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-15: sendWifiCommand timeout com AbortController[2m > [22mdeve retornar true quando fetch sucede[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-15: sendWifiCommand timeout com AbortController[2m > [22mdeve identificar AbortError em timeout[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-15: sendWifiCommand timeout com AbortController[2m > [22mdeve tratar erro de rede genérico[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-15: AbortController integration[2m > [22mAbortController deve gerar AbortError ao ser abortado[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-15: AbortController integration[2m > [22mtimeout de 8s deve ser configurado no controller[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mKIO-13: disconnect não chama serial.disconnect() duplicado[2m > [22mdeve chamar disconnect apenas uma vez via service[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mAND-01: exitLockTask com PIN[2m > [22mdeve rejeitar PIN incorreto[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mAND-01: exitLockTask com PIN[2m > [22mdeve rejeitar PIN vazio[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mAND-01: exitLockTask com PIN[2m > [22mdeve aceitar PIN correto[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mAND-02: cleartext traffic policy[2m > [22mdeve permitir cleartext apenas para IPs locais[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mAND-03: credenciais via environment/config[2m > [22mFirebase config deve vir de variáveis de ambiente VITE_*[32m 1[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mAND-03: credenciais via environment/config[2m > [22m.env.local.json deve estar coberto pelo .gitignore pattern .env.*[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mADM-03/05: cascade delete subcollections[2m > [22mdeve deletar todas as subcoleções conhecidas[32m 0[2mms[22m[39m
- [32m✓[39m src/__tests__/phase1-fixes.test.ts[2m > [22mADM-03/05: cascade delete subcollections[2m > [22mdeve incluir wastageEvents e maintenanceLogs na cascata[32m 0[2mms[22m[39m
+ [32m✓[39m src/__tests__/phase0-fixes.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m src/__tests__/phase2-fixes.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m src/__tests__/phase1-fixes.test.ts [2m([22m[2m28 tests[22m[2m)[22m[32m 27[2mms[22m[39m
 
 [2m Test Files [22m [1m[32m3 passed[39m[22m[90m (3)[39m
 [2m      Tests [22m [1m[32m61 passed[39m[22m[90m (61)[39m
-[2m   Start at [22m 18:50:51
-[2m   Duration [22m 1.27s[2m (transform 274ms, setup 868ms, import 246ms, tests 38ms, environment 1.93s)[22m
+[2m   Start at [22m 03:59:53
+[2m   Duration [22m 3.93s[2m (transform 551ms, setup 2.28s, import 337ms, tests 65ms, environment 7.40s)[22m
+
 
 
 STDERR:
 
-[31m⎯⎯⎯⎯⎯⎯[39m[1m[41m Unhandled Error [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
-[31m[1mError[22m: Cannot find environment for d:/Open-Kiosk-App/src/__tests__/phase1-fixes.test.ts[39m
-[90m [2m❯[22m getModuleGraph node_modules/@vitest/ui/dist/reporter.js:[2m487:9[22m[39m
-[90m [2m❯[22m node_modules/@vitest/ui/dist/reporter.js:[2m594:59[22m[39m
-[90m [2m❯[22m HTMLReporter.onTestRunEnd node_modules/@vitest/ui/dist/reporter.js:[2m588:35[22m[39m
-[90m [2m❯[22m node_modules/vitest/dist/chunks/cli-api.Cx2DW4Bc.js:[2m12959:56[22m[39m
-[90m [2m❯[22m Vitest.report node_modules/vitest/dist/chunks/cli-api.Cx2DW4Bc.js:[2m12959:36[22m[39m
-[90m [2m❯[22m TestRun.end node_modules/vitest/dist/chunks/cli-api.Cx2DW4Bc.js:[2m11793:21[22m[39m
-[90m [2m❯[22m node_modules/vitest/dist/chunks/cli-api.Cx2DW4Bc.js:[2m12612:26[22m[39m
-[90m [2m❯[22m node_modules/vitest/dist/chunks/cli-api.Cx2DW4Bc.js:[2m12622:11[22m[39m
 
-
-
-
-
-EXIT: 1
+EXIT_CODE: 0

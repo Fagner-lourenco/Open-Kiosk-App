@@ -106,7 +106,7 @@ describe('salesService', () => {
         20,
         'BRL',
         'ORDER-001',
-        'pix',
+        'pix_qr',
         'store-1'
       );
       
@@ -121,7 +121,7 @@ describe('salesService', () => {
         20,
         'BRL',
         'ORDER-002',
-        'credit_card',
+        'credit_card' as const,
         'store-1'
       );
       
@@ -134,7 +134,7 @@ describe('salesService', () => {
         20,
         'BRL',
         'ORDER-003',
-        'pix',
+        'pix_qr',
         'store-1'
       );
       
@@ -147,7 +147,7 @@ describe('salesService', () => {
         20,
         'BRL',
         'ORDER-004',
-        'debit_card',
+        'debit_card' as const,
         'store-1'
       );
       
@@ -162,7 +162,7 @@ describe('salesService', () => {
         20,
         'BRL',
         'ORDER-005',
-        'pix',
+        'pix_qr',
         'store-1'
       );
       
@@ -177,7 +177,7 @@ describe('salesService', () => {
         20,
         'BRL',
         'ORDER-006',
-        'pix',
+        'pix_qr',
         'custom-store-id'
       );
       
@@ -208,6 +208,9 @@ describe('salesService', () => {
         data: () => ({
           id: 'drink-1',
           title: 'Beer',
+          stock: 0,
+          price: 10,
+          inStock: true,
           isDrink: true,
           totalMlAvailable: 2000,
         }),
@@ -218,7 +221,7 @@ describe('salesService', () => {
         10,
         'BRL',
         'ORDER-007',
-        'pix',
+        'pix_qr',
         'store-1'
       );
       
@@ -229,7 +232,7 @@ describe('salesService', () => {
       mockTransaction.get.mockResolvedValueOnce({
         exists: () => false,
         data: () => null,
-      });
+      } as any);
 
       await expect(
         salesService.recordSaleAndUpdateStock(
@@ -237,7 +240,7 @@ describe('salesService', () => {
           20,
           'BRL',
           'ORDER-008',
-          'pix',
+          'pix_qr',
           'store-1'
         )
       ).rejects.toThrow('not found');
@@ -250,6 +253,8 @@ describe('salesService', () => {
           id: 'prod-1',
           title: 'Test Product',
           stock: 1, // Estoque insuficiente
+          price: 10,
+          inStock: true,
           isDrink: false,
         }),
       });
@@ -274,7 +279,7 @@ describe('salesService', () => {
           100,
           'BRL',
           'ORDER-009',
-          'pix',
+          'pix_qr',
           'store-1'
         )
       ).rejects.toThrow('insuficiente');

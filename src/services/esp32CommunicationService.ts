@@ -7,18 +7,31 @@ import { TapConfig } from '@/types/store';
 // Plugin USB Serial para Android (capacitor-usb-serial-plugin)
 // ImportaÃ§Ã£o dinÃ¢mica para nÃ£o quebrar na web
 let UsbSerial: any = null;
-const loadUsbSerialPlugin = async () => {
-  if (Capacitor.isNativePlatform() && !UsbSerial) {
-    try {
-      const module = await import('capacitor-usb-serial-plugin');
+let usbSerialLoadPromise: Promise<void> | null = null;
+const ensureUsbSerialPluginLoaded = async (): Promise<void> => {
+  if (!Capacitor.isNativePlatform() || UsbSerial) {
+    return;
+  }
+
+  if (usbSerialLoadPromise) {
+    return usbSerialLoadPromise;
+  }
+
+  usbSerialLoadPromise = import('capacitor-usb-serial-plugin')
+    .then((module) => {
       UsbSerial = module.UsbSerial;
       console.log('[ESP32] Plugin USB Serial carregado com sucesso');
-    } catch (error) {
+    })
+    .catch((error) => {
       console.warn('[ESP32] Plugin USB Serial nÃ£o disponÃ­vel:', error);
-    }
-  }
-  return UsbSerial;
+    })
+    .finally(() => {
+      usbSerialLoadPromise = null;
+    });
+
+  return usbSerialLoadPromise;
 };
+const getUsbSerialPlugin = () => UsbSerial;
 
 type USBPluginListenerHandle = { remove: () => Promise<void> };
 
@@ -223,6 +236,10 @@ class ESP32CommunicationService {
   private nativeUsbReadCallbackRegistered: boolean = false;
   private nativeUsbConnectPromise: Promise<boolean> | null = null;
   private lastNativeUsbAttachAt: number = 0;
+  private connectionOrder: ConnectionType[] = ['usb', 'wifi', 'bluetooth'];
+  private usbPollTimer: ReturnType<typeof setInterval> | null = null;
+  private lastUsbPollDeviceCount: number = 0;
+  private earlyUsbInitDone: boolean = false;
 
   // ============================================
   // UTILITÃRIOS
@@ -390,23 +407,65 @@ class ESP32CommunicationService {
     console.log('[USB OTG][devices]', JSON.stringify(payload));
   }
 
-  private async addNativeUSBListener(
-    plugin: any,
+  /**
+   * Registra listener USB via caminho SÍNCRONO do Capacitor (window.Capacitor.addListener).
+   * Isso bypassa o proxy ESM assíncrono de registerPlugin() que causa race conditions.
+   * O JSExport.java auto-gera este caminho, que chama cap.nativeCallback diretamente.
+   */
+  private addNativeUSBListenerSync(
     eventName: string,
     listener: (payload: any) => void
-  ): Promise<USBPluginListenerHandle | null> {
-    if (!plugin || typeof plugin.addListener !== 'function') return null;
-
+  ): USBPluginListenerHandle | null {
     try {
-      const maybeHandle = plugin.addListener(eventName, listener);
-      const handle = await Promise.resolve(maybeHandle);
-      if (handle && typeof handle.remove === 'function') {
-        return handle as USBPluginListenerHandle;
+      const cap = (window as any).Capacitor;
+      if (!cap) {
+        console.warn('[USB OTG] window.Capacitor não disponível');
+        return null;
       }
+
+      // Caminho A (SÍNCRONO): window.Capacitor.addListener('UsbSerial', eventName, callback)
+      // Este é o caminho gerado pelo JSExport.java que chama cap.nativeCallback() diretamente
+      if (typeof cap.addListener === 'function') {
+        const callbackId = cap.addListener('UsbSerial', eventName, listener);
+        console.log(`[USB OTG] Listener "${eventName}" registrado via Capacitor.addListener (sync), callbackId:`, callbackId);
+        return {
+          remove: async () => {
+            try {
+              if (typeof cap.removeListener === 'function') {
+                cap.removeListener('UsbSerial', callbackId);
+              }
+            } catch (e) {
+              console.warn(`[USB OTG] Erro ao remover listener "${eventName}":`, e);
+            }
+          }
+        };
+      }
+
+      // Fallback: tentar via window.Capacitor.Plugins.UsbSerial.addListener
+      const pluginProxy = cap.Plugins?.UsbSerial;
+      if (pluginProxy && typeof pluginProxy.addListener === 'function') {
+        const result = pluginProxy.addListener(eventName, listener);
+        console.log(`[USB OTG] Listener "${eventName}" registrado via Capacitor.Plugins.UsbSerial`);
+        return {
+          remove: async () => {
+            try {
+              const handle = await Promise.resolve(result);
+              if (handle && typeof handle.remove === 'function') {
+                await handle.remove();
+              }
+            } catch (e) {
+              console.warn(`[USB OTG] Erro ao remover listener "${eventName}":`, e);
+            }
+          }
+        };
+      }
+
+      console.warn(`[USB OTG] Nenhum caminho de registro disponível para "${eventName}"`);
+      return null;
     } catch (error) {
       console.warn(`[USB OTG] Falha ao registrar listener "${eventName}":`, error);
+      return null;
     }
-    return null;
   }
 
   private handleNativeUSBChunk(chunk: string): void {
@@ -455,37 +514,67 @@ class ESP32CommunicationService {
     }
   }
 
-  private async ensureNativeUSBPluginListeners(plugin: any): Promise<void> {
-    if (!this.isAndroid() || !plugin || this.nativeUsbListenersReady) return;
-    this.nativeUsbListenersReady = true;
+  private async ensureNativeUSBPluginListeners(plugin?: any): Promise<void> {
+    if (!this.isAndroid() || this.nativeUsbListenersReady) return;
 
-    const attachedHandle = await this.addNativeUSBListener(plugin, 'attached', (payload: any) => {
+    // Verificar se window.Capacitor está disponível (necessário para caminho síncrono)
+    const cap = (window as any).Capacitor;
+    if (!cap) {
+      console.warn('[USB] window.Capacitor não disponível — adiando registro de listeners');
+      return;
+    }
+
+    this.nativeUsbListenersReady = true;
+    console.log('[USB] Registrando listeners nativos via caminho SÍNCRONO (attached/detached/data/error)...');
+
+    // Diagnóstico: listar PluginHeaders disponíveis
+    try {
+      const headers = cap.PluginHeaders;
+      const usbHeader = headers?.find?.((h: any) => h.name === 'UsbSerial');
+      console.log('[USB] PluginHeaders UsbSerial:', JSON.stringify(usbHeader ?? 'NÃO ENCONTRADO'));
+      console.log('[USB] Capacitor.Plugins.UsbSerial disponível:', !!cap.Plugins?.UsbSerial);
+      console.log('[USB] Capacitor.addListener disponível:', typeof cap.addListener);
+    } catch (e) {
+      console.warn('[USB] Erro ao verificar PluginHeaders:', e);
+    }
+
+    const attachedHandle = this.addNativeUSBListenerSync('attached', (payload: any) => {
       const device = this.normalizeNativeUSBDevice(payload);
-      console.log('[USB OTG] EVENT attached:', JSON.stringify(device ?? payload));
+      console.log('[USB] attached — dispositivo detectado:', JSON.stringify(device ?? payload));
 
       const now = Date.now();
       if (now - this.lastNativeUsbAttachAt < 1200) return;
       this.lastNativeUsbAttachAt = now;
 
-      if (!this.connectionStatus.connected || this.connectionStatus.type !== 'usb') {
-        void this.connectUSBNative(USB_NATIVE_CONNECT_TIMEOUT_MS).catch((error) => {
-          console.warn('[USB OTG] Auto-connect apÃ³s attach falhou:', error);
-        });
-      }
+      // Promover USB: desconectar transporte inferior (BLE/WiFi) e conectar USB
+      void this.promoteUSBTransport().catch((error) => {
+        console.warn('[USB] Auto-connect após attach falhou:', error);
+      });
     });
-    if (attachedHandle) this.nativeUsbListenerHandles.push(attachedHandle);
+    if (attachedHandle) {
+      this.nativeUsbListenerHandles.push(attachedHandle);
+      console.log('[USB] ✅ Listener "attached" registrado com sucesso (SYNC)');
+    } else {
+      console.warn('[USB] ⚠️ Falha ao registrar listener "attached"');
+    }
 
-    const detachedHandle = await this.addNativeUSBListener(plugin, 'detached', (payload: any) => {
+    const detachedHandle = this.addNativeUSBListenerSync('detached', (payload: any) => {
       const device = this.normalizeNativeUSBDevice(payload);
-      console.log('[USB OTG] EVENT detached:', JSON.stringify(device ?? payload));
+      console.log('[USB] detached — dispositivo removido:', JSON.stringify(device ?? payload));
 
       if (this.connectionStatus.type === 'usb' && this.connectionStatus.connected) {
+        console.log('[ESP32Supervisor] transport_switch — USB desconectado, iniciando fallback');
         this.handleConnectionDropped('usb_native_detached');
       }
     });
-    if (detachedHandle) this.nativeUsbListenerHandles.push(detachedHandle);
+    if (detachedHandle) {
+      this.nativeUsbListenerHandles.push(detachedHandle);
+      console.log('[USB] ✅ Listener "detached" registrado com sucesso (SYNC)');
+    } else {
+      console.warn('[USB] ⚠️ Falha ao registrar listener "detached"');
+    }
 
-    const dataHandle = await this.addNativeUSBListener(plugin, 'data', (payload: any) => {
+    const dataHandle = this.addNativeUSBListenerSync('data', (payload: any) => {
       const chunk = typeof payload?.data === 'string'
         ? payload.data
         : typeof payload?.value === 'string'
@@ -495,18 +584,22 @@ class ESP32CommunicationService {
     });
     if (dataHandle) {
       this.nativeUsbListenerHandles.push(dataHandle);
-    } else if (!this.nativeUsbReadCallbackRegistered && typeof plugin.registerReadCallback === 'function') {
-      try {
-        await plugin.registerReadCallback((payload: { value: string }) => {
-          this.handleNativeUSBChunk(payload?.value || '');
-        });
-        this.nativeUsbReadCallbackRegistered = true;
-      } catch (error) {
-        console.warn('[USB OTG] registerReadCallback falhou:', error);
+    } else if (!this.nativeUsbReadCallbackRegistered) {
+      // Fallback: tentar registerReadCallback via plugin ESM se disponível
+      const esmPlugin = plugin || getUsbSerialPlugin();
+      if (esmPlugin && typeof esmPlugin.registerReadCallback === 'function') {
+        try {
+          await esmPlugin.registerReadCallback((payload: { value: string }) => {
+            this.handleNativeUSBChunk(payload?.value || '');
+          });
+          this.nativeUsbReadCallbackRegistered = true;
+        } catch (error) {
+          console.warn('[USB OTG] registerReadCallback falhou:', error);
+        }
       }
     }
 
-    const errorHandle = await this.addNativeUSBListener(plugin, 'error', (payload: any) => {
+    const errorHandle = this.addNativeUSBListenerSync('error', (payload: any) => {
       const errorMessage = typeof payload?.error === 'string'
         ? payload.error
         : JSON.stringify(payload);
@@ -517,6 +610,184 @@ class ESP32CommunicationService {
       }
     });
     if (errorHandle) this.nativeUsbListenerHandles.push(errorHandle);
+
+    console.log('[USB] Todos os listeners nativos registrados via caminho SÍNCRONO. Verificando dispositivos já conectados...');
+    // Verificar se já existe um dispositivo USB conectado que foi perdido
+    // durante a janela de race condition (antes dos listeners estarem prontos)
+    // Para isso SIM precisamos do plugin ESM (para chamar connectedDevices/getDevices)
+    const esmPlugin = plugin || getUsbSerialPlugin();
+    if (esmPlugin) {
+      void this.checkForAlreadyAttachedUSBDevice(esmPlugin);
+    } else {
+      // Plugin ESM ainda não carregou — agendar verificação quando carregar
+      ensureUsbSerialPluginLoaded()
+        .then(() => {
+          const p = getUsbSerialPlugin();
+          if (p) void this.checkForAlreadyAttachedUSBDevice(p);
+        })
+        .catch(() => { /* polling vai cobrir */ });
+    }
+  }
+
+  /**
+   * Verifica se já existe um dispositivo USB conectado após registro dos listeners.
+   * Resolve a race condition onde o evento 'attached' dispara antes dos listeners JS.
+   */
+  private async checkForAlreadyAttachedUSBDevice(plugin: any): Promise<void> {
+    try {
+      const devices = await this.fetchNativeUSBDevices(plugin);
+      if (devices.length > 0) {
+        console.log(`[USB] ${devices.length} dispositivo(s) já conectado(s) detectado(s) pós-registro de listeners`);
+        this.logNativeUSBDevices('post_listener_probe', devices);
+
+        // Se não estamos conectados via USB, tentar promover
+        if (!this.connectionStatus.connected || this.connectionStatus.type !== 'usb') {
+          console.log('[USB] Dispositivo USB encontrado — tentando promover transporte');
+          await this.promoteUSBTransport();
+        }
+      } else {
+        console.log('[USB] Nenhum dispositivo USB conectado no momento');
+      }
+    } catch (error) {
+      console.warn('[USB] Falha ao verificar dispositivos já conectados:', error);
+    }
+  }
+
+  /**
+   * Inicia polling periódico para detectar dispositivos USB.
+   * Funciona como backup dos event listeners (attached/detached) para garantir
+   * detecção mesmo quando os listeners nativos falham.
+   */
+  private startUSBDevicePolling(): void {
+    if (this.usbPollTimer || !this.isAndroid()) return;
+
+    const USB_POLL_INTERVAL_MS = 3000; // Verificar a cada 3 segundos
+    console.log(`[USB] Iniciando polling de dispositivos USB a cada ${USB_POLL_INTERVAL_MS}ms`);
+
+    this.usbPollTimer = setInterval(async () => {
+      try {
+        await ensureUsbSerialPluginLoaded();
+        const plugin = getUsbSerialPlugin();
+        if (!plugin) return;
+
+        const devices = await this.fetchNativeUSBDevices(plugin);
+        const currentCount = devices.length;
+
+        // Dispositivo USB surgiu (não existia antes)
+        if (currentCount > 0 && this.lastUsbPollDeviceCount === 0) {
+          console.log(`[USB][Poll] Dispositivo USB detectado via polling (${currentCount} dispositivo(s))`);
+          this.logNativeUSBDevices('usb_poll_detected', devices);
+
+          // Se não estamos conectados via USB, promover
+          if (!this.connectionStatus.connected || this.connectionStatus.type !== 'usb') {
+            console.log('[USB][Poll] Promovendo USB como transporte...');
+            await this.promoteUSBTransport();
+          }
+        }
+
+        // Dispositivo USB removido (existia antes mas não mais)
+        if (currentCount === 0 && this.lastUsbPollDeviceCount > 0) {
+          console.log('[USB][Poll] Dispositivo USB removido (detectado via polling)');
+          if (this.connectionStatus.type === 'usb' && this.connectionStatus.connected) {
+            this.handleConnectionDropped('usb_poll_detached');
+          }
+        }
+
+        this.lastUsbPollDeviceCount = currentCount;
+      } catch (error) {
+        // Silencioso — polling é backup, não deve poluir logs
+      }
+    }, USB_POLL_INTERVAL_MS);
+  }
+
+  /**
+   * Para o polling de dispositivos USB.
+   */
+  private stopUSBDevicePolling(): void {
+    if (this.usbPollTimer) {
+      clearInterval(this.usbPollTimer);
+      this.usbPollTimer = null;
+      console.log('[USB] Polling de dispositivos USB parado');
+    }
+  }
+
+  /**
+   * Promove USB como transporte ativo, desconectando transportes inferiores (BLE/WiFi)
+   * se necessário. Garante exclusividade: USB > BLE > WiFi.
+   */
+  private async promoteUSBTransport(): Promise<boolean> {
+    // Se já está conectado via USB, nada a fazer
+    if (this.connectionStatus.connected && this.connectionStatus.type === 'usb') {
+      console.log('[USB] Já conectado via USB, ignorando promoção');
+      return true;
+    }
+
+    // Se USB não está na lista de prioridade, não promover
+    const order = this.connectionOrder || ['usb', 'wifi', 'bluetooth'];
+    if (!order.includes('usb')) {
+      console.log('[USB] USB não está na ordem de prioridade, ignorando promoção');
+      return false;
+    }
+
+    // USB tem maior prioridade que o transporte atual?
+    const usbPriority = order.indexOf('usb');
+    const currentType = this.connectionStatus.type;
+    if (this.connectionStatus.connected && currentType !== 'none') {
+      const currentPriority = order.indexOf(currentType);
+      // currentPriority == -1 (não encontrado) ou > usbPriority → USB tem prioridade
+      if (currentPriority !== -1 && currentPriority <= usbPriority) {
+        console.log(`[USB] Transporte atual (${currentType}) tem prioridade igual ou maior que USB, ignorando`);
+        return false;
+      }
+
+      // Desconectar transporte atual para promover USB
+      console.log(`[ESP32Supervisor] transport_switch — desconectando ${currentType} para promover USB`);
+      this.manualDisconnectRequested = false; // Não é manual, é promoção
+      await this.disconnectCurrentTransportOnly();
+    }
+
+    try {
+      const success = await this.connectUSBNative(USB_NATIVE_CONNECT_TIMEOUT_MS);
+      if (success) {
+        console.log('[USB] connect_success — USB promovido como transporte ativo');
+        this.logSupervisor('transport_switch', { from: currentType, to: 'usb', reason: 'usb_promotion' });
+        return true;
+      }
+      console.warn('[USB] connect_fail — falha ao conectar USB, mantendo transporte anterior');
+      return false;
+    } catch (error) {
+      console.warn('[USB] connect_fail — erro ao conectar USB:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Desconecta o transporte atual sem marcar como disconnect manual.
+   * Usado internamente para promoção de transporte (ex: BLE→USB).
+   */
+  private async disconnectCurrentTransportOnly(): Promise<void> {
+    this.stopHeartbeat();
+    this.stopSupervisorHealthCheck();
+
+    if (
+      this.connectionStatus.type === 'bluetooth' &&
+      this.connectionStatus.deviceId
+    ) {
+      try {
+        await BleClient.disconnect(this.connectionStatus.deviceId);
+        console.log('[ESP32Supervisor] BLE desconectado para promoção de transporte');
+      } catch (error) {
+        console.warn('[ESP32Supervisor] Erro ao desconectar BLE para promoção:', error);
+      }
+    }
+
+    if (this.connectionStatus.type === 'wifi') {
+      console.log('[ESP32Supervisor] WiFi desconectado para promoção de transporte');
+    }
+
+    this.connectionStatus = { connected: false, type: 'none' };
+    this.connectedDevice = null;
+    this.notifyConnectionChange();
   }
 
   private async fetchNativeUSBDevices(plugin: any): Promise<NativeUSBDeviceDescriptor[]> {
@@ -553,6 +824,40 @@ class ESP32CommunicationService {
 
   isWeb(): boolean {
     return Capacitor.getPlatform() === 'web';
+  }
+
+  /**
+   * Inicialização precoce: registra listeners USB nativos ANTES do React montar.
+   * Chamado imediatamente quando o singleton é criado (module load time).
+   * Isso garante que eventos 'attached'/'detached' do plugin nativo sejam capturados
+   * mesmo se dispararem antes do ESP32Context montar.
+   */
+  initEarlyUSBListeners(): void {
+    if (this.earlyUsbInitDone || !this.isAndroid()) return;
+    this.earlyUsbInitDone = true;
+
+    console.log('[USB] Inicialização precoce: registrando listeners USB via caminho SÍNCRONO...');
+
+    // CRÍTICO: NÃO esperar ensureUsbSerialPluginLoaded()!
+    // Registrar listeners via window.Capacitor.addListener DIRETAMENTE.
+    // Isso funciona porque o JSExport auto-gera os bindings síncronos
+    // que já estão disponíveis quando o WebView carrega.
+    try {
+      // ensureNativeUSBPluginListeners agora usa window.Capacitor.addListener (sync)
+      // e NÃO requer o plugin ESM para registrar listeners
+      void this.ensureNativeUSBPluginListeners();
+      console.log('[USB] ✅ Listeners USB registrados na inicialização precoce (SYNC)');
+    } catch (error) {
+      console.warn('[USB] Falha na inicialização precoce:', error);
+    }
+
+    // Iniciar polling como backup — sempre, independente dos listeners
+    this.startUSBDevicePolling();
+
+    // Carregar plugin ESM em background (necessário para connectedDevices, open, write, etc.)
+    ensureUsbSerialPluginLoaded().catch((error) => {
+      console.warn('[USB] Falha ao carregar plugin ESM em background:', error);
+    });
   }
 
   // ============================================
@@ -686,13 +991,16 @@ class ESP32CommunicationService {
     return this.supervisorStatus;
   }
 
+  /**
+   * Define a ordem de prioridade de conexão usada pelo supervisor.
+   */
+  setConnectionOrder(order: ConnectionType[]): void {
+    this.connectionOrder = order;
+    console.log('[Supervisor] connectionOrder atualizado:', order);
+  }
+
   activateConnectionSupervisor(autoReconnect: boolean = true): void {
     this.ensureSerialInboundObserver();
-    if (this.isAndroid()) {
-      void loadUsbSerialPlugin()
-        .then((plugin) => this.ensureNativeUSBPluginListeners(plugin))
-        .catch((error) => console.warn('[USB OTG] Falha ao inicializar listeners nativos:', error));
-    }
     this.updateSupervisorStatus({ active: true });
 
     if (this.connectionStatus.connected) {
@@ -702,14 +1010,33 @@ class ESP32CommunicationService {
 
     this.stopSupervisorHealthCheck();
 
-    if (autoReconnect) {
-      this.scheduleReconnect('supervisor_activate', true);
+    if (this.isAndroid()) {
+      // CRÍTICO: Registrar listeners USB ANTES de tentar autoConnect
+      // para evitar race condition onde 'attached' dispara antes dos listeners JS
+      console.log('[ESP32Supervisor] Inicializando listeners USB nativos (caminho SÍNCRONO)...');
+      // Registrar listeners via caminho síncrono — NÃO depende do plugin ESM
+      try {
+        void this.ensureNativeUSBPluginListeners();
+        console.log('[ESP32Supervisor] Listeners USB registrados (SYNC)');
+      } catch (error) {
+        console.warn('[USB] Falha ao inicializar listeners nativos:', error);
+      }
+      // Iniciar polling USB como backup dos event listeners
+      this.startUSBDevicePolling();
+      if (autoReconnect && !this.connectionStatus.connected) {
+        this.scheduleReconnect('supervisor_activate', true);
+      }
+    } else {
+      if (autoReconnect) {
+        this.scheduleReconnect('supervisor_activate', true);
+      }
     }
   }
 
   deactivateConnectionSupervisor(reason: string = 'manual_deactivate'): void {
     this.clearSupervisorReconnectTimer();
     this.stopSupervisorHealthCheck();
+    this.stopUSBDevicePolling();
     this.resolvePendingPingWaiters(false);
     this.updateSupervisorStatus({
       active: false,
@@ -913,15 +1240,23 @@ class ESP32CommunicationService {
 
     try {
       const lastConnection = this.getLastConnection();
-      if (!lastConnection) {
-        this.logSupervisor('reconnect_missing_last_connection');
-        this.scheduleReconnect('missing_last_connection', false);
-        return false;
+
+      // 1) Tentar reconectar à última conexão conhecida
+      if (lastConnection) {
+        const success = await this.tryReconnectLastConnection(lastConnection);
+        if (success) {
+          this.logSupervisor('reconnect_attempt_success');
+          return true;
+        }
+        this.logSupervisor('reconnect_last_failed_trying_order');
+      } else {
+        this.logSupervisor('reconnect_missing_last_connection_trying_order');
       }
 
-      const success = await this.tryReconnectLastConnection(lastConnection);
-      if (success) {
-        this.logSupervisor('reconnect_attempt_success');
+      // 2) Fallback: tentar na ordem de prioridade configurada
+      const result = await this.autoConnectPreferredOrder(this.connectionOrder);
+      if (result !== 'none') {
+        this.logSupervisor('reconnect_preferred_order_success', { transport: result });
         return true;
       }
 
@@ -2006,7 +2341,8 @@ class ESP32CommunicationService {
     }
 
     try {
-      const plugin = await loadUsbSerialPlugin();
+      await ensureUsbSerialPluginLoaded();
+      const plugin = getUsbSerialPlugin();
       if (!plugin) {
         console.log('[AutoConnect USB OTG] Plugin nÃ£o disponÃ­vel');
         return false;
@@ -2046,7 +2382,14 @@ class ESP32CommunicationService {
 
     this.nativeUsbConnectPromise = (async () => {
       try {
-        const plugin = await loadUsbSerialPlugin();
+        // 🔧 PR2: Desconectar transporte anterior se estiver conectado em outro tipo
+        if (this.connectionStatus.connected && this.connectionStatus.type !== 'usb') {
+          console.log(`[USB OTG] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar USB`);
+          await this.disconnect();
+        }
+
+        await ensureUsbSerialPluginLoaded();
+        const plugin = getUsbSerialPlugin();
         if (!plugin) {
           throw new USBNativeConnectionError(
             'USB_PLUGIN_UNAVAILABLE',
@@ -2105,7 +2448,7 @@ class ESP32CommunicationService {
 
         const tempHandles: USBPluginListenerHandle[] = [];
         try {
-          const connectedHandle = await this.addNativeUSBListener(plugin, 'connected', (payload: any) => {
+          const connectedHandle = this.addNativeUSBListenerSync('connected', (payload: any) => {
             const connectedDevice = this.normalizeNativeUSBDevice(payload);
             console.log('[USB OTG] EVENT connected:', JSON.stringify(connectedDevice ?? payload));
 
@@ -2117,7 +2460,7 @@ class ESP32CommunicationService {
           });
           if (connectedHandle) tempHandles.push(connectedHandle);
 
-          const errorHandle = await this.addNativeUSBListener(plugin, 'error', (payload: any) => {
+          const errorHandle = this.addNativeUSBListenerSync('error', (payload: any) => {
             const errorMessage = typeof payload?.error === 'string'
               ? payload.error
               : JSON.stringify(payload);
@@ -2255,7 +2598,8 @@ class ESP32CommunicationService {
     }
 
     try {
-      const plugin = await loadUsbSerialPlugin();
+      await ensureUsbSerialPluginLoaded();
+      const plugin = getUsbSerialPlugin();
       if (!plugin) return [];
 
       const devices = await this.fetchNativeUSBDevices(plugin);
@@ -2282,7 +2626,8 @@ class ESP32CommunicationService {
     }
 
     try {
-      const plugin = await loadUsbSerialPlugin();
+      await ensureUsbSerialPluginLoaded();
+      const plugin = getUsbSerialPlugin();
       if (!plugin) return false;
 
       const data = typeof command === 'string'
@@ -2338,6 +2683,12 @@ class ESP32CommunicationService {
     const TIMEOUT_MS = 5000;
 
     try {
+      // 🔧 PR2: Desconectar transporte anterior se estiver conectado em outro tipo
+      if (this.connectionStatus.connected && this.connectionStatus.type !== 'wifi') {
+        console.log(`[WiFi] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar WiFi`);
+        await this.disconnect();
+      }
+
       this.esp32IpAddress = ipAddress;
 
       console.log(`[WiFi] Tentando conectar ao ESP32 em ${ipAddress}...`);
@@ -2714,7 +3065,8 @@ class ESP32CommunicationService {
       // Desconectar USB OTG nativo no Android
       if (Capacitor.isNativePlatform()) {
         try {
-          const plugin = await loadUsbSerialPlugin();
+          await ensureUsbSerialPluginLoaded();
+          const plugin = getUsbSerialPlugin();
           if (plugin) {
             try {
               await this.withTimeout(
@@ -2919,4 +3271,13 @@ class ESP32CommunicationService {
 
 // Singleton
 export const esp32Service = new ESP32CommunicationService();
+
+// Inicialização precoce: registrar listeners USB imediatamente (antes do React)
+// Isso resolve o timing issue onde eventos 'attached' disparam antes do ESP32Context montar
+try {
+  esp32Service.initEarlyUSBListeners();
+} catch (e) {
+  console.warn('[USB] Erro na inicialização precoce:', e);
+}
+
 export default esp32Service;

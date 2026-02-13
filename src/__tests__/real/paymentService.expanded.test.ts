@@ -194,7 +194,7 @@ describe('PaymentService - Expansão de Cobertura', () => {
         transactionId: 'tx-789',
         qrData: 'qr-data-mercado-pago',
         orderId: 'order-123',
-        order: { id: 'order-123', status: 'opened' },
+        order: { id: 'order-123', status: 'opened' } as any,
       };
       expect(result.qrData).toBe('qr-data-mercado-pago');
       expect(result.orderId).toBe('order-123');
@@ -360,7 +360,6 @@ describe('PaymentService - Expansão de Cobertura', () => {
       // Mock para retornar null
       const { createMercadoPagoAPI } = await import('@/services/mercadopagoAPI');
       vi.mocked(createMercadoPagoAPI).mockReturnValueOnce(null);
-
       const items = [{
         title: 'Produto Teste',
         unit_price: '10.00',
@@ -430,7 +429,8 @@ describe('PaymentService - Expansão de Cobertura', () => {
       }];
 
       // Mock para simular busca automática de terminal
-      const { createMercadoPagoAPI, getPaymentConfig } = await import('@/config/paymentGateway');
+      const { createMercadoPagoAPI } = await import('@/services/mercadopagoAPI');
+      const { getPaymentConfig } = await import('@/config/paymentGateway');
       const mockAPI = {
         listTerminals: vi.fn(async () => ({
           data: {
@@ -447,11 +447,11 @@ describe('PaymentService - Expansão de Cobertura', () => {
       vi.mocked(createMercadoPagoAPI).mockReturnValueOnce(mockAPI as any);
       vi.mocked(getPaymentConfig).mockReturnValueOnce({
         accessToken: 'test-token',
-        mode: 'test',
+        mode: 'sandbox',
         terminalId: '', // Sem terminal configurado
         pointExpirationTime: 'PT2M',
-        source: 'mock'
-      });
+        source: 'env'
+      } as any);
 
       const result = await paymentService.processMercadoPagoPoint(
         20.00,

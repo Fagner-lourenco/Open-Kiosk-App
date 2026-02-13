@@ -12,6 +12,7 @@ import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
+import { logStoreAction } from '@/services/auditService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,14 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { ConfirmDeleteDialog } from '@/components/shared/ConfirmDeleteDialog';
 import { 
   ArrowLeft,
   Store,
@@ -88,7 +82,7 @@ export function StoreDetailPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { currentFranchise, refreshStores } = useFranchise();
-  const { isSuperAdmin } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
   
   const isEditMode = searchParams.get('edit') === 'true';
   const initialTab = searchParams.get('tab') || 'details';
@@ -177,6 +171,36 @@ export function StoreDetailPage() {
         }
       );
 
+      if (user) {
+        const changedFields: string[] = [];
+        if (formData.name !== store?.name) changedFields.push('name');
+        if (formData.address !== (store?.address || '')) changedFields.push('address');
+        if (formData.phone !== (store?.phone || '')) changedFields.push('phone');
+        if (formData.email !== (store?.email || '')) changedFields.push('email');
+        if (formData.isActive !== store?.isActive) changedFields.push('isActive');
+
+        try {
+          await logStoreAction(
+            currentFranchise.id,
+            'update',
+            {
+              id: user.uid,
+              email: user.email || '',
+              name: user.displayName || undefined,
+            },
+            {
+              id: storeId,
+              name: store?.name || formData.name || storeId,
+            },
+            {
+              changedFields,
+            }
+          );
+        } catch (auditError) {
+          console.warn('[audit] Falha ao registrar atualizacao de loja:', auditError);
+        }
+      }
+
       await refreshStores();
       navigate(`/stores/${storeId}`);
     } catch (err) {
@@ -191,11 +215,32 @@ export function StoreDetailPage() {
     if (!currentFranchise || !storeId) return;
     
     setIsDeleting(true);
+    const deletedStoreName = store?.name || storeId;
 
     try {
       await deleteDoc(
         doc(db, `franchises/${currentFranchise.id}/stores/${storeId}`)
       );
+
+      if (user) {
+        try {
+          await logStoreAction(
+            currentFranchise.id,
+            'delete',
+            {
+              id: user.uid,
+              email: user.email || '',
+              name: user.displayName || undefined,
+            },
+            {
+              id: storeId,
+              name: deletedStoreName,
+            }
+          );
+        } catch (auditError) {
+          console.warn('[audit] Falha ao registrar exclusao de loja:', auditError);
+        }
+      }
 
       await refreshStores();
       navigate('/stores');
@@ -246,7 +291,7 @@ export function StoreDetailPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Link to="/stores">
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" aria-label="Voltar para lojas">
               <ArrowLeft className="h-4 w-4" />
             </Button>
           </Link>
@@ -296,52 +341,75 @@ export function StoreDetailPage() {
       )}
 
       <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList className="flex-wrap h-auto gap-1">
-          <TabsTrigger value="details">
-            <Store className="mr-2 h-4 w-4" />
-            Detalhes
-          </TabsTrigger>
-          <TabsTrigger value="products">
-            <Package className="mr-2 h-4 w-4" />
-            Produtos
-          </TabsTrigger>
-          <TabsTrigger value="inventory">
-            <Boxes className="mr-2 h-4 w-4" />
-            Inventário
-          </TabsTrigger>
-          <TabsTrigger value="orders">
-            <ShoppingCart className="mr-2 h-4 w-4" />
-            Pedidos
-          </TabsTrigger>
-          <TabsTrigger value="operations">
-            <Activity className="mr-2 h-4 w-4" />
-            Operacao
-          </TabsTrigger>
-          <TabsTrigger value="kegs">
-            <Beer className="mr-2 h-4 w-4" />
-            Barris
-          </TabsTrigger>
-          <TabsTrigger value="wastage">
-            <Droplets className="mr-2 h-4 w-4" />
-            Perdas
-          </TabsTrigger>
-          <TabsTrigger value="maintenance">
-            <Wrench className="mr-2 h-4 w-4" />
-            Manutencao
-          </TabsTrigger>
-          <TabsTrigger value="reports">
-            <BarChart3 className="mr-2 h-4 w-4" />
-            Relatórios
-          </TabsTrigger>
-          <TabsTrigger value="settings">
-            <Settings className="mr-2 h-4 w-4" />
-            Configurações
-          </TabsTrigger>
-          <TabsTrigger value="members">
-            <Users className="mr-2 h-4 w-4" />
-            Membros
-          </TabsTrigger>
-        </TabsList>
+        <div className="space-y-3">
+          <div>
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Operacao
+            </p>
+            <TabsList className="h-auto flex-wrap gap-1">
+              <TabsTrigger value="orders">
+                <ShoppingCart className="mr-2 h-4 w-4" />
+                Pedidos
+              </TabsTrigger>
+              <TabsTrigger value="operations">
+                <Activity className="mr-2 h-4 w-4" />
+                Operacao
+              </TabsTrigger>
+              <TabsTrigger value="kegs">
+                <Beer className="mr-2 h-4 w-4" />
+                Barris
+              </TabsTrigger>
+              <TabsTrigger value="wastage">
+                <Droplets className="mr-2 h-4 w-4" />
+                Perdas
+              </TabsTrigger>
+              <TabsTrigger value="maintenance">
+                <Wrench className="mr-2 h-4 w-4" />
+                Manutencao
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <div>
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Catalogo
+            </p>
+            <TabsList className="h-auto flex-wrap gap-1">
+              <TabsTrigger value="products">
+                <Package className="mr-2 h-4 w-4" />
+                Produtos
+              </TabsTrigger>
+              <TabsTrigger value="inventory">
+                <Boxes className="mr-2 h-4 w-4" />
+                Inventario
+              </TabsTrigger>
+              <TabsTrigger value="reports">
+                <BarChart3 className="mr-2 h-4 w-4" />
+                Relatorios
+              </TabsTrigger>
+            </TabsList>
+          </div>
+
+          <div>
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Gestao
+            </p>
+            <TabsList className="h-auto flex-wrap gap-1">
+              <TabsTrigger value="details">
+                <Store className="mr-2 h-4 w-4" />
+                Detalhes
+              </TabsTrigger>
+              <TabsTrigger value="members">
+                <Users className="mr-2 h-4 w-4" />
+                Membros
+              </TabsTrigger>
+              <TabsTrigger value="settings">
+                <Settings className="mr-2 h-4 w-4" />
+                Configuracoes
+              </TabsTrigger>
+            </TabsList>
+          </div>
+        </div>
 
         <TabsContent value="details" className="space-y-6 mt-6">
           {isEditMode ? (
@@ -590,40 +658,22 @@ export function StoreDetailPage() {
       </Tabs>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Excluir loja</DialogTitle>
-            <DialogDescription>
-              Tem certeza que deseja excluir a loja "{store.name}"?
-              Esta ação não pode ser desfeita e todos os dados serão perdidos.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setShowDeleteDialog(false)}
-              disabled={isDeleting}
-            >
-              Cancelar
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleDelete}
-              disabled={isDeleting}
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Excluindo...
-                </>
-              ) : (
-                'Excluir loja'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDeleteDialog
+        open={showDeleteDialog}
+        onOpenChange={setShowDeleteDialog}
+        title="Excluir loja"
+        description={
+          <>
+            Tem certeza que deseja excluir a loja "{store.name}"? Esta acao nao pode ser desfeita
+            e todos os dados relacionados (pedidos, estoque, configuracoes e membros) serao
+            perdidos.
+          </>
+        }
+        onConfirm={handleDelete}
+        isConfirming={isDeleting}
+        confirmLabel="Excluir loja"
+        confirmingLabel="Excluindo..."
+      />
     </div>
   );
 }

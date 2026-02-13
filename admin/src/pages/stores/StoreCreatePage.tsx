@@ -10,6 +10,7 @@ import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
+import { logStoreAction } from '@/services/auditService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +79,26 @@ export function StoreCreatePage() {
         storeData
       );
 
+      if (user) {
+        try {
+          await logStoreAction(
+            currentFranchise.id,
+            'create',
+            {
+              id: user.uid,
+              email: user.email || '',
+              name: user.displayName || undefined,
+            },
+            {
+              id: docRef.id,
+              name: storeData.name,
+            }
+          );
+        } catch (auditError) {
+          console.warn('[audit] Falha ao registrar criacao de loja:', auditError);
+        }
+      }
+
       await refreshStores();
       navigate(`/stores/${docRef.id}`);
     } catch (err) {
@@ -109,7 +130,7 @@ export function StoreCreatePage() {
       {/* Header */}
       <div className="flex items-center gap-4">
         <Link to="/stores">
-          <Button variant="ghost" size="icon">
+          <Button variant="ghost" size="icon" aria-label="Voltar para lojas">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>

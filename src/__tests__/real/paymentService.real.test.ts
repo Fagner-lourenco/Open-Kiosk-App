@@ -84,20 +84,27 @@ describe('PaymentService Real Tests', () => {
 
   describe('Card (Point)', () => {
     it('should process card payment via terminal', async () => {
-      const result = await paymentService.processCardPayment(120.0, 'order-456', 'terminal-1');
+      const result = await paymentService.processCardPayment(120.0, 'credit', 'order-456');
       expect(result).toBeDefined();
       expect(result.success).toBeDefined();
     });
 
     it('should fail with invalid amount', async () => {
-      const result = await paymentService.processCardPayment(-10, 'order-bad', 'terminal-1');
+      const result = await paymentService.processCardPayment(-10, 'debit', 'order-bad');
       expect(result).toBeDefined();
     });
   });
 
   describe('MercadoPago QR', () => {
     it('should create QR order', async () => {
-      const result = await paymentService.processMercadoPagoQR(50, 'order-qr', 'store-1', 'POS-01');
+      const items = [{
+        title: 'Produto Teste',
+        unit_price: '50.00',
+        quantity: 1,
+        unit_measure: 'unit',
+        total_amount: '50.00',
+      }];
+      const result = await paymentService.processMercadoPagoQR(50, items, 'store-1', 'POS-01');
       expect(result).toBeDefined();
     });
   });

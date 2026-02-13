@@ -16,7 +16,7 @@ describe('kioskModeService', () => {
 
   describe('exitKioskMode', () => {
     it('retorna true quando não é plataforma nativa', async () => {
-      const result = await exitKioskMode();
+      const result = await exitKioskMode('1234');
       expect(result).toBe(true);
     });
   });

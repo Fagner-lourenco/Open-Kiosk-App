@@ -41,12 +41,14 @@ export default function Admin() {
     }
   };
 
-  const handleAddProduct = async (newProduct: Omit<Product, "id">) => {
+  const handleAddProduct = async (newProduct: Omit<Product, "id">): Promise<string> => {
     try {
-      await addProduct(newProduct);
+      const id = await addProduct(newProduct);
       setActiveTab("products");
+      return id;
     } catch (error) {
       console.error("Error adding product:", error);
+      throw error;
     }
   };
 

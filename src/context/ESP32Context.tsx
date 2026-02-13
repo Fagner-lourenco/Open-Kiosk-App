@@ -258,9 +258,10 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
   const handleESP32Response = useCallback((response: ESP32Response) => {
     // 🔧 CORREÇÃO: Filtrar pongs repetidos (menos de 5s entre eles)
+    let skipLog = false;
     if (response.type === 'pong') {
       const now = Date.now();
-      const skipLog = now - lastPongTimeRef.current < 5000;
+      skipLog = now - lastPongTimeRef.current < 5000;
       lastPongTimeRef.current = now;
       // KIO-09 fix: removed early return — pong data (num_taps, ip, etc.) must always be processed
 
@@ -671,6 +672,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     // Verificar conexão inicial
     const initialStatus = esp32Service.getConnectionStatus();
+    // PR1: Sincronizar connectionOrder das settings com o serviço
+    const savedOrder = storeSettings?.esp32ConnectionOrder;
+    if (savedOrder && Array.isArray(savedOrder) && savedOrder.length > 0) {
+      esp32Service.setConnectionOrder(savedOrder as import('@/services/esp32CommunicationService').ConnectionType[]);
+    }
     esp32Service.activateConnectionSupervisor(autoReconnect);
     if (initialStatus.connected) {
       updateConnectionStatus(initialStatus);

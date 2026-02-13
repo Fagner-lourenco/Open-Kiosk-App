@@ -13,11 +13,15 @@
 // ============================================
 
 export interface ESP32Response {
-  type: 'pong' | 'status' | 'progress' | 'success' | 'error' | 'flow_test' | 'calibration' | 'info' | 'settings' | 'gpio_test' | 'gpio_diagnostic' | 'taps_status';
+  type: 'pong' | 'status' | 'progress' | 'success' | 'error' | 'flow_test' | 'calibration' | 'info' | 'settings' | 'gpio_test' | 'gpio_diagnostic' | 'taps_status' | 'config_applied';
   timestamp?: number;
   orderId?: string;
   stage?: string;
   message?: string;
+  // Campos de config_applied (firmware ACK)
+  error?: string;
+  applied?: boolean;
+  tapsVersion?: number;
   // Campos de progresso
   cup?: number;
   ml?: number;

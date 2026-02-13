@@ -83,9 +83,11 @@ export interface CreateNotificationInput {
 
 // Callback para listeners
 type NotificationCallback = (notifications: Notification[]) => void;
+type ErrorCallback = (error: Error) => void;
 
 class NotificationService {
   private listeners: Set<NotificationCallback> = new Set();
+  private errorListeners: Set<ErrorCallback> = new Set();
   private unsubscribe: (() => void) | null = null;
   private notifications: Notification[] = [];
   private userId: string | null = null;
@@ -117,9 +119,11 @@ class NotificationService {
     );
 
     // Query: notificações não descartadas, ordenadas por data
+    // Note: No userId filter — operational alerts from Cloud Functions
+    // (keg_low, maintenance_overdue, payment_failed) don't have a userId
+    // and should be visible to all franchise members with access.
     const q = query(
       notificationsRef,
-      where('userId', '==', this.userId),
       where('isDismissed', '==', false),
       orderBy('createdAt', 'desc'),
       limit(50)
@@ -143,6 +147,12 @@ class NotificationService {
       this.notifyListeners();
     }, (error) => {
       console.error('Error listening to notifications:', error);
+      // Se for erro de índice, para de tentar para evitar requests infinitos
+      if (error?.message?.includes('index') || error?.code === 'failed-precondition') {
+        console.warn('[NotificationService] Índice Firestore faltando. Execute: firebase deploy --only firestore:indexes');
+        this.cleanup();
+      }
+      this.notifyErrorListeners(error);
     });
   }
 
@@ -354,11 +364,30 @@ class NotificationService {
   }
 
   /**
+   * Adiciona um listener para erros
+   */
+  subscribeError(callback: ErrorCallback): () => void {
+    this.errorListeners.add(callback);
+    return () => {
+      this.errorListeners.delete(callback);
+    };
+  }
+
+  /**
    * Notifica todos os listeners
    */
   private notifyListeners() {
     this.listeners.forEach(callback => {
       callback(this.notifications);
+    });
+  }
+
+  /**
+   * Notifica listeners de erro
+   */
+  private notifyErrorListeners(error: Error) {
+    this.errorListeners.forEach(callback => {
+      callback(error);
     });
   }
 

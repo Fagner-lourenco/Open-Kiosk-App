@@ -58,11 +58,14 @@ function getRoleBadgeColor(role: string): string {
 
 function getRoleLabel(role: UserRole): string {
   const labels: Record<UserRole, string> = {
+    superadmin: 'Super Admin',
     owner: 'Proprietário',
     admin: 'Administrador',
     manager: 'Gerente',
     operator: 'Operador',
+    employee: 'Funcionário',
     technician: 'Técnico',
+    viewer: 'Visualizador',
   };
   return labels[role] || role;
 }

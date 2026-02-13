@@ -43,6 +43,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Users, Plus, Loader2, Trash2, Shield, UserPlus } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
+import { STORE_ROLE_OPTIONS, getRoleLabel } from '@/config/roles';
 
 interface StoreMember {
   id: string;
@@ -66,19 +67,12 @@ interface StoreMembersTabProps {
   storeId: string;
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  owner: 'Proprietário',
-  admin: 'Administrador',
-  manager: 'Gerente',
-  operator: 'Operador',
-  viewer: 'Visualizador',
-};
-
 const ROLE_COLORS: Record<string, string> = {
   owner: 'bg-purple-100 text-purple-800',
   admin: 'bg-blue-100 text-blue-800',
   manager: 'bg-green-100 text-green-800',
   operator: 'bg-yellow-100 text-yellow-800',
+  employee: 'bg-yellow-100 text-yellow-800',
   viewer: 'bg-gray-100 text-gray-800',
 };
 
@@ -258,7 +252,7 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
                   <div className="flex items-center gap-3">
                     <Badge className={ROLE_COLORS[member.role] || 'bg-gray-100'}>
                       <Shield className="h-3 w-3 mr-1" />
-                      {ROLE_LABELS[member.role] || member.role}
+                      {getRoleLabel(member.role)}
                     </Badge>
                     {member.id !== currentUser?.uid && (
                       <Button
@@ -324,9 +318,11 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="manager">Gerente</SelectItem>
-                      <SelectItem value="operator">Operador</SelectItem>
-                      <SelectItem value="viewer">Visualizador</SelectItem>
+                      {STORE_ROLE_OPTIONS.map((roleOption) => (
+                        <SelectItem key={roleOption.value} value={roleOption.value}>
+                          {roleOption.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

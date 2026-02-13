@@ -100,19 +100,25 @@ function PermissionGuard({
   
   // Verifica permissão única
   if (requiredPermission && !can(requiredPermission)) {
-    console.warn('[ProtectedRoute] Acesso negado - sem permissão:', requiredPermission);
+    if (import.meta.env.DEV) {
+      console.debug('[PermissionGuard] Rota protegida - sem permissão:', requiredPermission);
+    }
     return <Navigate to="/dashboard" replace />;
   }
   
   // Verifica múltiplas permissões (AND)
   if (requiredPermissions && !canAll(requiredPermissions)) {
-    console.warn('[ProtectedRoute] Acesso negado - faltam permissões:', requiredPermissions);
+    if (import.meta.env.DEV) {
+      console.debug('[PermissionGuard] Rota protegida - faltam permissões:', requiredPermissions);
+    }
     return <Navigate to="/dashboard" replace />;
   }
   
   // Verifica pelo menos uma permissão (OR)
   if (anyPermission && !canAny(anyPermission)) {
-    console.warn('[ProtectedRoute] Acesso negado - nenhuma permissão válida:', anyPermission);
+    if (import.meta.env.DEV) {
+      console.debug('[PermissionGuard] Rota protegida - nenhuma permissão válida:', anyPermission);
+    }
     return <Navigate to="/dashboard" replace />;
   }
   

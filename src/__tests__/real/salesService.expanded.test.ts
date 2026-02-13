@@ -21,6 +21,7 @@ const mockTransaction = {
   get: vi.fn(),
   set: vi.fn(),
   update: vi.fn(),
+  delete: vi.fn(),
 };
 
 vi.mock('firebase/firestore', () => ({
@@ -162,6 +163,7 @@ describe('SalesService - Expanded Tests', () => {
       isDrink: false,
       description: 'Hot coffee',
       tags: ['beverage'],
+      category: 'food',
     };
 
     const mockDrinkProduct = {
@@ -173,6 +175,8 @@ describe('SalesService - Expanded Tests', () => {
       inStock: true,
       description: 'Fresh OJ',
       tags: ['drink'],
+      category: 'drinks',
+      stock: 0,
     };
 
     const mockCartItem = {
@@ -222,7 +226,7 @@ describe('SalesService - Expanded Tests', () => {
         3.0,
         'BRL',
         'test-order-002',
-        'pix',
+        'pix_qr',
         'store-1'
       );
 
@@ -286,7 +290,7 @@ describe('SalesService - Expanded Tests', () => {
           3.0,
           'BRL',
           'test-order-005',
-          'pix',
+          'pix_qr',
           'store-1'
         )
       ).rejects.toThrow('Estoque insuficiente');
@@ -470,7 +474,7 @@ describe('SalesService - Expanded Tests', () => {
         3.0,
         'BRL',
         'test-order-013',
-        'pix',
+        'pix_qr',
         'store-1'
       );
 
@@ -505,7 +509,7 @@ describe('SalesService - Expanded Tests', () => {
           3.0,
           'BRL',
           'test-order-014',
-          'pix',
+          'pix_qr',
           'store-1'
         )
       ).rejects.toThrow('Invalid drink item');
@@ -662,7 +666,7 @@ describe('SalesService - Expanded Tests', () => {
         6.0,
         'BRL',
         'test-order-021',
-        'pix',
+        'pix_qr',
         'store-1'
       );
 
@@ -785,12 +789,12 @@ describe('SalesService - Expanded Tests', () => {
 
       const items = [
         {
-          product: { id: 'prod-1', title: 'Coffee', isDrink: false },
+          product: { id: 'prod-1', title: 'Coffee', isDrink: false, price: 5.0, description: 'Hot coffee', tags: ['beverage'], inStock: true, category: 'food', stock: 100 },
           quantity: 1,
           unitPrice: 5.0,
         },
         {
-          product: { id: 'drink-1', title: 'OJ', isDrink: true },
+          product: { id: 'drink-1', title: 'OJ', isDrink: true, price: 3.0, description: 'Fresh OJ', tags: ['drink'], inStock: true, category: 'drinks', stock: 0 },
           quantity: 1,
           unitPrice: 3.0,
           sizeKey: 'large',
@@ -798,7 +802,7 @@ describe('SalesService - Expanded Tests', () => {
           mlPerUnit: 500,
         },
         {
-          product: { id: 'drink-2', title: 'Water', isDrink: true },
+          product: { id: 'drink-2', title: 'Water', isDrink: true, price: 1.0, description: 'Water', tags: ['drink'], inStock: true, category: 'drinks', stock: 0 },
           quantity: 2,
           unitPrice: 1.0,
           sizeKey: 'small',
@@ -843,12 +847,12 @@ describe('SalesService - Expanded Tests', () => {
 
       const items = [
         {
-          product: { id: 'prod-1', title: 'Valid', isDrink: false },
+          product: { id: 'prod-1', title: 'Valid', isDrink: false, price: 5.0, description: 'Valid product', tags: [], inStock: true, category: 'food', stock: 10 },
           quantity: 1,
           unitPrice: 5.0,
         },
         {
-          product: { id: 'prod-2', title: 'Invalid', isDrink: false },
+          product: { id: 'prod-2', title: 'Invalid', isDrink: false, price: 5.0, description: 'Invalid product', tags: [], inStock: true, category: 'food', stock: 10 },
           quantity: 1,
           unitPrice: 5.0,
         },

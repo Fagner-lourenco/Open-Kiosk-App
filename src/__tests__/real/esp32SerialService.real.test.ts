@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ESP32SerialService, esp32Serial } from '@/services/esp32SerialService';
+import { esp32Serial, type ESP32Response, type ESP32Command, type ESP32MessageCallback, type ESP32RawCallback, type ESP32ConnectionCallback } from '@/services/esp32SerialService';
+import type { ConnectionType } from '@/services/esp32CommunicationService';
 
 // Mock do Web Serial API
 const mockNavigator = {
@@ -15,7 +16,7 @@ Object.defineProperty(window, 'navigator', {
 });
 
 describe('ESP32SerialService Real Tests', () => {
-  let service: ESP32SerialService;
+  let service: typeof esp32Serial;
 
   beforeEach(() => {
     // Como a classe não é exportada, vamos testar apenas as interfaces e tipos

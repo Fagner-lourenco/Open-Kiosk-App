@@ -15,10 +15,6 @@ vi.mock('@/services/firebase', () => ({
   getCurrentFranchiseId: vi.fn(() => null),
 }));
 
-vi.mock('@/lib/pathResolver', () => ({
-  isFranchiseMode: vi.fn(() => false),
-}));
-
 // Mock Firestore com mais controle
 const mockSnapshot = {
   exists: vi.fn(() => true),
@@ -35,19 +31,19 @@ const mockSnapshot = {
     updated_at: '2024-01-01T00:00:00.000Z',
   })),
   id: 'test-store-123',
-};
+} as any;
 
 const mockEmptySnapshot = {
   exists: vi.fn(() => true),
   data: vi.fn(() => ({})),
   id: 'empty-store',
-};
+} as any;
 
 const mockNonExistentSnapshot = {
   exists: vi.fn(() => false),
   data: vi.fn(() => null),
   id: 'non-existent',
-};
+} as any;
 
 const mockDocsSnapshot = {
   docs: [
@@ -78,7 +74,7 @@ const mockDocsSnapshot = {
       }),
     },
   ],
-};
+} as any;
 
 const mockActiveDocsSnapshot = {
   docs: [
@@ -94,7 +90,7 @@ const mockActiveDocsSnapshot = {
       }),
     },
   ],
-};
+} as any;
 
 vi.mock('firebase/firestore', () => ({
   collection: vi.fn(() => ({})),
@@ -110,7 +106,6 @@ vi.mock('firebase/firestore', () => ({
 import { storeService } from '@/services/storeService';
 import { getDoc, getDocs, setDoc, updateDoc, collection, doc, query, where } from 'firebase/firestore';
 import { getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
-import { isFranchiseMode } from '@/lib/pathResolver';
 
 describe('StoreService - Expanded Tests', () => {
   beforeEach(() => {
@@ -245,31 +240,19 @@ describe('StoreService - Expanded Tests', () => {
       expect(store).toBeNull();
     });
 
-    it('usa path de franchise quando em modo franchise', async () => {
-      vi.mocked(isFranchiseMode).mockReturnValueOnce(true);
+    it('usa path de franchise quando franchiseId está disponível', async () => {
       vi.mocked(getCurrentFranchiseId).mockReturnValueOnce('franchise-abc');
 
       await storeService.getStore('store-in-franchise');
 
-      expect(isFranchiseMode).toHaveBeenCalled();
       expect(getCurrentFranchiseId).toHaveBeenCalled();
     });
 
-    it('usa path legado quando não está em modo franchise', async () => {
-      vi.mocked(isFranchiseMode).mockReturnValueOnce(false);
+    it('usa franchiseId do getCurrentFranchiseId', async () => {
+      vi.mocked(getCurrentFranchiseId).mockReturnValueOnce('franchise-xyz');
 
       await storeService.getStore('legacy-store');
 
-      expect(isFranchiseMode).toHaveBeenCalled();
-    });
-
-    it('usa path legado quando franchiseId é null', async () => {
-      vi.mocked(isFranchiseMode).mockReturnValueOnce(true);
-      vi.mocked(getCurrentFranchiseId).mockReturnValueOnce(null);
-
-      await storeService.getStore('store-without-franchise');
-
-      expect(isFranchiseMode).toHaveBeenCalled();
       expect(getCurrentFranchiseId).toHaveBeenCalled();
     });
 
@@ -525,7 +508,7 @@ describe('StoreService - Expanded Tests', () => {
         })
       );
 
-      const callArgs = vi.mocked(updateDoc).mock.calls[0][1];
+      const callArgs = vi.mocked(updateDoc).mock.calls[0][1] as any;
       const updatedAt = new Date(callArgs.updated_at);
       expect(updatedAt.getTime()).toBeGreaterThanOrEqual(beforeUpdate.getTime());
       expect(updatedAt.getTime()).toBeLessThanOrEqual(afterUpdate.getTime());
@@ -537,6 +520,7 @@ describe('StoreService - Expanded Tests', () => {
         address: {
           street: 'Rua Teste',
           number: '123',
+          neighborhood: 'Centro',
           city: 'São Paulo',
           state: 'SP',
           zipCode: '01234-567',
@@ -605,7 +589,7 @@ describe('StoreService - Expanded Tests', () => {
     it('retorna array vazio quando não há lojas', async () => {
       vi.mocked(getDocs).mockResolvedValueOnce({
         docs: [],
-      });
+      } as any);
 
       const stores = await storeService.getAllStores();
       expect(stores).toEqual([]);
@@ -633,7 +617,7 @@ describe('StoreService - Expanded Tests', () => {
     it('retorna array vazio quando não há lojas ativas', async () => {
       vi.mocked(getDocs).mockResolvedValueOnce({
         docs: [],
-      });
+      } as any);
 
       const stores = await storeService.getActiveStores();
       expect(stores).toEqual([]);
@@ -704,26 +688,14 @@ describe('StoreService - Expanded Tests', () => {
       );
     });
 
-    it('usa path de franchise quando em modo franchise', async () => {
-      vi.mocked(isFranchiseMode).mockReturnValueOnce(true);
+    it('usa path de franchise quando franchiseId está disponível', async () => {
       vi.mocked(getCurrentFranchiseId).mockReturnValueOnce('franchise-xyz');
 
       vi.mocked(getDoc).mockResolvedValueOnce(mockNonExistentSnapshot);
 
       await storeService.ensureStoreExists('franchise-store', 'Franchise Store', 'BRL', '', 0);
 
-      expect(isFranchiseMode).toHaveBeenCalled();
       expect(getCurrentFranchiseId).toHaveBeenCalled();
-    });
-
-    it('usa path legado quando não está em modo franchise', async () => {
-      vi.mocked(isFranchiseMode).mockReturnValueOnce(false);
-
-      vi.mocked(getDoc).mockResolvedValueOnce(mockNonExistentSnapshot);
-
-      await storeService.ensureStoreExists('legacy-store', 'Legacy Store', 'EUR', '', 0);
-
-      expect(isFranchiseMode).toHaveBeenCalled();
     });
 
     it('propaga erro quando getDoc falha', async () => {

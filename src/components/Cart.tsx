@@ -179,7 +179,7 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
         onClose={() => updateCheckoutState(false)}
         cartItems={cartItems}
         onComplete={handleCheckoutComplete}
-        onUpdateQuantity={onUpdateQuantity}
+        onUpdateQuantity={(item: CartItem, quantity: number) => onUpdateQuantity(getCartItemKey(item.product.id, item.sizeKey), quantity)}
         onClearCart={onClearCart}
       />
     </>

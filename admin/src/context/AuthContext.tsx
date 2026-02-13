@@ -27,6 +27,7 @@ import {
 } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
+import { logLogin, logLogout } from '@/services/auditService';
 
 // Tipo de role do usuário (espelhado de shared/types/roles.ts)
 type UserRole = 'superadmin' | 'owner' | 'admin' | 'manager' | 'operator' | 'technician' | 'viewer';
@@ -67,6 +68,48 @@ interface AuthContextValue {
 // ============================================================================
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function mapAuthLoginError(error: unknown): string {
+  const authError = error as { code?: string; message?: string };
+  const code = authError?.code || '';
+  const message = authError?.message || '';
+
+  const errorMessages: Record<string, string> = {
+    'auth/invalid-email': 'Email inválido',
+    'auth/user-disabled': 'Usuário desabilitado',
+    'auth/user-not-found': 'Usuário não encontrado',
+    'auth/wrong-password': 'Senha incorreta',
+    'auth/invalid-credential': 'Email ou senha inválidos',
+    'auth/invalid-login-credentials': 'Email ou senha inválidos',
+    'auth/too-many-requests': 'Muitas tentativas. Tente novamente mais tarde.',
+    'auth/network-request-failed': 'Falha de conexão. Verifique sua internet e tente novamente.',
+    'auth/api-key-not-valid': 'Configuração Firebase inválida (API Key).',
+    'auth/app-not-authorized': 'App não autorizado no Firebase para este domínio.',
+    'auth/operation-not-allowed': 'Login por email/senha não está habilitado no Firebase Auth.',
+  };
+
+  if (code && errorMessages[code]) {
+    return errorMessages[code];
+  }
+
+  if (message.includes('INVALID_LOGIN_CREDENTIALS')) {
+    return 'Email ou senha inválidos';
+  }
+  if (message.includes('EMAIL_NOT_FOUND')) {
+    return 'Usuário não encontrado';
+  }
+  if (message.includes('INVALID_PASSWORD')) {
+    return 'Senha incorreta';
+  }
+  if (message.includes('USER_DISABLED')) {
+    return 'Usuário desabilitado';
+  }
+  if (message.includes('OPERATION_NOT_ALLOWED')) {
+    return 'Login por email/senha não está habilitado no Firebase Auth.';
+  }
+
+  return 'Erro ao fazer login';
+}
 
 // ============================================================================
 // PROVIDER
@@ -116,6 +159,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
           claims,
         });
 
+        // Log de login uma vez por sessao e franquia
+        if (claims.franchiseId) {
+          const loginKey = `audit_login:${firebaseUser.uid}:${claims.franchiseId}`;
+          const alreadyLoggedInSession =
+            typeof sessionStorage !== 'undefined' && sessionStorage.getItem(loginKey) === '1';
+
+          if (!alreadyLoggedInSession) {
+            try {
+              await logLogin(claims.franchiseId, {
+                id: firebaseUser.uid,
+                email: firebaseUser.email || '',
+                name: firebaseUser.displayName || undefined,
+              });
+              if (typeof sessionStorage !== 'undefined') {
+                sessionStorage.setItem(loginKey, '1');
+              }
+            } catch (error) {
+              console.warn('[audit] Falha ao registrar login:', error);
+            }
+          }
+        }
+
         // Atualiza lastLoginAt
         try {
           const userRef = doc(db, 'users', firebaseUser.uid);
@@ -145,20 +210,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Login
   const login = useCallback(async (email: string, password: string) => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const normalizedEmail = email.trim().toLowerCase();
+      await signInWithEmailAndPassword(auth, normalizedEmail, password);
       return { success: true };
     } catch (error: any) {
-      const errorMessages: Record<string, string> = {
-        'auth/invalid-email': 'Email inválido',
-        'auth/user-disabled': 'Usuário desabilitado',
-        'auth/user-not-found': 'Usuário não encontrado',
-        'auth/wrong-password': 'Senha incorreta',
-        'auth/invalid-credential': 'Credenciais inválidas',
-        'auth/too-many-requests': 'Muitas tentativas. Tente novamente mais tarde.',
-      };
+      if (import.meta.env.DEV) {
+        console.error('[auth] Login falhou', {
+          code: error?.code,
+          message: error?.message,
+        });
+      }
+
       return {
         success: false,
-        error: errorMessages[error.code] || 'Erro ao fazer login',
+        error: mapAuthLoginError(error),
       };
     }
   }, []);
@@ -197,8 +262,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Logout
   const logout = useCallback(async () => {
+    if (user?.claims.franchiseId) {
+      try {
+        await logLogout(user.claims.franchiseId, {
+          id: user.uid,
+          email: user.email || '',
+          name: user.displayName || undefined,
+        });
+      } catch (error) {
+        console.warn('[audit] Falha ao registrar logout:', error);
+      }
+    }
+
     await signOut(auth);
-  }, []);
+  }, [user]);
 
   // Reset password
   const resetPassword = useCallback(async (email: string) => {

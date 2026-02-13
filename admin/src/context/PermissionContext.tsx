@@ -38,8 +38,13 @@ interface PermissionProviderProps {
 
 export function PermissionProvider({ children }: PermissionProviderProps) {
   const { currentMembership: membership } = useFranchise();
-  
-  const role = (membership?.role as UserRole) || null;
+
+  const normalizedRole =
+    typeof membership?.role === 'string'
+      ? membership.role.toLowerCase()
+      : null;
+
+  const role = (normalizedRole as UserRole) || null;
   
   const permissions = useMemo(() => {
     if (!role) return [];

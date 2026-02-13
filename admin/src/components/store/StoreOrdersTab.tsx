@@ -3,8 +3,8 @@
  * Store Orders Tab Component - Refactored
  * ============================================================================
  * 
- * Componente para exibir pedidos de uma loja específica.
- * Layout master-detail com timeline e ações.
+ * Componente para exibir pedidos de uma loja especifica.
+ * Layout master-detail com timeline e acoes.
  */
 
 import { useState } from 'react';
@@ -13,6 +13,8 @@ import { collection, query, getDocs, orderBy, limit, where, Timestamp } from 'fi
 import { db } from '@/lib/firebase';
 import { ordersPath } from '@/lib/pathResolver';
 import { OrdersPanel, Order, OrderStats } from '@/components/orders';
+import { useAuth } from '@/context/AuthContext';
+import { cancelOrder, refundOrder, printOrderReceipt } from '@/services/orderService';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -25,6 +27,7 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [limitCount, setLimitCount] = useState(50);
   const queryClient = useQueryClient();
+  const { user } = useAuth();
 
   // Fetch orders
   const { data: orders = [], isLoading, isFetching } = useQuery({
@@ -122,21 +125,77 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
   };
 
   const handleReprint = (order: Order) => {
-    // TODO: Implement print functionality
-    toast.info('Funcionalidade de reimpressão será implementada em breve');
-    console.log('Reprint order:', order.id);
+    printOrderReceipt(order);
   };
 
-  const handleCancel = (order: Order) => {
-    // TODO: Implement cancel functionality
-    toast.info('Funcionalidade de cancelamento será implementada em breve');
-    console.log('Cancel order:', order.id);
+  const handleCancel = async (order: Order) => {
+    if (!user) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
+    if (!(order.status === 'pending' || order.status === 'processing')) {
+      toast.warning('Somente pedidos pendentes ou em processamento podem ser cancelados');
+      return;
+    }
+
+    const orderLabel = order.orderNumber || order.orderId || order.id;
+    const confirmed = window.confirm(
+      `Cancelar o pedido ${orderLabel}?\n\nEsta ação não pode ser desfeita.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await cancelOrder({
+        franchiseId,
+        storeId,
+        orderId: order.id,
+        actor: {
+          id: user.uid,
+          email: user.email || '',
+          name: user.displayName || undefined,
+        },
+      });
+      toast.success('Pedido cancelado com sucesso');
+      handleRefresh();
+    } catch (error) {
+      console.error('Error cancelling order:', error);
+      toast.error('Erro ao cancelar pedido');
+    }
   };
 
-  const handleRefund = (order: Order) => {
-    // TODO: Implement refund functionality
-    toast.info('Funcionalidade de estorno será implementada em breve');
-    console.log('Refund order:', order.id);
+  const handleRefund = async (order: Order) => {
+    if (!user) {
+      toast.error('Usuário não autenticado');
+      return;
+    }
+    if (!(order.status === 'completed' && order.paymentStatus === 'paid')) {
+      toast.warning('Somente pedidos concluídos e pagos podem ser estornados');
+      return;
+    }
+
+    const orderLabel = order.orderNumber || order.orderId || order.id;
+    const confirmed = window.confirm(
+      `Estornar o pedido ${orderLabel}?\n\nO pagamento será marcado como estornado.`
+    );
+    if (!confirmed) return;
+
+    try {
+      await refundOrder({
+        franchiseId,
+        storeId,
+        orderId: order.id,
+        actor: {
+          id: user.uid,
+          email: user.email || '',
+          name: user.displayName || undefined,
+        },
+      });
+      toast.success('Pedido estornado com sucesso');
+      handleRefresh();
+    } catch (error) {
+      console.error('Error refunding order:', error);
+      toast.error('Erro ao estornar pedido');
+    }
   };
 
   if (isLoading && orders.length === 0) {
@@ -164,3 +223,4 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
     />
   );
 }
+

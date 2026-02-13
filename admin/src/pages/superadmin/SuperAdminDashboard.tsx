@@ -373,6 +373,7 @@ export default function SuperAdminDashboard() {
                           variant="ghost" 
                           size="icon" 
                           title="Visualizar"
+                          aria-label={`Visualizar franquia ${franchise.name}`}
                           disabled={actionLoading === franchise.id}
                           onClick={() => handleViewFranchise(franchise.id)}
                         >
@@ -386,6 +387,7 @@ export default function SuperAdminDashboard() {
                           variant="ghost" 
                           size="icon" 
                           title="Configurar"
+                          aria-label={`Configurar franquia ${franchise.name}`}
                           disabled={actionLoading === franchise.id}
                           onClick={() => handleConfigureFranchise(franchise.id)}
                         >

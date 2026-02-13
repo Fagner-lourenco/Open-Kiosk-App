@@ -1,6 +1,6 @@
-/**
+﻿/**
  * ============================================================================
- * UserDetailPage - Detalhes do Usuário
+ * UserDetailPage - Detalhes do UsuÃƒÂ¡rio
  * ============================================================================
  */
 
@@ -30,6 +30,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { FRANCHISE_ROLE_OPTIONS, getRoleLabel } from '@/config/roles';
 import { 
   ArrowLeft, 
   User, 
@@ -69,6 +70,8 @@ export function UserDetailPage() {
   const [selectedRole, setSelectedRole] = useState('');
   const [showRemoveDialog, setShowRemoveDialog] = useState(false);
 
+  const roleOptions = [{ value: 'owner', label: getRoleLabel('owner') }, ...FRANCHISE_ROLE_OPTIONS];
+
   useEffect(() => {
     if (currentFranchise && userId) {
       loadUser();
@@ -104,7 +107,7 @@ export function UserDetailPage() {
         const userData: UserData = {
           id: userId!,
           email: currentFranchise?.ownerEmail || '',
-          displayName: 'Proprietário',
+          displayName: 'ProprietÃƒÂ¡rio',
           role: 'owner',
           addedAt: new Date(),
           stores: ['*'],
@@ -112,11 +115,11 @@ export function UserDetailPage() {
         setUser(userData);
         setSelectedRole(userData.role);
       } else {
-        setError('Usuário não encontrado');
+        setError('UsuÃƒÂ¡rio nÃƒÂ£o encontrado');
       }
     } catch (err) {
       console.error('Error loading user:', err);
-      setError('Erro ao carregar usuário');
+      setError('Erro ao carregar usuÃƒÂ¡rio');
     }
     
     setIsLoading(false);
@@ -140,11 +143,11 @@ export function UserDetailPage() {
       if (user) {
         setUser({ ...user, role: newRole });
       }
-      setSuccess('Função atualizada com sucesso!');
+      setSuccess('FunÃƒÂ§ÃƒÂ£o atualizada com sucesso!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       console.error('Error updating role:', err);
-      setError('Erro ao atualizar função');
+      setError('Erro ao atualizar funÃƒÂ§ÃƒÂ£o');
       setSelectedRole(user?.role || '');
     }
     
@@ -161,23 +164,14 @@ export function UserDetailPage() {
       // Remove from members subcollection
       await deleteDoc(doc(db, 'franchises', currentFranchise.id, 'members', userId));
       await refreshFranchises();
-      navigate('/users');
+      navigate('/team');
     } catch (err) {
       console.error('Error removing user:', err);
-      setError('Erro ao remover usuário');
+      setError('Erro ao remover usuÃƒÂ¡rio');
       setIsRemoving(false);
     }
   };
 
-  const getRoleLabel = (role: string) => {
-    const labels: Record<string, string> = {
-      owner: 'Proprietário',
-      manager: 'Gerente',
-      employee: 'Funcionário',
-      viewer: 'Visualizador',
-    };
-    return labels[role] || role;
-  };
 
   const getInitials = (name?: string, email?: string) => {
     if (name) {
@@ -217,10 +211,10 @@ export function UserDetailPage() {
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-        <Link to="/users">
+        <Link to="/team">
           <Button variant="outline">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Voltar para usuários
+            Voltar para equipe
           </Button>
         </Link>
       </div>
@@ -233,14 +227,14 @@ export function UserDetailPage() {
     <div className="space-y-6 max-w-3xl">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Link to="/users">
-          <Button variant="ghost" size="icon">
+        <Link to="/team">
+          <Button variant="ghost" size="icon" aria-label="Voltar para equipe">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Detalhes do Usuário</h1>
-          <p className="text-gray-500">Gerenciar permissões e acessos</p>
+          <h1 className="text-2xl font-bold text-gray-900">Detalhes do UsuÃƒÂ¡rio</h1>
+          <p className="text-gray-500">Gerenciar permissÃƒÂµes e acessos</p>
         </div>
       </div>
 
@@ -294,9 +288,9 @@ export function UserDetailPage() {
       {/* Role Management */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Função</CardTitle>
+          <CardTitle className="text-base">FunÃƒÂ§ÃƒÂ£o</CardTitle>
           <CardDescription>
-            Defina a função do usuário na franquia
+            Defina a funÃƒÂ§ÃƒÂ£o do usuÃƒÂ¡rio na franquia
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -310,10 +304,11 @@ export function UserDetailPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="owner">Proprietário</SelectItem>
-                <SelectItem value="manager">Gerente</SelectItem>
-                <SelectItem value="employee">Funcionário</SelectItem>
-                <SelectItem value="viewer">Visualizador</SelectItem>
+                {roleOptions.map((roleOption) => (
+                  <SelectItem key={roleOption.value} value={roleOption.value}>
+                    {roleOption.label}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             
@@ -322,7 +317,7 @@ export function UserDetailPage() {
           
           {user.role === 'owner' && (
             <p className="text-sm text-gray-500 mt-2">
-              Proprietários não podem ter sua função alterada
+              ProprietÃƒÂ¡rios nÃƒÂ£o podem ter sua funÃƒÂ§ÃƒÂ£o alterada
             </p>
           )}
         </CardContent>
@@ -333,7 +328,7 @@ export function UserDetailPage() {
         <CardHeader>
           <CardTitle className="text-base">Acesso a Lojas</CardTitle>
           <CardDescription>
-            Lojas que este usuário pode acessar
+            Lojas que este usuÃƒÂ¡rio pode acessar
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -363,8 +358,8 @@ export function UserDetailPage() {
           
           <p className="text-sm text-gray-500 mt-4">
             {user.role === 'owner' 
-              ? 'Proprietários têm acesso a todas as lojas automaticamente'
-              : 'O acesso às lojas é herdado da função na franquia'
+              ? 'ProprietÃƒÂ¡rios tÃƒÂªm acesso a todas as lojas automaticamente'
+              : 'O acesso ÃƒÂ s lojas ÃƒÂ© herdado da funÃƒÂ§ÃƒÂ£o na franquia'
             }
           </p>
         </CardContent>
@@ -375,7 +370,7 @@ export function UserDetailPage() {
         <CardHeader>
           <CardTitle className="text-base">Atividade Recente</CardTitle>
           <CardDescription>
-            Últimas ações deste usuário
+            ÃƒÅ¡ltimas aÃƒÂ§ÃƒÂµes deste usuÃƒÂ¡rio
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -392,7 +387,7 @@ export function UserDetailPage() {
           <CardHeader>
             <CardTitle className="text-base text-red-600">Zona de Perigo</CardTitle>
             <CardDescription>
-              Ações irreversíveis para este usuário
+              AÃƒÂ§ÃƒÂµes irreversÃƒÂ­veis para este usuÃƒÂ¡rio
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -404,7 +399,7 @@ export function UserDetailPage() {
               Remover da Franquia
             </Button>
             <p className="text-sm text-gray-500 mt-2">
-              O usuário perderá acesso a todas as lojas desta franquia.
+              O usuÃƒÂ¡rio perderÃƒÂ¡ acesso a todas as lojas desta franquia.
             </p>
           </CardContent>
         </Card>
@@ -414,10 +409,10 @@ export function UserDetailPage() {
       <Dialog open={showRemoveDialog} onOpenChange={setShowRemoveDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remover usuário</DialogTitle>
+            <DialogTitle>Remover usuÃƒÂ¡rio</DialogTitle>
             <DialogDescription>
               Tem certeza que deseja remover "{user.displayName || user.email}" da franquia?
-              O usuário perderá acesso a todas as lojas.
+              O usuÃƒÂ¡rio perderÃƒÂ¡ acesso a todas as lojas.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -439,7 +434,7 @@ export function UserDetailPage() {
                   Removendo...
                 </>
               ) : (
-                'Remover usuário'
+                'Remover usuÃƒÂ¡rio'
               )}
             </Button>
           </DialogFooter>

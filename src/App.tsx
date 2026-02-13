@@ -164,6 +164,34 @@ const AppContent = () => {
     };
   }, []);
 
+  // Em plataforma nativa, garantir que não haja Service Worker controlando o WebView
+  // (evita servir bundle antigo em https://localhost no Capacitor).
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    const cleanupNativeWebViewCache = async () => {
+      try {
+        if ('serviceWorker' in navigator) {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(registrations.map((registration) => registration.unregister()));
+          console.log('[PWA] Service Workers removidos em plataforma nativa:', registrations.length);
+        }
+
+        if ('caches' in window) {
+          const keys = await caches.keys();
+          await Promise.all(keys.map((key) => caches.delete(key)));
+          if (keys.length > 0) {
+            console.log('[PWA] Cache Storage limpo em plataforma nativa:', keys.length);
+          }
+        }
+      } catch (error) {
+        console.warn('[PWA] Falha ao limpar SW/cache no nativo:', error);
+      }
+    };
+
+    void cleanupNativeWebViewCache();
+  }, []);
+
   return (
     <LanguageProvider
       initialLanguage={initialLanguage}
@@ -231,10 +259,12 @@ const App = () => (
       <Toaster />
       <Sonner />
       <AppContent />
-      {/* PWA Update Prompt */}
-      <Suspense fallback={null}>
-        <PWAUpdatePrompt />
-      </Suspense>
+      {/* PWA Update Prompt apenas na web */}
+      {!Capacitor.isNativePlatform() && (
+        <Suspense fallback={null}>
+          <PWAUpdatePrompt />
+        </Suspense>
+      )}
     </TooltipProvider>
   </QueryClientProvider>
 );

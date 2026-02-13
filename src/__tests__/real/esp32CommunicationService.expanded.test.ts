@@ -11,7 +11,7 @@ import {
   ESP32_DEVICE_NAME,
   ESP32_WIFI_SSID,
   ESP32_WIFI_PASSWORD,
-  ESP32_DEFAULT_IP,
+  getESP32WiFiIP,
   ESP32_BLE_PIN,
   ConnectionType,
   LastConnectionInfo,
@@ -61,7 +61,7 @@ vi.mock('capacitor-usb-serial-plugin', () => ({
     read: vi.fn(),
     registerReadCallback: vi.fn(),
   },
-}), { virtual: true });
+}));
 
 describe('ESP32 Communication Service - Expansão de Cobertura', () => {
   beforeEach(() => {
@@ -82,7 +82,7 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
     });
 
     it('deve ter ESP32_DEFAULT_IP correto', () => {
-      expect(ESP32_DEFAULT_IP).toBe('192.168.4.1');
+      expect(getESP32WiFiIP()).toBe('192.168.4.1');
     });
 
     it('deve ter ESP32_BLE_PIN correto', () => {
@@ -105,13 +105,11 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
         deviceId: 'device-123',
         deviceName: 'Test Device',
         timestamp: Date.now(),
-        success: true,
       };
 
       expect(info.type).toBe('bluetooth');
       expect(info.deviceId).toBe('device-123');
       expect(info.deviceName).toBe('Test Device');
-      expect(info.success).toBe(true);
       expect(typeof info.timestamp).toBe('number');
     });
 
@@ -120,17 +118,15 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
         id: 'device-123',
         name: 'ESP32-Test',
         type: 'bluetooth',
-        address: 'AA:BB:CC:DD:EE:FF',
+        ipAddress: '192.168.4.1',
         rssi: -50,
-        services: ['service-1'],
       };
 
       expect(device.id).toBe('device-123');
       expect(device.name).toBe('ESP32-Test');
       expect(device.type).toBe('bluetooth');
-      expect(device.address).toBe('AA:BB:CC:DD:EE:FF');
+      expect(device.ipAddress).toBe('192.168.4.1');
       expect(device.rssi).toBe(-50);
-      expect(device.services).toContain('service-1');
     });
 
     it('deve criar ConnectionStatus válido', () => {
@@ -139,18 +135,12 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
         type: 'wifi',
         deviceId: 'device-123',
         deviceName: 'ESP32-WiFi',
-        ipAddress: '192.168.4.1',
-        lastHeartbeat: Date.now(),
-        connectionTime: Date.now(),
       };
 
       expect(status.connected).toBe(true);
       expect(status.type).toBe('wifi');
       expect(status.deviceId).toBe('device-123');
       expect(status.deviceName).toBe('ESP32-WiFi');
-      expect(status.ipAddress).toBe('192.168.4.1');
-      expect(typeof status.lastHeartbeat).toBe('number');
-      expect(typeof status.connectionTime).toBe('number');
     });
   });
 
@@ -205,9 +195,9 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
 
   describe('Funções de Utilitário (Mockadas)', () => {
     it('deve tentar desconectar quando não conectado', async () => {
-      const result = await esp32Service.disconnect();
-      // O resultado pode ser undefined ou true dependendo da implementação
-      expect(result === undefined || result === true).toBe(true);
+      await esp32Service.disconnect();
+      // disconnect() retorna void; verificamos que não lançou erro
+      expect(true).toBe(true);
     });
 
     it('deve retornar dispositivos vazios para scan (sem hardware)', async () => {
@@ -226,7 +216,7 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
 
     it('deve validar formato do IP', () => {
       const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
-      expect(ipRegex.test(ESP32_DEFAULT_IP)).toBe(true);
+      expect(ipRegex.test(getESP32WiFiIP())).toBe(true);
     });
 
     it('deve validar formato do PIN BLE', () => {

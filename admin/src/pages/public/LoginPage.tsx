@@ -64,8 +64,9 @@ export function LoginPage() {
               type="email"
               placeholder="seu@email.com"
               value={email}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setEmail(e.target.value.trim())}
               className="pl-10"
+              autoComplete="email"
               required
               disabled={isLoading}
             />
@@ -91,6 +92,7 @@ export function LoginPage() {
               value={password}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
               className="pl-10"
+              autoComplete="current-password"
               required
               disabled={isLoading}
             />

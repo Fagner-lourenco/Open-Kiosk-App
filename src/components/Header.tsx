@@ -3,7 +3,7 @@ import React from 'react';
 import { Search, Bell, User, Menu, Store } from 'lucide-react';
 import { useTranslation } from '@/i18n';
 import { useStoreContext } from '@/context/StoreContext';
-import { ESP32StatusIndicator } from './ESP32StatusIndicator';
+import ESP32StatusIndicator from './ESP32StatusIndicator';
 
 interface HeaderProps {
   onMenuToggle: () => void;

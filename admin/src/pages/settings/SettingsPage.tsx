@@ -19,14 +19,8 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { ConfirmDeleteDialog } from '@/components/shared/ConfirmDeleteDialog';
+import { AuditActions, logUserAction } from '@/services/auditService';
 import { 
   Settings,
   Building2,
@@ -123,6 +117,42 @@ export function SettingsPage() {
         updatedAt: serverTimestamp(),
         updatedBy: user?.uid,
       });
+
+      if (user) {
+        const changedFields: string[] = [];
+        if (settings.name !== (currentFranchise.name || '')) changedFields.push('name');
+        if (settings.description !== (currentFranchise.description || '')) changedFields.push('description');
+        if (settings.website !== (currentFranchise.website || '')) changedFields.push('website');
+        if (settings.supportEmail !== (currentFranchise.supportEmail || '')) changedFields.push('supportEmail');
+        if (JSON.stringify(settings.notifications) !== JSON.stringify(currentFranchise.settings?.notifications || {})) {
+          changedFields.push('notifications');
+        }
+        if (JSON.stringify(settings.appearance) !== JSON.stringify(currentFranchise.settings?.appearance || {})) {
+          changedFields.push('appearance');
+        }
+
+        try {
+          await logUserAction(
+            currentFranchise.id,
+            AuditActions.SETTINGS_UPDATE,
+            {
+              id: user.uid,
+              email: user.email || '',
+              name: user.displayName || undefined,
+            },
+            {
+              type: 'franchise',
+              id: currentFranchise.id,
+              name: currentFranchise.name,
+            },
+            {
+              changedFields,
+            }
+          );
+        } catch (auditError) {
+          console.warn('[audit] Falha ao registrar alteracao de configuracoes:', auditError);
+        }
+      }
 
       await refreshFranchises();
       setSaveSuccess(true);
@@ -538,66 +568,43 @@ export function SettingsPage() {
       </Tabs>
 
       {/* Delete Confirmation Dialog */}
-      <Dialog open={showDeleteDialog} onOpenChange={(open) => {
-        setShowDeleteDialog(open);
-        if (!open) setDeleteConfirmation('');
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-red-600">Excluir Franquia</DialogTitle>
-            <DialogDescription>
-              Tem certeza que deseja excluir "{currentFranchise.name}"?
-              Esta ação não pode ser desfeita e todos os dados (lojas, pedidos, membros) serão perdidos permanentemente.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4 py-4">
-            <Alert className="border-red-200 bg-red-50">
-              <AlertCircle className="h-4 w-4 text-red-600" />
-              <AlertDescription className="text-red-600">
-                Para confirmar, digite o nome da franquia: <strong>{currentFranchise.name}</strong>
-              </AlertDescription>
-            </Alert>
-            
-            <Input
-              placeholder="Digite o nome da franquia"
-              value={deleteConfirmation}
-              onChange={(e) => setDeleteConfirmation(e.target.value)}
-              className="border-red-200 focus:border-red-400"
-            />
-          </div>
-          
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowDeleteDialog(false);
-                setDeleteConfirmation('');
-              }}
-              disabled={isDeleting}
-            >
-              Cancelar
-            </Button>
-            <Button 
-              variant="destructive" 
-              onClick={handleDeleteFranchise}
-              disabled={isDeleting || deleteConfirmation !== currentFranchise.name}
-            >
-              {isDeleting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Excluindo...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Excluir Franquia
-                </>
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDeleteDialog
+        open={showDeleteDialog}
+        onOpenChange={(open) => {
+          if (isDeleting) return;
+          setShowDeleteDialog(open);
+          if (!open) setDeleteConfirmation('');
+        }}
+        title="Excluir Franquia"
+        description={
+          <>
+            Tem certeza que deseja excluir "{currentFranchise.name}"? Esta acao nao pode ser
+            desfeita e todos os dados (lojas, pedidos, membros) serao perdidos permanentemente.
+          </>
+        }
+        onConfirm={handleDeleteFranchise}
+        isConfirming={isDeleting}
+        confirmDisabled={deleteConfirmation !== currentFranchise.name}
+        confirmLabel="Excluir Franquia"
+        confirmingLabel="Excluindo..."
+      >
+        <div className="space-y-4 py-4">
+          <Alert className="border-red-200 bg-red-50">
+            <AlertCircle className="h-4 w-4 text-red-600" />
+            <AlertDescription className="text-red-600">
+              Para confirmar, digite o nome da franquia: <strong>{currentFranchise.name}</strong>
+            </AlertDescription>
+          </Alert>
+
+          <Input
+            placeholder="Digite o nome da franquia"
+            value={deleteConfirmation}
+            onChange={(e) => setDeleteConfirmation(e.target.value)}
+            className="border-red-200 focus:border-red-400"
+            disabled={isDeleting}
+          />
+        </div>
+      </ConfirmDeleteDialog>
     </div>
   );
 }

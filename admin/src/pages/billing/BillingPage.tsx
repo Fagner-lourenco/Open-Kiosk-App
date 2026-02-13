@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Check, CreditCard, AlertCircle, Loader2, ExternalLink, Crown } from 'lucide-react';
+import { toast } from 'sonner';
 import { useFranchise } from '../../context/FranchiseContext';
 import { 
   getFranchiseBilling, 
@@ -85,7 +86,7 @@ export default function BillingPage() {
       }
     } catch (error) {
       console.error('Erro ao criar checkout:', error);
-      alert('Erro ao iniciar checkout. Tente novamente.');
+      toast.error('Erro ao iniciar checkout. Tente novamente.');
     } finally {
       setCheckoutLoading(null);
     }
@@ -99,7 +100,7 @@ export default function BillingPage() {
       window.open(url, '_blank');
     } catch (error) {
       console.error('Erro ao abrir portal:', error);
-      alert('Erro ao abrir portal de pagamento.');
+      toast.error('Erro ao abrir portal de pagamento.');
     } finally {
       setPortalLoading(false);
     }

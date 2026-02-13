@@ -42,6 +42,7 @@ export {
 
 // Payments (PagBank + generic)
 export { createPayment, pagbankWebhook, syncPendingPayments } from './payments';
+export { onPaymentUpdated } from './payments/onPaymentUpdated';
 
 // ERP Vertical — Triggers
 export { onServingSessionCreated } from './erp/onServingSessionCreated';
@@ -52,6 +53,7 @@ export { aggregateOperationalDaily } from './erp/aggregateOperationalDaily';
 export { checkKegLevels } from './erp/checkKegLevels';
 export { checkMaintenanceOverdue } from './erp/checkMaintenanceOverdue';
 export { resetTapDailyCounters } from './erp/resetTapDailyCounters';
+export { cleanupOldNotifications } from './erp/cleanupOldNotifications';
 
 // Migrations
 export { consolidatePaymentGatewayConfig, rollbackPaymentGatewayConfig } from './migrations/consolidatePaymentGatewayConfig';

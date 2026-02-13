@@ -596,26 +596,31 @@ service cloud.firestore {
       }
 
       // NOTIFICATIONS SUBCOLLECTION (dentro de franchise)
+      // Operational alerts from Cloud Functions (keg_low, maintenance, payments)
+      // are franchise-scoped — all franchise members can read them.
       // ──────────────────────────────────────────────────────────────────────
       
       match /notifications/{notificationId} {
-        // Owner, admin ou o usuário destinatário podem ler notificações
+        // All franchise members can read notifications
         allow read: if isSuperAdmin() || 
                       isFranchiseOwner(franchiseId) ||
                       isOwnerOrAdmin(franchiseId) ||
-                      (isAuthenticated() && resource.data.userId == request.auth.uid);
+                      isFranchiseMember(franchiseId);
         
-        // Owner ou admin podem criar notificações (ou Cloud Functions)
+        // Owner ou admin podem criar notificações (ou Cloud Functions via Admin SDK)
         allow create: if isSuperAdmin() || 
                         isFranchiseOwner(franchiseId) ||
                         isOwnerOrAdmin(franchiseId);
         
-        // Usuário pode atualizar próprias notificações (marcar como lida/dispensada)
-        // Owner/admin podem atualizar qualquer notificação
-        allow update: if isSuperAdmin() || 
+        // Any franchise member can mark as read/dismissed
+        // Restricted to only readAt, isRead, isDismissed fields
+        allow update: if (isSuperAdmin() || 
                         isFranchiseOwner(franchiseId) ||
-                        isOwnerOrAdmin(franchiseId) ||
-                        (isAuthenticated() && resource.data.userId == request.auth.uid);
+                        isOwnerOrAdmin(franchiseId))
+                      ||
+                      (isFranchiseMember(franchiseId) &&
+                       request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['readAt', 'isRead', 'isDismissed']));
         
         // Owner ou admin podem deletar notificações
         allow delete: if isSuperAdmin() || 

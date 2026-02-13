@@ -56,19 +56,35 @@ export const checkMaintenanceOverdue = functions
               updatedBy: 'system',
             });
 
-            // Create notification
-            const notifRef = db.collection(`${storePath}/notifications`).doc();
-            await notifRef.set({
-              id: notifRef.id,
-              type: 'maintenance_overdue',
-              severity: 'warning',
-              message: `Manutencao atrasada: ${logType}${tapId && tapId !== 'all' ? ` (T${Number(tapId) + 1})` : ''}`,
-              createdAt: serverTimestamp(),
-              readAt: null,
-              entityRef: `maintenanceLogs/${logDoc.id}`,
-              storeId,
-              franchiseId,
-            });
+            // Dedupe: avoid duplicate notifications for the same maintenance log on same day
+            const today = new Date().toISOString().slice(0, 10);
+            const dedupeKey = `maintenance_overdue_${logDoc.id}_${today}`;
+            const existingSnap = await db.collection(`franchises/${franchiseId}/notifications`)
+              .where('dedupeKey', '==', dedupeKey).limit(1).get();
+
+            if (existingSnap.empty) {
+              // Create notification at franchise-level (admin UI reads this path)
+              const notifRef = db.collection(`franchises/${franchiseId}/notifications`).doc();
+              await notifRef.set({
+                id: notifRef.id,
+                type: 'warning',
+                priority: 'high',
+                title: 'Manutenção Atrasada',
+                message: `Manutencao atrasada: ${logType}${tapId && tapId !== 'all' ? ` (T${Number(tapId) + 1})` : ''}`,
+                isRead: false,
+                isDismissed: false,
+                createdAt: serverTimestamp(),
+                readAt: null,
+                entityRef: `maintenanceLogs/${logDoc.id}`,
+                storeId,
+                franchiseId,
+                dedupeKey,
+                actionUrl: `/stores/${storeId}?tab=operations`,
+                actionLabel: 'Ver Operações',
+              });
+            } else {
+              console.log(`[ERP:Maintenance] Skipped duplicate for ${logDoc.id} (${dedupeKey})`);
+            }
 
             console.log(`[ERP:Maintenance] Marked overdue: ${logDoc.id}`);
           }

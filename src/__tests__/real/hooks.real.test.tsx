@@ -4,8 +4,8 @@ import { BrowserRouter } from 'react-router-dom';
 import { ReactNode } from 'react';
 
 const mockProducts = [
-  { id: '1', name: 'Produto 1', price: 10, stock: 100, active: true },
-  { id: '2', name: 'Produto 2', price: 20, stock: 50, active: true },
+  { id: '1', title: 'Produto 1', price: 10, stock: 100, active: true },
+  { id: '2', title: 'Produto 2', price: 20, stock: 50, active: true },
 ];
 
 vi.mock('@/hooks/useFirebaseProducts', () => ({
@@ -23,7 +23,7 @@ vi.mock('@/hooks/useCheckoutFlow', () => ({
 }));
 
 vi.mock('@/hooks/useKioskIdle', () => ({
-  useKioskIdle: ({ isInitiallyIdle = false } = {}) => ({ isIdle: isInitiallyIdle, resetIdle: vi.fn() }),
+  useKioskIdle: ({ suppressed = false } = {}) => ({ isIdle: suppressed, resetIdle: vi.fn() }),
 }));
 
 import { useFirebaseProducts } from '@/hooks/useFirebaseProducts';
@@ -36,7 +36,7 @@ describe('Hooks reais (mockados)', () => {
   it('useFirebaseProducts retorna lista mockada', () => {
     const { result } = renderHook(() => useFirebaseProducts(), { wrapper });
     expect(result.current.products).toHaveLength(2);
-    expect(result.current.products?.[0].name).toBe('Produto 1');
+    expect(result.current.products?.[0].title).toBe('Produto 1');
     expect(result.current.loading).toBe(false);
   });
 
@@ -48,7 +48,7 @@ describe('Hooks reais (mockados)', () => {
   });
 
   it('useKioskIdle fornece controle de idle', () => {
-    const { result } = renderHook(() => useKioskIdle({ isInitiallyIdle: false }), { wrapper });
+    const { result } = renderHook(() => useKioskIdle({ suppressed: false }), { wrapper });
     expect(result.current.isIdle).toBe(false);
     result.current.resetIdle();
   });

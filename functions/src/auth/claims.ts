@@ -124,6 +124,37 @@ export const setAdminClaims = functions
 
       if (typeof newClaims.franchiseId === 'string' && newClaims.franchiseId) {
         auditLog.franchiseId = newClaims.franchiseId;
+
+        // Compatibilidade com o Admin: espelha evento na subcollection da franquia
+        try {
+          await db
+            .collection('franchises')
+            .doc(newClaims.franchiseId)
+            .collection('auditLogs')
+            .add({
+              action: 'set_admin_claims',
+              actor: {
+                id: context.auth.uid,
+                email: context.auth.token.email || '',
+                name: context.auth.token.name || null,
+              },
+              target: {
+                type: 'user',
+                id: userId,
+                name: userId,
+              },
+              details: {
+                claims: newClaims,
+              },
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        } catch (franchiseAuditError) {
+          functions.logger.warn('[claims] Failed to mirror audit log to franchise path', {
+            userId,
+            franchiseId: newClaims.franchiseId,
+            error: franchiseAuditError instanceof Error ? franchiseAuditError.message : franchiseAuditError,
+          });
+        }
       }
       if (typeof newClaims.storeId === 'string' && newClaims.storeId) {
         auditLog.storeId = newClaims.storeId;

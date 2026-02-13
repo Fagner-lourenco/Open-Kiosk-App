@@ -1,13 +1,13 @@
-/**
+﻿/**
  * ============================================================================
  * TeamPage - Equipe (Membros + Convites Unificados)
  * ============================================================================
  * 
- * Página unificada para gerenciar membros da franquia e convites pendentes.
+ * PÃ¡gina unificada para gerenciar membros da franquia e convites pendentes.
  * Substitui as antigas UsersPage e InvitationsPage.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -61,6 +61,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { FilterBar } from '@/components/layout/FilterBar';
+import { Pagination } from '@/components/ui/pagination';
+import {
+  FRANCHISE_ROLE_OPTIONS,
+  getRoleBadge,
+  getRoleLabel,
+  isOperatorRole,
+} from '@/config/roles';
 import { 
   Plus, 
   Search, 
@@ -104,6 +113,7 @@ interface Invitation {
 }
 
 export function TeamPage() {
+  const PAGE_SIZE = 20;
   const { currentFranchise, refreshFranchises } = useFranchise();
   const { user } = useAuth();
   const queryClient = useQueryClient();
@@ -155,7 +165,7 @@ export function TeamPage() {
           id: currentFranchise.ownerId,
           userId: currentFranchise.ownerId,
           email: currentFranchise.ownerEmail || 'owner@example.com',
-          displayName: 'Proprietário',
+          displayName: 'ProprietÃ¡rio',
           role: 'owner',
           addedAt: addedAtStr,
         });
@@ -216,7 +226,7 @@ export function TeamPage() {
     },
     onError: (err) => {
       console.error('Error changing role:', err);
-      setError('Erro ao alterar função do usuário');
+      setError('Erro ao alterar funÃ§Ã£o do usuÃ¡rio');
     },
   });
 
@@ -233,14 +243,14 @@ export function TeamPage() {
     },
     onError: (err) => {
       console.error('Error removing member:', err);
-      setError('Erro ao remover usuário');
+      setError('Erro ao remover usuÃ¡rio');
     },
   });
 
   // Create invitation mutation
   const createInviteMutation = useMutation({
     mutationFn: async ({ email, role }: { email: string; role: string }) => {
-      if (!currentFranchise || !user) throw new Error('Dados inválidos');
+      if (!currentFranchise || !user) throw new Error('Dados invÃ¡lidos');
       
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
@@ -299,7 +309,7 @@ export function TeamPage() {
 
   const handleCreateInvite = () => {
     if (!inviteEmail) {
-      setError('Email é obrigatório');
+      setError('Email Ã© obrigatÃ³rio');
       return;
     }
     setError(null);
@@ -320,15 +330,32 @@ export function TeamPage() {
     member.displayName?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getRoleBadge = (role: string) => {
-    const config: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
-      owner: { label: 'Proprietário', variant: 'default' },
-      manager: { label: 'Gerente', variant: 'secondary' },
-      employee: { label: 'Funcionário', variant: 'outline' },
-      viewer: { label: 'Visualizador', variant: 'outline' },
-    };
-    return config[role] || { label: role, variant: 'outline' };
-  };
+  const [membersPage, setMembersPage] = useState(1);
+  const [invitationsPage, setInvitationsPage] = useState(1);
+  const totalMemberPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
+  const paginatedMembers = filteredMembers.slice((membersPage - 1) * PAGE_SIZE, membersPage * PAGE_SIZE);
+  const totalInvitationPages = Math.max(1, Math.ceil(invitations.length / PAGE_SIZE));
+  const paginatedInvitations = invitations.slice((invitationsPage - 1) * PAGE_SIZE, invitationsPage * PAGE_SIZE);
+
+  useEffect(() => {
+    setMembersPage(1);
+  }, [searchQuery, currentFranchise?.id]);
+
+  useEffect(() => {
+    setInvitationsPage(1);
+  }, [currentFranchise?.id, invitations.length]);
+
+  useEffect(() => {
+    if (membersPage > totalMemberPages) {
+      setMembersPage(totalMemberPages);
+    }
+  }, [membersPage, totalMemberPages]);
+
+  useEffect(() => {
+    if (invitationsPage > totalInvitationPages) {
+      setInvitationsPage(totalInvitationPages);
+    }
+  }, [invitationsPage, totalInvitationPages]);
 
   const getInitials = (name?: string, email?: string) => {
     if (name) {
@@ -350,19 +377,7 @@ export function TeamPage() {
       return <Badge variant="secondary">Expirado</Badge>;
     }
     return <Badge className="bg-yellow-100 text-yellow-700">Pendente</Badge>;
-  };
-
-  const getRoleLabel = (role: string) => {
-    const labels: Record<string, string> = {
-      owner: 'Proprietário',
-      manager: 'Gerente',
-      employee: 'Funcionário',
-      viewer: 'Visualizador',
-    };
-    return labels[role] || role;
-  };
-
-  if (!currentFranchise) {
+  };  if (!currentFranchise) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Card className="max-w-md w-full">
@@ -380,26 +395,23 @@ export function TeamPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">Equipe</h1>
-            {pendingCount > 0 && (
-              <Badge variant="secondary" className="bg-yellow-100 text-yellow-700">
-                {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
-              </Badge>
-            )}
-          </div>
-          <p className="text-gray-500">
-            Gerencie os membros de {currentFranchise.name}
-          </p>
-        </div>
-        <Button onClick={() => setShowInviteDialog(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Convidar
-        </Button>
-      </div>
+      <PageHeader
+        title="Equipe"
+        meta={
+          pendingCount > 0 ? (
+            <Badge variant="secondary" className="bg-yellow-100 text-yellow-700">
+              {pendingCount} pendente{pendingCount > 1 ? 's' : ''}
+            </Badge>
+          ) : null
+        }
+        description={`Gerencie os membros de ${currentFranchise.name}`}
+        actions={
+          <Button onClick={() => setShowInviteDialog(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Convidar
+          </Button>
+        }
+      />
 
       {error && (
         <Alert variant="destructive">
@@ -431,16 +443,17 @@ export function TeamPage() {
 
         {/* Members Tab */}
         <TabsContent value="members" className="space-y-4">
-          {/* Search */}
-          <div className="relative max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Buscar membros..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
-            />
-          </div>
+          <FilterBar>
+            <div className="relative max-w-md flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Input
+                placeholder="Buscar membros..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+          </FilterBar>
 
           {/* Members List */}
           <Card>
@@ -479,7 +492,7 @@ export function TeamPage() {
                 </div>
               ) : (
                 <div className="divide-y">
-                  {filteredMembers.map((member) => {
+                  {paginatedMembers.map((member) => {
                     const roleBadge = getRoleBadge(member.role);
                     
                     return (
@@ -513,7 +526,12 @@ export function TeamPage() {
                           
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" disabled={changeRoleMutation.isPending}>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled={changeRoleMutation.isPending}
+                                aria-label={`Mais acoes para ${member.displayName || member.email}`}
+                              >
                                 <MoreVertical className="h-4 w-4" />
                               </Button>
                             </DropdownMenuTrigger>
@@ -530,7 +548,7 @@ export function TeamPage() {
                                   <DropdownMenuSub>
                                     <DropdownMenuSubTrigger>
                                       <Shield className="mr-2 h-4 w-4" />
-                                      Alterar função
+                                      Alterar funÃ§Ã£o
                                     </DropdownMenuSubTrigger>
                                     <DropdownMenuPortal>
                                       <DropdownMenuSubContent>
@@ -542,9 +560,9 @@ export function TeamPage() {
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
                                           onClick={() => handleChangeRole(member.id, 'employee')}
-                                          disabled={member.role === 'employee'}
+                                          disabled={isOperatorRole(member.role)}
                                         >
-                                          Funcionário
+                                          Operador
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
                                           onClick={() => handleChangeRole(member.id, 'viewer')}
@@ -578,6 +596,17 @@ export function TeamPage() {
             </CardContent>
           </Card>
 
+          {filteredMembers.length > 0 && (
+            <Pagination
+              page={membersPage}
+              totalPages={totalMemberPages}
+              totalItems={filteredMembers.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setMembersPage}
+              ariaLabel="Paginacao de membros"
+            />
+          )}
+
           {/* Stats */}
           {members.length > 0 && (
             <div className="flex items-center justify-between text-sm text-gray-500 pt-4 border-t">
@@ -585,9 +614,9 @@ export function TeamPage() {
                 {filteredMembers.length} de {members.length} membro(s)
               </span>
               <div className="flex items-center gap-4">
-                <span>{members.filter(m => m.role === 'owner').length} proprietário(s)</span>
+                <span>{members.filter(m => m.role === 'owner').length} proprietÃ¡rio(s)</span>
                 <span>{members.filter(m => m.role === 'manager').length} gerente(s)</span>
-                <span>{members.filter(m => m.role === 'employee').length} funcionário(s)</span>
+                <span>{members.filter(m => isOperatorRole(m.role)).length} operador(es)</span>
               </div>
             </div>
           )}
@@ -677,7 +706,7 @@ export function TeamPage() {
                 </div>
               ) : (
                 <div className="divide-y">
-                  {invitations.map((invite) => (
+                  {paginatedInvitations.map((invite) => (
                     <div 
                       key={invite.id}
                       className="flex items-center justify-between p-4 hover:bg-gray-50"
@@ -690,7 +719,7 @@ export function TeamPage() {
                           <p className="font-medium text-gray-900">{invite.email}</p>
                           <div className="flex items-center gap-2 text-sm text-gray-500">
                             <span>{getRoleLabel(invite.role)}</span>
-                            <span>•</span>
+                            <span>-</span>
                             <span>{invite.createdAt.toLocaleDateString('pt-BR')}</span>
                           </div>
                         </div>
@@ -706,6 +735,7 @@ export function TeamPage() {
                               size="sm"
                               onClick={() => copyInviteLink(invite)}
                               title="Copiar link"
+                              aria-label={`Copiar link do convite para ${invite.email}`}
                             >
                               {copiedLink === invite.id ? (
                                 <CheckCircle className="h-4 w-4 text-green-600" />
@@ -719,6 +749,7 @@ export function TeamPage() {
                               onClick={() => revokeInviteMutation.mutate(invite.id)}
                               disabled={revokeInviteMutation.isPending}
                               title="Revogar convite"
+                              aria-label={`Revogar convite para ${invite.email}`}
                             >
                               <XCircle className="h-4 w-4 text-red-500" />
                             </Button>
@@ -731,6 +762,17 @@ export function TeamPage() {
               )}
             </CardContent>
           </Card>
+
+          {invitations.length > 0 && (
+            <Pagination
+              page={invitationsPage}
+              totalPages={totalInvitationPages}
+              totalItems={invitations.length}
+              pageSize={PAGE_SIZE}
+              onPageChange={setInvitationsPage}
+              ariaLabel="Paginacao de convites"
+            />
+          )}
         </TabsContent>
       </Tabs>
 
@@ -741,7 +783,7 @@ export function TeamPage() {
             <DialogTitle>Remover membro</DialogTitle>
             <DialogDescription>
               Tem certeza que deseja remover "{removeMember?.displayName || removeMember?.email}" da equipe?
-              O usuário perderá acesso a todas as lojas.
+              O usuÃ¡rio perderÃ¡ acesso a todas as lojas.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -794,7 +836,7 @@ export function TeamPage() {
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="role">Função</Label>
+              <Label htmlFor="role">FunÃ§Ã£o</Label>
               <Select
                 value={inviteRole}
                 onValueChange={setInviteRole}
@@ -804,9 +846,11 @@ export function TeamPage() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="manager">Gerente</SelectItem>
-                  <SelectItem value="employee">Funcionário</SelectItem>
-                  <SelectItem value="viewer">Visualizador</SelectItem>
+                  {FRANCHISE_ROLE_OPTIONS.map((roleOption) => (
+                    <SelectItem key={roleOption.value} value={roleOption.value}>
+                      {roleOption.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <p className="text-xs text-gray-500">
@@ -845,3 +889,4 @@ export function TeamPage() {
     </div>
   );
 }
+

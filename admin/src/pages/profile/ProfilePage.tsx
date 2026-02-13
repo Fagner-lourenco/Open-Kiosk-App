@@ -266,7 +266,7 @@ export function ProfilePage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} aria-label="Voltar">
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
@@ -295,6 +295,7 @@ export function ProfilePage() {
                     variant="outline"
                     className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-white shadow"
                     onClick={() => toast.info('Upload de foto em breve')}
+                    aria-label="Alterar foto de perfil"
                   >
                     <Camera className="h-4 w-4" />
                   </Button>
@@ -556,6 +557,7 @@ export function ProfilePage() {
                   size="icon"
                   className="absolute right-0 top-0 h-full"
                   onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                  aria-label={showCurrentPassword ? 'Ocultar senha atual' : 'Mostrar senha atual'}
                 >
                   {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
@@ -580,6 +582,7 @@ export function ProfilePage() {
                   size="icon"
                   className="absolute right-0 top-0 h-full"
                   onClick={() => setShowNewPassword(!showNewPassword)}
+                  aria-label={showNewPassword ? 'Ocultar nova senha' : 'Mostrar nova senha'}
                 >
                   {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>

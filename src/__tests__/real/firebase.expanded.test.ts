@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ============================================================================
  * TESTES REAIS - Firebase Service (Expansão de Cobertura)
  * ============================================================================
@@ -35,7 +35,6 @@ const resetFirebaseState = async () => {
   getCurrentFranchiseId = firebaseModule.getCurrentFranchiseId;
   getStoreCollection = firebaseModule.getStoreCollection;
   getStoreDoc = firebaseModule.getStoreDoc;
-  getStoreCollectionPath = firebaseModule.getStoreCollectionPath;
   getCurrentStoreId = firebaseModule.getCurrentStoreId;
   getFirebaseAuth = firebaseModule.getFirebaseAuth;
   
@@ -51,7 +50,6 @@ let getFirebaseApp: any;
 let getCurrentFranchiseId: any;
 let getStoreCollection: any;
 let getStoreDoc: any;
-let getStoreCollectionPath: any;
 let getCurrentStoreId: any;
 let getFirebaseAuth: any;
 
@@ -118,7 +116,6 @@ describe('Firebase Service - Expansão de Cobertura', () => {
     getCurrentFranchiseId = firebaseModule.getCurrentFranchiseId;
     getStoreCollection = firebaseModule.getStoreCollection;
     getStoreDoc = firebaseModule.getStoreDoc;
-    getStoreCollectionPath = firebaseModule.getStoreCollectionPath;
     getCurrentStoreId = firebaseModule.getCurrentStoreId;
     getFirebaseAuth = firebaseModule.getFirebaseAuth;
   });
@@ -161,7 +158,7 @@ let localStorageStore: Record<string, string> = {};
       vi.stubEnv('VITE_FIREBASE_APP_ID', '1:123456789:web:abcdef');
 
       // Mock initializeApp para retornar app válido
-      vi.mocked(initializeApp).mockReturnValueOnce({ name: 'test-app' });
+      vi.mocked(initializeApp).mockReturnValueOnce({ name: 'test-app' } as any);
 
       const result = initializeFirebaseFromEnv();
 
@@ -189,7 +186,7 @@ let localStorageStore: Record<string, string> = {};
       vi.stubEnv('VITE_FIREBASE_PROJECT_ID', 'test-project');
 
       // Mock getApps para retornar app existente
-      vi.mocked(getApps).mockReturnValue([{ name: 'existing-app' }]);
+      vi.mocked(getApps).mockReturnValue([{ name: 'existing-app' } as any]);
 
       const result = initializeFirebaseFromEnv();
 
@@ -207,7 +204,7 @@ let localStorageStore: Record<string, string> = {};
       vi.stubEnv('VITE_FIREBASE_APP_ID', '1:123456789:web:abcdef');
 
       // Mock initializeApp para retornar app válido
-      vi.mocked(initializeApp).mockReturnValueOnce({ name: 'test-app' });
+      vi.mocked(initializeApp).mockReturnValueOnce({ name: 'test-app' } as any);
 
       // Sobrescrever o mock do initializeFirestore para este teste específico
       vi.mocked(initializeFirestore).mockImplementationOnce(() => {
@@ -219,13 +216,15 @@ let localStorageStore: Record<string, string> = {};
       expect(result).not.toBeNull();
       expect(result?.persistenceEnabled).toBe(false);
     });
-    });
   });
 
   describe('initializeFirebase', () => {
     const mockSettings: StoreSettings = {
       storeId: 'test-store',
-      storeName: 'Test Store',
+      name: 'Test Store',
+      currency: 'BRL',
+      taxId: '',
+      taxPercentage: 0,
       firebaseConfig: {
         apiKey: 'test-api-key',
         authDomain: 'test.firebaseapp.com',
@@ -238,7 +237,7 @@ let localStorageStore: Record<string, string> = {};
 
     it('deve inicializar Firebase com configurações válidas', () => {
       // Mock initializeApp para retornar app válido
-      vi.mocked(initializeApp).mockReturnValueOnce({ name: 'test-app' });
+      vi.mocked(initializeApp).mockReturnValueOnce({ name: 'test-app' } as any);
 
       const result = initializeFirebase(mockSettings);
 
@@ -250,7 +249,7 @@ let localStorageStore: Record<string, string> = {};
 
     it('deve reutilizar instância existente se app já foi inicializado', () => {
       // Mock getApps para retornar app existente
-      vi.mocked(getApps).mockReturnValue([{ name: 'existing-app' }]);
+      vi.mocked(getApps).mockReturnValue([{ name: 'existing-app' } as any]);
 
       const result = initializeFirebase(mockSettings);
 
@@ -288,7 +287,10 @@ let localStorageStore: Record<string, string> = {};
       // Inicializar Firebase para habilitar persistência
       const mockSettings: StoreSettings = {
         storeId: 'test-store',
-        storeName: 'Test Store',
+        name: 'Test Store',
+        currency: 'BRL',
+        taxId: '',
+        taxPercentage: 0,
         firebaseConfig: {
           apiKey: 'test-api-key',
           authDomain: 'test.firebaseapp.com',
@@ -316,7 +318,10 @@ let localStorageStore: Record<string, string> = {};
     it('deve retornar instância do Firestore quando inicializado', () => {
       const mockSettings: StoreSettings = {
         storeId: 'test-store',
-        storeName: 'Test Store',
+        name: 'Test Store',
+        currency: 'BRL',
+        taxId: '',
+        taxPercentage: 0,
         firebaseConfig: {
           apiKey: 'test-api-key',
           authDomain: 'test.firebaseapp.com',
@@ -345,7 +350,10 @@ let localStorageStore: Record<string, string> = {};
     it('deve retornar instância do App quando inicializado', () => {
       const mockSettings: StoreSettings = {
         storeId: 'test-store',
-        storeName: 'Test Store',
+        name: 'Test Store',
+        currency: 'BRL',
+        taxId: '',
+        taxPercentage: 0,
         firebaseConfig: {
           apiKey: 'test-api-key',
           authDomain: 'test.firebaseapp.com',
@@ -425,7 +433,10 @@ let localStorageStore: Record<string, string> = {};
       // Inicializar Firebase para os testes
       const mockSettings: StoreSettings = {
         storeId: 'test-store',
-        storeName: 'Test Store',
+        name: 'Test Store',
+        currency: 'BRL',
+        taxId: '',
+        taxPercentage: 0,
         firebaseConfig: {
           apiKey: 'test-api-key',
           authDomain: 'test.firebaseapp.com',
@@ -466,7 +477,10 @@ let localStorageStore: Record<string, string> = {};
       // Inicializar Firebase para os testes
       const mockSettings: StoreSettings = {
         storeId: 'test-store',
-        storeName: 'Test Store',
+        name: 'Test Store',
+        currency: 'BRL',
+        taxId: '',
+        taxPercentage: 0,
         firebaseConfig: {
           apiKey: 'test-api-key',
           authDomain: 'test.firebaseapp.com',
@@ -491,14 +505,6 @@ let localStorageStore: Record<string, string> = {};
 
       expect(document).toBeDefined();
       expect(document.type).toBe('document');
-    });
-  });
-
-  describe('getStoreCollectionPath', () => {
-    it('deve construir path correto para collection', () => {
-      const path = getStoreCollectionPath('store-123', 'products');
-
-      expect(path).toBe('stores/store-123/products');
     });
   });
 
@@ -566,7 +572,10 @@ let localStorageStore: Record<string, string> = {};
     it('deve retornar instância do Auth quando inicializado', () => {
       const mockSettings: StoreSettings = {
         storeId: 'test-store',
-        storeName: 'Test Store',
+        name: 'Test Store',
+        currency: 'BRL',
+        taxId: '',
+        taxPercentage: 0,
         firebaseConfig: {
           apiKey: 'test-api-key',
           authDomain: 'test.firebaseapp.com',
@@ -583,6 +592,4 @@ let localStorageStore: Record<string, string> = {};
       expect(auth.type).toBe('auth');
     });
   });
-} ) ; 
- 
- 
+});

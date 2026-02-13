@@ -151,6 +151,7 @@ function NotificationItem({ notification, onMarkRead, onDismiss }: NotificationI
           variant="ghost"
           size="icon"
           className="h-6 w-6 text-gray-400 hover:text-red-500"
+          aria-label={`Dispensar notificacao: ${notification.title}`}
           onClick={(e) => {
             e.stopPropagation();
             onDismiss(notification.id);
@@ -175,19 +176,33 @@ export function NotificationCenter() {
   const { user } = useAuth();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // Inicializar serviço e subscrever
   useEffect(() => {
     if (user?.uid && currentFranchise?.id) {
+      setIsLoading(true);
+      setError(null);
       notificationService.initialize(user.uid, currentFranchise.id);
       
       const unsubscribe = notificationService.subscribe((newNotifications) => {
         setNotifications(newNotifications);
+        setIsLoading(false);
+        setError(null);
+      });
+
+      const unsubscribeError = notificationService.subscribeError((err) => {
+        setError(err.message || 'Erro ao carregar notificações');
+        setIsLoading(false);
       });
 
       return () => {
         unsubscribe();
+        unsubscribeError();
       };
+    } else {
+      setIsLoading(false);
     }
   }, [user?.uid, currentFranchise?.id]);
 
@@ -288,7 +303,18 @@ export function NotificationCenter() {
 
         <DropdownMenuSeparator />
 
-        {!hasNotifications ? (
+        {isLoading ? (
+          <div className="py-8 text-center text-gray-500">
+            <Bell className="h-12 w-12 mx-auto mb-3 opacity-30 animate-pulse" />
+            <p className="text-sm font-medium">Carregando notificações...</p>
+          </div>
+        ) : error ? (
+          <div className="py-8 text-center text-red-500">
+            <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
+            <p className="text-sm font-medium">Erro ao carregar</p>
+            <p className="text-xs mt-1 text-gray-500">{error}</p>
+          </div>
+        ) : !hasNotifications ? (
           <div className="py-8 text-center text-gray-500">
             <Bell className="h-12 w-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm font-medium">Nenhuma notificação</p>
@@ -309,13 +335,13 @@ export function NotificationCenter() {
           </ScrollArea>
         )}
 
-        {hasNotifications && (
+        {hasNotifications && notifications.length >= 10 && (
           <>
             <DropdownMenuSeparator />
-            <div className="p-2">
-              <Button variant="ghost" className="w-full text-sm" asChild>
-                <Link to="/notifications">Ver todas as notificações</Link>
-              </Button>
+            <div className="p-2 text-center">
+              <p className="text-xs text-muted-foreground">
+                Mostrando as {notifications.length > 50 ? '50' : notifications.length} mais recentes
+              </p>
             </div>
           </>
         )}

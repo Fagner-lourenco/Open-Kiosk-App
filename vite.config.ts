@@ -154,7 +154,7 @@ export default defineConfig(({ mode }) => ({
     test: {
       globals: true,
       environment: 'jsdom',
-      setupFiles: ['./src/__tests__/real/setup.ts'],
+      setupFiles: ['./src/__tests__/real/setup.tsx'],
       coverage: {
         provider: 'v8',
         reporter: ['text', 'json', 'html'],

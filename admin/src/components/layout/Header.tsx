@@ -1,19 +1,20 @@
 /**
  * ============================================================================
- * Header - Cabeçalho
+ * Header - Cabecalho
  * ============================================================================
- * 
- * Cabeçalho com busca, notificações e menu do usuário.
+ *
+ * Cabecalho com busca, notificacoes e menu do usuario.
  * Inclui menu mobile via Sheet.
- * 
+ *
  * @author Open Kiosk Project
  * @version 2.0.0
  */
 
-import { useState } from 'react';
+import { useContext, useMemo, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useFranchise } from '@/context/FranchiseContext';
+import { PermissionContext } from '@/context/PermissionContext';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,52 +33,58 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { 
-  Search, 
-  Menu, 
-  LogOut, 
-  Settings, 
+import {
+  Search,
+  Menu,
+  LogOut,
+  Settings,
   User,
-  LayoutDashboard,
   Store,
-  UsersRound,
-  BarChart3,
-  ClipboardList,
-  Shield,
 } from 'lucide-react';
 import { NotificationCenter } from '@/components/NotificationCenter';
-
-const navItems = [
-  { label: 'Dashboard', href: '/', icon: LayoutDashboard },
-  { label: 'Lojas', href: '/stores', icon: Store },
-  { label: 'Equipe', href: '/team', icon: UsersRound },
-  { label: 'Relatórios', href: '/reports', icon: BarChart3 },
-  { label: 'Auditoria', href: '/audit', icon: ClipboardList },
-  { label: 'Configurações', href: '/settings', icon: Settings },
-];
+import {
+  ENABLE_PERMISSION_FILTERED_NAV,
+  PRIMARY_NAV_ITEMS,
+  SUPER_ADMIN_NAV_ITEM,
+} from '@/config/navConfig';
 
 export function Header() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, isSuperAdmin } = useAuth();
-  const { currentFranchise } = useFranchise();
+  const { currentFranchise, isLoading } = useFranchise();
+  const permissionContext = useContext(PermissionContext);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const SuperAdminIcon = SUPER_ADMIN_NAV_ITEM.icon;
+
+  const visibleNavItems = useMemo(() => {
+    if (!ENABLE_PERMISSION_FILTERED_NAV) return PRIMARY_NAV_ITEMS;
+    if (!permissionContext) return PRIMARY_NAV_ITEMS;
+
+    return PRIMARY_NAV_ITEMS.filter(
+      (item) => !item.requiredPermission || permissionContext.can(item.requiredPermission),
+    );
+  }, [permissionContext]);
+
+  const isPermissionLoading =
+    ENABLE_PERMISSION_FILTERED_NAV && (isLoading || !permissionContext);
 
   const handleLogout = async () => {
     await logout();
     navigate('/login');
   };
 
-  const initials = user?.displayName
-    ?.split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2) || 'U';
+  const initials =
+    user?.displayName
+      ?.split(' ')
+      .map((n) => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2) || 'U';
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-white border-b border-gray-200">
+      <header className="sticky top-0 z-40 border-b border-border bg-card">
         <div className="flex items-center justify-between h-16 px-6">
           {/* Mobile Menu Button */}
           <Button
@@ -85,6 +92,7 @@ export function Header() {
             size="icon"
             className="lg:hidden"
             onClick={() => setIsMobileMenuOpen(true)}
+            aria-label="Abrir menu de navegacao"
           >
             <Menu className="h-5 w-5" />
           </Button>
@@ -92,18 +100,18 @@ export function Header() {
           {/* Search */}
           <div className="hidden md:flex flex-1 max-w-md">
             <div className="relative w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
                 placeholder="Buscar..."
-                className="pl-10 bg-gray-50 border-gray-200"
+                className="border-border bg-muted pl-10"
               />
             </div>
           </div>
 
           {/* Right Side */}
           <div className="flex items-center gap-4">
-            {/* Notifications - Novo componente integrado */}
+            {/* Notifications */}
             <NotificationCenter />
 
             {/* User Menu */}
@@ -117,12 +125,10 @@ export function Header() {
                     </AvatarFallback>
                   </Avatar>
                   <div className="hidden md:block text-left">
-                    <p className="text-sm font-medium text-gray-900">
-                      {user?.displayName || 'Usuário'}
+                    <p className="text-sm font-medium text-foreground">
+                      {user?.displayName || 'Usuario'}
                     </p>
-                    <p className="text-xs text-gray-500">
-                      {user?.email}
-                    </p>
+                    <p className="text-xs text-muted-foreground">{user?.email}</p>
                   </div>
                 </Button>
               </DropdownMenuTrigger>
@@ -135,7 +141,7 @@ export function Header() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
-                  Configurações
+                  Configuracoes
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="text-red-600">
@@ -151,20 +157,20 @@ export function Header() {
       {/* Mobile Menu Sheet */}
       <Sheet open={isMobileMenuOpen} onOpenChange={setIsMobileMenuOpen}>
         <SheetContent side="left" className="w-72 p-0">
-          <SheetHeader className="px-6 py-4 border-b">
+          <SheetHeader className="border-b border-border px-6 py-4">
             <SheetTitle className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center">
-                <Store className="h-5 w-5 text-white" />
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
+                <Store className="h-5 w-5 text-primary-foreground" />
               </div>
               <span className="text-sm font-semibold">Open Kiosk Admin</span>
             </SheetTitle>
           </SheetHeader>
-          
+
           {/* Franchise Info */}
           {currentFranchise && (
-            <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-              <p className="text-xs text-gray-500 mb-0.5">Franquia</p>
-              <p className="text-sm font-medium text-gray-900 truncate">
+            <div className="border-b border-border bg-muted px-4 py-3">
+              <p className="mb-0.5 text-xs text-muted-foreground">Franquia</p>
+              <p className="truncate text-sm font-medium text-foreground">
                 {currentFranchise.name}
               </p>
             </div>
@@ -172,10 +178,15 @@ export function Header() {
 
           {/* Navigation */}
           <nav className="p-4 space-y-1">
-            {navItems.map((item) => {
-              const isActive = item.href === '/' 
-                ? location.pathname === '/'
-                : location.pathname.startsWith(item.href);
+            {isPermissionLoading && (
+              <p className="px-3 py-2 text-xs text-muted-foreground" role="status" aria-live="polite">
+                Carregando permissoes...
+              </p>
+            )}
+
+            {visibleNavItems.map((item) => {
+              const isActive =
+                location.pathname === item.href || location.pathname.startsWith(`${item.href}/`);
 
               return (
                 <NavLink
@@ -185,14 +196,13 @@ export function Header() {
                   className={cn(
                     'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
                     isActive
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                   )}
                 >
-                  <item.icon className={cn(
-                    'h-5 w-5',
-                    isActive ? 'text-blue-600' : 'text-gray-400'
-                  )} />
+                  <item.icon
+                    className={cn('h-5 w-5', isActive ? 'text-primary' : 'text-muted-foreground')}
+                  />
                   {item.label}
                 </NavLink>
               );
@@ -201,20 +211,22 @@ export function Header() {
             {/* Super Admin */}
             {isSuperAdmin && (
               <NavLink
-                to="/superadmin"
+                to={SUPER_ADMIN_NAV_ITEM.href}
                 onClick={() => setIsMobileMenuOpen(false)}
                 className={cn(
-                  'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors mt-4 border-t border-gray-100 pt-4',
-                  location.pathname === '/superadmin'
+                  'mt-4 flex items-center gap-3 rounded-lg border-t border-border/60 px-3 pt-4 pb-2 text-sm font-medium transition-colors',
+                  location.pathname.startsWith('/superadmin')
                     ? 'bg-purple-50 text-purple-700'
-                    : 'text-purple-600 hover:bg-purple-50 hover:text-purple-900'
+                    : 'text-purple-600 hover:bg-purple-50 hover:text-purple-900',
                 )}
               >
-                <Shield className={cn(
-                  'h-5 w-5',
-                  location.pathname === '/superadmin' ? 'text-purple-600' : 'text-purple-400'
-                )} />
-                Super Admin
+                <SuperAdminIcon
+                  className={cn(
+                    'h-5 w-5',
+                    location.pathname.startsWith('/superadmin') ? 'text-purple-600' : 'text-purple-400',
+                  )}
+                />
+                {SUPER_ADMIN_NAV_ITEM.label}
               </NavLink>
             )}
           </nav>

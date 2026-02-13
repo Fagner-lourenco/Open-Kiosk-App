@@ -1,0 +1,25 @@
+diff --git a/android/src/main/java/com/viewtrak/plugins/usbserial/UsbSerialPlugin.java b/android/src/main/java/com/viewtrak/plugins/usbserial/UsbSerialPlugin.java
+index 1234567..abcdefg 100644
+--- a/android/src/main/java/com/viewtrak/plugins/usbserial/UsbSerialPlugin.java
++++ b/android/src/main/java/com/viewtrak/plugins/usbserial/UsbSerialPlugin.java
+@@ -135,7 +135,9 @@ public class UsbSerialPlugin extends Plugin implements Callback {
+             ret.put("vid", device.getVendorId());
+             ret.put("did", device.getDeviceId());
+         }
+-        notifyListeners("attached", ret);
++        // retainUntilConsumed=true: se listeners JS ainda não registraram,
++        // o evento é retido e enviado quando o primeiro listener for adicionado
++        notifyListeners("attached", ret, true);
+     }
+ 
+     @Override
+@@ -146,7 +148,9 @@ public class UsbSerialPlugin extends Plugin implements Callback {
+             ret.put("vid", device.getVendorId());
+             ret.put("did", device.getDeviceId());
+         }
+-        notifyListeners("detached", ret);
++        // retainUntilConsumed=true: garante que detach não é perdido
++        notifyListeners("detached", ret, true);
+     }
+ 
+     @Override

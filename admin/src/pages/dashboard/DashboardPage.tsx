@@ -165,7 +165,7 @@ export function DashboardPage() {
       icon: Users,
       color: 'text-green-600',
       bgColor: 'bg-green-100',
-      href: '/users',
+      href: '/team',
     },
     {
       title: 'Pedidos',
@@ -308,7 +308,7 @@ export function DashboardPage() {
                 </Button>
               </Link>
             )}
-            <Link to="/invitations">
+            <Link to="/team?tab=invitations">
               <Button variant="outline" className="w-full justify-start">
                 <Users className="mr-2 h-4 w-4" />
                 Convidar usuário

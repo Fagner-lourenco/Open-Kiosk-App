@@ -19,6 +19,7 @@ interface ESP32StatusIndicatorProps {
   showLabel?: boolean;
   size?: 'sm' | 'md' | 'lg';
   onClick?: () => void;
+  className?: string;
 }
 
 const ESP32StatusIndicator: React.FC<ESP32StatusIndicatorProps> = ({

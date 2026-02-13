@@ -84,10 +84,10 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
 
   if (isLoading && !currentFranchise) {
     return (
-      <div className={cn('px-4 py-3 border-b border-gray-200', className)}>
-        <div className="w-full flex items-center justify-center px-3 py-2 bg-gray-50 rounded-lg">
-          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-          <span className="ml-2 text-sm text-gray-500">Carregando...</span>
+      <div className={cn('border-b border-border px-4 py-3', className)}>
+        <div className="flex w-full items-center justify-center rounded-lg bg-muted px-3 py-2">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">Carregando...</span>
         </div>
       </div>
     );
@@ -98,27 +98,27 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
   }
 
   return (
-    <div className={cn('px-4 py-3 border-b border-gray-200', className)}>
+    <div className={cn('border-b border-border px-4 py-3', className)}>
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             disabled={switching}
-            className="w-full justify-between px-3 py-2 h-auto bg-gray-50 hover:bg-gray-100"
+            className="h-auto w-full justify-between bg-muted px-3 py-2 hover:bg-accent"
           >
             <div className="flex items-center gap-2 min-w-0 text-left">
-              <Building2 className="h-4 w-4 text-blue-600 shrink-0" />
+              <Building2 className="h-4 w-4 shrink-0 text-primary" />
               <div className="min-w-0">
-                <p className="text-[10px] text-gray-500 uppercase tracking-wide">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                   Franquia
                 </p>
-                <p className="text-sm font-medium text-gray-900 truncate">
+                <p className="truncate text-sm font-medium text-foreground">
                   {currentFranchise.name}
                 </p>
               </div>
             </div>
             {switching ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-gray-400" />
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
             ) : (
               <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
             )}
@@ -130,7 +130,7 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
             <>
               <div className="px-2 py-2">
                 <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     placeholder="Buscar franquia..."
                     value={search}
@@ -148,11 +148,11 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
           <div className="max-h-[300px] overflow-y-auto">
             {/* Franquias */}
             <DropdownMenuGroup>
-              <DropdownMenuLabel className="text-xs text-gray-500">
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Franquias ({filteredFranchises.length})
               </DropdownMenuLabel>
               {filteredFranchises.length === 0 ? (
-                <div className="flex flex-col items-center py-4 text-gray-500">
+                <div className="flex flex-col items-center py-4 text-muted-foreground">
                   <Search className="h-6 w-6 mb-2 opacity-50" />
                   <p className="text-sm">Nenhuma franquia encontrada</p>
                 </div>
@@ -166,21 +166,21 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
                     <Building2 className={cn(
                       'h-4 w-4',
                       franchise.id === currentFranchise.id 
-                        ? 'text-blue-600' 
-                        : 'text-gray-400'
+                        ? 'text-primary' 
+                        : 'text-muted-foreground'
                     )} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">
                         {franchise.name}
                       </p>
                       {franchise.ownerEmail && (
-                        <p className="text-xs text-gray-500 truncate">
+                        <p className="truncate text-xs text-muted-foreground">
                           {franchise.ownerEmail}
                         </p>
                       )}
                     </div>
                     {franchise.id === currentFranchise.id && (
-                      <Check className="h-4 w-4 text-blue-600" />
+                      <Check className="h-4 w-4 text-primary" />
                     )}
                   </DropdownMenuItem>
                 ))
@@ -192,7 +192,7 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
-                  <DropdownMenuLabel className="text-xs text-gray-500">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">
                     Lojas de {currentFranchise.name}
                   </DropdownMenuLabel>
                   {stores.map((store) => (
@@ -205,7 +205,7 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
                       <div className="flex-1 min-w-0">
                         <p className="text-sm truncate">{store.name}</p>
                         {store.address && (
-                          <p className="text-xs text-gray-500 truncate">
+                          <p className="truncate text-xs text-muted-foreground">
                             {store.address}
                           </p>
                         )}

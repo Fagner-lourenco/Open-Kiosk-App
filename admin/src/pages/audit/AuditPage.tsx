@@ -5,14 +5,25 @@
  */
 
 import { useState, useEffect } from 'react';
-import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  onSnapshot,
+  type FirestoreError,
+} from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { auditLogsPath } from '@/lib/pathResolver';
 import { useFranchise } from '@/context/FranchiseContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { FilterBar } from '@/components/layout/FilterBar';
 import {
   Select,
   SelectContent,
@@ -34,6 +45,7 @@ import {
   UserPlus,
   Edit,
   Trash2,
+  AlertCircle,
   LogIn,
   LogOut,
   CheckCircle
@@ -55,6 +67,61 @@ interface AuditLog {
   details?: Record<string, any>;
   timestamp: Date;
   ip?: string;
+}
+
+function parseAuditTimestamp(value: any): Date {
+  if (!value) return new Date();
+
+  if (typeof value?.toDate === 'function') {
+    return value.toDate();
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+}
+
+function normalizeAuditLog(data: Record<string, any>, id: string): AuditLog {
+  const actor = data.actor || {
+    id: data.performedBy || data.userId || 'system',
+    email: data.actorEmail || data.email || 'system@local',
+    name: data.actorName || data.userName,
+  };
+
+  const target = data.target ||
+    (data.targetUserId
+      ? {
+          type: 'user',
+          id: data.targetUserId,
+          name: data.targetUserId,
+        }
+      : undefined);
+
+  const details = data.details ||
+    (data.claims
+      ? {
+          claims: data.claims,
+        }
+      : undefined);
+
+  return {
+    id,
+    action: data.action || data.type || 'unknown.action',
+    actor,
+    target,
+    details,
+    timestamp: parseAuditTimestamp(data.timestamp || data.createdAt || data.updatedAt),
+    ip: data.ip,
+  };
+}
+
+function getAuditErrorMessage(error: FirestoreError): string {
+  if (error.code === 'permission-denied') {
+    return 'Sem permissao para ler os logs de auditoria desta franquia.';
+  }
+  if (error.code === 'failed-precondition') {
+    return 'Indice do Firestore ausente para a consulta de auditoria.';
+  }
+  return 'Erro ao carregar logs de auditoria.';
 }
 
 const actionIcons: Record<string, any> = {
@@ -133,6 +200,7 @@ export function AuditPage() {
   // Real-time audit logs subscription
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [queryError, setQueryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!currentFranchise) {
@@ -142,52 +210,136 @@ export function AuditPage() {
     }
 
     setIsLoading(true);
+    setQueryError(null);
+    const logsCollectionPath = auditLogsPath(currentFranchise.id);
     
     let q = query(
-      collection(db, `franchises/${currentFranchise.id}/auditLogs`),
+      collection(db, logsCollectionPath),
       orderBy('timestamp', 'desc'),
       limit(pageSize * page)
     );
     
     if (actionFilter !== 'all') {
       q = query(
-        collection(db, `franchises/${currentFranchise.id}/auditLogs`),
+        collection(db, logsCollectionPath),
         where('action', '==', actionFilter),
         orderBy('timestamp', 'desc'),
         limit(pageSize * page)
       );
     }
     
-    // Subscribe to real-time updates
+    let rawUnsubscribe: (() => void) | null = null;
+    let legacyUnsubscribe: (() => void) | null = null;
+
+    const cleanupRaw = () => {
+      if (rawUnsubscribe) {
+        rawUnsubscribe();
+        rawUnsubscribe = null;
+      }
+    };
+
+    const cleanupLegacy = () => {
+      if (legacyUnsubscribe) {
+        legacyUnsubscribe();
+        legacyUnsubscribe = null;
+      }
+    };
+
+    const subscribeLegacyLogs = () => {
+      if (legacyUnsubscribe) return;
+
+      const legacyQuery = query(
+        collection(db, 'audit_logs'),
+        where('franchiseId', '==', currentFranchise.id),
+        limit(pageSize * page)
+      );
+
+      legacyUnsubscribe = onSnapshot(
+        legacyQuery,
+        (legacySnapshot) => {
+          const legacyLogs = legacySnapshot.docs
+            .map((doc) => normalizeAuditLog(doc.data(), doc.id))
+            .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+          setLogs(legacyLogs);
+          setIsLoading(false);
+        },
+        (legacyError) => {
+          console.error('Error fetching legacy audit logs:', legacyError);
+          setLogs([]);
+          setQueryError(getAuditErrorMessage(legacyError));
+          setIsLoading(false);
+        }
+      );
+    };
+
+    const subscribeRawFranchiseLogs = () => {
+      if (rawUnsubscribe) return;
+
+      const rawQuery = query(
+        collection(db, logsCollectionPath),
+        limit(pageSize * page)
+      );
+
+      rawUnsubscribe = onSnapshot(
+        rawQuery,
+        (rawSnapshot) => {
+          const rawLogs = rawSnapshot.docs
+            .map((doc) => normalizeAuditLog(doc.data(), doc.id))
+            .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+
+          if (rawLogs.length > 0) {
+            cleanupLegacy();
+            setLogs(rawLogs);
+            setIsLoading(false);
+            return;
+          }
+
+          subscribeLegacyLogs();
+        },
+        (rawError) => {
+          console.error('Error fetching fallback franchise audit logs:', rawError);
+          subscribeLegacyLogs();
+        }
+      );
+    };
+
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const auditLogs = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          action: data.action,
-          actor: data.actor,
-          target: data.target,
-          details: data.details,
-          timestamp: data.timestamp?.toDate() || new Date(),
-          ip: data.ip,
-        };
-      });
-      
-      setLogs(auditLogs);
-      setIsLoading(false);
+      const auditLogs = snapshot.docs.map(doc => normalizeAuditLog(doc.data(), doc.id));
+
+      if (auditLogs.length > 0) {
+        cleanupRaw();
+        cleanupLegacy();
+        setLogs(auditLogs);
+        setIsLoading(false);
+        return;
+      }
+
+      subscribeRawFranchiseLogs();
     }, (error) => {
       console.error('Error fetching audit logs:', error);
+      cleanupRaw();
+      cleanupLegacy();
+      setLogs([]);
+      setQueryError(getAuditErrorMessage(error));
       setIsLoading(false);
     });
 
     // Cleanup subscription on unmount
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      cleanupRaw();
+      cleanupLegacy();
+    };
   }, [currentFranchise?.id, actionFilter, page]);
 
   const filteredLogs = logs.filter(log =>
-    log.actor.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    log.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    log.target?.name?.toLowerCase().includes(searchQuery.toLowerCase())
+    (actionFilter === 'all' || log.action === actionFilter) &&
+    (
+      (log.actor.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (log.action || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (log.target?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+    )
   );
 
   const getActionIcon = (action: string) => {
@@ -224,49 +376,42 @@ export function AuditPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-gray-900">Auditoria</h1>
-            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-              <span className="w-2 h-2 bg-green-500 rounded-full mr-2 animate-pulse" />
-              Tempo real
-            </Badge>
-          </div>
-          <p className="text-gray-500">
-            Histórico de atividades em {currentFranchise.name}
-          </p>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          {exportSuccess && (
-            <Alert className="border-green-200 bg-green-50 text-green-800 py-2">
-              <CheckCircle className="h-4 w-4" />
-              <AlertDescription>
-                Exportado com sucesso!
-              </AlertDescription>
-            </Alert>
-          )}
-          
-          <Button 
-            variant="outline"
-            onClick={exportToCSV}
-            disabled={isExporting || isLoading || filteredLogs.length === 0}
-          >
-            {isExporting ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-2 h-4 w-4" />
+      <PageHeader
+        title="Auditoria"
+        meta={
+          <Badge variant="outline" className="border-green-200 bg-green-50 text-green-700">
+            <span className="mr-2 h-2 w-2 animate-pulse rounded-full bg-green-500" />
+            Tempo real
+          </Badge>
+        }
+        description={`Histórico de atividades em ${currentFranchise.name}`}
+        actions={
+          <div className="flex items-center gap-4">
+            {exportSuccess && (
+              <Alert className="border-green-200 bg-green-50 py-2 text-green-800">
+                <CheckCircle className="h-4 w-4" />
+                <AlertDescription>Exportado com sucesso!</AlertDescription>
+              </Alert>
             )}
-            Exportar
-          </Button>
-        </div>
-      </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-md">
+            <Button
+              variant="outline"
+              onClick={exportToCSV}
+              disabled={isExporting || isLoading || filteredLogs.length === 0}
+            >
+              {isExporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              Exportar
+            </Button>
+          </div>
+        }
+      />
+
+      <FilterBar className="md:justify-between">
+        <div className="relative max-w-md flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
           <Input
             placeholder="Buscar por usuário, ação..."
@@ -275,7 +420,7 @@ export function AuditPage() {
             className="pl-10"
           />
         </div>
-        
+
         <Select value={actionFilter} onValueChange={setActionFilter}>
           <SelectTrigger className="w-[200px]">
             <SelectValue placeholder="Filtrar por ação" />
@@ -289,7 +434,7 @@ export function AuditPage() {
             <SelectItem value="settings.update">Configurações</SelectItem>
           </SelectContent>
         </Select>
-      </div>
+      </FilterBar>
 
       {/* Audit Log */}
       <Card>
@@ -303,7 +448,14 @@ export function AuditPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {isLoading ? (
+          {queryError ? (
+            <div className="p-6">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{queryError}</AlertDescription>
+              </Alert>
+            </div>
+          ) : isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
             </div>

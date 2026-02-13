@@ -63,7 +63,8 @@ vi.mock('firebase/firestore', () => ({
 import { storeService } from '@/services/storeService';
 import { getDoc, getDocs, setDoc, updateDoc } from 'firebase/firestore';
 import { getCurrentStoreId } from '@/services/firebase';
-import { isFranchiseMode } from '@/lib/pathResolver';
+// isFranchiseMode foi removido de pathResolver
+const isFranchiseMode = vi.fn(() => false);
 
 describe('StoreService', () => {
   beforeEach(() => {

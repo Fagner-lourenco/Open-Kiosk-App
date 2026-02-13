@@ -633,6 +633,8 @@
     "kioskModeSoftwareDescription": "Habilita restrições de interface e navegação forçada no quiosque.",
     "kioskModeNative": "Lock Task Mode (Android)",
     "kioskModeNativeDescription": "Bloqueia o dispositivo neste aplicativo em nível de sistema.",
+    "maintenancePinTitle": "PIN de Manutenção",
+    "maintenancePinDescription": "Digite o PIN de manutenção para desativar o modo kiosk.",
     "inactivityTimeout": "Tempo de Inatividade",
     "inactivityTimeoutDescription": "Tempo sem interação para exibir a tela de atração (10-300s).",
     "attractTimeoutUpdated": "Tempo de inatividade atualizado"

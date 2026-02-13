@@ -51,7 +51,7 @@ export interface ResolvedPaymentConfig {
  * @param provider - Valor do Firestore (pode estar em formato legado)
  * @returns Canonical PaymentProvider
  */
-const normalizeProvider = (provider?: PaymentProvider): PaymentProvider => {
+const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
   if (!provider) return 'mercado_pago';
   if (provider === 'mercadopago') return 'mercado_pago';
   if (provider === 'none' || provider === 'mercado_pago' || provider === 'pagbank') return provider;

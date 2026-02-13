@@ -8,7 +8,7 @@
 import { registerPlugin, Capacitor } from '@capacitor/core';
 
 interface KioskModePlugin {
-  exitLockTask(): Promise<void>;
+  exitLockTask(options?: { pin?: string }): Promise<void>;
   startLockTask(): Promise<void>;
   isInLockTaskMode(): Promise<{ locked: boolean }>;
 }
@@ -21,8 +21,9 @@ const KioskMode = Capacitor.isNativePlatform()
 /**
  * Sair do modo kiosk (Lock Task)
  * Permite que o usuário saia do app após autenticação admin
+ * @param pin PIN de manutenção exigido pelo plugin nativo (AND-01)
  */
-export const exitKioskMode = async (): Promise<boolean> => {
+export const exitKioskMode = async (pin: string): Promise<boolean> => {
   if (!Capacitor.isNativePlatform()) {
     console.log('[KioskMode] Não é plataforma nativa, ignorando');
     return true;
@@ -34,7 +35,7 @@ export const exitKioskMode = async (): Promise<boolean> => {
   }
 
   try {
-    await KioskMode.exitLockTask();
+    await KioskMode.exitLockTask({ pin });
     console.log('[KioskMode] Lock Task encerrado com sucesso');
     return true;
   } catch (error) {

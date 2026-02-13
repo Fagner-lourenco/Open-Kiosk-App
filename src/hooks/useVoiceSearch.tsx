@@ -1,13 +1,34 @@
 import { useState, useEffect, useRef } from 'react';
 import { VOICE_ERROR_MESSAGES, VoiceSearchHook } from '@/types/voiceSearchTypes';
 
+// Web Speech API type declarations for cross-config compatibility
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface SpeechRecognitionEventCompat {
+  resultIndex: number;
+  results: any;
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+interface SpeechRecognitionErrorEventCompat {
+  error: string;
+}
+
+declare global {
+  // Only extend Window, don't redeclare existing DOM types
+  // SpeechRecognition is already in DOM lib for tsconfig.app.json
+  // For tsconfig.test.json, these enable compilation without DOM SpeechRecognition
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  interface Window {
+    [key: string]: any; // Allow dynamic access for SpeechRecognition/webkitSpeechRecognition
+  }
+}
+
 
 export const useVoiceSearch = (): VoiceSearchHook => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [confidence, setConfidence] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null);
+  const [recognition, setRecognition] = useState<any>(null);
   const timeoutRef = useRef<NodeJS.Timeout>();
   const autoStopRef = useRef<NodeJS.Timeout>();
   const isMountedRef = useRef(true);
@@ -27,7 +48,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
     recognitionInstance.interimResults = true;
     recognitionInstance.lang = 'en-US';
 
-    recognitionInstance.onresult = (event: SpeechRecognitionEvent) => {
+    recognitionInstance.onresult = (event: SpeechRecognitionEventCompat) => {
       if (!isMountedRef.current) return;
       let finalTranscript = '';
       let interimTranscript = '';
@@ -83,7 +104,7 @@ export const useVoiceSearch = (): VoiceSearchHook => {
       }
     };
 
-    recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
+    recognitionInstance.onerror = (event: SpeechRecognitionErrorEventCompat) => {
       if (!isMountedRef.current) return;
       console.error('Speech recognition error:', event.error);
 

@@ -12,7 +12,9 @@
  * @version 1.0.0
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { doc, getDoc } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -52,6 +54,7 @@ import {
 } from 'lucide-react';
 import { useWastage, type WastageType, type CreateWastageInput } from '@/hooks/useWastage';
 import { cn } from '@/lib/utils';
+import { db } from '@/lib/firebase';
 
 // ============================================================================
 // TYPES
@@ -232,8 +235,32 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [typeFilter, setTypeFilter] = useState<'all' | WastageType>('all');
 
-  // We use tap ids 0-3 as default
-  const tapIds = ['0', '1', '2', '3'];
+  const { data: maxTaps = 4 } = useQuery({
+    queryKey: ['store-max-taps', franchiseId, storeId],
+    queryFn: async () => {
+      const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
+      const storeSnapshot = await getDoc(storeRef);
+
+      if (!storeSnapshot.exists()) return 4;
+
+      const data = storeSnapshot.data() as Record<string, unknown>;
+      const settings = (data.settings as Record<string, unknown> | undefined) || {};
+      const explicitMaxTaps = Number(data.maxTaps);
+      const settingsMaxTaps = Number(settings.maxTaps);
+      const configuredTapCount = Array.isArray(data.taps) ? data.taps.length : 0;
+
+      const candidates = [explicitMaxTaps, settingsMaxTaps, configuredTapCount, 4];
+      const resolvedTapCount = candidates.find((value) => Number.isFinite(value) && value > 0) ?? 4;
+
+      return Math.min(32, Math.max(1, Math.trunc(resolvedTapCount)));
+    },
+    enabled: !!franchiseId && !!storeId,
+  });
+
+  const tapIds = useMemo(
+    () => Array.from({ length: maxTaps }, (_, index) => String(index)),
+    [maxTaps],
+  );
 
   const filteredEvents = typeFilter === 'all'
     ? events

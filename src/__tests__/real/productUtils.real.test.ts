@@ -4,32 +4,36 @@ import type { Product, CartItem } from '@/types/product';
 
 const mockProduct: Product = {
   id: 'prod-1',
-  name: 'Test Product',
+  title: 'Test Product',
   price: 10.00,
+  description: '',
+  tags: [],
+  inStock: true,
   stock: 20,
   minStock: 5,
   isDrink: false,
   storeId: 'store-1',
   category: 'snacks',
-  active: true,
 };
 
 const mockDrinkProduct: Product = {
   id: 'drink-1',
-  name: 'Test Drink',
+  title: 'Test Drink',
   price: 5.00,
+  description: '',
+  tags: [],
+  inStock: true,
   stock: 0,
   isDrink: true,
   totalMlAvailable: 2000,
   defaultSizeKey: 'medium',
   sizes: [
-    { key: 'small', ml: 200, price: 3.00 },
-    { key: 'medium', ml: 400, price: 5.00 },
-    { key: 'large', ml: 600, price: 7.00 },
+    { key: 'small', label: 'Pequeno', ml: 200, price: 3.00 },
+    { key: 'medium', label: 'Médio', ml: 400, price: 5.00 },
+    { key: 'large', label: 'Grande', ml: 600, price: 7.00 },
   ],
   storeId: 'store-1',
   category: 'drinks',
-  active: true,
 };
 
 describe('productUtils', () => {
@@ -54,7 +58,7 @@ describe('productUtils', () => {
 
     it('retorna stock menos itens no carrinho para produto normal', () => {
       const cartItems: CartItem[] = [
-        { id: '1', product: mockProduct, quantity: 5, unitPrice: 10, totalPrice: 50 },
+        { product: mockProduct, quantity: 5, unitPrice: 10 },
       ];
       expect(getMaxQuantity(mockProduct, undefined, cartItems)).toBe(15);
     });
@@ -71,7 +75,7 @@ describe('productUtils', () => {
 
     it('calcula ml disponível para bebidas com itens no carrinho', () => {
       const cartItems: CartItem[] = [
-        { id: '1', product: mockDrinkProduct, quantity: 2, unitPrice: 5, totalPrice: 10, mlPerUnit: 400 },
+        { product: mockDrinkProduct, quantity: 2, unitPrice: 5, mlPerUnit: 400 },
       ];
       // 2000 - (2*400) = 1200ml, medium = 400ml, max = 3
       expect(getMaxQuantity(mockDrinkProduct, 'medium', cartItems)).toBe(3);

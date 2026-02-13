@@ -67,6 +67,24 @@ export interface Store {
   settings?: Record<string, any>;
 }
 
+const VALID_MEMBER_ROLES = new Set([
+  'owner',
+  'admin',
+  'manager',
+  'operator',
+  'employee',
+  'technician',
+  'viewer',
+]);
+
+function normalizeMemberRole(role: unknown): FranchiseMember['role'] {
+  const normalized = typeof role === 'string' ? role.toLowerCase() : '';
+  if (VALID_MEMBER_ROLES.has(normalized)) {
+    return normalized as FranchiseMember['role'];
+  }
+  return 'viewer';
+}
+
 interface FranchiseContextValue {
   /** Franquias do usuário */
   franchises: Franchise[];
@@ -178,7 +196,8 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
         try {
           const membersQuery = query(
             collectionGroup(db, 'members'),
-            where('userId', '==', user.uid)
+            where('userId', '==', user.uid),
+            where('isActive', '==', true)
           );
           const membersSnapshot = await getDocs(membersQuery);
           
@@ -282,12 +301,32 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
       const memberSnap = await getDoc(memberRef);
       
       if (memberSnap.exists()) {
+        const memberData = memberSnap.data();
         setCurrentMembership({
           id: memberSnap.id,
-          ...memberSnap.data(),
+          ...memberData,
+          role: normalizeMemberRole(memberData.role),
         } as FranchiseMember);
       } else {
-        setCurrentMembership(null);
+        const fallbackQuery = query(
+          collection(db, 'franchises', franchiseId, 'members'),
+          where('userId', '==', user.uid),
+          where('isActive', '==', true)
+        );
+        const fallbackSnap = await getDocs(fallbackQuery);
+
+        if (!fallbackSnap.empty) {
+          const legacyMemberDoc = fallbackSnap.docs[0];
+          const legacyData = legacyMemberDoc.data();
+
+          setCurrentMembership({
+            id: legacyMemberDoc.id,
+            ...legacyData,
+            role: normalizeMemberRole(legacyData.role),
+          } as FranchiseMember);
+        } else {
+          setCurrentMembership(null);
+        }
       }
     } catch (error) {
       console.error('Erro ao carregar membership:', error);

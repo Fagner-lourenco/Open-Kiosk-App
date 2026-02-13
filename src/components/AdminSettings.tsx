@@ -6,6 +6,7 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Printer, Video, Store, MonitorPlay, Droplets, Lock, Unlock, Smartphone } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
@@ -49,6 +50,8 @@ export default function AdminSettings() {
   // Estado para modo kiosk (Lock Task Android)
   const [kioskModeEnabled, setKioskModeEnabled] = useState<boolean>(false);
   const [kioskModeLoading, setKioskModeLoading] = useState<boolean>(false);
+  const [showPinDialog, setShowPinDialog] = useState<boolean>(false);
+  const [maintenancePin, setMaintenancePin] = useState<string>('');
   const isNativePlatform = Capacitor.isNativePlatform();
 
   // Estado para configurações de vídeo de fundo
@@ -79,29 +82,45 @@ export default function AdminSettings() {
 
   // Handler para toggle do modo kiosk (Nativo Android) - Não sincronizado
   const handleNativeKioskToggle = async (enabled: boolean) => {
+    if (!enabled) {
+      // AND-01: Pedir PIN antes de desativar
+      setShowPinDialog(true);
+      return;
+    }
     setKioskModeLoading(true);
     try {
-      if (enabled) {
-        const success = await enterKioskMode();
-        if (success) {
-          setKioskModeEnabled(true);
-          toast.success(t('settings.kioskModeEnabled') || 'Modo Kiosk (Android) ativado');
-        } else {
-          toast.error(t('settings.kioskModeError') || 'Erro ao ativar modo kiosk');
-        }
+      const success = await enterKioskMode();
+      if (success) {
+        setKioskModeEnabled(true);
+        toast.success(t('settings.kioskModeEnabled') || 'Modo Kiosk (Android) ativado');
       } else {
-        const success = await exitKioskMode();
-        if (success) {
-          setKioskModeEnabled(false);
-          toast.success(t('settings.kioskModeDisabled') || 'Modo Kiosk (Android) desativado');
-        } else {
-          toast.error(t('settings.kioskModeError') || 'Erro ao desativar modo kiosk');
-        }
+        toast.error(t('settings.kioskModeError') || 'Erro ao ativar modo kiosk');
       }
     } catch (error) {
       console.error('[KioskMode] Erro:', error);
       toast.error(t('settings.kioskModeError') || 'Erro ao alterar modo kiosk');
     } finally {
+      setKioskModeLoading(false);
+    }
+  };
+
+  // Handler para confirmar saída do kiosk com PIN
+  const handleConfirmExitKiosk = async () => {
+    setShowPinDialog(false);
+    setKioskModeLoading(true);
+    try {
+      const success = await exitKioskMode(maintenancePin);
+      if (success) {
+        setKioskModeEnabled(false);
+        toast.success(t('settings.kioskModeDisabled') || 'Modo Kiosk (Android) desativado');
+      } else {
+        toast.error('PIN inválido ou erro ao desativar modo kiosk');
+      }
+    } catch (error) {
+      console.error('[KioskMode] Erro:', error);
+      toast.error(t('settings.kioskModeError') || 'Erro ao alterar modo kiosk');
+    } finally {
+      setMaintenancePin('');
       setKioskModeLoading(false);
     }
   };
@@ -800,6 +819,37 @@ export default function AdminSettings() {
           )}
         </CardContent>
       </Card>
+
+      {/* Dialog PIN de Manutenção (AND-01) */}
+      <Dialog open={showPinDialog} onOpenChange={(open) => { if (!open) { setShowPinDialog(false); setMaintenancePin(''); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('settings.maintenancePinTitle') || 'PIN de Manutenção'}</DialogTitle>
+            <DialogDescription>
+              {t('settings.maintenancePinDescription') || 'Digite o PIN de manutenção para desativar o modo kiosk.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <Input
+              type="password"
+              inputMode="numeric"
+              placeholder="000000"
+              value={maintenancePin}
+              onChange={(e) => setMaintenancePin(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && maintenancePin) handleConfirmExitKiosk(); }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowPinDialog(false); setMaintenancePin(''); }}>
+              {t('common.cancel') || 'Cancelar'}
+            </Button>
+            <Button onClick={handleConfirmExitKiosk} disabled={!maintenancePin}>
+              {t('common.confirm') || 'Confirmar'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Nota informativa */}
       <Card className="border-blue-200 bg-blue-50">

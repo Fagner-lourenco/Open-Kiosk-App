@@ -13,7 +13,9 @@
  * @version 1.0.0
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { doc, getDoc } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -60,6 +62,7 @@ import {
   type CreateMaintenanceInput,
 } from '@/hooks/useMaintenance';
 import { cn } from '@/lib/utils';
+import { db } from '@/lib/firebase';
 
 // ============================================================================
 // TYPES
@@ -107,11 +110,13 @@ function MaintenanceStatusBadge({ status }: { status: MaintenanceStatus }) {
 function ScheduleDialog({
   open,
   onOpenChange,
+  tapIds,
   onSubmit,
   isPending,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  tapIds: string[];
   onSubmit: (data: CreateMaintenanceInput) => Promise<unknown>;
   isPending: boolean;
 }) {
@@ -170,10 +175,11 @@ function ScheduleDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Geral (todas)</SelectItem>
-                <SelectItem value="0">Torneira 1</SelectItem>
-                <SelectItem value="1">Torneira 2</SelectItem>
-                <SelectItem value="2">Torneira 3</SelectItem>
-                <SelectItem value="3">Torneira 4</SelectItem>
+                {tapIds.map((tapIdOption) => (
+                  <SelectItem key={tapIdOption} value={tapIdOption}>
+                    Torneira {Number(tapIdOption) + 1}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
@@ -305,6 +311,33 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [completeLogId, setCompleteLogId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | MaintenanceStatus>('all');
+
+  const { data: maxTaps = 4 } = useQuery({
+    queryKey: ['store-max-taps', franchiseId, storeId],
+    queryFn: async () => {
+      const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
+      const storeSnapshot = await getDoc(storeRef);
+
+      if (!storeSnapshot.exists()) return 4;
+
+      const data = storeSnapshot.data() as Record<string, unknown>;
+      const settings = (data.settings as Record<string, unknown> | undefined) || {};
+      const explicitMaxTaps = Number(data.maxTaps);
+      const settingsMaxTaps = Number(settings.maxTaps);
+      const configuredTapCount = Array.isArray(data.taps) ? data.taps.length : 0;
+
+      const candidates = [explicitMaxTaps, settingsMaxTaps, configuredTapCount, 4];
+      const resolvedTapCount = candidates.find((value) => Number.isFinite(value) && value > 0) ?? 4;
+
+      return Math.min(32, Math.max(1, Math.trunc(resolvedTapCount)));
+    },
+    enabled: !!franchiseId && !!storeId,
+  });
+
+  const tapIds = useMemo(
+    () => Array.from({ length: maxTaps }, (_, index) => String(index)),
+    [maxTaps],
+  );
 
   const filteredLogs = statusFilter === 'all'
     ? logs
@@ -522,6 +555,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
       <ScheduleDialog
         open={showScheduleDialog}
         onOpenChange={setShowScheduleDialog}
+        tapIds={tapIds}
         onSubmit={schedule}
         isPending={isScheduling}
       />

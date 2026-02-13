@@ -28,7 +28,8 @@ import { useTranslation } from '@/i18n';
 import { useStoreSettings } from '@/hooks/useStoreSettings';
 import { useESP32AutoConnect } from '@/hooks/useESP32AutoConnect';
 import { useESP32Reconnect } from '@/hooks/useESP32Reconnect';
-import { useESP32, ESP32LogEntry } from '@/context/ESP32Context';
+import { useESP32 } from '@/context/ESP32Context';
+import { ESP32LogEntry } from '@/types/esp32ContextTypes';
 import {
   Usb,
   Wifi,
@@ -63,7 +64,6 @@ import esp32Service, {
   ConnectionStatus,
   ESP32_DEVICE_NAME,
   ESP32_BLE_PIN,
-  ESP32_DEFAULT_IP,
 } from '@/services/esp32CommunicationService';
 import { Capacitor } from '@capacitor/core';
 import { TapSelector, useTapSelection } from '@/components/TapSelector';
@@ -169,9 +169,10 @@ export function ESP32DispenserPanel() {
   // HOOKS DE AUTOCONEXÃO E RECONEXÃO
   // ============================================
 
-  // Hook de autoconexão (tenta conectar ao iniciar)
+  // Hook de autoconexão — DESATIVADO: o Supervisor (PR1) agora faz autoconnect com fallback
+  // pela ordem de prioridade configurada: evita race condition com o supervisor.
   const { isAutoConnecting, autoConnectResult, connectedVia, retryAutoConnect } = useESP32AutoConnect({
-    enabled: autoConnectEnabled,
+    enabled: false, // PR4: supervisor já gerencia reconexão + autoconnect
     connectionOrder,
     onConnected: (status) => {
       // Estado já é atualizado pelo ESP32Context automaticamente
@@ -934,7 +935,7 @@ export function ESP32DispenserPanel() {
               {isConnected ? (
                 <>
                   <CheckCircle className="w-4 h-4 mr-1" />
-                  {t('esp32.connected')}
+                  {t('esp32.connected')} ({connectionStatus.type === 'usb' ? 'USB' : connectionStatus.type === 'wifi' ? 'WiFi' : connectionStatus.type === 'bluetooth' ? 'BLE' : connectionStatus.type})
                 </>
               ) : (
                 <>

@@ -78,6 +78,33 @@ export const onServingSessionCreated = functions
             updatedAt: serverTimestamp(),
             updatedBy: 'system',
           });
+
+          // Create real-time notification for keg depletion
+          const batchCode = (kegData.batchCode as string) || session.kegId!.slice(0, 8);
+          const dedupeKey = `keg_depleted_${session.kegId}`;
+          const existingSnap = await db.collection(`franchises/${franchiseId}/notifications`)
+            .where('dedupeKey', '==', dedupeKey).limit(1).get();
+          if (existingSnap.empty) {
+            const notifRef = db.collection(`franchises/${franchiseId}/notifications`).doc();
+            batch.set(notifRef, {
+              id: notifRef.id,
+              type: 'stock',
+              priority: 'critical',
+              title: 'Barril Esgotado',
+              message: `Barril ${batchCode} foi totalmente consumido — necessário substituir`,
+              isRead: false,
+              isDismissed: false,
+              createdAt: serverTimestamp(),
+              readAt: null,
+              entityRef: `kegs/${session.kegId}`,
+              storeId,
+              franchiseId,
+              dedupeKey,
+              actionUrl: `/stores/${storeId}?tab=operations`,
+              actionLabel: 'Ver Operações',
+            });
+          }
+
           console.log(`[ERP:ServingSession] Keg ${session.kegId} marked depleted`);
         } else {
           batch.update(kegRef, {
