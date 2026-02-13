@@ -23,6 +23,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ConfirmDeleteDialog } from '@/components/shared/ConfirmDeleteDialog';
+import { LoadingState } from '@/components/common/LoadingState';
+import { ErrorState } from '@/components/common/ErrorState';
 import { 
   ArrowLeft,
   Store,
@@ -59,6 +61,7 @@ import {
   StoreWastageTab,
   StoreMaintenanceTab,
 } from '@/components/store';
+import { DangerZoneCard } from '@/components/common/DangerZoneCard';
 
 interface StoreData {
   id: string;
@@ -197,7 +200,7 @@ export function StoreDetailPage() {
             }
           );
         } catch (auditError) {
-          console.warn('[audit] Falha ao registrar atualizacao de loja:', auditError);
+          console.warn('[audit] Falha ao registrar atualização de loja:', auditError);
         }
       }
 
@@ -238,7 +241,7 @@ export function StoreDetailPage() {
             }
           );
         } catch (auditError) {
-          console.warn('[audit] Falha ao registrar exclusao de loja:', auditError);
+          console.warn('[audit] Falha ao registrar exclusão de loja:', auditError);
         }
       }
 
@@ -259,26 +262,24 @@ export function StoreDetailPage() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    );
+    return <LoadingState className="min-h-[400px]" />;
   }
 
   if (error && !store) {
     return (
       <div className="space-y-6">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-        <Link to="/stores">
-          <Button variant="outline">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Voltar para lojas
-          </Button>
-        </Link>
+        <ErrorState
+          title="Erro ao carregar loja"
+          description={error}
+        />
+        <div className="flex justify-center">
+          <Link to="/stores">
+            <Button variant="outline">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Voltar para lojas
+            </Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -297,12 +298,12 @@ export function StoreDetailPage() {
           </Link>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-gray-900">{store.name}</h1>
+              <h1 className="text-2xl font-bold text-foreground">{store.name}</h1>
               <Badge variant={store.isActive ? 'default' : 'secondary'}>
                 {store.isActive ? 'Ativa' : 'Inativa'}
               </Badge>
             </div>
-            <p className="text-gray-500">{store.address || 'Sem endereço'}</p>
+            <p className="text-muted-foreground">{store.address || 'Sem endereço'}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -344,7 +345,7 @@ export function StoreDetailPage() {
         <div className="space-y-3">
           <div>
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Operacao
+              Operação
             </p>
             <TabsList className="h-auto flex-wrap gap-1">
               <TabsTrigger value="orders">
@@ -353,7 +354,7 @@ export function StoreDetailPage() {
               </TabsTrigger>
               <TabsTrigger value="operations">
                 <Activity className="mr-2 h-4 w-4" />
-                Operacao
+                Operação
               </TabsTrigger>
               <TabsTrigger value="kegs">
                 <Beer className="mr-2 h-4 w-4" />
@@ -365,14 +366,14 @@ export function StoreDetailPage() {
               </TabsTrigger>
               <TabsTrigger value="maintenance">
                 <Wrench className="mr-2 h-4 w-4" />
-                Manutencao
+                Manutenção
               </TabsTrigger>
             </TabsList>
           </div>
 
           <div>
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Catalogo
+              Catálogo
             </p>
             <TabsList className="h-auto flex-wrap gap-1">
               <TabsTrigger value="products">
@@ -381,18 +382,18 @@ export function StoreDetailPage() {
               </TabsTrigger>
               <TabsTrigger value="inventory">
                 <Boxes className="mr-2 h-4 w-4" />
-                Inventario
+                Inventário
               </TabsTrigger>
               <TabsTrigger value="reports">
                 <BarChart3 className="mr-2 h-4 w-4" />
-                Relatorios
+                Relatórios
               </TabsTrigger>
             </TabsList>
           </div>
 
           <div>
             <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Gestao
+              Gestão
             </p>
             <TabsList className="h-auto flex-wrap gap-1">
               <TabsTrigger value="details">
@@ -405,7 +406,7 @@ export function StoreDetailPage() {
               </TabsTrigger>
               <TabsTrigger value="settings">
                 <Settings className="mr-2 h-4 w-4" />
-                Configuracoes
+                Configurações
               </TabsTrigger>
             </TabsList>
           </div>
@@ -468,7 +469,7 @@ export function StoreDetailPage() {
                 <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div>
                     <Label htmlFor="isActive">Loja ativa</Label>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-muted-foreground">
                       Lojas inativas não aparecem no app
                     </p>
                   </div>
@@ -488,28 +489,28 @@ export function StoreDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-3">
-                    <MapPin className="h-5 w-5 text-gray-400" />
+                    <MapPin className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">Endereço</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {store.address || 'Não informado'}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Phone className="h-5 w-5 text-gray-400" />
+                    <Phone className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">Telefone</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {store.phone || 'Não informado'}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Mail className="h-5 w-5 text-gray-400" />
+                    <Mail className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">Email</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {store.email || 'Não informado'}
                       </p>
                     </div>
@@ -523,28 +524,28 @@ export function StoreDetailPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex items-center gap-3">
-                    <Clock className="h-5 w-5 text-gray-400" />
+                    <Clock className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">Criada em</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {store.createdAt?.toLocaleDateString('pt-BR') || 'N/A'}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Clock className="h-5 w-5 text-gray-400" />
+                    <Clock className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">Última atualização</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {store.updatedAt?.toLocaleDateString('pt-BR') || 'N/A'}
                       </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Users className="h-5 w-5 text-gray-400" />
+                    <Users className="h-5 w-5 text-muted-foreground" />
                     <div>
                       <p className="text-sm font-medium">Membros</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="text-sm text-muted-foreground">
                         {store.operators?.length || 0} usuário(s)
                       </p>
                     </div>
@@ -556,14 +557,7 @@ export function StoreDetailPage() {
 
           {/* Danger Zone - Only for superadmin */}
           {isSuperAdmin && (
-            <Card className="border-red-200">
-              <CardHeader>
-                <CardTitle className="text-base text-red-600">Zona de Perigo</CardTitle>
-                <CardDescription>
-                  Ações irreversíveis para esta loja
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
+            <DangerZoneCard description="Ações irreversíveis para esta loja">
                 <Button
                   variant="destructive"
                   onClick={() => setShowDeleteDialog(true)}
@@ -571,8 +565,7 @@ export function StoreDetailPage() {
                   <Trash2 className="mr-2 h-4 w-4" />
                   Excluir loja
                 </Button>
-              </CardContent>
-            </Card>
+            </DangerZoneCard>
           )}
         </TabsContent>
 
@@ -664,8 +657,8 @@ export function StoreDetailPage() {
         title="Excluir loja"
         description={
           <>
-            Tem certeza que deseja excluir a loja "{store.name}"? Esta acao nao pode ser desfeita
-            e todos os dados relacionados (pedidos, estoque, configuracoes e membros) serao
+            Tem certeza que deseja excluir a loja "{store.name}"? Esta ação não pode ser desfeita
+            e todos os dados relacionados (pedidos, estoque, configurações e membros) serão
             perdidos.
           </>
         }

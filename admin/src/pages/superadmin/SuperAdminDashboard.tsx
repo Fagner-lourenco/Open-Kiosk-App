@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { getPlanBadge, getStatusBadge } from '@/utils/franchise-badges';
 import { collection, getDocs, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
@@ -186,22 +187,6 @@ export default function SuperAdminDashboard() {
     return timestamp.toDate().toLocaleDateString('pt-BR');
   };
 
-  const getPlanBadge = (plan?: string) => {
-    const planColors: Record<string, string> = {
-      trial: 'bg-yellow-100 text-yellow-800',
-      basic: 'bg-blue-100 text-blue-800',
-      professional: 'bg-purple-100 text-purple-800',
-      enterprise: 'bg-green-100 text-green-800',
-    };
-    return planColors[plan || 'trial'] || planColors.trial;
-  };
-
-  const getStatusBadge = (status?: string) => {
-    return status === 'active' 
-      ? 'bg-green-100 text-green-800' 
-      : 'bg-red-100 text-red-800';
-  };
-
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -326,7 +311,7 @@ export default function SuperAdminDashboard() {
               Nenhuma franquia encontrada
             </div>
           ) : (
-            <Table>
+            <Table aria-label="Lista de franquias">
               <TableHeader>
                 <TableRow>
                   <TableHead>Nome</TableHead>

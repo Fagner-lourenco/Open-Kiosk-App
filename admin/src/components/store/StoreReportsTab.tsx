@@ -278,7 +278,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -392,7 +392,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-[300px] flex items-center justify-center text-gray-400">
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
                 Sem dados de vendas no período
               </div>
             )}
@@ -447,7 +447,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
               </TableBody>
             </Table>
           ) : (
-            <div className="py-8 text-center text-gray-400">
+            <div className="py-8 text-center text-muted-foreground">
               Nenhuma venda registrada no período
             </div>
           )}
@@ -472,7 +472,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
               </BarChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-[200px] flex items-center justify-center text-gray-400">
+            <div className="h-[200px] flex items-center justify-center text-muted-foreground">
               Nenhum produto cadastrado
             </div>
           )}
@@ -604,7 +604,7 @@ function OperationalReportsSection({
           <CardDescription>Dados operacionais de chopp no periodo</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="py-8 text-center text-gray-400">
+          <div className="py-8 text-center text-muted-foreground">
             Nenhum dado operacional no periodo
           </div>
         </CardContent>
@@ -627,21 +627,21 @@ function OperationalReportsSection({
             <div className="p-3 bg-blue-50 rounded-lg">
               <div className="flex items-center gap-2 mb-1">
                 <Droplets className="h-4 w-4 text-blue-500" />
-                <span className="text-xs text-gray-500">Dispensado</span>
+                <span className="text-xs text-muted-foreground">Dispensado</span>
               </div>
               <p className="text-lg font-bold text-blue-700">{formatMl(totalMlDispensed)}</p>
             </div>
             <div className="p-3 bg-red-50 rounded-lg">
               <div className="flex items-center gap-2 mb-1">
                 <AlertTriangle className="h-4 w-4 text-red-500" />
-                <span className="text-xs text-gray-500">Perdas</span>
+                <span className="text-xs text-muted-foreground">Perdas</span>
               </div>
               <p className="text-lg font-bold text-red-600">{formatMl(totalMlWasted)}</p>
             </div>
             <div className="p-3 bg-yellow-50 rounded-lg">
               <div className="flex items-center gap-2 mb-1">
                 <TrendingUp className="h-4 w-4 text-yellow-600" />
-                <span className="text-xs text-gray-500">% Perda</span>
+                <span className="text-xs text-muted-foreground">% Perda</span>
               </div>
               <p className="text-lg font-bold text-yellow-700">
                 {wastePercentage.toFixed(1)}%
@@ -650,7 +650,7 @@ function OperationalReportsSection({
             <div className="p-3 bg-green-50 rounded-lg">
               <div className="flex items-center gap-2 mb-1">
                 <Activity className="h-4 w-4 text-green-500" />
-                <span className="text-xs text-gray-500">Sessoes</span>
+                <span className="text-xs text-muted-foreground">Sessoes</span>
               </div>
               <p className="text-lg font-bold text-green-700">{totalSessions}</p>
             </div>

@@ -55,7 +55,7 @@ export function PaymentMethodsChart({ data, loading = false }: PaymentMethodsCha
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-64 bg-gray-100 rounded animate-pulse" />
+          <div className="h-64 bg-muted rounded animate-pulse" />
         </CardContent>
       </Card>
     );

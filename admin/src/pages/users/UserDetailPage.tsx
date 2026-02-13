@@ -1,6 +1,6 @@
 ﻿/**
  * ============================================================================
- * UserDetailPage - Detalhes do UsuÃƒÂ¡rio
+ * UserDetailPage - Detalhes do Usuário
  * ============================================================================
  */
 
@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FRANCHISE_ROLE_OPTIONS, getRoleLabel } from '@/config/roles';
+import { DangerZoneCard } from '@/components/common/DangerZoneCard';
 import { 
   ArrowLeft, 
   User, 
@@ -40,10 +41,12 @@ import {
   Calendar,
   Shield,
   Store,
-  Building2,
   Trash2,
   CheckCircle
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { LoadingState } from '@/components/common/LoadingState';
+import { ErrorState } from '@/components/common/ErrorState';
 
 interface UserData {
   id: string;
@@ -107,7 +110,7 @@ export function UserDetailPage() {
         const userData: UserData = {
           id: userId!,
           email: currentFranchise?.ownerEmail || '',
-          displayName: 'ProprietÃƒÂ¡rio',
+          displayName: 'Proprietário',
           role: 'owner',
           addedAt: new Date(),
           stores: ['*'],
@@ -115,11 +118,11 @@ export function UserDetailPage() {
         setUser(userData);
         setSelectedRole(userData.role);
       } else {
-        setError('UsuÃƒÂ¡rio nÃƒÂ£o encontrado');
+        setError('Usuário não encontrado');
       }
     } catch (err) {
       console.error('Error loading user:', err);
-      setError('Erro ao carregar usuÃƒÂ¡rio');
+      setError('Erro ao carregar usuário');
     }
     
     setIsLoading(false);
@@ -143,11 +146,11 @@ export function UserDetailPage() {
       if (user) {
         setUser({ ...user, role: newRole });
       }
-      setSuccess('FunÃƒÂ§ÃƒÂ£o atualizada com sucesso!');
+      setSuccess('Função atualizada com sucesso!');
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       console.error('Error updating role:', err);
-      setError('Erro ao atualizar funÃƒÂ§ÃƒÂ£o');
+      setError('Erro ao atualizar função');
       setSelectedRole(user?.role || '');
     }
     
@@ -167,7 +170,7 @@ export function UserDetailPage() {
       navigate('/team');
     } catch (err) {
       console.error('Error removing user:', err);
-      setError('Erro ao remover usuÃƒÂ¡rio');
+      setError('Erro ao remover usuário');
       setIsRemoving(false);
     }
   };
@@ -181,42 +184,28 @@ export function UserDetailPage() {
   };
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected />;
   }
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    );
+    return <LoadingState className="min-h-[400px]" />;
   }
 
   if (error && !user) {
     return (
       <div className="space-y-6">
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-        <Link to="/team">
-          <Button variant="outline">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Voltar para equipe
-          </Button>
-        </Link>
+        <ErrorState
+          title="Erro ao carregar usuário"
+          description={error}
+        />
+        <div className="flex justify-center">
+          <Link to="/team">
+            <Button variant="outline">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Voltar para equipe
+            </Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -233,8 +222,8 @@ export function UserDetailPage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Detalhes do UsuÃƒÂ¡rio</h1>
-          <p className="text-gray-500">Gerenciar permissÃƒÂµes e acessos</p>
+          <h1 className="text-2xl font-bold text-foreground">Detalhes do Usuário</h1>
+          <p className="text-muted-foreground">Gerenciar permissões e acessos</p>
         </div>
       </div>
 
@@ -264,14 +253,14 @@ export function UserDetailPage() {
             </Avatar>
             
             <div className="flex-1">
-              <h2 className="text-xl font-semibold text-gray-900">
+              <h2 className="text-xl font-semibold text-foreground">
                 {user.displayName || 'Sem nome'}
               </h2>
-              <div className="flex items-center gap-2 text-gray-500 mt-1">
+              <div className="flex items-center gap-2 text-muted-foreground mt-1">
                 <Mail className="h-4 w-4" />
                 {user.email}
               </div>
-              <div className="flex items-center gap-2 text-gray-500 mt-1">
+              <div className="flex items-center gap-2 text-muted-foreground mt-1">
                 <Calendar className="h-4 w-4" />
                 Membro desde {user.addedAt?.toLocaleDateString('pt-BR') || 'N/A'}
               </div>
@@ -288,9 +277,9 @@ export function UserDetailPage() {
       {/* Role Management */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">FunÃƒÂ§ÃƒÂ£o</CardTitle>
+          <CardTitle className="text-base">Função</CardTitle>
           <CardDescription>
-            Defina a funÃƒÂ§ÃƒÂ£o do usuÃƒÂ¡rio na franquia
+            Defina a função do usuário na franquia
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -316,8 +305,8 @@ export function UserDetailPage() {
           </div>
           
           {user.role === 'owner' && (
-            <p className="text-sm text-gray-500 mt-2">
-              ProprietÃƒÂ¡rios nÃƒÂ£o podem ter sua funÃƒÂ§ÃƒÂ£o alterada
+            <p className="text-sm text-muted-foreground mt-2">
+              Proprietários não podem ter sua função alterada
             </p>
           )}
         </CardContent>
@@ -328,14 +317,14 @@ export function UserDetailPage() {
         <CardHeader>
           <CardTitle className="text-base">Acesso a Lojas</CardTitle>
           <CardDescription>
-            Lojas que este usuÃƒÂ¡rio pode acessar
+            Lojas que este usuário pode acessar
           </CardDescription>
         </CardHeader>
         <CardContent>
           {stores.length === 0 ? (
             <div className="text-center py-6">
-              <Store className="h-8 w-8 mx-auto text-gray-300 mb-2" />
-              <p className="text-sm text-gray-500">Nenhuma loja cadastrada</p>
+              <Store className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
+              <p className="text-sm text-muted-foreground">Nenhuma loja cadastrada</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -345,7 +334,7 @@ export function UserDetailPage() {
                   className="flex items-center justify-between p-3 border rounded-lg"
                 >
                   <div className="flex items-center gap-3">
-                    <Store className="h-5 w-5 text-gray-400" />
+                    <Store className="h-5 w-5 text-muted-foreground" />
                     <span>{store.name}</span>
                   </div>
                   <Badge variant="outline">
@@ -356,10 +345,10 @@ export function UserDetailPage() {
             </div>
           )}
           
-          <p className="text-sm text-gray-500 mt-4">
+          <p className="text-sm text-muted-foreground mt-4">
             {user.role === 'owner' 
-              ? 'ProprietÃƒÂ¡rios tÃƒÂªm acesso a todas as lojas automaticamente'
-              : 'O acesso ÃƒÂ s lojas ÃƒÂ© herdado da funÃƒÂ§ÃƒÂ£o na franquia'
+              ? 'Proprietários têm acesso a todas as lojas automaticamente'
+              : 'O acesso às lojas é herdado da função na franquia'
             }
           </p>
         </CardContent>
@@ -370,27 +359,20 @@ export function UserDetailPage() {
         <CardHeader>
           <CardTitle className="text-base">Atividade Recente</CardTitle>
           <CardDescription>
-            ÃƒÅ¡ltimas aÃƒÂ§ÃƒÂµes deste usuÃƒÂ¡rio
+            Últimas ações deste usuário
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="text-center py-6">
-            <User className="h-8 w-8 mx-auto text-gray-300 mb-2" />
-            <p className="text-sm text-gray-500">Nenhuma atividade registrada</p>
+            <User className="h-8 w-8 mx-auto text-muted-foreground/50 mb-2" />
+            <p className="text-sm text-muted-foreground">Nenhuma atividade registrada</p>
           </div>
         </CardContent>
       </Card>
 
       {/* Danger Zone - only for non-owners */}
       {user.role !== 'owner' && (
-        <Card className="border-red-200">
-          <CardHeader>
-            <CardTitle className="text-base text-red-600">Zona de Perigo</CardTitle>
-            <CardDescription>
-              AÃƒÂ§ÃƒÂµes irreversÃƒÂ­veis para este usuÃƒÂ¡rio
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+        <DangerZoneCard description="Ações irreversíveis para este usuário">
             <Button
               variant="destructive"
               onClick={() => setShowRemoveDialog(true)}
@@ -398,21 +380,20 @@ export function UserDetailPage() {
               <Trash2 className="mr-2 h-4 w-4" />
               Remover da Franquia
             </Button>
-            <p className="text-sm text-gray-500 mt-2">
-              O usuÃƒÂ¡rio perderÃƒÂ¡ acesso a todas as lojas desta franquia.
+            <p className="text-sm text-muted-foreground mt-2">
+              O usuário perderá acesso a todas as lojas desta franquia.
             </p>
-          </CardContent>
-        </Card>
+        </DangerZoneCard>
       )}
 
       {/* Remove User Dialog */}
       <Dialog open={showRemoveDialog} onOpenChange={setShowRemoveDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Remover usuÃƒÂ¡rio</DialogTitle>
+            <DialogTitle>Remover usuário</DialogTitle>
             <DialogDescription>
               Tem certeza que deseja remover "{user.displayName || user.email}" da franquia?
-              O usuÃƒÂ¡rio perderÃƒÂ¡ acesso a todas as lojas.
+              O usuário perderá acesso a todas as lojas.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -434,7 +415,7 @@ export function UserDetailPage() {
                   Removendo...
                 </>
               ) : (
-                'Remover usuÃƒÂ¡rio'
+                'Remover usuário'
               )}
             </Button>
           </DialogFooter>

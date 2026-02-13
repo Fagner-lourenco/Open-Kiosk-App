@@ -23,7 +23,6 @@ import { ConfirmDeleteDialog } from '@/components/shared/ConfirmDeleteDialog';
 import { AuditActions, logUserAction } from '@/services/auditService';
 import { 
   Settings,
-  Building2,
   Bell,
   Shield,
   Palette,
@@ -34,6 +33,8 @@ import {
   CheckCircle,
   Trash2
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { DangerZoneCard } from '@/components/common/DangerZoneCard';
 
 interface FranchiseSettings {
   name: string;
@@ -150,7 +151,7 @@ export function SettingsPage() {
             }
           );
         } catch (auditError) {
-          console.warn('[audit] Falha ao registrar alteracao de configuracoes:', auditError);
+          console.warn('[audit] Falha ao registrar alteração de configurações:', auditError);
         }
       }
 
@@ -196,19 +197,7 @@ export function SettingsPage() {
   };
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para acessar as configurações
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para acessar as configurações" />;
   }
 
   return (
@@ -216,8 +205,8 @@ export function SettingsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Configurações</h1>
-          <p className="text-gray-500">
+          <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
+          <p className="text-muted-foreground">
             Gerencie as configurações de {currentFranchise.name}
           </p>
         </div>
@@ -306,7 +295,7 @@ export function SettingsPage() {
                 <div className="space-y-2">
                   <Label htmlFor="website">Website</Label>
                   <div className="relative">
-                    <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                    <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="website"
                       value={settings.website}
@@ -343,7 +332,7 @@ export function SettingsPage() {
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div>
                   <Label>Novos pedidos</Label>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Receber email quando novos pedidos forem realizados
                   </p>
                 </div>
@@ -361,7 +350,7 @@ export function SettingsPage() {
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div>
                   <Label>Estoque baixo</Label>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Receber alerta quando o estoque estiver baixo
                   </p>
                 </div>
@@ -379,7 +368,7 @@ export function SettingsPage() {
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div>
                   <Label>Novos membros</Label>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Receber notificação quando novos membros entrarem
                   </p>
                 </div>
@@ -480,7 +469,7 @@ export function SettingsPage() {
               <div className="flex items-center justify-between p-4 border rounded-lg opacity-60">
                 <div>
                   <h4 className="font-medium">App Autenticador</h4>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Use Google Authenticator, Authy ou similar
                   </p>
                 </div>
@@ -490,7 +479,7 @@ export function SettingsPage() {
               <div className="flex items-center justify-between p-4 border rounded-lg opacity-60">
                 <div>
                   <h4 className="font-medium">SMS</h4>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Receber código por mensagem de texto
                   </p>
                 </div>
@@ -500,7 +489,7 @@ export function SettingsPage() {
               <div className="flex items-center justify-between p-4 border rounded-lg opacity-60">
                 <div>
                   <h4 className="font-medium">Email</h4>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-sm text-muted-foreground">
                     Receber código por email
                   </p>
                 </div>
@@ -528,7 +517,7 @@ export function SettingsPage() {
                       {user?.email}
                       <Badge variant="secondary" className="text-xs">Atual</Badge>
                     </h4>
-                    <p className="text-sm text-gray-500">
+                    <p className="text-sm text-muted-foreground">
                       Sessão ativa
                     </p>
                   </div>
@@ -544,14 +533,7 @@ export function SettingsPage() {
             </CardContent>
           </Card>
           {/* Danger Zone */}
-          <Card className="border-red-200">
-            <CardHeader>
-              <CardTitle className="text-base text-red-600">Zona de Perigo</CardTitle>
-              <CardDescription>
-                Ações irreversíveis para esta franquia
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+          <DangerZoneCard description="Ações irreversíveis para esta franquia">
               <Button
                 variant="destructive"
                 onClick={() => setShowDeleteDialog(true)}
@@ -559,11 +541,10 @@ export function SettingsPage() {
                 <Trash2 className="mr-2 h-4 w-4" />
                 Excluir Franquia
               </Button>
-              <p className="text-sm text-gray-500 mt-2">
+              <p className="text-sm text-muted-foreground mt-2">
                 Esta ação excluirá permanentemente a franquia e todos os seus dados.
               </p>
-            </CardContent>
-          </Card>
+          </DangerZoneCard>
         </TabsContent>
       </Tabs>
 
@@ -578,8 +559,8 @@ export function SettingsPage() {
         title="Excluir Franquia"
         description={
           <>
-            Tem certeza que deseja excluir "{currentFranchise.name}"? Esta acao nao pode ser
-            desfeita e todos os dados (lojas, pedidos, membros) serao perdidos permanentemente.
+            Tem certeza que deseja excluir "{currentFranchise.name}"? Esta ação não pode ser
+            desfeita e todos os dados (lojas, pedidos, membros) serão perdidos permanentemente.
           </>
         }
         onConfirm={handleDeleteFranchise}

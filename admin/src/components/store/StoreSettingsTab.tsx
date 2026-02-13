@@ -534,7 +534,7 @@ function AttractVideoCard({ settings, franchiseId, storeId, onVideoConfigChange 
         <div className="flex items-center justify-between">
           <div>
             <Label>Habilitar Vídeo</Label>
-            <p className="text-sm text-gray-500">Reproduzir vídeo de fundo na tela de atração</p>
+            <p className="text-sm text-muted-foreground">Reproduzir vídeo de fundo na tela de atração</p>
           </div>
           <Switch
             checked={videoConfig.isEnabled ?? false}
@@ -603,7 +603,7 @@ function AttractVideoCard({ settings, franchiseId, storeId, onVideoConfigChange 
                 placeholder="Faça seu pedido aqui"
                 maxLength={200}
               />
-              <p className="text-xs text-gray-400 mt-1">Exibido sobre o vídeo na tela de atração</p>
+              <p className="text-xs text-muted-foreground mt-1">Exibido sobre o vídeo na tela de atração</p>
             </div>
 
             {/* Display subtitle */}
@@ -628,7 +628,7 @@ function AttractVideoCard({ settings, franchiseId, storeId, onVideoConfigChange 
                 onChange={(e) => onVideoConfigChange({ videoOpacity: Number(e.target.value) / 100 })}
                 className="w-full mt-1"
               />
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Controla o escurecimento sobre o vídeo (0% = invisível, 100% = sem escurecimento)
               </p>
             </div>
@@ -926,7 +926,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
   if (isLoading || !settings) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -1178,7 +1178,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
                       <Label>Dinheiro</Label>
-                      <p className="text-xs text-gray-500">Pagamento em espécie</p>
+                      <p className="text-xs text-muted-foreground">Pagamento em espécie</p>
                     </div>
                     <Switch
                       checked={gatewayConfig.enabledMethods.cash}
@@ -1190,7 +1190,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
                       <Label>PIX</Label>
-                      <p className="text-xs text-gray-500">QR Code instantâneo</p>
+                      <p className="text-xs text-muted-foreground">QR Code instantâneo</p>
                     </div>
                     <Switch
                       checked={gatewayConfig.enabledMethods.pix}
@@ -1202,7 +1202,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
                       <Label>Crédito</Label>
-                      <p className="text-xs text-gray-500">Cartão de crédito</p>
+                      <p className="text-xs text-muted-foreground">Cartão de crédito</p>
                     </div>
                     <Switch
                       checked={gatewayConfig.enabledMethods.credit}
@@ -1214,7 +1214,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                   <div className="flex items-center justify-between p-3 border rounded-lg">
                     <div>
                       <Label>Débito</Label>
-                      <p className="text-xs text-gray-500">Cartão de débito</p>
+                      <p className="text-xs text-muted-foreground">Cartão de débito</p>
                     </div>
                     <Switch
                       checked={gatewayConfig.enabledMethods.debit}
@@ -1260,7 +1260,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                             placeholder={field.placeholder}
                           />
                           {field.helpText && (
-                            <p className="text-xs text-gray-500 mt-1">{field.helpText}</p>
+                            <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
                           )}
                         </div>
                       ))}
@@ -1308,7 +1308,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
               Dispositivo ESP32 e Hardware
             </div>
             {hardwareLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             ) : hardwareStatus?.lastHeartbeat ? (
               <Badge variant="outline" className="text-xs font-normal">
                 <Activity className="h-3 w-3 mr-1" />
@@ -1322,7 +1322,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Connection Status - Usa dados em tempo real quando disponível */}
-          <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+          <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
             <div className="flex items-center gap-3">
               {deviceStatus.state === 'online' ? (
                 <div className="relative">
@@ -1335,11 +1335,11 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
               ) : deviceStatus.state === 'offline' ? (
                 <WifiOff className="h-5 w-5 text-orange-500" />
               ) : (
-                <WifiOff className="h-5 w-5 text-gray-400" />
+                <WifiOff className="h-5 w-5 text-muted-foreground" />
               )}
               <div>
                 <p className="font-medium">Status de Conexão</p>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-muted-foreground">
                   {deviceStatus.message}
                 </p>
               </div>
@@ -1369,32 +1369,32 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
 
           {/* Hardware Info Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-gray-500">Firmware</p>
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-muted-foreground">Firmware</p>
               <p className="font-medium">
                 {deviceStatus.firmwareVersion || (
-                  <span className="text-gray-400">Não disponível</span>
+                  <span className="text-muted-foreground">Não disponível</span>
                 )}
               </p>
             </div>
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-gray-500">Última Sync</p>
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-muted-foreground">Última Sync</p>
               <p className="font-medium">
                 {deviceStatus.lastSeenAt
                   ? deviceStatus.lastSeenAt.toLocaleString('pt-BR')
                   : '-'}
               </p>
             </div>
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-gray-500">MAC Address</p>
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-muted-foreground">MAC Address</p>
               <p className="font-medium font-mono text-xs">
                 {deviceStatus.macAddress || (
-                  <span className="text-gray-400">Não disponível</span>
+                  <span className="text-muted-foreground">Não disponível</span>
                 )}
               </p>
             </div>
-            <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-gray-500">IP Address</p>
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-muted-foreground">IP Address</p>
               <p className="font-medium font-mono text-xs">
                 {deviceStatus.ipAddress || '-'}
               </p>
@@ -1404,7 +1404,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           {/* Dispensers Status - Tempo Real */}
           {(hardwareStatus?.dispensers && hardwareStatus.dispensers.length > 0) && (
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold flex items-center text-gray-700">
+              <h4 className="text-sm font-semibold flex items-center text-foreground">
                 <Droplets className="h-4 w-4 mr-2" />
                 Torneiras Conectadas ({hardwareStatus.dispensers.length})
               </h4>
@@ -1416,7 +1416,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                       dispenser.status === 'ready' ? 'border-green-200 bg-green-50' :
                       dispenser.status === 'busy' ? 'border-blue-200 bg-blue-50' :
                       dispenser.status === 'error' ? 'border-red-200 bg-red-50' :
-                      'border-gray-200 bg-gray-50'
+                      'border-border bg-muted'
                     }`}
                   >
                     <div className="flex items-center justify-between">
@@ -1425,7 +1425,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                           dispenser.status === 'ready' ? 'text-green-600' :
                           dispenser.status === 'busy' ? 'text-blue-600' :
                           dispenser.status === 'error' ? 'text-red-600' :
-                          'text-gray-400'
+                          'text-muted-foreground'
                         }`} />
                         <span className="font-medium">
                           {dispenser.name || `Torneira ${dispenser.id}`}
@@ -1442,7 +1442,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                          dispenser.status === 'error' ? 'Erro' : 'Offline'}
                       </Badge>
                     </div>
-                    <div className="mt-2 text-xs text-gray-600">
+                    <div className="mt-2 text-xs text-muted-foreground">
                       {dispenser.productName && <p>Produto: {dispenser.productName}</p>}
                       {dispenser.totalDispenses !== undefined && <p>Total dispensado: {dispenser.totalDispenses}x</p>}
                       {dispenser.lastDispense && (
@@ -1457,12 +1457,12 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
 
           {/* Printer Status */}
           {hardwareStatus?.printer && (
-            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
               <div className="flex items-center gap-3">
-                <Printer className={`h-5 w-5 ${hardwareStatus.printer.isConnected ? 'text-green-600' : 'text-gray-400'}`} />
+                <Printer className={`h-5 w-5 ${hardwareStatus.printer.isConnected ? 'text-green-600' : 'text-muted-foreground'}`} />
                 <div>
                   <p className="font-medium">Impressora</p>
-                  <p className="text-xs text-gray-500">{hardwareStatus.printer.model || 'Genérica'}</p>
+                  <p className="text-xs text-muted-foreground">{hardwareStatus.printer.model || 'Genérica'}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -1509,7 +1509,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center">
               <Droplets className="h-5 w-5 mr-2" />
-              Configuracao de Torneiras (GPIO)
+              Configuração de Torneiras (GPIO)
             </div>
             <Button
               size="sm"
@@ -1554,13 +1554,13 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 handleChange('__gpioAdvancedMode' as any, checked);
               }}
             />
-            <Label htmlFor="gpio-advanced-mode" className="text-xs text-gray-500 cursor-pointer">
+            <Label htmlFor="gpio-advanced-mode" className="text-xs text-muted-foreground cursor-pointer">
               Modo Avancado (habilita GPIO 43/44 UART)
             </Label>
           </div>
 
           {(!settings.taps || settings.taps.length === 0) ? (
-            <div className="text-center py-8 text-gray-500">
+            <div className="text-center py-8 text-muted-foreground">
               <Droplets className="h-12 w-12 mx-auto mb-3 opacity-50" />
               <p>Nenhuma torneira configurada</p>
               <p className="text-sm">Clique em "Adicionar Torneira" para comecar</p>
@@ -1587,13 +1587,13 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 return (
                   <div
                     key={tap.id}
-                    className={`p-4 border rounded-lg space-y-3 ${!tap.enabled ? 'opacity-60 bg-gray-50' : ''}`}
+                    className={`p-4 border rounded-lg space-y-3 ${!tap.enabled ? 'opacity-60 bg-muted' : ''}`}
                   >
                     {/* Header: Name + Enable + Delete */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-full ${tap.enabled ? 'bg-green-100' : 'bg-gray-100'}`}>
-                          <Droplets className={`h-4 w-4 ${tap.enabled ? 'text-green-600' : 'text-gray-400'}`} />
+                        <div className={`p-2 rounded-full ${tap.enabled ? 'bg-green-100' : 'bg-muted'}`}>
+                          <Droplets className={`h-4 w-4 ${tap.enabled ? 'text-green-600' : 'text-muted-foreground'}`} />
                         </div>
                         <div className="flex items-center gap-2">
                           <Input
@@ -1606,7 +1606,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                             className="font-medium w-40"
                             placeholder="Nome da torneira"
                           />
-                          <span className="text-xs text-gray-400">ID: {tap.id}</span>
+                          <span className="text-xs text-muted-foreground">ID: {tap.id}</span>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -1696,7 +1696,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                     {samePinConflict && (
                       <p className="text-xs text-red-600">
                         <AlertTriangle className="h-3 w-3 inline mr-1" />
-                        Valvula e sensor nao podem usar o mesmo GPIO!
+                        Valvula e sensor não podem usar o mesmo GPIO!
                       </p>
                     )}
 
@@ -1723,7 +1723,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                           placeholder="5680"
                           className="w-32"
                         />
-                        <p className="text-xs text-gray-400 mt-0.5">Sensor YF-S201: ~5680</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Sensor YF-S201: ~5680</p>
                       </div>
                       <div>
                         <Label className="text-xs font-medium">mL por Segundo (vazao)</Label>
@@ -1747,7 +1747,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                           placeholder="33.3"
                           className="w-32"
                         />
-                        <p className="text-xs text-gray-400 mt-0.5">Valor tipico: 30-40 mL/s</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Valor tipico: 30-40 mL/s</p>
                       </div>
                     </div>
                   </div>
@@ -1756,7 +1756,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             </div>
           )}
         </CardContent>
-        <CardFooter className="flex flex-col items-start gap-2 text-xs text-gray-500">
+        <CardFooter className="flex flex-col items-start gap-2 text-xs text-muted-foreground">
           {/* Duplicate GPIO pin warning */}
           {settings.taps && settings.taps.length > 1 && (() => {
             const dupes = findDuplicateGpioPins(settings.taps!);
@@ -1774,7 +1774,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             );
           })()}
           <span>
-            Ultima atualizacao: {settings.tapsUpdatedAt
+            Ultima atualização: {settings.tapsUpdatedAt
               ? new Date(settings.tapsUpdatedAt as any).toLocaleString('pt-BR')
               : 'Nunca'} {settings.tapsVersion && `(v${settings.tapsVersion})`}
           </span>
@@ -1793,7 +1793,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <div className="flex items-center justify-between">
             <div>
               <Label>Notificações de Pedidos</Label>
-              <p className="text-sm text-gray-500">Receber alertas de novos pedidos</p>
+              <p className="text-sm text-muted-foreground">Receber alertas de novos pedidos</p>
             </div>
             <Switch
               checked={settings.orderNotifications ?? true}
@@ -1803,7 +1803,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <div className="flex items-center justify-between">
             <div>
               <Label>Alertas de Estoque Baixo</Label>
-              <p className="text-sm text-gray-500">Notificar quando o estoque estiver baixo</p>
+              <p className="text-sm text-muted-foreground">Notificar quando o estoque estiver baixo</p>
             </div>
             <Switch
               checked={settings.lowStockAlerts ?? true}
@@ -1837,7 +1837,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <div className="flex items-center justify-between">
             <div>
               <Label>Modo Kiosk</Label>
-              <p className="text-sm text-gray-500">Habilitar interface de autoatendimento</p>
+              <p className="text-sm text-muted-foreground">Habilitar interface de autoatendimento</p>
             </div>
             <Switch
               checked={settings.kioskEnabled ?? false}
@@ -1847,7 +1847,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <div className="flex items-center justify-between">
             <div>
               <Label>Tela de Atração</Label>
-              <p className="text-sm text-gray-500">Mostrar vídeo/imagem quando ocioso</p>
+              <p className="text-sm text-muted-foreground">Mostrar vídeo/imagem quando ocioso</p>
             </div>
             <Switch
               checked={settings.attractScreenEnabled ?? true}

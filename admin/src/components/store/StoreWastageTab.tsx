@@ -177,7 +177,7 @@ function CreateWastageDialog({
           </div>
 
           {selectedKeg && (
-            <div className="p-2 bg-gray-50 rounded text-xs text-gray-600">
+            <div className="p-2 bg-muted rounded text-xs text-muted-foreground">
               Barril: {selectedKeg.batchCode || selectedKeg.kegId.slice(0, 8)}
             </div>
           )}
@@ -195,7 +195,7 @@ function CreateWastageDialog({
           </div>
 
           <div className="space-y-2">
-            <Label>Motivo / Observacao</Label>
+            <Label>Motivo / Observação</Label>
             <Textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -269,7 +269,7 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
   if (loadingEvents) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -282,46 +282,46 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
               <Droplets className="h-4 w-4 text-red-500" />
-              <p className="text-sm text-gray-500">Total Perdido</p>
+              <p className="text-sm text-muted-foreground">Total Perdido</p>
             </div>
             <p className={cn('text-2xl font-bold', kpis.totalMl > 0 && 'text-red-600')}>
               {formatMl(kpis.totalMl)}
             </p>
-            <p className="text-xs text-gray-400">Ultimos 30 dias</p>
+            <p className="text-xs text-muted-foreground">Ultimos 30 dias</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
-              <Hash className="h-4 w-4 text-gray-500" />
-              <p className="text-sm text-gray-500">Eventos</p>
+              <Hash className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Eventos</p>
             </div>
             <p className="text-2xl font-bold">{kpis.totalEvents}</p>
-            <p className="text-xs text-gray-400">Ultimos 30 dias</p>
+            <p className="text-xs text-muted-foreground">Ultimos 30 dias</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
               <TrendingDown className="h-4 w-4 text-yellow-500" />
-              <p className="text-sm text-gray-500">Espuma</p>
+              <p className="text-sm text-muted-foreground">Espuma</p>
             </div>
             <p className="text-2xl font-bold">
               {formatMl(kpis.byType['foam']?.ml || 0)}
             </p>
-            <p className="text-xs text-gray-400">{kpis.byType['foam']?.count || 0} eventos</p>
+            <p className="text-xs text-muted-foreground">{kpis.byType['foam']?.count || 0} eventos</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="h-4 w-4 text-orange-500" />
-              <p className="text-sm text-gray-500">Derrame</p>
+              <p className="text-sm text-muted-foreground">Derrame</p>
             </div>
             <p className="text-2xl font-bold">
               {formatMl(kpis.byType['spill']?.ml || 0)}
             </p>
-            <p className="text-xs text-gray-400">{kpis.byType['spill']?.count || 0} eventos</p>
+            <p className="text-xs text-muted-foreground">{kpis.byType['spill']?.count || 0} eventos</p>
           </CardContent>
         </Card>
       </div>
@@ -365,8 +365,8 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
 
           {/* Table */}
           {filteredEvents.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <div className="text-center py-8 text-muted-foreground">
+              <AlertTriangle className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
               <p>{events.length === 0 ? 'Nenhuma perda registrada' : 'Nenhuma perda encontrada'}</p>
             </div>
           ) : (
@@ -386,7 +386,7 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
                   <TableRow key={event.id}>
                     <TableCell className="text-sm">
                       {event.createdAt.toLocaleDateString('pt-BR')}{' '}
-                      <span className="text-gray-400">
+                      <span className="text-muted-foreground">
                         {event.createdAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </TableCell>
@@ -401,10 +401,10 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
                     <TableCell className="font-medium text-red-600">
                       {formatMl(event.mlLost)}
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500">
+                    <TableCell className="text-sm text-muted-foreground">
                       {event.source === 'auto' ? 'Sistema' : 'Manual'}
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500 max-w-[200px] truncate">
+                    <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                       {event.reason || '-'}
                     </TableCell>
                   </TableRow>

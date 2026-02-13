@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * StoreMaintenanceTab — Manutencao (Scheduling + Tracking)
+ * StoreMaintenanceTab — Manutenção (Scheduling + Tracking)
  * ============================================================================
  *
  * Tab para agendar e acompanhar manutencoes:
@@ -79,7 +79,7 @@ interface StoreMaintenanceTabProps {
 
 const MAINTENANCE_TYPE_LABELS: Record<MaintenanceType, string> = {
   cleaning: 'Limpeza',
-  calibration: 'Calibracao',
+  calibration: 'Calibração',
   repair: 'Reparo',
   inspection: 'Inspecao',
   other: 'Outro',
@@ -147,8 +147,8 @@ function ScheduleDialog({
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Agendar Manutencao</DialogTitle>
-          <DialogDescription>Agende uma limpeza, calibracao, reparo ou inspecao.</DialogDescription>
+          <DialogTitle>Agendar Manutenção</DialogTitle>
+          <DialogDescription>Agende uma limpeza, calibração, reparo ou inspecao.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
@@ -159,7 +159,7 @@ function ScheduleDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="cleaning">Limpeza</SelectItem>
-                <SelectItem value="calibration">Calibracao</SelectItem>
+                <SelectItem value="calibration">Calibração</SelectItem>
                 <SelectItem value="repair">Reparo</SelectItem>
                 <SelectItem value="inspection">Inspecao</SelectItem>
                 <SelectItem value="other">Outro</SelectItem>
@@ -253,12 +253,12 @@ function CompleteDialog({
     <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Concluir Manutencao</DialogTitle>
+          <DialogTitle>Concluir Manutenção</DialogTitle>
           <DialogDescription>Registre a conclusao da manutencao.</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>Duracao (minutos)</Label>
+            <Label>Duração (minutos)</Label>
             <Input
               type="number"
               min={1}
@@ -354,7 +354,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
   if (loadingLogs) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -402,13 +402,13 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-gray-500">Total</p>
+            <p className="text-sm text-muted-foreground">Total</p>
             <p className="text-2xl font-bold">{logs.length}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-gray-500">Agendadas</p>
+            <p className="text-sm text-muted-foreground">Agendadas</p>
             <p className="text-2xl font-bold">
               {logs.filter((l) => l.status === 'scheduled').length}
             </p>
@@ -439,7 +439,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
             <div>
               <CardTitle className="flex items-center">
                 <Wrench className="h-5 w-5 mr-2" />
-                Manutencao
+                Manutenção
               </CardTitle>
               <CardDescription>
                 Historico de limpezas, calibracoes e reparos
@@ -470,8 +470,8 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
 
           {/* Table */}
           {filteredLogs.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Wrench className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <div className="text-center py-8 text-muted-foreground">
+              <Wrench className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
               <p>{logs.length === 0 ? 'Nenhuma manutencao registrada' : 'Nenhuma manutencao encontrada'}</p>
             </div>
           ) : (
@@ -483,7 +483,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
                   <TableHead>Tap</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Agendado</TableHead>
-                  <TableHead>Duracao</TableHead>
+                  <TableHead>Duração</TableHead>
                   <TableHead>Notas</TableHead>
                   <TableHead className="w-24">Acoes</TableHead>
                 </TableRow>
@@ -503,19 +503,19 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
                           T{Number(log.tapId) + 1}
                         </Badge>
                       ) : (
-                        <span className="text-gray-400 text-sm">Geral</span>
+                        <span className="text-muted-foreground text-sm">Geral</span>
                       )}
                     </TableCell>
                     <TableCell>
                       <MaintenanceStatusBadge status={log.status} />
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500">
+                    <TableCell className="text-sm text-muted-foreground">
                       {log.scheduledAt ? log.scheduledAt.toLocaleDateString('pt-BR') : '-'}
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500">
+                    <TableCell className="text-sm text-muted-foreground">
                       {log.durationMinutes ? `${log.durationMinutes}min` : '-'}
                     </TableCell>
-                    <TableCell className="text-sm text-gray-500 max-w-[150px] truncate">
+                    <TableCell className="text-sm text-muted-foreground max-w-[150px] truncate">
                       {log.notes || '-'}
                     </TableCell>
                     <TableCell>
@@ -533,7 +533,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-7 px-2 text-gray-400"
+                              className="h-7 px-2 text-muted-foreground"
                               onClick={() => handleCancel(log.id)}
                               disabled={isCanceling}
                             >

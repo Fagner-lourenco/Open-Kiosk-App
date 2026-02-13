@@ -138,6 +138,7 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
                     className="pl-8 h-8 text-sm"
                     onClick={(e) => e.stopPropagation()}
                     onKeyDown={(e) => e.stopPropagation()}
+                    aria-label="Buscar franquia"
                   />
                 </div>
               </div>

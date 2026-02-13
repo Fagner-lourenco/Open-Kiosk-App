@@ -223,7 +223,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -242,7 +242,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
         <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
           {/* Search */}
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Buscar produtos..."
               value={searchTerm}
@@ -277,13 +277,13 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
       {filteredProducts.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <Package className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-            <h4 className="text-lg font-medium text-gray-900 mb-2">
+            <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+            <h4 className="text-lg font-medium text-foreground mb-2">
               {searchTerm || stockFilter !== 'all' 
                 ? 'Nenhum produto encontrado'
                 : 'Nenhum produto cadastrado'}
             </h4>
-            <p className="text-gray-500 mb-4">
+            <p className="text-muted-foreground mb-4">
               {searchTerm || stockFilter !== 'all'
                 ? 'Tente ajustar os filtros de busca.'
                 : 'Adicione o primeiro produto da loja.'}
@@ -302,7 +302,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
             {displayedProducts.map((product) => (
               <Card key={product.id} className="overflow-hidden hover:shadow-md transition-shadow">
                 {product.image && (
-                  <div className="h-32 bg-gray-100 relative">
+                  <div className="h-32 bg-muted relative">
                     <img
                       src={product.image}
                       alt={product.title}
@@ -330,7 +330,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
                         </Badge>
                       )}
                     </div>
-                    <p className="text-sm text-gray-500 line-clamp-2">{product.description}</p>
+                    <p className="text-sm text-muted-foreground line-clamp-2">{product.description}</p>
                     
                     <div className="flex items-center justify-between">
                       <span className="font-medium text-green-600">
@@ -339,7 +339,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
                       {getStockBadge(product)}
                     </div>
 
-                    <div className="text-xs text-gray-500">
+                    <div className="text-xs text-muted-foreground">
                       <span>Categoria: {product.category || 'Sem categoria'}</span>
                       <span className="mx-2">•</span>
                       <span>Estoque: {getStockText(product)}</span>
@@ -395,7 +395,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
           )}
 
           {/* Results Info */}
-          <div className="text-center text-gray-500 text-sm">
+          <div className="text-center text-muted-foreground text-sm">
             Exibindo {displayedProducts.length} de {filteredProducts.length} produtos
           </div>
         </>

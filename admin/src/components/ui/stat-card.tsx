@@ -28,8 +28,8 @@ export interface StatCardProps {
 
 const colorVariants = {
   default: {
-    icon: 'text-gray-600 bg-gray-100',
-    value: 'text-gray-900',
+    icon: 'text-muted-foreground bg-muted',
+    value: 'text-foreground',
   },
   blue: {
     icon: 'text-blue-600 bg-blue-100',
@@ -70,11 +70,11 @@ export function StatCard({
         <CardContent className="p-4">
           <div className="flex items-start justify-between">
             <div className="space-y-2">
-              <div className="h-4 w-24 bg-gray-200 rounded animate-pulse" />
-              <div className="h-8 w-16 bg-gray-200 rounded animate-pulse" />
-              <div className="h-3 w-20 bg-gray-200 rounded animate-pulse" />
+              <div className="h-4 w-24 bg-muted rounded animate-pulse" />
+              <div className="h-8 w-16 bg-muted rounded animate-pulse" />
+              <div className="h-3 w-20 bg-muted rounded animate-pulse" />
             </div>
-            <div className="h-10 w-10 bg-gray-200 rounded-lg animate-pulse" />
+            <div className="h-10 w-10 bg-muted rounded-lg animate-pulse" />
           </div>
         </CardContent>
       </Card>

@@ -10,6 +10,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Check, CreditCard, AlertCircle, Loader2, ExternalLink, Crown } from 'lucide-react';
+import { LoadingState } from '@/components/common/LoadingState';
 import { toast } from 'sonner';
 import { useFranchise } from '../../context/FranchiseContext';
 import { 
@@ -107,11 +108,7 @@ export default function BillingPage() {
   };
   
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
+    return <LoadingState className="min-h-[400px]" />;
   }
   
   const currentPlan = billing ? getPlanDetails(billing.plan) : getPlanDetails('free');
@@ -156,7 +153,7 @@ export default function BillingPage() {
               <h2 className="text-lg font-semibold">Plano Atual</h2>
             </div>
             <p className="text-3xl font-bold mt-2">{currentPlan.name}</p>
-            <p className="text-gray-600 mt-1">{currentPlan.description}</p>
+            <p className="text-muted-foreground mt-1">{currentPlan.description}</p>
             
             {billing && (
               <div className="mt-4 flex items-center gap-4">
@@ -164,7 +161,7 @@ export default function BillingPage() {
                   getBillingStatusColor(billing.planStatus) === 'green' ? 'bg-green-100 text-green-800' :
                   getBillingStatusColor(billing.planStatus) === 'yellow' ? 'bg-yellow-100 text-yellow-800' :
                   getBillingStatusColor(billing.planStatus) === 'red' ? 'bg-red-100 text-red-800' :
-                  'bg-gray-100 text-gray-800'
+                  'bg-muted text-foreground'
                 }`}>
                   {getBillingStatusLabel(billing.planStatus)}
                 </span>
@@ -184,7 +181,7 @@ export default function BillingPage() {
             <button
               onClick={handleManageBilling}
               disabled={portalLoading}
-              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-muted disabled:opacity-50"
             >
               {portalLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -202,7 +199,7 @@ export default function BillingPage() {
           <h3 className="font-medium mb-3">Recursos incluídos:</h3>
           <ul className="grid grid-cols-2 md:grid-cols-3 gap-2">
             {currentPlan.features.map((feature, i) => (
-              <li key={i} className="flex items-center gap-2 text-sm text-gray-600">
+              <li key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Check className="h-4 w-4 text-green-500" />
                 {feature}
               </li>
@@ -213,13 +210,13 @@ export default function BillingPage() {
       
       {/* Seletor de intervalo */}
       <div className="flex items-center justify-center mb-8">
-        <div className="bg-gray-100 rounded-lg p-1 flex">
+        <div className="bg-muted rounded-lg p-1 flex">
           <button
             onClick={() => setSelectedInterval('monthly')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               selectedInterval === 'monthly' 
-                ? 'bg-white shadow text-gray-900' 
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'bg-white shadow text-foreground' 
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             Mensal
@@ -228,8 +225,8 @@ export default function BillingPage() {
             onClick={() => setSelectedInterval('yearly')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               selectedInterval === 'yearly' 
-                ? 'bg-white shadow text-gray-900' 
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'bg-white shadow text-foreground' 
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             Anual
@@ -253,7 +250,7 @@ export default function BillingPage() {
             <div 
               key={plan.id}
               className={`relative bg-white rounded-lg border-2 p-6 ${
-                plan.popular ? 'border-primary' : 'border-gray-200'
+                plan.popular ? 'border-primary' : 'border-border'
               } ${isCurrent ? 'ring-2 ring-primary ring-offset-2' : ''}`}
             >
               {plan.popular && (
@@ -263,15 +260,15 @@ export default function BillingPage() {
               )}
               
               <h3 className="text-xl font-bold">{plan.name}</h3>
-              <p className="text-gray-600 text-sm mt-1">{plan.description}</p>
+              <p className="text-muted-foreground text-sm mt-1">{plan.description}</p>
               
               <div className="mt-4">
                 <span className="text-4xl font-bold">{formatCurrency(monthlyEquivalent)}</span>
-                <span className="text-gray-500">/mês</span>
+                <span className="text-muted-foreground">/mês</span>
               </div>
               
               {selectedInterval === 'yearly' && (
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-muted-foreground mt-1">
                   {formatCurrency(price)} cobrado anualmente
                 </p>
               )}
@@ -290,7 +287,7 @@ export default function BillingPage() {
                 disabled={isCurrent || checkoutLoading !== null}
                 className={`w-full mt-6 py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 ${
                   isCurrent 
-                    ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
                     : plan.popular
                       ? 'bg-primary text-white hover:bg-primary/90'
                       : 'bg-gray-900 text-white hover:bg-gray-800'
@@ -326,7 +323,7 @@ export default function BillingPage() {
               <tbody>
                 {history.map((event) => (
                   <tr key={event.id} className="border-b last:border-0">
-                    <td className="py-3 px-4 text-gray-600">
+                    <td className="py-3 px-4 text-muted-foreground">
                       {event.timestamp.toLocaleDateString('pt-BR')}
                     </td>
                     <td className="py-3 px-4">

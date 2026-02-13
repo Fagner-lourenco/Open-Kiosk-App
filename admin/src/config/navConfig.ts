@@ -26,10 +26,10 @@ export const PRIMARY_NAV_ITEMS: AdminNavItem[] = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Lojas', href: '/stores', icon: Store },
   { label: 'Equipe', href: '/team', icon: UsersRound, requiredPermission: 'users:read' },
-  { label: 'Relatorios', href: '/reports', icon: BarChart3, requiredPermission: 'reports:read' },
+  { label: 'Relatórios', href: '/reports', icon: BarChart3, requiredPermission: 'reports:read' },
   { label: 'Auditoria', href: '/audit', icon: ClipboardList, requiredPermission: 'audit:read' },
-  { label: 'Planos', href: '/billing', icon: CreditCard, requiredPermission: 'billing:read' },
-  { label: 'Configuracoes', href: '/settings', icon: Settings, requiredPermission: 'settings:read' },
+  { label: 'Faturamento', href: '/billing', icon: CreditCard, requiredPermission: 'billing:read' },
+  { label: 'Configurações', href: '/settings', icon: Settings, requiredPermission: 'settings:read' },
 ];
 
 export const SUPER_ADMIN_NAV_ITEM: AdminNavItem = {

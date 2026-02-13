@@ -148,6 +148,7 @@ export function OrderFilters({
           size="icon"
           onClick={onRefresh}
           disabled={isRefreshing}
+          aria-label="Atualizar pedidos"
         >
           <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
         </Button>

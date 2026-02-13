@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * StoreOperationsTab — Operacao ao Vivo (Live Operations)
+ * StoreOperationsTab — Operação ao Vivo (Live Operations)
  * ============================================================================
  *
  * Tab de operacoes real-time para monitoramento de torneiras e sessoes.
@@ -164,7 +164,7 @@ function TapCard({
     <div
       className={cn(
         'p-4 border rounded-lg',
-        isActive ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'
+        isActive ? 'border-green-200 bg-green-50' : 'border-border bg-muted'
       )}
     >
       <div className="flex items-center justify-between mb-2">
@@ -181,12 +181,12 @@ function TapCard({
 
       {keg ? (
         <>
-          <p className="text-xs text-gray-600 truncate font-medium">{productTitle}</p>
-          <p className="text-xs text-gray-500">{keg.batchCode || keg.kegId.slice(0, 8)}</p>
+          <p className="text-xs text-muted-foreground truncate font-medium">{productTitle}</p>
+          <p className="text-xs text-muted-foreground">{keg.batchCode || keg.kegId.slice(0, 8)}</p>
 
           {/* Volume bar */}
           <div className="mt-2">
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-muted rounded-full h-2">
               <div
                 className={cn(
                   'h-2 rounded-full transition-all',
@@ -195,7 +195,7 @@ function TapCard({
                 style={{ width: `${pctRemaining}%` }}
               />
             </div>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               {formatMl(keg.remainingMl)} / {formatMl(keg.volumeMl)} ({pctRemaining}%)
             </p>
           </div>
@@ -203,15 +203,15 @@ function TapCard({
           {/* Today's stats */}
           <div className="mt-3 grid grid-cols-3 gap-1 text-center">
             <div>
-              <p className="text-xs text-gray-500">Hoje</p>
+              <p className="text-xs text-muted-foreground">Hoje</p>
               <p className="text-sm font-semibold">{formatMl(tap.todayMlDispensed)}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Servidas</p>
+              <p className="text-xs text-muted-foreground">Servidas</p>
               <p className="text-sm font-semibold">{tap.todaySessions}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-500">Perda</p>
+              <p className="text-xs text-muted-foreground">Perda</p>
               <p className={cn('text-sm font-semibold', tap.todayWastageMl > 0 && 'text-red-600')}>
                 {formatMl(tap.todayWastageMl)}
               </p>
@@ -219,7 +219,7 @@ function TapCard({
           </div>
         </>
       ) : (
-        <p className="text-xs text-gray-400 mt-1">Sem barril conectado</p>
+        <p className="text-xs text-muted-foreground mt-1">Sem barril conectado</p>
       )}
     </div>
   );
@@ -349,7 +349,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
   if (loadingTaps) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -361,8 +361,8 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
-              <Beer className="h-4 w-4 text-gray-500" />
-              <p className="text-sm text-gray-500">Taps Ativas</p>
+              <Beer className="h-4 w-4 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Taps Ativas</p>
             </div>
             <p className="text-2xl font-bold">
               {activeTaps} / {taps.length}
@@ -373,7 +373,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
               <Droplets className="h-4 w-4 text-blue-500" />
-              <p className="text-sm text-gray-500">Dispensado Hoje</p>
+              <p className="text-sm text-muted-foreground">Dispensado Hoje</p>
             </div>
             <p className="text-2xl font-bold text-blue-700">{formatMl(totalTodayMl)}</p>
           </CardContent>
@@ -382,7 +382,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
               <Activity className="h-4 w-4 text-green-500" />
-              <p className="text-sm text-gray-500">Sessoes Hoje</p>
+              <p className="text-sm text-muted-foreground">Sessoes Hoje</p>
             </div>
             <p className="text-2xl font-bold text-green-700">{totalTodaySessions}</p>
           </CardContent>
@@ -391,7 +391,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="h-4 w-4 text-red-500" />
-              <p className="text-sm text-gray-500">Perdas Hoje</p>
+              <p className="text-sm text-muted-foreground">Perdas Hoje</p>
             </div>
             <p className={cn('text-2xl font-bold', totalTodayWaste > 0 ? 'text-red-600' : '')}>
               {formatMl(totalTodayWaste)}
@@ -424,7 +424,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
               );
             })}
             {taps.length === 0 && (
-              <p className="col-span-4 text-center text-gray-400 py-4">
+              <p className="col-span-4 text-center text-muted-foreground py-4">
                 Nenhuma torneira configurada
               </p>
             )}
@@ -471,11 +471,11 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
         <CardContent>
           {loadingSessions ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : sessions.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Activity className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <div className="text-center py-8 text-muted-foreground">
+              <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
               <p>Nenhuma sessao registrada</p>
             </div>
           ) : (
@@ -508,7 +508,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
                           T{Number(s.tapId) + 1}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-gray-500 font-mono">
+                      <TableCell className="text-sm text-muted-foreground font-mono">
                         {s.orderId.length > 12 ? `...${s.orderId.slice(-8)}` : s.orderId}
                       </TableCell>
                       <TableCell className="text-sm">
@@ -522,7 +522,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
                           'text-xs',
                           isOverPour && 'text-red-600 font-medium',
                           isUnderPour && 'text-yellow-600 font-medium',
-                          !isOverPour && !isUnderPour && 'text-gray-500'
+                          !isOverPour && !isUnderPour && 'text-muted-foreground'
                         )}>
                           {diff >= 0 ? '+' : ''}{formatMl(diff)} ({diffPct >= 0 ? '+' : ''}{diffPct}%)
                         </span>

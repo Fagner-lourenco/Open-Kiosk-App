@@ -272,7 +272,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -369,7 +369,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                 <DropdownMenuContent className="w-[400px]" align="start">
                   <div className="p-2">
                     <div className="relative">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="Buscar produto..."
                         value={searchTerm}
@@ -384,7 +384,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                   <div className="max-h-64 overflow-y-auto">
                     <DropdownMenuGroup>
                       {filteredProducts.length === 0 ? (
-                        <div className="text-center py-4 text-gray-500 text-sm">
+                        <div className="text-center py-4 text-muted-foreground text-sm">
                           Nenhum produto encontrado
                         </div>
                       ) : (
@@ -417,7 +417,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                                 <Badge variant="secondary" className="text-xs">
                                   {product.category || 'Sem categoria'}
                                 </Badge>
-                                <span className="text-sm text-gray-500">
+                                <span className="text-sm text-muted-foreground">
                                   {product.isDrink ? `${stock}ml` : `${stock} un.`}
                                 </span>
                                 {isOutOfStock && (
@@ -492,7 +492,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
 
           {/* Preview */}
           {selectedProduct && quantity > 0 && (
-            <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+            <div className="mt-4 p-3 bg-muted rounded-lg">
               <p className="text-sm">
                 <strong>{selectedProduct.title}:</strong>{' '}
                 {(() => {
@@ -539,7 +539,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
         </CardHeader>
         <CardContent>
           {inventoryLogs.length === 0 ? (
-            <p className="text-center text-gray-500 py-8">
+            <p className="text-center text-muted-foreground py-8">
               Nenhuma movimentação registrada
             </p>
           ) : (
@@ -570,8 +570,8 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                     <TableCell>{log.quantity}</TableCell>
                     <TableCell>{log.previousStock}</TableCell>
                     <TableCell>{log.newStock}</TableCell>
-                    <TableCell className="text-sm text-gray-500">{log.userEmail}</TableCell>
-                    <TableCell className="text-sm text-gray-500">
+                    <TableCell className="text-sm text-muted-foreground">{log.userEmail}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
                       {log.timestamp?.toDate().toLocaleString('pt-BR')}
                     </TableCell>
                   </TableRow>
@@ -598,7 +598,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar produtos..."
                 value={searchTerm}
@@ -646,7 +646,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
           </div>
 
           {/* Filter Summary */}
-          <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <span>Exibindo {filteredProducts.length} de {products.length} produtos</span>
             {(searchTerm || stockFilter !== 'all' || categoryFilter !== 'all') && (
               <Badge variant="secondary">Filtrado</Badge>
@@ -655,8 +655,8 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
 
           {/* Products Grid */}
           {filteredProducts.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Package className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <div className="text-center py-8 text-muted-foreground">
+              <Package className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
               <p>Nenhum produto corresponde aos filtros</p>
               <Button variant="outline" onClick={clearFilters} className="mt-2">
                 Limpar Filtros
@@ -674,8 +674,8 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                   <div 
                     key={product.id} 
                     className={cn(
-                      "flex justify-between items-center p-3 border rounded-lg hover:bg-gray-50 transition-colors cursor-pointer",
-                      selectedProductId === product.id && "ring-2 ring-primary bg-gray-50"
+                      "flex justify-between items-center p-3 border rounded-lg hover:bg-muted transition-colors cursor-pointer",
+                      selectedProductId === product.id && "ring-2 ring-primary bg-muted"
                     )}
                     onClick={() => setSelectedProductId(product.id)}
                   >
@@ -686,7 +686,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                         <Badge variant="secondary" className="text-xs shrink-0">{product.category || 'Sem categoria'}</Badge>
                       </div>
                       {product.description && (
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-1">{product.description}</p>
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-1">{product.description}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0 ml-4">

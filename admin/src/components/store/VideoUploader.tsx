@@ -127,8 +127,8 @@ export function VideoUploader({ franchiseId, storeId, currentUrl, onUploadComple
         {uploadState === 'uploading' ? (
           <div className="space-y-3">
             <Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-500" />
-            <p className="text-sm text-gray-600">Enviando... {progress}%</p>
-            <div className="w-full bg-gray-200 rounded-full h-2 max-w-xs mx-auto">
+            <p className="text-sm text-muted-foreground">Enviando... {progress}%</p>
+            <div className="w-full bg-muted rounded-full h-2 max-w-xs mx-auto">
               <div
                 className="bg-blue-500 h-2 rounded-full transition-all"
                 style={{ width: `${progress}%` }}
@@ -150,11 +150,11 @@ export function VideoUploader({ franchiseId, storeId, currentUrl, onUploadComple
           </div>
         ) : (
           <div className="space-y-2">
-            <Upload className="h-8 w-8 mx-auto text-gray-400" />
-            <p className="text-sm text-gray-600">
+            <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
               Arraste um vídeo aqui ou clique para selecionar
             </p>
-            <p className="text-xs text-gray-400">
+            <p className="text-xs text-muted-foreground">
               MP4 ou WebM, máximo 50MB
             </p>
           </div>
@@ -182,13 +182,13 @@ export function VideoUploader({ franchiseId, storeId, currentUrl, onUploadComple
 
       {/* Current URL hint */}
       {currentUrl && uploadState === 'idle' && (
-        <p className="text-xs text-gray-400 truncate">
+        <p className="text-xs text-muted-foreground truncate">
           URL atual: {currentUrl}
         </p>
       )}
 
       {/* Tips */}
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         Use vídeos MP4 diretos. Plataformas recomendadas: Firebase Storage, Cloudinary, AWS S3, Bunny CDN. Links de download do Pexels/Pixabay geralmente não funcionam por CORS/redirect.
       </p>
     </div>

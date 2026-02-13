@@ -38,7 +38,6 @@ import {
   Activity,
   Shield,
   Download,
-  Building2,
   Loader2,
   Store,
   Settings,
@@ -50,6 +49,8 @@ import {
   LogOut,
   CheckCircle
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { LoadingState } from '@/components/common/LoadingState';
 
 interface AuditLog {
   id: string;
@@ -359,19 +360,7 @@ export function AuditPage() {
   };
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para ver o log de auditoria
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para ver o log de auditoria" />;
   }
 
   return (
@@ -412,7 +401,7 @@ export function AuditPage() {
 
       <FilterBar className="md:justify-between">
         <div className="relative max-w-md flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Buscar por usuário, ação..."
             value={searchQuery}
@@ -456,27 +445,25 @@ export function AuditPage() {
               </Alert>
             </div>
           ) : isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            </div>
+            <LoadingState />
           ) : filteredLogs.length === 0 ? (
             <div className="text-center py-12">
-              <Activity className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+              <Activity className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
               {searchQuery || actionFilter !== 'all' ? (
                 <>
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">
+                  <h3 className="text-lg font-medium text-foreground mb-1">
                     Nenhum registro encontrado
                   </h3>
-                  <p className="text-gray-500">
+                  <p className="text-muted-foreground">
                     Tente ajustar os filtros de busca
                   </p>
                 </>
               ) : (
                 <>
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">
+                  <h3 className="text-lg font-medium text-foreground mb-1">
                     Nenhuma atividade registrada
                   </h3>
-                  <p className="text-gray-500">
+                  <p className="text-muted-foreground">
                     As atividades aparecerão aqui quando ocorrerem
                   </p>
                 </>
@@ -490,10 +477,10 @@ export function AuditPage() {
                 return (
                   <div 
                     key={log.id}
-                    className="flex items-start gap-4 p-4 hover:bg-gray-50"
+                    className="flex items-start gap-4 p-4 hover:bg-muted"
                   >
-                    <div className="p-2 rounded-full bg-gray-100">
-                      <Icon className="h-4 w-4 text-gray-600" />
+                    <div className="p-2 rounded-full bg-muted">
+                      <Icon className="h-4 w-4 text-muted-foreground" />
                     </div>
                     
                     <div className="flex-1 min-w-0">
@@ -503,7 +490,7 @@ export function AuditPage() {
                         </Badge>
                       </div>
                       
-                      <p className="text-sm text-gray-900 mt-1">
+                      <p className="text-sm text-foreground mt-1">
                         <span className="font-medium">
                           {log.actor.name || log.actor.email}
                         </span>
@@ -515,7 +502,7 @@ export function AuditPage() {
                         )}
                       </p>
                       
-                      <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+                      <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
                         <div className="flex items-center gap-1">
                           <Clock className="h-3 w-3" />
                           {log.timestamp.toLocaleString('pt-BR')}

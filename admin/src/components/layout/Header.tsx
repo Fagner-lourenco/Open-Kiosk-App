@@ -40,6 +40,8 @@ import {
   Settings,
   User,
   Store,
+  PanelLeftOpen,
+  PanelLeftClose,
 } from 'lucide-react';
 import { NotificationCenter } from '@/components/NotificationCenter';
 import {
@@ -47,6 +49,7 @@ import {
   PRIMARY_NAV_ITEMS,
   SUPER_ADMIN_NAV_ITEM,
 } from '@/config/navConfig';
+import { useSidebar } from '@/hooks/useSidebar';
 
 export function Header() {
   const navigate = useNavigate();
@@ -55,6 +58,7 @@ export function Header() {
   const { currentFranchise, isLoading } = useFranchise();
   const permissionContext = useContext(PermissionContext);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { collapsed, toggle: toggleSidebar } = useSidebar();
   const SuperAdminIcon = SUPER_ADMIN_NAV_ITEM.icon;
 
   const visibleNavItems = useMemo(() => {
@@ -84,27 +88,43 @@ export function Header() {
 
   return (
     <>
-      <header className="sticky top-0 z-40 border-b border-border bg-card">
-        <div className="flex items-center justify-between h-16 px-6">
+      <header className="sticky top-0 z-40 border-b border-border/60 bg-card/80 backdrop-blur-xl supports-[backdrop-filter]:bg-card/60">
+        <div className="flex items-center justify-between h-14 px-6">
           {/* Mobile Menu Button */}
           <Button
             variant="ghost"
             size="icon"
             className="lg:hidden"
             onClick={() => setIsMobileMenuOpen(true)}
-            aria-label="Abrir menu de navegacao"
+            aria-label="Abrir menu de navegação"
           >
             <Menu className="h-5 w-5" />
           </Button>
 
+          {/* Desktop Sidebar Toggle */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="hidden lg:flex"
+            onClick={toggleSidebar}
+            aria-label={collapsed ? 'Expandir sidebar' : 'Recolher sidebar'}
+          >
+            {collapsed ? (
+              <PanelLeftOpen className="h-5 w-5" />
+            ) : (
+              <PanelLeftClose className="h-5 w-5" />
+            )}
+          </Button>
+
           {/* Search */}
-          <div className="hidden md:flex flex-1 max-w-md">
+          <div className="hidden md:flex flex-1 max-w-sm ml-4">
             <div className="relative w-full">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="search"
                 placeholder="Buscar..."
-                className="border-border bg-muted pl-10"
+                className="h-9 rounded-lg border-transparent bg-muted/60 pl-9 text-sm placeholder:text-muted-foreground/60 focus-visible:border-border focus-visible:bg-background"
+                aria-label="Buscar no painel"
               />
             </div>
           </div>
@@ -141,7 +161,7 @@ export function Header() {
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate('/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
-                  Configuracoes
+                  Configurações
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleLogout} className="text-red-600">
@@ -180,7 +200,7 @@ export function Header() {
           <nav className="p-4 space-y-1">
             {isPermissionLoading && (
               <p className="px-3 py-2 text-xs text-muted-foreground" role="status" aria-live="polite">
-                Carregando permissoes...
+                Carregando permissões...
               </p>
             )}
 

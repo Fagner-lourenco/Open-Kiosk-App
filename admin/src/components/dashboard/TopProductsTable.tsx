@@ -39,7 +39,7 @@ export function TopProductsTable({
         <CardContent>
           <div className="space-y-3">
             {[...Array(limit)].map((_, i) => (
-              <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+              <div key={i} className="h-12 bg-muted rounded animate-pulse" />
             ))}
           </div>
         </CardContent>
@@ -53,7 +53,7 @@ export function TopProductsTable({
   const getMedalColor = (index: number) => {
     switch (index) {
       case 0: return 'bg-yellow-100 text-yellow-700 border-yellow-300';
-      case 1: return 'bg-gray-100 text-gray-600 border-gray-300';
+      case 1: return 'bg-muted text-muted-foreground border-gray-300';
       case 2: return 'bg-orange-100 text-orange-700 border-orange-300';
       default: return 'bg-blue-50 text-blue-600 border-blue-200';
     }
@@ -93,7 +93,7 @@ export function TopProductsTable({
                   <p className="font-medium truncate">{product.name}</p>
                   <div className="flex items-center gap-2 mt-1">
                     {/* Progress bar */}
-                    <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                    <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
                       <div 
                         className="h-full bg-blue-500 rounded-full transition-all"
                         style={{ width: `${(product.quantity / maxQuantity) * 100}%` }}

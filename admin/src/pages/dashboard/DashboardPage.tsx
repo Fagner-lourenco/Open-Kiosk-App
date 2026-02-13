@@ -192,7 +192,7 @@ export function DashboardPage() {
       <div className="flex items-center justify-center min-h-[400px]">
         <Card className="max-w-lg w-full">
           <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+            <Building2 className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <CardTitle>
               {stores.length === 0 && !isSuperAdmin 
                 ? 'Bem-vindo ao Open Kiosk' 
@@ -204,9 +204,9 @@ export function DashboardPage() {
                   <p>
                     Você ainda não está associado a nenhuma franquia.
                   </p>
-                  <div className="text-sm text-left bg-gray-50 rounded-lg p-4 space-y-2">
-                    <p className="font-medium text-gray-700">O que você pode fazer:</p>
-                    <ul className="list-disc list-inside space-y-1 text-gray-600">
+                  <div className="text-sm text-left bg-muted rounded-lg p-4 space-y-2">
+                    <p className="font-medium text-foreground">O que você pode fazer:</p>
+                    <ul className="list-disc list-inside space-y-1 text-muted-foreground">
                       <li>Aguarde um convite de um administrador de franquia</li>
                       <li>Verifique se o convite foi enviado para o email correto</li>
                       <li>Entre em contato com o suporte se precisar de ajuda</li>
@@ -227,8 +227,8 @@ export function DashboardPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-500">
+        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+        <p className="text-muted-foreground">
           Visão geral de {currentFranchise.name}
         </p>
       </div>
@@ -241,11 +241,11 @@ export function DashboardPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-500">{stat.title}</p>
+                    <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
                     <p className="text-2xl font-bold mt-1">
                       {isLoading ? '...' : stat.value}
                     </p>
-                    <p className="text-xs text-gray-400 mt-1">{stat.description}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
                   </div>
                   <div className={`p-3 rounded-full ${stat.bgColor}`}>
                     <stat.icon className={`h-6 w-6 ${stat.color}`} />
@@ -270,17 +270,17 @@ export function DashboardPage() {
                 <Link 
                   key={store.id} 
                   to={`/stores/${store.id}`}
-                  className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-50"
+                  className="flex items-center justify-between p-2 rounded-lg hover:bg-muted"
                 >
                   <div className="flex items-center gap-2">
-                    <Store className="h-4 w-4 text-gray-400" />
+                    <Store className="h-4 w-4 text-muted-foreground" />
                     <span className="text-sm">{store.name}</span>
                   </div>
-                  <ArrowRight className="h-4 w-4 text-gray-400" />
+                  <ArrowRight className="h-4 w-4 text-muted-foreground" />
                 </Link>
               ))}
               {stores.length === 0 && (
-                <p className="text-sm text-gray-500 text-center py-4">
+                <p className="text-sm text-muted-foreground text-center py-4">
                   Nenhuma loja cadastrada
                 </p>
               )}
@@ -333,10 +333,10 @@ export function DashboardPage() {
               {stats?.recentActivity && stats.recentActivity.length > 0 ? (
                 stats.recentActivity.map((activity) => (
                   <div key={activity.id} className="flex items-start gap-2">
-                    <Activity className="h-4 w-4 text-gray-400 mt-0.5" />
+                    <Activity className="h-4 w-4 text-muted-foreground mt-0.5" />
                     <div>
                       <p className="text-sm">{activity.description}</p>
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-muted-foreground">
                         {activity.timestamp.toLocaleString('pt-BR')}
                       </p>
                     </div>
@@ -344,8 +344,8 @@ export function DashboardPage() {
                 ))
               ) : (
                 <div className="text-center py-4">
-                  <Activity className="h-8 w-8 text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-500">Nenhuma atividade recente</p>
+                  <Activity className="h-8 w-8 text-muted-foreground/50 mx-auto mb-2" />
+                  <p className="text-sm text-muted-foreground">Nenhuma atividade recente</p>
                 </div>
               )}
             </div>

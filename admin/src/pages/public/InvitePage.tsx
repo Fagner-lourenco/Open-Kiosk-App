@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { LoadingState } from '@/components/common/LoadingState';
 import { 
   Loader2, 
   AlertCircle, 
@@ -280,11 +281,7 @@ export function InvitePage() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[300px]">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    );
+    return <LoadingState className="min-h-[300px]" />;
   }
 
   if (error && !invite) {
@@ -311,8 +308,8 @@ export function InvitePage() {
           <div className="mx-auto w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mb-4">
             <CheckCircle className="h-6 w-6 text-green-600" />
           </div>
-          <h2 className="text-xl font-semibold text-gray-900">Convite aceito!</h2>
-          <p className="text-sm text-gray-500 mt-2">
+          <h2 className="text-xl font-semibold text-foreground">Convite aceito!</h2>
+          <p className="text-sm text-muted-foreground mt-2">
             Você agora faz parte de {invite?.franchiseName}
             {invite?.storeName && ` - ${invite.storeName}`}
           </p>
@@ -328,8 +325,8 @@ export function InvitePage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h2 className="text-xl font-semibold text-gray-900">Convite recebido</h2>
-        <p className="text-sm text-gray-500 mt-1">
+        <h2 className="text-xl font-semibold text-foreground">Convite recebido</h2>
+        <p className="text-sm text-muted-foreground mt-1">
           Você foi convidado por {invite?.invitedBy}
         </p>
       </div>
@@ -341,28 +338,28 @@ export function InvitePage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center gap-3">
-            <Building2 className="h-5 w-5 text-gray-400" />
+            <Building2 className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-sm font-medium">{invite?.franchiseName}</p>
-              <p className="text-xs text-gray-500">Franquia</p>
+              <p className="text-xs text-muted-foreground">Franquia</p>
             </div>
           </div>
           
           {invite?.storeName && (
             <div className="flex items-center gap-3">
-              <Store className="h-5 w-5 text-gray-400" />
+              <Store className="h-5 w-5 text-muted-foreground" />
               <div>
                 <p className="text-sm font-medium">{invite.storeName}</p>
-                <p className="text-xs text-gray-500">Loja</p>
+                <p className="text-xs text-muted-foreground">Loja</p>
               </div>
             </div>
           )}
           
           <div className="flex items-center gap-3">
-            <User className="h-5 w-5 text-gray-400" />
+            <User className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-sm font-medium">{getRoleLabel(invite?.role || '')}</p>
-              <p className="text-xs text-gray-500">Função</p>
+              <p className="text-xs text-muted-foreground">Função</p>
             </div>
           </div>
         </CardContent>
@@ -404,19 +401,19 @@ export function InvitePage() {
       {/* If user is not logged in, show registration form */}
       {!user && (
         <form onSubmit={(e) => { e.preventDefault(); acceptInvite(); }} className="space-y-4">
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-muted-foreground">
             Crie uma conta para aceitar o convite:
           </p>
           
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="email"
                 type="email"
                 value={invite?.email || ''}
-                className="pl-10 bg-gray-50"
+                className="pl-10 bg-muted"
                 disabled
               />
             </div>
@@ -425,7 +422,7 @@ export function InvitePage() {
           <div className="space-y-2">
             <Label htmlFor="name">Nome completo</Label>
             <div className="relative">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="name"
                 type="text"
@@ -442,7 +439,7 @@ export function InvitePage() {
           <div className="space-y-2">
             <Label htmlFor="password">Senha</Label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="password"
                 type="password"
@@ -460,7 +457,7 @@ export function InvitePage() {
           <div className="space-y-2">
             <Label htmlFor="confirmPassword">Confirmar senha</Label>
             <div className="relative">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 id="confirmPassword"
                 type="password"
@@ -488,7 +485,7 @@ export function InvitePage() {
       )}
 
       <div className="text-center">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Já tem uma conta?{' '}
           <Link to={`/login?redirect=${invitePath}`} className="text-blue-600 hover:underline font-medium">
             Fazer login

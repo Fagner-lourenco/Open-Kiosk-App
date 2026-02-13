@@ -194,7 +194,7 @@ export default function CreateFranchisePage() {
                 Nome da Franquia <span className="text-red-500">*</span>
               </Label>
               <div className="relative">
-                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="name"
                   placeholder="Ex: Minha Franquia"
@@ -212,7 +212,7 @@ export default function CreateFranchisePage() {
             <div className="space-y-2">
               <Label htmlFor="description">Descrição</Label>
               <div className="relative">
-                <FileText className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
+                <FileText className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                 <Textarea
                   id="description"
                   placeholder="Descrição da franquia..."
@@ -229,7 +229,7 @@ export default function CreateFranchisePage() {
                 Email do Proprietário <span className="text-red-500">*</span>
               </Label>
               <div className="relative">
-                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="ownerEmail"
                   type="email"
@@ -248,7 +248,7 @@ export default function CreateFranchisePage() {
             <div className="space-y-2">
               <Label htmlFor="supportEmail">Email de Suporte</Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="supportEmail"
                   type="email"
@@ -267,7 +267,7 @@ export default function CreateFranchisePage() {
             <div className="space-y-2">
               <Label htmlFor="website">Website</Label>
               <div className="relative">
-                <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Globe className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
                   id="website"
                   type="url"

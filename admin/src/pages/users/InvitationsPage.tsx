@@ -24,7 +24,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -51,9 +50,12 @@ import {
   Loader2,
   AlertCircle,
   Copy,
-  Building2,
   Send
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { LoadingState } from '@/components/common/LoadingState';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { getInvitationStatusBadge } from '@/utils/invitation-badges';
 
 interface Invitation {
   id: string;
@@ -174,21 +176,6 @@ export function InvitationsPage() {
     setTimeout(() => setCopiedLink(null), 2000);
   };
 
-  const getStatusBadge = (status: string, expiresAt: Date) => {
-    const isExpired = expiresAt < new Date();
-    
-    if (status === 'accepted') {
-      return <Badge className="bg-green-100 text-green-700">Aceito</Badge>;
-    }
-    if (status === 'revoked') {
-      return <Badge variant="destructive">Revogado</Badge>;
-    }
-    if (isExpired || status === 'expired') {
-      return <Badge variant="secondary">Expirado</Badge>;
-    }
-    return <Badge className="bg-yellow-100 text-yellow-700">Pendente</Badge>;
-  };
-
   const getRoleLabel = (role: string) => {
     const labels: Record<string, string> = {
       owner: 'Proprietário',
@@ -200,36 +187,22 @@ export function InvitationsPage() {
   };
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para gerenciar convites
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para gerenciar convites" />;
   }
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Convites</h1>
-          <p className="text-gray-500">
-            Gerencie convites para {currentFranchise.name}
-          </p>
-        </div>
-        <Button onClick={() => setShowInviteDialog(true)}>
-          <Plus className="mr-2 h-4 w-4" />
-          Novo Convite
-        </Button>
-      </div>
+      <PageHeader
+        title="Convites"
+        description={`Gerencie convites para ${currentFranchise.name}`}
+        actions={
+          <Button onClick={() => setShowInviteDialog(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Novo Convite
+          </Button>
+        }
+      />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -243,7 +216,7 @@ export function InvitationsPage() {
                 <p className="text-2xl font-bold">
                   {invitations.filter(i => i.status === 'pending' && i.expiresAt > new Date()).length}
                 </p>
-                <p className="text-sm text-gray-500">Pendentes</p>
+                <p className="text-sm text-muted-foreground">Pendentes</p>
               </div>
             </div>
           </CardContent>
@@ -259,7 +232,7 @@ export function InvitationsPage() {
                 <p className="text-2xl font-bold">
                   {invitations.filter(i => i.status === 'accepted').length}
                 </p>
-                <p className="text-sm text-gray-500">Aceitos</p>
+                <p className="text-sm text-muted-foreground">Aceitos</p>
               </div>
             </div>
           </CardContent>
@@ -268,14 +241,14 @@ export function InvitationsPage() {
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-full bg-gray-100">
-                <XCircle className="h-5 w-5 text-gray-600" />
+              <div className="p-2 rounded-full bg-muted">
+                <XCircle className="h-5 w-5 text-muted-foreground" />
               </div>
               <div>
                 <p className="text-2xl font-bold">
                   {invitations.filter(i => i.status === 'revoked' || i.status === 'expired' || i.expiresAt < new Date()).length}
                 </p>
-                <p className="text-sm text-gray-500">Expirados/Revogados</p>
+                <p className="text-sm text-muted-foreground">Expirados/Revogados</p>
               </div>
             </div>
           </CardContent>
@@ -292,16 +265,14 @@ export function InvitationsPage() {
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-            </div>
+            <LoadingState />
           ) : invitations.length === 0 ? (
             <div className="text-center py-12">
-              <Mail className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-1">
+              <Mail className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+              <h3 className="text-lg font-medium text-foreground mb-1">
                 Nenhum convite enviado
               </h3>
-              <p className="text-gray-500 mb-4">
+              <p className="text-muted-foreground mb-4">
                 Convide membros para sua franquia
               </p>
               <Button onClick={() => setShowInviteDialog(true)}>
@@ -314,15 +285,15 @@ export function InvitationsPage() {
               {invitations.map((invite) => (
                 <div 
                   key={invite.id}
-                  className="flex items-center justify-between p-4 hover:bg-gray-50"
+                  className="flex items-center justify-between p-4 hover:bg-muted"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="p-2 rounded-full bg-gray-100">
-                      <Mail className="h-5 w-5 text-gray-500" />
+                    <div className="p-2 rounded-full bg-muted">
+                      <Mail className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div>
-                      <p className="font-medium text-gray-900">{invite.email}</p>
-                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                      <p className="font-medium text-foreground">{invite.email}</p>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <span>{getRoleLabel(invite.role)}</span>
                         <span>•</span>
                         <span>
@@ -333,7 +304,7 @@ export function InvitationsPage() {
                   </div>
                   
                   <div className="flex items-center gap-3">
-                    {getStatusBadge(invite.status, invite.expiresAt)}
+                    {getInvitationStatusBadge(invite.status, invite.expiresAt)}
                     
                     {invite.status === 'pending' && invite.expiresAt > new Date() && (
                       <>
@@ -412,7 +383,7 @@ export function InvitationsPage() {
                   <SelectItem value="viewer">Visualizador</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 O convite expira em 7 dias
               </p>
             </div>

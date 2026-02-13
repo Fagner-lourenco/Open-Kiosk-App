@@ -113,6 +113,7 @@ export function useKegs(franchiseId: string, storeId: string) {
     data: kegs = [],
     isLoading: loadingKegs,
     error: kegsError,
+    refetch: refetchKegs,
   } = useQuery({
     queryKey: kegKeys.all(franchiseId, storeId),
     queryFn: async (): Promise<Keg[]> => {
@@ -231,6 +232,7 @@ export function useKegs(franchiseId: string, storeId: string) {
     kegs,
     loadingKegs,
     kegsError,
+    refetchKegs,
     products,
     tappedKegs,
     inStockKegs,

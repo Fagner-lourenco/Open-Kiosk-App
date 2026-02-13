@@ -23,9 +23,9 @@ import {
   Store, 
   Save, 
   Loader2, 
-  AlertCircle,
-  Building2
+  AlertCircle
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 
 export function StoreCreatePage() {
   const navigate = useNavigate();
@@ -95,7 +95,7 @@ export function StoreCreatePage() {
             }
           );
         } catch (auditError) {
-          console.warn('[audit] Falha ao registrar criacao de loja:', auditError);
+          console.warn('[audit] Falha ao registrar criação de loja:', auditError);
         }
       }
 
@@ -110,19 +110,7 @@ export function StoreCreatePage() {
   };
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para criar uma loja
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para criar uma loja" />;
   }
 
   return (
@@ -135,8 +123,8 @@ export function StoreCreatePage() {
           </Button>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Nova Loja</h1>
-          <p className="text-gray-500">
+          <h1 className="text-2xl font-bold text-foreground">Nova Loja</h1>
+          <p className="text-muted-foreground">
             Criar uma nova loja em {currentFranchise.name}
           </p>
         </div>
@@ -214,7 +202,7 @@ export function StoreCreatePage() {
             <div className="flex items-center justify-between p-4 border rounded-lg">
               <div>
                 <Label htmlFor="isActive">Loja ativa</Label>
-                <p className="text-sm text-gray-500">
+                <p className="text-sm text-muted-foreground">
                   Defina se a loja estará disponível imediatamente
                 </p>
               </div>

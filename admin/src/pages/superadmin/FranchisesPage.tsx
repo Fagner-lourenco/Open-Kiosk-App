@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { getPlanBadge, getStatusBadge } from '@/utils/franchise-badges';
 import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, orderBy, Timestamp, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -168,22 +169,6 @@ export default function FranchisesPage() {
     return timestamp.toDate().toLocaleDateString('pt-BR');
   };
 
-  const getPlanBadge = (plan?: string) => {
-    const styles: Record<string, string> = {
-      trial: 'bg-yellow-100 text-yellow-800',
-      basic: 'bg-blue-100 text-blue-800',
-      professional: 'bg-purple-100 text-purple-800',
-      enterprise: 'bg-green-100 text-green-800',
-    };
-    return styles[plan || 'trial'] || styles.trial;
-  };
-
-  const getStatusBadge = (status?: string) => {
-    return status === 'active'
-      ? 'bg-green-100 text-green-800'
-      : 'bg-red-100 text-red-800';
-  };
-
   if (!isSuperAdmin) {
     return (
       <div className="p-6">
@@ -234,7 +219,7 @@ export default function FranchisesPage() {
         </CardHeader>
         <CardContent>
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Buscar por nome, email ou descrição..."
               value={search}
@@ -264,13 +249,13 @@ export default function FranchisesPage() {
             </div>
           ) : filteredFranchises.length === 0 ? (
             <div className="text-center py-12">
-              <Building2 className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-              <p className="text-gray-500">
+              <Building2 className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+              <p className="text-muted-foreground">
                 {search ? 'Nenhuma franquia encontrada' : 'Nenhuma franquia cadastrada'}
               </p>
             </div>
           ) : (
-            <Table>
+            <Table aria-label="Tabela de franquias">
               <TableHeader>
                 <TableRow>
                   <TableHead>Franquia</TableHead>
@@ -288,13 +273,13 @@ export default function FranchisesPage() {
                   <TableRow key={franchise.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div className="p-2 bg-gray-100 rounded-lg">
-                          <Building2 className="h-4 w-4 text-gray-600" />
+                        <div className="p-2 bg-muted rounded-lg">
+                          <Building2 className="h-4 w-4 text-muted-foreground" />
                         </div>
                         <div>
                           <p className="font-medium">{franchise.name}</p>
                           {franchise.description && (
-                            <p className="text-xs text-gray-500 truncate max-w-[200px]">
+                            <p className="text-xs text-muted-foreground truncate max-w-[200px]">
                               {franchise.description}
                             </p>
                           )}
@@ -302,19 +287,19 @@ export default function FranchisesPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <span className="text-sm text-gray-600">
+                      <span className="text-sm text-muted-foreground">
                         {franchise.ownerEmail || '-'}
                       </span>
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center gap-1">
-                        <Store className="h-4 w-4 text-gray-400" />
+                        <Store className="h-4 w-4 text-muted-foreground" />
                         <span>{franchise.storeCount}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
                       <div className="flex items-center justify-center gap-1">
-                        <Users className="h-4 w-4 text-gray-400" />
+                        <Users className="h-4 w-4 text-muted-foreground" />
                         <span>{franchise.memberCount}</span>
                       </div>
                     </TableCell>
@@ -328,7 +313,7 @@ export default function FranchisesPage() {
                         {franchise.plan}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-gray-600">
+                    <TableCell className="text-sm text-muted-foreground">
                       {formatDate(franchise.createdAt)}
                     </TableCell>
                     <TableCell>
@@ -383,8 +368,8 @@ export default function FranchisesPage() {
         title="Excluir Franquia"
         description={
           <>
-            Tem certeza que deseja excluir a franquia "{deleteTarget?.name}"? Esta acao nao pode
-            ser desfeita e excluira lojas, pedidos, membros e configuracoes associados.
+            Tem certeza que deseja excluir a franquia "{deleteTarget?.name}"? Esta ação não pode
+            ser desfeita e excluira lojas, pedidos, membros e configurações associados.
           </>
         }
         onConfirm={handleDelete}

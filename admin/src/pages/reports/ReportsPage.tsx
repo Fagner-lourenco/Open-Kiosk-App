@@ -31,13 +31,15 @@ import {
   Store,
   Download,
   Calendar,
-  Building2,
   Loader2,
   CheckCircle,
   Package,
   BarChart3,
   PieChart as PieChartIcon
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { LoadingState } from '@/components/common/LoadingState';
+import { CHART_PRIMARY, CHART_SECONDARY, getChartColor } from '@/constants/chart-colors';
 import {
   LineChart,
   Line,
@@ -282,19 +284,7 @@ export function ReportsPage() {
   }, [reportData?.allOrders]);
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para ver relatórios
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para ver relatórios" />;
   }
 
   return (
@@ -302,8 +292,8 @@ export function ReportsPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Relatórios</h1>
-          <p className="text-gray-500">
+          <h1 className="text-2xl font-bold text-foreground">Relatórios</h1>
+          <p className="text-muted-foreground">
             Análise de desempenho de {currentFranchise.name}
           </p>
         </div>
@@ -334,7 +324,7 @@ export function ReportsPage() {
       {/* Filters */}
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
-          <Store className="h-4 w-4 text-gray-400" />
+          <Store className="h-4 w-4 text-muted-foreground" />
           <Select value={selectedStore} onValueChange={setSelectedStore}>
             <SelectTrigger className="w-[200px]">
               <SelectValue placeholder="Selecione a loja" />
@@ -351,7 +341,7 @@ export function ReportsPage() {
         </div>
         
         <div className="flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-gray-400" />
+          <Calendar className="h-4 w-4 text-muted-foreground" />
           <Select value={dateRange} onValueChange={setDateRange}>
             <SelectTrigger className="w-[180px]">
               <SelectValue />
@@ -368,9 +358,7 @@ export function ReportsPage() {
 
       {/* KPIs */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-        </div>
+        <LoadingState />
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -378,7 +366,7 @@ export function ReportsPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-500">Receita Total</p>
+                    <p className="text-sm font-medium text-muted-foreground">Receita Total</p>
                     <p className="text-2xl font-bold mt-1">
                       R$ {reportData?.totalRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
                     </p>
@@ -394,7 +382,7 @@ export function ReportsPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-500">Total de Pedidos</p>
+                    <p className="text-sm font-medium text-muted-foreground">Total de Pedidos</p>
                     <p className="text-2xl font-bold mt-1">
                       {reportData?.totalOrders || 0}
                     </p>
@@ -410,7 +398,7 @@ export function ReportsPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-500">Ticket Médio</p>
+                    <p className="text-sm font-medium text-muted-foreground">Ticket Médio</p>
                     <p className="text-2xl font-bold mt-1">
                       R$ {reportData?.averageOrderValue.toLocaleString('pt-BR', { minimumFractionDigits: 2 }) || '0,00'}
                     </p>
@@ -426,7 +414,7 @@ export function ReportsPage() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-gray-500">Clientes Únicos</p>
+                    <p className="text-sm font-medium text-muted-foreground">Clientes Únicos</p>
                     <p className="text-2xl font-bold mt-1">
                       {reportData?.uniqueCustomers || 0}
                     </p>
@@ -473,9 +461,9 @@ export function ReportsPage() {
                         <Line 
                           type="monotone" 
                           dataKey="revenue" 
-                          stroke="#8884d8" 
+                          stroke={CHART_PRIMARY} 
                           strokeWidth={2}
-                          dot={{ fill: '#8884d8' }}
+                          dot={{ fill: CHART_PRIMARY }}
                         />
                       </LineChart>
                     </ResponsiveContainer>
@@ -501,7 +489,7 @@ export function ReportsPage() {
                         <Tooltip 
                           formatter={(value: number) => [`R$ ${value.toFixed(2)}`, 'Receita']}
                         />
-                        <Bar dataKey="revenue" fill="#8884d8" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="revenue" fill={CHART_PRIMARY} radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -530,7 +518,7 @@ export function ReportsPage() {
                         <Tooltip 
                           formatter={(value: number) => [value, 'Pedidos']}
                         />
-                        <Bar dataKey="orders" fill="#82ca9d" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="orders" fill={CHART_SECONDARY} radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </CardContent>
@@ -559,7 +547,7 @@ export function ReportsPage() {
                           yAxisId="left"
                           type="monotone" 
                           dataKey="revenue" 
-                          stroke="#8884d8" 
+                          stroke={CHART_PRIMARY} 
                           strokeWidth={2}
                           name="Receita (R$)"
                         />
@@ -567,7 +555,7 @@ export function ReportsPage() {
                           yAxisId="right"
                           type="monotone" 
                           dataKey="orders" 
-                          stroke="#82ca9d" 
+                          stroke={CHART_SECONDARY} 
                           strokeWidth={2}
                           name="Pedidos"
                         />
@@ -605,13 +593,13 @@ export function ReportsPage() {
                           <Tooltip 
                             formatter={(value: number) => [value, 'Vendas']}
                           />
-                          <Bar dataKey="quantity" fill="#82ca9d" radius={[0, 4, 4, 0]} />
+                          <Bar dataKey="quantity" fill={CHART_SECONDARY} radius={[0, 4, 4, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
                       <div className="text-center py-12">
-                        <ShoppingCart className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                        <p className="text-gray-500">Nenhum produto vendido no período</p>
+                        <ShoppingCart className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                        <p className="text-muted-foreground">Nenhum produto vendido no período</p>
                       </div>
                     )}
                   </CardContent>
@@ -638,13 +626,13 @@ export function ReportsPage() {
                             labelLine={false}
                             label={({ name, percent }) => `${name.substring(0, 10)}${name.length > 10 ? '...' : ''} ${(percent * 100).toFixed(0)}%`}
                             outerRadius={80}
-                            fill="#8884d8"
+                            fill={CHART_PRIMARY}
                             dataKey="quantity"
                           >
                             {reportData.topProducts.map((_, index) => (
                               <Cell 
                                 key={`cell-${index}`} 
-                                fill={['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#00C49F'][index % 5]} 
+                                fill={getChartColor(index)} 
                               />
                             ))}
                           </Pie>
@@ -653,8 +641,8 @@ export function ReportsPage() {
                       </ResponsiveContainer>
                     ) : (
                       <div className="text-center py-12">
-                        <Package className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                        <p className="text-gray-500">Nenhum produto vendido no período</p>
+                        <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                        <p className="text-muted-foreground">Nenhum produto vendido no período</p>
                       </div>
                     )}
                   </CardContent>
@@ -671,13 +659,13 @@ export function ReportsPage() {
                           <div className="flex items-center gap-4">
                             <div 
                               className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold"
-                              style={{ backgroundColor: ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#00C49F'][index % 5] }}
+                              style={{ backgroundColor: getChartColor(index) }}
                             >
                               {index + 1}
                             </div>
                             <div>
                               <h4 className="font-semibold">{item.name}</h4>
-                              <p className="text-sm text-gray-500">Produto #{index + 1} em vendas</p>
+                              <p className="text-sm text-muted-foreground">Produto #{index + 1} em vendas</p>
                             </div>
                           </div>
                           <div className="text-right">
@@ -715,13 +703,13 @@ export function ReportsPage() {
                           <Tooltip 
                             formatter={(value: number) => [`R$ ${value.toFixed(2)}`, 'Receita']}
                           />
-                          <Bar dataKey="revenue" fill="#8884d8" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="revenue" fill={CHART_PRIMARY} radius={[4, 4, 0, 0]} />
                         </BarChart>
                       </ResponsiveContainer>
                     ) : (
                       <div className="text-center py-12">
-                        <Store className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                        <p className="text-gray-500">Nenhuma loja cadastrada</p>
+                        <Store className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                        <p className="text-muted-foreground">Nenhuma loja cadastrada</p>
                       </div>
                     )}
                   </CardContent>
@@ -748,13 +736,13 @@ export function ReportsPage() {
                             labelLine={false}
                             label={({ storeName, percent }) => `${storeName} ${(percent * 100).toFixed(0)}%`}
                             outerRadius={80}
-                            fill="#8884d8"
+                            fill={CHART_PRIMARY}
                             dataKey="revenue"
                           >
                             {reportData.storeStats.map((_, index) => (
                               <Cell 
                                 key={`cell-${index}`} 
-                                fill={['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#00C49F'][index % 5]} 
+                                fill={getChartColor(index)} 
                               />
                             ))}
                           </Pie>
@@ -763,8 +751,8 @@ export function ReportsPage() {
                       </ResponsiveContainer>
                     ) : (
                       <div className="text-center py-12">
-                        <Store className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                        <p className="text-gray-500">Nenhuma loja cadastrada</p>
+                        <Store className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                        <p className="text-muted-foreground">Nenhuma loja cadastrada</p>
                       </div>
                     )}
                   </CardContent>
@@ -784,23 +772,23 @@ export function ReportsPage() {
                           <div className="flex items-center gap-4">
                             <div 
                               className="w-12 h-12 rounded-full flex items-center justify-center"
-                              style={{ backgroundColor: ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#00C49F'][index % 5] + '20' }}
+                              style={{ backgroundColor: getChartColor(index) + '20' }}
                             >
                               <Store 
                                 className="h-6 w-6" 
-                                style={{ color: ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#00C49F'][index % 5] }} 
+                                style={{ color: getChartColor(index) }} 
                               />
                             </div>
                             <div>
                               <h4 className="font-semibold">{store.storeName}</h4>
-                              <p className="text-sm text-gray-500">{store.orders} pedidos realizados</p>
+                              <p className="text-sm text-muted-foreground">{store.orders} pedidos realizados</p>
                             </div>
                           </div>
                           <div className="text-right">
                             <p className="text-2xl font-bold text-green-600">
                               R$ {store.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                             </p>
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-muted-foreground">
                               Ticket médio: R$ {store.orders > 0 ? (store.revenue / store.orders).toFixed(2) : '0,00'}
                             </p>
                           </div>

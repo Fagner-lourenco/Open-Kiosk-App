@@ -28,8 +28,8 @@ interface TimelineProps {
 const colorVariants = {
   default: {
     dot: 'bg-gray-400',
-    line: 'bg-gray-200',
-    icon: 'text-gray-600 bg-gray-100',
+    line: 'bg-muted',
+    icon: 'text-muted-foreground bg-muted',
   },
   blue: {
     dot: 'bg-blue-500',
@@ -85,7 +85,7 @@ export function Timeline({ events, className }: TimelineProps) {
               <div 
                 className={cn(
                   "absolute left-4 top-8 bottom-0 w-0.5",
-                  event.status === 'pending' ? 'bg-gray-200' : colors.line
+                  event.status === 'pending' ? 'bg-muted' : colors.line
                 )}
               />
             )}
@@ -97,7 +97,7 @@ export function Timeline({ events, className }: TimelineProps) {
                 className={cn(
                   "relative z-10 flex items-center justify-center w-8 h-8 rounded-full shrink-0",
                   event.status === 'pending' 
-                    ? 'bg-gray-100 text-gray-400' 
+                    ? 'bg-muted text-muted-foreground' 
                     : colors.icon,
                   isCurrent && 'ring-2 ring-offset-2 ring-blue-500'
                 )}
@@ -111,7 +111,7 @@ export function Timeline({ events, className }: TimelineProps) {
                   <p 
                     className={cn(
                       "font-medium text-sm",
-                      event.status === 'pending' ? 'text-gray-400' : 'text-gray-900'
+                      event.status === 'pending' ? 'text-muted-foreground' : 'text-foreground'
                     )}
                   >
                     {event.title}

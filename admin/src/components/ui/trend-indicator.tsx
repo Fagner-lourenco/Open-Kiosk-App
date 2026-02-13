@@ -37,13 +37,13 @@ export function TrendIndicator({
     ? 'text-green-600'
     : direction === 'down'
       ? 'text-red-600'
-      : 'text-gray-500';
+      : 'text-muted-foreground';
 
   const bgClass = direction === 'up'
     ? 'bg-green-50'
     : direction === 'down'
       ? 'text-red-50'
-      : 'bg-gray-50';
+      : 'bg-muted';
 
   const sizeClasses = {
     sm: 'text-xs',

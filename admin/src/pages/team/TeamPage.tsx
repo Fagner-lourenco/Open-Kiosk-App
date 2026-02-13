@@ -3,7 +3,7 @@
  * TeamPage - Equipe (Membros + Convites Unificados)
  * ============================================================================
  * 
- * PÃ¡gina unificada para gerenciar membros da franquia e convites pendentes.
+ * Página unificada para gerenciar membros da franquia e convites pendentes.
  * Substitui as antigas UsersPage e InvitationsPage.
  */
 
@@ -77,7 +77,6 @@ import {
   MoreVertical, 
   Eye,
   Mail,
-  Building2,
   Shield,
   UserMinus,
   Loader2,
@@ -89,6 +88,9 @@ import {
   Send,
   UsersRound
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { LoadingState } from '@/components/common/LoadingState';
+import { getInvitationStatusBadge } from '@/utils/invitation-badges';
 
 interface FranchiseMember {
   id: string;
@@ -165,7 +167,7 @@ export function TeamPage() {
           id: currentFranchise.ownerId,
           userId: currentFranchise.ownerId,
           email: currentFranchise.ownerEmail || 'owner@example.com',
-          displayName: 'ProprietÃ¡rio',
+          displayName: 'Proprietário',
           role: 'owner',
           addedAt: addedAtStr,
         });
@@ -226,7 +228,7 @@ export function TeamPage() {
     },
     onError: (err) => {
       console.error('Error changing role:', err);
-      setError('Erro ao alterar funÃ§Ã£o do usuÃ¡rio');
+      setError('Erro ao alterar função do usuário');
     },
   });
 
@@ -243,14 +245,14 @@ export function TeamPage() {
     },
     onError: (err) => {
       console.error('Error removing member:', err);
-      setError('Erro ao remover usuÃ¡rio');
+      setError('Erro ao remover usuário');
     },
   });
 
   // Create invitation mutation
   const createInviteMutation = useMutation({
     mutationFn: async ({ email, role }: { email: string; role: string }) => {
-      if (!currentFranchise || !user) throw new Error('Dados invÃ¡lidos');
+      if (!currentFranchise || !user) throw new Error('Dados inválidos');
       
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
@@ -309,7 +311,7 @@ export function TeamPage() {
 
   const handleCreateInvite = () => {
     if (!inviteEmail) {
-      setError('Email Ã© obrigatÃ³rio');
+      setError('Email é obrigatório');
       return;
     }
     setError(null);
@@ -364,33 +366,8 @@ export function TeamPage() {
     return email?.slice(0, 2).toUpperCase() || 'U';
   };
 
-  const getStatusBadge = (status: string, expiresAt: Date) => {
-    const isExpired = expiresAt < new Date();
-    
-    if (status === 'accepted') {
-      return <Badge className="bg-green-100 text-green-700">Aceito</Badge>;
-    }
-    if (status === 'revoked') {
-      return <Badge variant="destructive">Revogado</Badge>;
-    }
-    if (isExpired || status === 'expired') {
-      return <Badge variant="secondary">Expirado</Badge>;
-    }
-    return <Badge className="bg-yellow-100 text-yellow-700">Pendente</Badge>;
-  };  if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para gerenciar a equipe
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+  if (!currentFranchise) {
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para gerenciar a equipe" />;
   }
 
   return (
@@ -445,12 +422,13 @@ export function TeamPage() {
         <TabsContent value="members" className="space-y-4">
           <FilterBar>
             <div className="relative max-w-md flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar membros..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-10"
+                aria-label="Buscar membros da equipe"
               />
             </div>
           </FilterBar>
@@ -459,28 +437,25 @@ export function TeamPage() {
           <Card>
             <CardContent className="p-0">
               {loadingMembers ? (
-                <div className="p-12 text-center">
-                  <Loader2 className="h-8 w-8 mx-auto text-gray-400 mb-4 animate-spin" />
-                  <p className="text-gray-500">Carregando membros...</p>
-                </div>
+                <LoadingState showLabel label="Carregando membros..." className="p-12" />
               ) : filteredMembers.length === 0 ? (
                 <div className="p-12 text-center">
-                  <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+                  <Users className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
                   {searchQuery ? (
                     <>
-                      <h3 className="text-lg font-medium text-gray-900 mb-1">
+                      <h3 className="text-lg font-medium text-foreground mb-1">
                         Nenhum membro encontrado
                       </h3>
-                      <p className="text-gray-500">
+                      <p className="text-muted-foreground">
                         Tente buscar com outros termos
                       </p>
                     </>
                   ) : (
                     <>
-                      <h3 className="text-lg font-medium text-gray-900 mb-1">
+                      <h3 className="text-lg font-medium text-foreground mb-1">
                         Nenhum membro
                       </h3>
-                      <p className="text-gray-500 mb-4">
+                      <p className="text-muted-foreground mb-4">
                         Convide membros para sua equipe
                       </p>
                       <Button onClick={() => setShowInviteDialog(true)}>
@@ -498,7 +473,7 @@ export function TeamPage() {
                     return (
                       <div 
                         key={member.id}
-                        className="flex items-center justify-between p-4 hover:bg-gray-50"
+                        className="flex items-center justify-between p-4 hover:bg-muted"
                       >
                         <div className="flex items-center gap-4">
                           <Avatar>
@@ -508,10 +483,10 @@ export function TeamPage() {
                             </AvatarFallback>
                           </Avatar>
                           <div>
-                            <p className="font-medium text-gray-900">
+                            <p className="font-medium text-foreground">
                               {member.displayName || 'Sem nome'}
                             </p>
-                            <div className="flex items-center gap-2 text-sm text-gray-500">
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
                               <Mail className="h-3 w-3" />
                               {member.email}
                             </div>
@@ -548,7 +523,7 @@ export function TeamPage() {
                                   <DropdownMenuSub>
                                     <DropdownMenuSubTrigger>
                                       <Shield className="mr-2 h-4 w-4" />
-                                      Alterar funÃ§Ã£o
+                                      Alterar função
                                     </DropdownMenuSubTrigger>
                                     <DropdownMenuPortal>
                                       <DropdownMenuSubContent>
@@ -603,18 +578,18 @@ export function TeamPage() {
               totalItems={filteredMembers.length}
               pageSize={PAGE_SIZE}
               onPageChange={setMembersPage}
-              ariaLabel="Paginacao de membros"
+              ariaLabel="Paginação de membros"
             />
           )}
 
           {/* Stats */}
           {members.length > 0 && (
-            <div className="flex items-center justify-between text-sm text-gray-500 pt-4 border-t">
+            <div className="flex items-center justify-between text-sm text-muted-foreground pt-4 border-t">
               <span>
                 {filteredMembers.length} de {members.length} membro(s)
               </span>
               <div className="flex items-center gap-4">
-                <span>{members.filter(m => m.role === 'owner').length} proprietÃ¡rio(s)</span>
+                <span>{members.filter(m => m.role === 'owner').length} proprietário(s)</span>
                 <span>{members.filter(m => m.role === 'manager').length} gerente(s)</span>
                 <span>{members.filter(m => isOperatorRole(m.role)).length} operador(es)</span>
               </div>
@@ -634,7 +609,7 @@ export function TeamPage() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{pendingCount}</p>
-                    <p className="text-sm text-gray-500">Pendentes</p>
+                    <p className="text-sm text-muted-foreground">Pendentes</p>
                   </div>
                 </div>
               </CardContent>
@@ -650,7 +625,7 @@ export function TeamPage() {
                     <p className="text-2xl font-bold">
                       {invitations.filter(i => i.status === 'accepted').length}
                     </p>
-                    <p className="text-sm text-gray-500">Aceitos</p>
+                    <p className="text-sm text-muted-foreground">Aceitos</p>
                   </div>
                 </div>
               </CardContent>
@@ -659,8 +634,8 @@ export function TeamPage() {
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-full bg-gray-100">
-                    <XCircle className="h-5 w-5 text-gray-600" />
+                  <div className="p-2 rounded-full bg-muted">
+                    <XCircle className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div>
                     <p className="text-2xl font-bold">
@@ -670,7 +645,7 @@ export function TeamPage() {
                         i.expiresAt < new Date()
                       ).length}
                     </p>
-                    <p className="text-sm text-gray-500">Expirados/Revogados</p>
+                    <p className="text-sm text-muted-foreground">Expirados/Revogados</p>
                   </div>
                 </div>
               </CardContent>
@@ -687,16 +662,14 @@ export function TeamPage() {
             </CardHeader>
             <CardContent className="p-0">
               {loadingInvitations ? (
-                <div className="flex items-center justify-center py-12">
-                  <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-                </div>
+                <LoadingState />
               ) : invitations.length === 0 ? (
                 <div className="text-center py-12">
-                  <Mail className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">
+                  <Mail className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                  <h3 className="text-lg font-medium text-foreground mb-1">
                     Nenhum convite enviado
                   </h3>
-                  <p className="text-gray-500 mb-4">
+                  <p className="text-muted-foreground mb-4">
                     Convide membros para sua equipe
                   </p>
                   <Button onClick={() => setShowInviteDialog(true)}>
@@ -709,15 +682,15 @@ export function TeamPage() {
                   {paginatedInvitations.map((invite) => (
                     <div 
                       key={invite.id}
-                      className="flex items-center justify-between p-4 hover:bg-gray-50"
+                      className="flex items-center justify-between p-4 hover:bg-muted"
                     >
                       <div className="flex items-center gap-4">
-                        <div className="p-2 rounded-full bg-gray-100">
-                          <Mail className="h-5 w-5 text-gray-500" />
+                        <div className="p-2 rounded-full bg-muted">
+                          <Mail className="h-5 w-5 text-muted-foreground" />
                         </div>
                         <div>
-                          <p className="font-medium text-gray-900">{invite.email}</p>
-                          <div className="flex items-center gap-2 text-sm text-gray-500">
+                          <p className="font-medium text-foreground">{invite.email}</p>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <span>{getRoleLabel(invite.role)}</span>
                             <span>-</span>
                             <span>{invite.createdAt.toLocaleDateString('pt-BR')}</span>
@@ -726,7 +699,7 @@ export function TeamPage() {
                       </div>
                       
                       <div className="flex items-center gap-3">
-                        {getStatusBadge(invite.status, invite.expiresAt)}
+                        {getInvitationStatusBadge(invite.status, invite.expiresAt)}
                         
                         {invite.status === 'pending' && invite.expiresAt > new Date() && (
                           <>
@@ -770,7 +743,7 @@ export function TeamPage() {
               totalItems={invitations.length}
               pageSize={PAGE_SIZE}
               onPageChange={setInvitationsPage}
-              ariaLabel="Paginacao de convites"
+              ariaLabel="Paginação de convites"
             />
           )}
         </TabsContent>
@@ -783,7 +756,7 @@ export function TeamPage() {
             <DialogTitle>Remover membro</DialogTitle>
             <DialogDescription>
               Tem certeza que deseja remover "{removeMember?.displayName || removeMember?.email}" da equipe?
-              O usuÃ¡rio perderÃ¡ acesso a todas as lojas.
+              O usuário perderá acesso a todas as lojas.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -836,7 +809,7 @@ export function TeamPage() {
             </div>
             
             <div className="space-y-2">
-              <Label htmlFor="role">FunÃ§Ã£o</Label>
+              <Label htmlFor="role">Função</Label>
               <Select
                 value={inviteRole}
                 onValueChange={setInviteRole}
@@ -853,7 +826,7 @@ export function TeamPage() {
                   ))}
                 </SelectContent>
               </Select>
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 O convite expira em 7 dias
               </p>
             </div>

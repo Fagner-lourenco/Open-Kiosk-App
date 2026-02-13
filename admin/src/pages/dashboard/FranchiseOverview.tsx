@@ -358,7 +358,7 @@ function FullOverview({ metrics }: { metrics: FranchiseMetrics }) {
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500 flex items-center gap-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Store className="h-4 w-4" />
               Lojas
             </CardTitle>
@@ -367,7 +367,7 @@ function FullOverview({ metrics }: { metrics: FranchiseMetrics }) {
             <div className="flex items-center gap-4">
               <div>
                 <span className="text-2xl font-bold">{metrics.activeStores}</span>
-                <span className="text-gray-500 ml-1">ativas</span>
+                <span className="text-muted-foreground ml-1">ativas</span>
               </div>
               {metrics.inactiveStores > 0 && (
                 <Badge variant="secondary">
@@ -380,7 +380,7 @@ function FullOverview({ metrics }: { metrics: FranchiseMetrics }) {
         
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500 flex items-center gap-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <Users className="h-4 w-4" />
               Equipe
             </CardTitle>
@@ -399,7 +399,7 @@ function FullOverview({ metrics }: { metrics: FranchiseMetrics }) {
         
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-gray-500 flex items-center gap-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
               <CheckCircle2 className="h-4 w-4" />
               Status
             </CardTitle>

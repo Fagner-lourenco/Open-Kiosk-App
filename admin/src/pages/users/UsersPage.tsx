@@ -10,7 +10,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { collection, doc, updateDoc, deleteDoc, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -42,12 +42,14 @@ import {
   MoreVertical, 
   Eye,
   Mail,
-  Building2,
   Shield,
   UserMinus,
   Loader2,
   AlertCircle
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { LoadingState } from '@/components/common/LoadingState';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface FranchiseMember {
   id: string;
@@ -175,38 +177,24 @@ export function UsersPage() {
   };
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para gerenciar usuários
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para gerenciar usuários" />;
   }
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Usuários</h1>
-          <p className="text-gray-500">
-            Membros de {currentFranchise.name}
-          </p>
-        </div>
-        <Link to="/invitations">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            Convidar Usuário
-          </Button>
-        </Link>
-      </div>
+      <PageHeader
+        title="Usuários"
+        description={`Membros de ${currentFranchise.name}`}
+        actions={
+          <Link to="/invitations">
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              Convidar Usuário
+            </Button>
+          </Link>
+        }
+      />
 
       {error && (
         <Alert variant="destructive">
@@ -217,7 +205,7 @@ export function UsersPage() {
 
       {/* Search */}
       <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder="Buscar usuários..."
           value={searchQuery}
@@ -230,28 +218,25 @@ export function UsersPage() {
       <Card>
         <CardContent className="p-0">
           {loadingMembers ? (
-            <div className="p-12 text-center">
-              <Loader2 className="h-8 w-8 mx-auto text-gray-400 mb-4 animate-spin" />
-              <p className="text-gray-500">Carregando usuários...</p>
-            </div>
+            <LoadingState showLabel label="Carregando usuários..." className="p-12" />
           ) : filteredMembers.length === 0 ? (
             <div className="p-12 text-center">
-              <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+              <Users className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
               {searchQuery ? (
                 <>
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">
+                  <h3 className="text-lg font-medium text-foreground mb-1">
                     Nenhum usuário encontrado
                   </h3>
-                  <p className="text-gray-500">
+                  <p className="text-muted-foreground">
                     Tente buscar com outros termos
                   </p>
                 </>
               ) : (
                 <>
-                  <h3 className="text-lg font-medium text-gray-900 mb-1">
+                  <h3 className="text-lg font-medium text-foreground mb-1">
                     Nenhum usuário
                   </h3>
-                  <p className="text-gray-500 mb-4">
+                  <p className="text-muted-foreground mb-4">
                     Convide membros para sua franquia
                   </p>
                   <Link to="/invitations">
@@ -271,7 +256,7 @@ export function UsersPage() {
                 return (
                   <div 
                     key={member.id}
-                    className="flex items-center justify-between p-4 hover:bg-gray-50"
+                    className="flex items-center justify-between p-4 hover:bg-muted"
                   >
                     <div className="flex items-center gap-4">
                       <Avatar>
@@ -281,10 +266,10 @@ export function UsersPage() {
                         </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="font-medium text-gray-900">
+                        <p className="font-medium text-foreground">
                           {member.displayName || 'Sem nome'}
                         </p>
-                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Mail className="h-3 w-3" />
                           {member.email}
                         </div>
@@ -299,7 +284,7 @@ export function UsersPage() {
                       
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" disabled={changeRoleMutation.isPending}>
+                          <Button variant="ghost" size="icon" disabled={changeRoleMutation.isPending} aria-label={`Mais ações para ${member.displayName || member.email}`}>
                             <MoreVertical className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -366,7 +351,7 @@ export function UsersPage() {
 
       {/* Stats */}
       {members.length > 0 && (
-        <div className="flex items-center justify-between text-sm text-gray-500 pt-4 border-t">
+        <div className="flex items-center justify-between text-sm text-muted-foreground pt-4 border-t">
           <span>
             {filteredMembers.length} de {members.length} usuário(s)
           </span>

@@ -42,6 +42,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/useToast';
+import { LoadingState } from '@/components/common/LoadingState';
+import { DangerZoneCard } from '@/components/common/DangerZoneCard';
 
 // Icons
 import { 
@@ -254,11 +256,7 @@ export function ProfilePage() {
   };
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-      </div>
-    );
+    return <LoadingState className="min-h-screen" />;
   }
 
   return (
@@ -270,8 +268,8 @@ export function ProfilePage() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Minha Conta</h1>
-            <p className="text-gray-500">Gerencie seu perfil e configurações pessoais</p>
+            <h1 className="text-2xl font-bold text-foreground">Minha Conta</h1>
+            <p className="text-muted-foreground">Gerencie seu perfil e configurações pessoais</p>
           </div>
         </div>
       </div>
@@ -302,7 +300,7 @@ export function ProfilePage() {
                 </div>
 
                 <h2 className="mt-4 text-xl font-semibold">{profile.displayName || 'Usuário'}</h2>
-                <p className="text-sm text-gray-500">{profile.email}</p>
+                <p className="text-sm text-muted-foreground">{profile.email}</p>
                 
                 <div className="mt-3 flex items-center gap-2">
                   <Badge variant="secondary" className="flex items-center gap-1">
@@ -312,7 +310,7 @@ export function ProfilePage() {
                 </div>
 
                 {currentFranchise && (
-                  <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
+                  <div className="mt-4 flex items-center gap-2 text-sm text-muted-foreground">
                     <Building2 className="h-4 w-4" />
                     {currentFranchise.name}
                   </div>
@@ -329,18 +327,18 @@ export function ProfilePage() {
             <CardContent className="space-y-4 text-sm">
               {profile.createdAt && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Membro desde</span>
+                  <span className="text-muted-foreground">Membro desde</span>
                   <span>{new Date(profile.createdAt).toLocaleDateString('pt-BR')}</span>
                 </div>
               )}
               {profile.lastLoginAt && (
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Último acesso</span>
+                  <span className="text-muted-foreground">Último acesso</span>
                   <span>{new Date(profile.lastLoginAt).toLocaleString('pt-BR')}</span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className="text-gray-500">Email verificado</span>
+                <span className="text-muted-foreground">Email verificado</span>
                 {user?.emailVerified ? (
                   <CheckCircle className="h-4 w-4 text-green-600" />
                 ) : (
@@ -389,7 +387,7 @@ export function ProfilePage() {
                     <div className="space-y-2">
                       <Label htmlFor="displayName">Nome Completo</Label>
                       <div className="relative">
-                        <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
                           id="displayName"
                           value={profile.displayName}
@@ -403,7 +401,7 @@ export function ProfilePage() {
                     <div className="space-y-2">
                       <Label htmlFor="phone">Telefone</Label>
                       <div className="relative">
-                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                         <Input
                           id="phone"
                           value={profile.phone || ''}
@@ -418,16 +416,16 @@ export function ProfilePage() {
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         id="email"
                         value={profile.email}
-                        className="pl-10 bg-gray-50"
+                        className="pl-10 bg-muted"
                         disabled
                         readOnly
                       />
                     </div>
-                    <p className="text-xs text-gray-500">
+                    <p className="text-xs text-muted-foreground">
                       O email não pode ser alterado por segurança
                     </p>
                   </div>
@@ -508,14 +506,7 @@ export function ProfilePage() {
                 </CardContent>
               </Card>
 
-              <Card className="border-red-200">
-                <CardHeader>
-                  <CardTitle className="text-red-600">Zona de Perigo</CardTitle>
-                  <CardDescription>
-                    Ações irreversíveis na sua conta
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
+              <DangerZoneCard description="Ações irreversíveis na sua conta">
                   <Button
                     variant="outline"
                     className="text-red-600 hover:text-red-700 hover:bg-red-50"
@@ -523,8 +514,7 @@ export function ProfilePage() {
                   >
                     Excluir Minha Conta
                   </Button>
-                </CardContent>
-              </Card>
+              </DangerZoneCard>
             </TabsContent>
           </Tabs>
         </div>

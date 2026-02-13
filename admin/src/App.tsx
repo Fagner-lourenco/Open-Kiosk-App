@@ -30,8 +30,21 @@ import { LandingPage } from '@/pages/public/LandingPage';
 // Protected Pages
 import { DashboardPage } from '@/pages/dashboard/DashboardPage';
 import { StoresPage } from '@/pages/stores/StoresPage';
-import { StoreDetailPage } from '@/pages/stores/StoreDetailPage';
 import { StoreCreatePage } from '@/pages/stores/StoreCreatePage';
+import { StoreLayout } from '@/components/store/StoreLayout';
+import { StoreOverviewPage } from '@/pages/stores/StoreOverviewPage';
+import {
+  StoreOrdersPage,
+  StoreOperationsPage,
+  StoreKegsPage,
+  StoreWastagePage,
+  StoreMaintenancePage,
+  StoreProductsPage,
+  StoreInventoryPage,
+  StoreMembersPage,
+  StoreReportsPage,
+  StoreSettingsPage,
+} from '@/pages/stores/StoreSubPages';
 import { TeamPage } from '@/pages/team/TeamPage';
 import { UserDetailPage } from '@/pages/users/UserDetailPage';
 import { ReportsPage } from '@/pages/reports/ReportsPage';
@@ -248,7 +261,19 @@ export default function App() {
           {/* Lojas */}
           <Route path="stores" element={<StoresPage />} />
           <Route path="stores/new" element={<SuperAdminRoute><StoreCreatePage /></SuperAdminRoute>} />
-          <Route path="stores/:storeId" element={<StoreDetailPage />} />
+          <Route path="stores/:storeId" element={<StoreLayout />}>
+            <Route index element={<StoreOverviewPage />} />
+            <Route path="orders" element={<StoreOrdersPage />} />
+            <Route path="operations" element={<StoreOperationsPage />} />
+            <Route path="kegs" element={<StoreKegsPage />} />
+            <Route path="wastage" element={<StoreWastagePage />} />
+            <Route path="maintenance" element={<StoreMaintenancePage />} />
+            <Route path="products" element={<StoreProductsPage />} />
+            <Route path="inventory" element={<StoreInventoryPage />} />
+            <Route path="members" element={<StoreMembersPage />} />
+            <Route path="reports" element={<StoreReportsPage />} />
+            <Route path="settings" element={<StoreSettingsPage />} />
+          </Route>
           
           {/* Equipe - requer permissão de gestão de usuários */}
           <Route path="team" element={

@@ -118,7 +118,7 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
     return (
       <Card>
         <CardContent className="py-6 flex items-center justify-center">
-          <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
         </CardContent>
       </Card>
     );
@@ -127,8 +127,8 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
   if (!status) {
     return (
       <Card className="border-dashed">
-        <CardContent className="py-6 text-center text-gray-500">
-          <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-gray-300" />
+        <CardContent className="py-6 text-center text-muted-foreground">
+          <AlertTriangle className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
           <p>Nenhum status de hardware disponível</p>
           <p className="text-xs mt-1">O Kiosk precisa estar online para reportar o status</p>
         </CardContent>
@@ -142,7 +142,7 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
       <div className="flex items-center gap-2 flex-wrap">
         <Badge 
           variant={status.esp32Connected && !isStale ? 'default' : 'secondary'}
-          className={status.esp32Connected && !isStale ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}
+          className={status.esp32Connected && !isStale ? 'bg-green-100 text-green-800' : 'bg-muted text-muted-foreground'}
         >
           {status.esp32Connected ? (
             status.esp32Type === 'usb' ? <Usb className="h-3 w-3 mr-1" /> : <Wifi className="h-3 w-3 mr-1" />
@@ -154,7 +154,7 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
         
         <Badge 
           variant="secondary"
-          className={status.dispensersOnline > 0 ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-600'}
+          className={status.dispensersOnline > 0 ? 'bg-blue-100 text-blue-800' : 'bg-muted text-muted-foreground'}
         >
           <Droplets className="h-3 w-3 mr-1" />
           {status.dispensersOnline}/{status.dispensersTotal} Dispensers
@@ -193,7 +193,7 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
       </CardHeader>
       <CardContent className="space-y-4">
         {/* ESP32 Status */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
           <div className="flex items-center gap-3">
             {status.esp32Connected ? (
               status.esp32Type === 'usb' ? (
@@ -206,13 +206,13 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
                 </div>
               )
             ) : (
-              <div className="p-2 rounded-full bg-gray-100">
-                <WifiOff className="h-5 w-5 text-gray-400" />
+              <div className="p-2 rounded-full bg-muted">
+                <WifiOff className="h-5 w-5 text-muted-foreground" />
               </div>
             )}
             <div>
               <p className="font-medium">ESP32</p>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 {status.esp32Connected 
                   ? `Conectado via ${status.esp32Type?.toUpperCase() || 'USB'}`
                   : 'Desconectado'
@@ -224,22 +224,22 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
             {status.esp32Connected ? (
               <CheckCircle className="h-5 w-5 text-green-500" />
             ) : (
-              <AlertTriangle className="h-5 w-5 text-gray-300" />
+              <AlertTriangle className="h-5 w-5 text-muted-foreground/50" />
             )}
           </div>
         </div>
 
         {/* Dispensers / Multi-Tap Status */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-full ${status.dispensersOnline > 0 || status.numTaps ? 'bg-blue-100' : 'bg-gray-100'}`}>
-              <Droplets className={`h-5 w-5 ${status.dispensersOnline > 0 || status.numTaps ? 'text-blue-600' : 'text-gray-400'}`} />
+            <div className={`p-2 rounded-full ${status.dispensersOnline > 0 || status.numTaps ? 'bg-blue-100' : 'bg-muted'}`}>
+              <Droplets className={`h-5 w-5 ${status.dispensersOnline > 0 || status.numTaps ? 'text-blue-600' : 'text-muted-foreground'}`} />
             </div>
             <div>
               <p className="font-medium">
                 {status.numTaps ? `Torneiras (${status.numTaps})` : 'Dispensadores'}
               </p>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 {status.numTaps 
                   ? `${status.taps?.filter(t => t.isDispensing).length || 0} em uso`
                   : `${status.dispensersOnline} de ${status.dispensersTotal} online`
@@ -261,21 +261,21 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
             ) : (
               <>
                 <span className="text-2xl font-bold text-blue-600">{status.dispensersOnline}</span>
-                <span className="text-gray-400">/{status.dispensersTotal}</span>
+                <span className="text-muted-foreground">/{status.dispensersTotal}</span>
               </>
             )}
           </div>
         </div>
 
         {/* Printer Status */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-gray-50">
+        <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
           <div className="flex items-center gap-3">
-            <div className={`p-2 rounded-full ${status.printerConnected ? 'bg-purple-100' : 'bg-gray-100'}`}>
-              <Printer className={`h-5 w-5 ${status.printerConnected ? 'text-purple-600' : 'text-gray-400'}`} />
+            <div className={`p-2 rounded-full ${status.printerConnected ? 'bg-purple-100' : 'bg-muted'}`}>
+              <Printer className={`h-5 w-5 ${status.printerConnected ? 'text-purple-600' : 'text-muted-foreground'}`} />
             </div>
             <div>
               <p className="font-medium">Impressora Térmica</p>
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 {status.printerConnected 
                   ? `Porta ${status.printerPort || 'configurada'}`
                   : 'Não conectada'
@@ -287,13 +287,13 @@ export function StoreHardwareStatus({ franchiseId, storeId, compact = false }: S
             {status.printerConnected ? (
               <CheckCircle className="h-5 w-5 text-purple-500" />
             ) : (
-              <AlertTriangle className="h-5 w-5 text-gray-300" />
+              <AlertTriangle className="h-5 w-5 text-muted-foreground/50" />
             )}
           </div>
         </div>
 
         {/* Metadados */}
-        <div className="pt-3 border-t text-sm text-gray-500 space-y-1">
+        <div className="pt-3 border-t text-sm text-muted-foreground space-y-1">
           {status.lastHeartbeat && (
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4" />

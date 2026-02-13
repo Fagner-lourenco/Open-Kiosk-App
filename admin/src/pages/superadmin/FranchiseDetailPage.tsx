@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { getPlanBadge, getStatusBadge } from '@/utils/franchise-badges';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   doc,
@@ -225,31 +226,12 @@ export default function FranchiseDetailPage() {
     });
   };
 
-  const getPlanBadge = (plan?: string) => {
-    const styles: Record<string, string> = {
-      trial: 'bg-yellow-100 text-yellow-800',
-      basic: 'bg-blue-100 text-blue-800',
-      professional: 'bg-purple-100 text-purple-800',
-      enterprise: 'bg-green-100 text-green-800',
-    };
-    return styles[plan || 'trial'] || styles.trial;
-  };
-
-  const getStatusBadge = (status?: string) => {
-    const styles: Record<string, string> = {
-      active: 'bg-green-100 text-green-800',
-      inactive: 'bg-gray-100 text-gray-800',
-      suspended: 'bg-red-100 text-red-800',
-    };
-    return styles[status || 'active'] || styles.active;
-  };
-
   const getRoleBadge = (role: string) => {
     const styles: Record<string, string> = {
       owner: 'bg-purple-100 text-purple-800',
       manager: 'bg-blue-100 text-blue-800',
       employee: 'bg-green-100 text-green-800',
-      viewer: 'bg-gray-100 text-gray-800',
+      viewer: 'bg-muted text-foreground',
     };
     return styles[role] || styles.viewer;
   };
@@ -494,34 +476,34 @@ export default function FranchiseDetailPage() {
                   {/* Visualização */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="flex items-center gap-3">
-                      <Building2 className="h-5 w-5 text-gray-400" />
+                      <Building2 className="h-5 w-5 text-muted-foreground" />
                       <div>
-                        <p className="text-sm text-gray-500">Nome</p>
+                        <p className="text-sm text-muted-foreground">Nome</p>
                         <p className="font-medium">{franchise.name}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <User className="h-5 w-5 text-gray-400" />
+                      <User className="h-5 w-5 text-muted-foreground" />
                       <div>
-                        <p className="text-sm text-gray-500">Proprietário</p>
+                        <p className="text-sm text-muted-foreground">Proprietário</p>
                         <p className="font-medium">
                           {franchise.ownerEmail || '-'}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <Mail className="h-5 w-5 text-gray-400" />
+                      <Mail className="h-5 w-5 text-muted-foreground" />
                       <div>
-                        <p className="text-sm text-gray-500">Email de Suporte</p>
+                        <p className="text-sm text-muted-foreground">Email de Suporte</p>
                         <p className="font-medium">
                           {franchise.supportEmail || '-'}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <Globe className="h-5 w-5 text-gray-400" />
+                      <Globe className="h-5 w-5 text-muted-foreground" />
                       <div>
-                        <p className="text-sm text-gray-500">Website</p>
+                        <p className="text-sm text-muted-foreground">Website</p>
                         <p className="font-medium">
                           {franchise.website ? (
                             <a
@@ -539,18 +521,18 @@ export default function FranchiseDetailPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <Calendar className="h-5 w-5 text-gray-400" />
+                      <Calendar className="h-5 w-5 text-muted-foreground" />
                       <div>
-                        <p className="text-sm text-gray-500">Criado em</p>
+                        <p className="text-sm text-muted-foreground">Criado em</p>
                         <p className="font-medium">
                           {formatDate(franchise.createdAt)}
                         </p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <Calendar className="h-5 w-5 text-gray-400" />
+                      <Calendar className="h-5 w-5 text-muted-foreground" />
                       <div>
-                        <p className="text-sm text-gray-500">Atualizado em</p>
+                        <p className="text-sm text-muted-foreground">Atualizado em</p>
                         <p className="font-medium">
                           {formatDate(franchise.updatedAt)}
                         </p>
@@ -559,9 +541,9 @@ export default function FranchiseDetailPage() {
                   </div>
                   {franchise.description && (
                     <div className="flex items-start gap-3 mt-4">
-                      <FileText className="h-5 w-5 text-gray-400 mt-0.5" />
+                      <FileText className="h-5 w-5 text-muted-foreground mt-0.5" />
                       <div>
-                        <p className="text-sm text-gray-500">Descrição</p>
+                        <p className="text-sm text-muted-foreground">Descrição</p>
                         <p className="font-medium">{franchise.description}</p>
                       </div>
                     </div>
@@ -587,11 +569,11 @@ export default function FranchiseDetailPage() {
             <CardContent>
               {stores.length === 0 ? (
                 <div className="text-center py-12">
-                  <Store className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                  <p className="text-gray-500">Nenhuma loja cadastrada</p>
+                  <Store className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                  <p className="text-muted-foreground">Nenhuma loja cadastrada</p>
                 </div>
               ) : (
-                <Table>
+                <Table aria-label="Tabela de lojas da franquia">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Nome</TableHead>
@@ -613,7 +595,7 @@ export default function FranchiseDetailPage() {
                             className={
                               store.isActive !== false
                                 ? 'bg-green-100 text-green-800'
-                                : 'bg-gray-100 text-gray-800'
+                                : 'bg-muted text-foreground'
                             }
                           >
                             {store.isActive !== false ? 'Ativa' : 'Inativa'}
@@ -643,11 +625,11 @@ export default function FranchiseDetailPage() {
             <CardContent>
               {members.length === 0 ? (
                 <div className="text-center py-12">
-                  <Users className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-                  <p className="text-gray-500">Nenhum membro cadastrado</p>
+                  <Users className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+                  <p className="text-muted-foreground">Nenhum membro cadastrado</p>
                 </div>
               ) : (
-                <Table>
+                <Table aria-label="Tabela de membros da franquia">
                   <TableHeader>
                     <TableRow>
                       <TableHead>Email</TableHead>

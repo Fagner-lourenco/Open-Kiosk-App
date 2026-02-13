@@ -173,7 +173,7 @@ function CreateKegDialog({
                 value={volumeMl}
                 onChange={(e) => setVolumeMl(Number(e.target.value))}
               />
-              <p className="text-xs text-gray-500">{(volumeMl / 1000).toFixed(0)}L</p>
+              <p className="text-xs text-muted-foreground">{(volumeMl / 1000).toFixed(0)}L</p>
             </div>
             <div className="space-y-2">
               <Label>Custo (R$)</Label>
@@ -385,7 +385,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -396,7 +396,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-gray-500">Total</p>
+            <p className="text-sm text-muted-foreground">Total</p>
             <p className="text-2xl font-bold">{kegs.length}</p>
           </CardContent>
         </Card>
@@ -408,13 +408,13 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
         </Card>
         <Card>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-gray-500">Estoque</p>
+            <p className="text-sm text-muted-foreground">Estoque</p>
             <p className="text-2xl font-bold">{inStockKegs.length}</p>
           </CardContent>
         </Card>
         <Card className={cn(depletedKegs.length > 0 && 'border-red-200')}>
           <CardContent className="pt-4 pb-4">
-            <p className="text-sm text-gray-500">Vazios</p>
+            <p className="text-sm text-muted-foreground">Vazios</p>
             <p className={cn('text-2xl font-bold', depletedKegs.length > 0 && 'text-red-600')}>
               {depletedKegs.length}
             </p>
@@ -447,7 +447,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                   className={cn(
                     'p-3 border rounded-lg',
                     isInconsistent ? 'border-yellow-400 bg-yellow-50' :
-                    isActive ? 'border-green-200 bg-green-50' : 'border-gray-200 bg-gray-50'
+                    isActive ? 'border-green-200 bg-green-50' : 'border-border bg-muted'
                   )}
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -467,10 +467,10 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                   )}
                   {keg ? (
                     <>
-                      <p className="text-xs text-gray-600 truncate">{getProductTitle(keg.productId)}</p>
-                      <p className="text-xs text-gray-500">{keg.batchCode || keg.kegId.slice(0, 8)}</p>
+                      <p className="text-xs text-muted-foreground truncate">{getProductTitle(keg.productId)}</p>
+                      <p className="text-xs text-muted-foreground">{keg.batchCode || keg.kegId.slice(0, 8)}</p>
                       <div className="mt-2">
-                        <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div className="w-full bg-muted rounded-full h-2">
                           <div
                             className={cn(
                               'h-2 rounded-full transition-all',
@@ -479,7 +479,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                             style={{ width: `${pctRemaining}%` }}
                           />
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">
+                        <p className="text-xs text-muted-foreground mt-1">
                           {(keg.remainingMl / 1000).toFixed(1)}L / {(keg.volumeMl / 1000).toFixed(0)}L ({pctRemaining}%)
                         </p>
                       </div>
@@ -495,7 +495,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                       </Button>
                     </>
                   ) : (
-                    <p className="text-xs text-gray-400 mt-1">Sem barril</p>
+                    <p className="text-xs text-muted-foreground mt-1">Sem barril</p>
                   )}
                 </div>
               );
@@ -527,7 +527,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
           {/* Filters */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Buscar por produto, lote..."
                 value={searchTerm}
@@ -560,8 +560,8 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
 
           {/* Table */}
           {filteredKegs.length === 0 ? (
-            <div className="text-center py-8 text-gray-500">
-              <Package className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+            <div className="text-center py-8 text-muted-foreground">
+              <Package className="h-12 w-12 mx-auto mb-4 text-muted-foreground/50" />
               <p>{kegs.length === 0 ? 'Nenhum barril cadastrado' : 'Nenhum barril encontrado'}</p>
             </div>
           ) : (
@@ -590,7 +590,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                       <TableCell className="font-medium">
                         {getProductTitle(keg.productId)}
                       </TableCell>
-                      <TableCell className="text-sm text-gray-500">
+                      <TableCell className="text-sm text-muted-foreground">
                         {keg.batchCode || '-'}
                       </TableCell>
                       <TableCell className="text-sm">
@@ -598,7 +598,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <div className="w-16 bg-gray-200 rounded-full h-1.5">
+                          <div className="w-16 bg-muted rounded-full h-1.5">
                             <div
                               className={cn(
                                 'h-1.5 rounded-full',
@@ -607,7 +607,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                               style={{ width: `${pct}%` }}
                             />
                           </div>
-                          <span className="text-sm text-gray-600">
+                          <span className="text-sm text-muted-foreground">
                             {(keg.remainingMl / 1000).toFixed(1)}L
                           </span>
                         </div>
@@ -618,13 +618,13 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                             T{Number(tapId) + 1}
                           </Badge>
                         ) : (
-                          <span className="text-gray-400">-</span>
+                          <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
                       <TableCell>
                         <KegStatusBadge status={keg.status} />
                       </TableCell>
-                      <TableCell className="text-sm text-gray-500">
+                      <TableCell className="text-sm text-muted-foreground">
                         {keg.expiresAt ? (
                           <span className={cn(isExpiring && 'text-red-600 font-medium')}>
                             {keg.expiresAt.toLocaleDateString('pt-BR')}

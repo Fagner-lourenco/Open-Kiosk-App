@@ -5,7 +5,7 @@
  *
  * Gerencia WastageEvents (perdas) para uma loja.
  * - Query com filtros de tipo/data
- * - Criacao de novos eventos de perda
+ * - Criação de novos eventos de perda
  * - KPIs calculados (total ml, custo estimado, % do total, eventos)
  *
  * Path: franchises/{fId}/stores/{sId}/wastageEvents/{id}
@@ -116,6 +116,8 @@ export function useWastage(franchiseId: string, storeId: string) {
   const {
     data: events = [],
     isLoading: loadingEvents,
+    isError: isErrorEvents,
+    refetch: refetchEvents,
   } = useQuery({
     queryKey: wastageKeys.all(franchiseId, storeId),
     queryFn: async (): Promise<WastageEvent[]> => {
@@ -199,6 +201,8 @@ export function useWastage(franchiseId: string, storeId: string) {
   return {
     events,
     loadingEvents,
+    isErrorEvents,
+    refetchEvents,
     kpis,
     recentEvents,
     tappedKegs,

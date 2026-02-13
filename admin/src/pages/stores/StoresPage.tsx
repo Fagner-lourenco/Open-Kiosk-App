@@ -10,7 +10,7 @@ import { doc, deleteDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -35,8 +35,8 @@ import {
   Eye,
   MapPin,
   Users,
-  Building2,
 } from 'lucide-react';
+import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 
 export function StoresPage() {
   const PAGE_SIZE = 20;
@@ -86,19 +86,7 @@ export function StoresPage() {
   }, [page, totalPages]);
 
   if (!currentFranchise) {
-    return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Card className="max-w-md w-full">
-          <CardHeader className="text-center">
-            <Building2 className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-            <CardTitle>Nenhuma franquia selecionada</CardTitle>
-            <CardDescription>
-              Selecione uma franquia no menu lateral para gerenciar lojas
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      </div>
-    );
+    return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para gerenciar lojas" />;
   }
 
   return (
@@ -120,12 +108,13 @@ export function StoresPage() {
 
       <FilterBar>
         <div className="relative max-w-md flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Buscar lojas..."
             value={searchQuery}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
             className="pl-10"
+            aria-label="Buscar lojas"
           />
         </div>
       </FilterBar>
@@ -136,8 +125,8 @@ export function StoresPage() {
           {[1, 2, 3].map((i) => (
             <Card key={i} className="animate-pulse">
               <CardContent className="p-6">
-                <div className="h-4 bg-gray-200 rounded w-3/4 mb-4" />
-                <div className="h-3 bg-gray-200 rounded w-1/2" />
+                <div className="h-4 bg-muted rounded w-3/4 mb-4" />
+                <div className="h-3 bg-muted rounded w-1/2" />
               </CardContent>
             </Card>
           ))}
@@ -145,22 +134,22 @@ export function StoresPage() {
       ) : filteredStores.length === 0 ? (
         <Card>
           <CardContent className="p-12 text-center">
-            <Store className="h-12 w-12 mx-auto text-gray-300 mb-4" />
+            <Store className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
             {searchQuery ? (
               <>
-                <h3 className="text-lg font-medium text-gray-900 mb-1">
+                <h3 className="text-lg font-medium text-foreground mb-1">
                   Nenhuma loja encontrada
                 </h3>
-                <p className="text-gray-500">
+                <p className="text-muted-foreground">
                   Tente buscar com outros termos
                 </p>
               </>
             ) : (
               <>
-                <h3 className="text-lg font-medium text-gray-900 mb-1">
+                <h3 className="text-lg font-medium text-foreground mb-1">
                   Nenhuma loja cadastrada
                 </h3>
-                <p className="text-gray-500 mb-4">
+                <p className="text-muted-foreground mb-4">
                   {isSuperAdmin 
                     ? 'Comece criando sua primeira loja'
                     : 'Esta franquia ainda não possui lojas'}
@@ -233,7 +222,7 @@ export function StoresPage() {
                 </div>
               </CardHeader>
               <CardContent className="pt-0">
-                <div className="space-y-2 text-sm text-gray-500">
+                <div className="space-y-2 text-sm text-muted-foreground">
                   {store.address && (
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4" />
@@ -263,13 +252,13 @@ export function StoresPage() {
           totalItems={filteredStores.length}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
-          ariaLabel="Paginacao de lojas"
+          ariaLabel="Paginação de lojas"
         />
       )}
 
       {/* Stats */}
       {stores.length > 0 && (
-        <div className="flex items-center justify-between text-sm text-gray-500">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>
             {filteredStores.length} de {stores.length} loja(s)
           </span>
@@ -291,9 +280,9 @@ export function StoresPage() {
         title="Excluir loja"
         description={
           <>
-            Tem certeza que deseja excluir a loja "{deleteStoreName}"? Esta acao nao pode ser
-            desfeita e todos os dados relacionados (pedidos, estoque, configuracoes e membros)
-            serao perdidos.
+            Tem certeza que deseja excluir a loja "{deleteStoreName}"? Esta ação não pode ser
+            desfeita e todos os dados relacionados (pedidos, estoque, configurações e membros)
+            serão perdidos.
           </>
         }
         onConfirm={handleDeleteStore}

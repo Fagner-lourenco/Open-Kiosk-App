@@ -121,7 +121,7 @@ export function OrderDetails({
                 className="flex items-center gap-3 p-2 rounded-lg bg-muted/50"
               >
                 {/* Image placeholder */}
-                <div className="w-12 h-12 rounded-lg bg-gray-200 flex items-center justify-center shrink-0 overflow-hidden">
+                <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0 overflow-hidden">
                   {item.imageUrl ? (
                     <img 
                       src={item.imageUrl} 
@@ -129,7 +129,7 @@ export function OrderDetails({
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <Package className="h-5 w-5 text-gray-400" />
+                    <Package className="h-5 w-5 text-muted-foreground" />
                   )}
                 </div>
 

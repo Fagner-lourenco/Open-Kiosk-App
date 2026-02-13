@@ -56,7 +56,7 @@ const NotificationIcon: Record<NotificationType, React.ReactNode> = {
   stock: <AlertTriangle className="h-4 w-4 text-orange-500" />,
   hardware: <Cpu className="h-4 w-4 text-purple-500" />,
   payment: <CreditCard className="h-4 w-4 text-red-500" />,
-  system: <Settings className="h-4 w-4 text-gray-500" />,
+  system: <Settings className="h-4 w-4 text-muted-foreground" />,
 };
 
 // Cores de fundo por tipo
@@ -69,7 +69,7 @@ const NotificationBgColor: Record<NotificationType, string> = {
   stock: 'bg-orange-50 hover:bg-orange-100',
   hardware: 'bg-purple-50 hover:bg-purple-100',
   payment: 'bg-red-50 hover:bg-red-100',
-  system: 'bg-gray-50 hover:bg-gray-100',
+  system: 'bg-muted hover:bg-muted',
 };
 
 // Formatar data relativa
@@ -121,16 +121,16 @@ function NotificationItem({ notification, onMarkRead, onDismiss }: NotificationI
         <div className="flex items-start justify-between gap-2">
           <p className={cn(
             'text-sm',
-            !notification.isRead ? 'font-semibold text-gray-900' : 'font-medium text-gray-700'
+            !notification.isRead ? 'font-semibold text-foreground' : 'font-medium text-foreground'
           )}>
             {notification.title}
           </p>
-          <span className="text-xs text-gray-400 flex-shrink-0 flex items-center">
+          <span className="text-xs text-muted-foreground flex-shrink-0 flex items-center">
             <Clock className="h-3 w-3 mr-1" />
             {formatRelativeTime(notification.createdAt)}
           </span>
         </div>
-        <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">
+        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
           {notification.message}
         </p>
         {notification.actionLabel && notification.actionUrl && (
@@ -150,8 +150,8 @@ function NotificationItem({ notification, onMarkRead, onDismiss }: NotificationI
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 text-gray-400 hover:text-red-500"
-          aria-label={`Dispensar notificacao: ${notification.title}`}
+          className="h-6 w-6 text-muted-foreground hover:text-red-500"
+          aria-label={`Dispensar notificação: ${notification.title}`}
           onClick={(e) => {
             e.stopPropagation();
             onDismiss(notification.id);
@@ -304,7 +304,7 @@ export function NotificationCenter() {
         <DropdownMenuSeparator />
 
         {isLoading ? (
-          <div className="py-8 text-center text-gray-500">
+          <div className="py-8 text-center text-muted-foreground">
             <Bell className="h-12 w-12 mx-auto mb-3 opacity-30 animate-pulse" />
             <p className="text-sm font-medium">Carregando notificações...</p>
           </div>
@@ -312,10 +312,10 @@ export function NotificationCenter() {
           <div className="py-8 text-center text-red-500">
             <AlertCircle className="h-12 w-12 mx-auto mb-3 opacity-50" />
             <p className="text-sm font-medium">Erro ao carregar</p>
-            <p className="text-xs mt-1 text-gray-500">{error}</p>
+            <p className="text-xs mt-1 text-muted-foreground">{error}</p>
           </div>
         ) : !hasNotifications ? (
-          <div className="py-8 text-center text-gray-500">
+          <div className="py-8 text-center text-muted-foreground">
             <Bell className="h-12 w-12 mx-auto mb-3 opacity-30" />
             <p className="text-sm font-medium">Nenhuma notificação</p>
             <p className="text-xs mt-1">Você será notificado sobre eventos importantes</p>

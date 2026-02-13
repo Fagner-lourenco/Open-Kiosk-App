@@ -141,6 +141,8 @@ export function useMaintenance(franchiseId: string, storeId: string) {
   const {
     data: logs = [],
     isLoading: loadingLogs,
+    isError: isErrorLogs,
+    refetch: refetchLogs,
   } = useQuery({
     queryKey: maintenanceKeys.all(franchiseId, storeId),
     queryFn: async (): Promise<MaintenanceLog[]> => {
@@ -184,7 +186,7 @@ export function useMaintenance(franchiseId: string, storeId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });
-      toast.success('Manutencao agendada');
+      toast.success('Manutenção agendada');
     },
     onError: () => {
       toast.error('Erro ao agendar manutencao');
@@ -209,7 +211,7 @@ export function useMaintenance(franchiseId: string, storeId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });
-      toast.success('Manutencao concluida');
+      toast.success('Manutenção concluida');
     },
     onError: () => {
       toast.error('Erro ao concluir manutencao');
@@ -230,7 +232,7 @@ export function useMaintenance(franchiseId: string, storeId: string) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });
-      toast.success('Manutencao cancelada');
+      toast.success('Manutenção cancelada');
     },
     onError: () => {
       toast.error('Erro ao cancelar manutencao');
@@ -240,6 +242,8 @@ export function useMaintenance(franchiseId: string, storeId: string) {
   return {
     logs,
     loadingLogs,
+    isErrorLogs,
+    refetchLogs,
     scheduledLogs,
     overdueLogs,
     completedLogs,

@@ -231,7 +231,7 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
             placeholder="https://..."
           />
           {image && isValidUrl(image) && (
-            <div className="mt-2 w-20 h-20 rounded-lg overflow-hidden bg-gray-100">
+            <div className="mt-2 w-20 h-20 rounded-lg overflow-hidden bg-muted">
               <img src={image} alt="Preview" className="w-full h-full object-cover" />
             </div>
           )}
@@ -253,7 +253,7 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
         <GlassWater className="h-5 w-5 text-blue-600" />
         <div className="flex-1">
           <Label htmlFor="isDrink" className="font-medium">Este produto é uma bebida?</Label>
-          <p className="text-sm text-gray-500">Bebidas possuem tamanhos e controle de estoque em ML</p>
+          <p className="text-sm text-muted-foreground">Bebidas possuem tamanhos e controle de estoque em ML</p>
         </div>
         <Switch
           id="isDrink"
@@ -275,7 +275,7 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
               onChange={(e) => setTotalMlAvailable(Number(e.target.value) || 0)}
               placeholder="Ex: 5000"
             />
-            <p className="text-xs text-gray-500">Quantidade total em mililitros disponível para venda</p>
+            <p className="text-xs text-muted-foreground">Quantidade total em mililitros disponível para venda</p>
           </div>
 
           {/* Tamanhos */}
@@ -290,13 +290,13 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
             
             <div className="border rounded-lg p-4 space-y-3">
               {sizes.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-4">
+                <p className="text-sm text-muted-foreground text-center py-4">
                   Nenhum tamanho cadastrado. Adicione pelo menos um.
                 </p>
               ) : (
                 <>
                   {/* Header */}
-                  <div className="hidden md:grid grid-cols-[1fr_1fr_100px_80px_40px] gap-2 text-xs font-medium text-gray-500 pb-2 border-b">
+                  <div className="hidden md:grid grid-cols-[1fr_1fr_100px_80px_40px] gap-2 text-xs font-medium text-muted-foreground pb-2 border-b">
                     <div>Chave</div>
                     <div>Nome</div>
                     <div>Preço (R$)</div>
@@ -378,7 +378,7 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
               onChange={(e) => setMinStock(parseInt(e.target.value) || 0)}
               placeholder="1000"
             />
-            <p className="text-xs text-gray-500">Você será alertado quando o estoque ficar abaixo deste valor</p>
+            <p className="text-xs text-muted-foreground">Você será alertado quando o estoque ficar abaixo deste valor</p>
           </div>
         </>
       ) : (

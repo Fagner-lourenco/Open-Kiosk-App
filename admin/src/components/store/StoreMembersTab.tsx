@@ -73,7 +73,7 @@ const ROLE_COLORS: Record<string, string> = {
   manager: 'bg-green-100 text-green-800',
   operator: 'bg-yellow-100 text-yellow-800',
   employee: 'bg-yellow-100 text-yellow-800',
-  viewer: 'bg-gray-100 text-gray-800',
+  viewer: 'bg-muted text-foreground',
 };
 
 export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) {
@@ -190,7 +190,7 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
@@ -204,7 +204,7 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
             <Users className="h-5 w-5 mr-2" />
             Membros da Loja
           </h3>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-muted-foreground">
             Gerencie quem tem acesso a esta loja
           </p>
         </div>
@@ -218,9 +218,9 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
       {storeMembers.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
-            <UserPlus className="h-12 w-12 mx-auto text-gray-300 mb-4" />
-            <h4 className="text-lg font-medium text-gray-900 mb-2">Nenhum membro</h4>
-            <p className="text-gray-500 mb-4">
+            <UserPlus className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
+            <h4 className="text-lg font-medium text-foreground mb-2">Nenhum membro</h4>
+            <p className="text-muted-foreground mb-4">
               Adicione membros da franquia para gerenciar esta loja.
             </p>
             <Button onClick={() => setIsAddDialogOpen(true)}>
@@ -246,11 +246,11 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
                       <p className="font-medium">
                         {member.displayName || member.email}
                       </p>
-                      <p className="text-sm text-gray-500">{member.email}</p>
+                      <p className="text-sm text-muted-foreground">{member.email}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <Badge className={ROLE_COLORS[member.role] || 'bg-gray-100'}>
+                    <Badge className={ROLE_COLORS[member.role] || 'bg-muted'}>
                       <Shield className="h-3 w-3 mr-1" />
                       {getRoleLabel(member.role)}
                     </Badge>
@@ -282,7 +282,7 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
           
           <div className="space-y-4 py-4">
             {availableMembers.length === 0 ? (
-              <p className="text-center text-gray-500 py-4">
+              <p className="text-center text-muted-foreground py-4">
                 Todos os membros da franquia já estão nesta loja.
               </p>
             ) : (

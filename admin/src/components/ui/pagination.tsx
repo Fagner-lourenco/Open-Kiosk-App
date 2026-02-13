@@ -18,7 +18,7 @@ export function Pagination({
   pageSize,
   onPageChange,
   className,
-  ariaLabel = 'Paginacao',
+  ariaLabel = 'Paginação',
 }: PaginationProps) {
   if (totalPages <= 1) return null;
 
