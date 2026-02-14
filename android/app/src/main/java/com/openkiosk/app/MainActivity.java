@@ -34,6 +34,8 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         // Registrar plugin KioskMode antes do super.onCreate
         registerPlugin(KioskModePlugin.class);
+        // Registrar plugin PlugPagTerminal (Phase 1 skeleton)
+        registerPlugin(PlugPagTerminalPlugin.class);
         
         super.onCreate(savedInstanceState);
         enableImmersiveMode();

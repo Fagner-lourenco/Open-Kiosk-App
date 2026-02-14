@@ -1,6 +1,6 @@
 import * as functions from 'firebase-functions';
 import crypto from 'crypto';
-import { db, admin, requireAuth, requireFranchiseAccess } from '../lib';
+import { db, admin, requireAuth, requireFranchiseAccess, sanitizeForLog } from '../lib';
 import { createPagBankProvider, type PagBankProviderConfig } from './providers/pagbank';
 import {
   type CreatePaymentInput,
@@ -89,11 +89,8 @@ const resolvePagBankConfig = (environment: 'sandbox' | 'production'): PagBankPro
   };
 };
 
-const maskCardLast4 = (cardNumber?: string): string | undefined => {
-  if (!cardNumber) return undefined;
-  const digits = cardNumber.replace(/\D/g, '');
-  return digits.length >= 4 ? digits.slice(-4) : undefined;
-};
+/** @deprecated Full PAN masking removed (Phase 0 Security Hardening). cardLast4 is now extracted from provider response. */
+// const maskCardLast4 — REMOVED: never receive full PAN in Cloud Functions
 
 const ensureMethodAllowed = (configProvider: string, method: PaymentMethod): void => {
   if (configProvider !== 'pagbank') {
@@ -134,9 +131,11 @@ export const createPaymentIntent = async (
     throw new functions.https.HttpsError('invalid-argument', 'Dados do cartao obrigatorios.');
   }
   if (data.card) {
-    const { number, expMonth, expYear, securityCode, holderName, holderTaxId } = data.card;
-    if (!number || !expMonth || !expYear || !securityCode || !holderName || !holderTaxId) {
-      throw new functions.https.HttpsError('invalid-argument', 'Dados do cartao incompletos.');
+    if (!data.card.encrypted) {
+      throw new functions.https.HttpsError(
+        'invalid-argument',
+        'Campo card.encrypted obrigatorio. Dados raw de cartao (PAN/CVV) nao sao aceitos.'
+      );
     }
   }
 
@@ -232,7 +231,7 @@ export const createPaymentIntent = async (
           email: data.customer.email,
         }
       : undefined,
-    cardLast4: maskCardLast4(data.card?.number),
+    // cardLast4 will be set from provider response (see below)
     createdAt: now,
     updatedAt: now,
   };
@@ -263,6 +262,8 @@ export const createPaymentIntent = async (
       providerOrderId: providerResult.providerOrderId,
       providerPaymentId: providerResult.providerPaymentId,
       pix: providerResult.pix ?? paymentRecord.pix,
+      // Extract cardLast4 from provider response (never from raw PAN)
+      cardLast4: providerResult.providerMetadata?.cardLast4,
       updatedAt: now,
     };
 
@@ -287,7 +288,7 @@ export const createPaymentIntent = async (
       },
       { merge: true }
     );
-    functions.logger.error('[payments] PagBank createPayment error', { error: errorMessage });
+    functions.logger.error('[payments] PagBank createPayment error', sanitizeForLog({ error: errorMessage }));
     throw new functions.https.HttpsError('internal', errorMessage);
   }
 };

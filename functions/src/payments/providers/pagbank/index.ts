@@ -3,6 +3,7 @@ import type {
   ProviderCreatePaymentInput,
   ProviderCreatePaymentResult,
   ProviderPaymentStatusResult,
+  ProviderMetadata,
   PaymentRecord,
   PaymentStatus,
 } from '../../types';
@@ -37,6 +38,26 @@ const extractQrCode = (order: any): { qrCodeText?: string; qrCodeImage?: string 
     return rel.includes('qrcode') || rel.includes('image');
   })?.href;
   return { qrCodeText, qrCodeImage };
+};
+
+/**
+ * Extract only allowlisted fields from PagBank response.
+ * NEVER store the full `order` object — it may contain PII/PAN fragments.
+ */
+const extractProviderMetadata = (order: any): ProviderMetadata => {
+  const charge = Array.isArray(order?.charges) ? order.charges[0] : undefined;
+  const paymentResponse = charge?.payment_response || {};
+  const card = charge?.payment_method?.card || {};
+
+  return {
+    orderId: typeof order?.id === 'string' ? order.id : undefined,
+    chargeId: typeof charge?.id === 'string' ? charge.id : undefined,
+    status: typeof order?.status === 'string' ? order.status : undefined,
+    cardBrand: typeof card?.brand === 'string' ? card.brand : undefined,
+    cardLast4: typeof card?.last_digits === 'string' ? card.last_digits : undefined,
+    nsu: typeof paymentResponse?.reference === 'string' ? paymentResponse.reference : undefined,
+    authorizationCode: typeof paymentResponse?.code === 'string' ? paymentResponse.code : undefined,
+  };
 };
 
 const pagbankRequest = async <T>(
@@ -110,6 +131,9 @@ export const createPagBankProvider = (config: PagBankProviderConfig): PaymentPro
         if (!input.card) {
           throw new Error('Dados do cartao ausentes para pagamento com cartao.');
         }
+        if (!input.card.encrypted) {
+          throw new Error('Campo card.encrypted obrigatorio. PAN/CVV raw nao sao aceitos.');
+        }
         payload.charges = [
           {
             amount: {
@@ -119,14 +143,7 @@ export const createPagBankProvider = (config: PagBankProviderConfig): PaymentPro
             payment_method: {
               type: input.method === 'credit' ? 'CREDIT_CARD' : 'DEBIT_CARD',
               card: {
-                number: input.card.number,
-                exp_month: input.card.expMonth,
-                exp_year: input.card.expYear,
-                security_code: input.card.securityCode,
-                holder: {
-                  name: input.card.holderName,
-                  tax_id: input.card.holderTaxId,
-                },
+                encrypted: input.card.encrypted,
               },
             },
           },
@@ -152,7 +169,7 @@ export const createPagBankProvider = (config: PagBankProviderConfig): PaymentPro
               expiresAt: input.expiresAt,
             }
           : undefined,
-        raw: order,
+        providerMetadata: extractProviderMetadata(order),
       };
     },
 
@@ -179,7 +196,7 @@ export const createPagBankProvider = (config: PagBankProviderConfig): PaymentPro
               expiresAt: payment.pix?.expiresAt,
             }
           : undefined,
-        raw: order,
+        providerMetadata: extractProviderMetadata(order),
       };
     },
   };

@@ -34,13 +34,22 @@ export interface PaymentCustomer {
   phone?: string;
 }
 
+/**
+ * Card data for PagBank REST payments (Phase 0 Security Hardening).
+ *
+ * Raw PAN/CVV fields removed. The frontend encrypts card data using
+ * PagBank.js SDK (`PagSeguro.encryptCard()`) and sends only the opaque
+ * `encrypted` token to Cloud Functions.
+ *
+ * For card-present (PlugPag Phase 1+), this interface is NOT used.
+ */
 export interface PaymentCard {
-  number: string;
-  expMonth: string;
-  expYear: string;
-  securityCode: string;
-  holderName: string;
-  holderTaxId: string;
+  /** Opaque encrypted blob from PagBank.js */
+  encrypted: string;
+  /** @pii — holder name (optional, masked before persist) */
+  holderName?: string;
+  /** Holder CPF for anti-fraud */
+  holderTaxId?: string;
 }
 
 export interface PaymentItemInput {

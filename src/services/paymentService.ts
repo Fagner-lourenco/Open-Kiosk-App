@@ -161,82 +161,34 @@ class PaymentService {
   }
 
   /**
-   * PIX Payment - Mock implementation
-   * 
-   * Nota: Este é um mock para testes.
-   * Para PIX real, use processMercadoPagoQR().
+   * PIX Payment — MOCK REMOVIDO (Phase 0 Security Hardening)
+   *
+   * Para PIX real, use processMercadoPagoQR() ou createPayment() via Cloud Functions.
+   * @throws PaymentError sempre — mocks não são permitidos em produção.
    */
-  async processPixPayment(amount: number, orderId: string): Promise<PaymentResult> {
-    const controller = new AbortController();
-    const transactionId = this.generateTransactionId('PIX');
-    
-    this.activeTransactions.set(transactionId, controller);
-
-    try {
-      // Mock: Gerar QR code (em produção: chamar API do banco)
-      const pixCode = this.generateMockPixQRCode(amount, orderId);
-
-      // Mock: Simular tempo de confirmação (em produção: use polling)
-      await this.simulatePaymentConfirmation(3000, controller.signal);
-
-      this.activeTransactions.delete(transactionId);
-
-      return {
-        success: true,
-        transactionId,
-        pixCode,
-        message: "Pagamento PIX confirmado"
-      };
-    } catch (error) {
-      this.activeTransactions.delete(transactionId);
-      
-      if ((error as Error).name === 'AbortError') {
-        throw new PaymentError('PAYMENT_CANCELLED', 'Pagamento cancelado pelo usuário');
-      }
-      
-      throw new PaymentError('PIX_ERROR', 'Erro ao processar PIX');
-    }
+  async processPixPayment(_amount: number, _orderId: string): Promise<PaymentResult> {
+    throw new PaymentError(
+      'MOCK_DISABLED',
+      'processPixPayment mock foi removido. Use processMercadoPagoQR() ou createPayment() para PIX real.'
+    );
   }
 
   /**
-   * Card Payment (Credit/Debit) - Mock implementation
-   * 
-   * Produção:
-   * 1. Integrar SDK da máquina de cartão
-   * 2. Enviar request para SDK
-   * 3. Aguardar aprovação (timeout 30s)
+   * Card Payment — MOCK REMOVIDO (Phase 0 Security Hardening)
+   *
+   * Para cartão card-present, será integrado via PlugPag (Phase 1).
+   * Para cartão REST (PagBank), use createPayment() via Cloud Functions com card.encrypted.
+   * @throws PaymentError sempre — mocks não são permitidos em produção.
    */
   async processCardPayment(
-    amount: number, 
-    cardType: 'credit' | 'debit',
-    orderId: string
+    _amount: number,
+    _cardType: 'credit' | 'debit',
+    _orderId: string
   ): Promise<PaymentResult> {
-    const controller = new AbortController();
-    const transactionId = this.generateTransactionId(`CARD-${cardType.toUpperCase()}`);
-    
-    this.activeTransactions.set(transactionId, controller);
-
-    try {
-      // Mock: Simular comunicação com SDK (em produção: SDK real)
-      // Ex: await cardSDK.processPayment({ amount, type: cardType })
-      await this.simulatePaymentConfirmation(4000, controller.signal);
-
-      this.activeTransactions.delete(transactionId);
-
-      return {
-        success: true,
-        transactionId,
-        message: `Pagamento ${cardType === 'credit' ? 'crédito' : 'débito'} aprovado`
-      };
-    } catch (error) {
-      this.activeTransactions.delete(transactionId);
-      
-      if ((error as Error).name === 'AbortError') {
-        throw new PaymentError('PAYMENT_CANCELLED', 'Pagamento cancelado pelo usuário');
-      }
-      
-      throw new PaymentError('CARD_ERROR', 'Erro ao processar cartão');
-    }
+    throw new PaymentError(
+      'MOCK_DISABLED',
+      'processCardPayment mock foi removido. Use createPayment() com card.encrypted ou PlugPag (Phase 1).'
+    );
   }
 
   /**
@@ -273,34 +225,6 @@ class PaymentService {
       controller.abort();
     });
     this.activeTransactions.clear();
-  }
-
-  // ===== MOCK HELPERS (remover em produção) =====
-
-  private generateMockPixQRCode(amount: number, orderId: string): string {
-    // Mock: Em produção, retornar QR code real da API do banco
-    return `00020126580014br.gov.bcb.pix0136${orderId}5204000053039865802BR5925KIOSK STORE6009SAO PAULO62070503***6304${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
-  }
-
-  private async simulatePaymentConfirmation(delayMs: number, signal: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const cleanup = () => {
-        signal.removeEventListener('abort', abortHandler);
-      };
-
-      const abortHandler = () => {
-        clearTimeout(timeout);
-        cleanup();
-        reject(new DOMException('Payment cancelled', 'AbortError'));
-      };
-
-      const timeout = setTimeout(() => {
-        cleanup();
-        resolve();
-      }, delayMs);
-
-      signal.addEventListener('abort', abortHandler);
-    });
   }
 
   // ===== MERCADO PAGO INTEGRATION =====

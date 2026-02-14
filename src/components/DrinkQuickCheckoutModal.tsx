@@ -25,6 +25,7 @@ import { useTranslation } from "@/i18n";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
 import { persistFailedDispense } from "@/services/dispenseRecoveryService";
 import type { CreatePaymentInput, PaymentMethod as GatewayPaymentMethod, PaymentRecord, PaymentStatus as GatewayPaymentStatus } from "@/types/payments";
+import { encryptCard } from "@/utils/pagbankEncrypt";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -771,14 +772,45 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         return;
       }
 
-      card = {
-        number: cleanCardNumber,
-        expMonth: cleanExpMonth,
-        expYear: cleanExpYear,
-        securityCode: cleanCvv,
-        holderName: customerName,
-        holderTaxId: customerTaxId,
-      };
+      // Phase 0: Encrypt card data client-side via PagBank.js SDK
+      const pagbankPublicKey = gatewayConfig?.providers?.pagbank?.publicKey;
+      if (!pagbankPublicKey) {
+        toast({
+          title: 'Configuração ausente',
+          description: 'PagBank publicKey não configurada. Contate o administrador.',
+          variant: 'destructive',
+        });
+        setIsProcessing(false);
+        updateProcessingStage("idle");
+        moveToStep(2);
+        return;
+      }
+
+      try {
+        const encrypted = encryptCard(pagbankPublicKey, {
+          number: cleanCardNumber,
+          expMonth: cleanExpMonth,
+          expYear: cleanExpYear,
+          securityCode: cleanCvv,
+          holderName: customerName,
+        });
+
+        card = {
+          encrypted,
+          holderName: customerName,
+          holderTaxId: customerTaxId,
+        };
+      } catch (encErr) {
+        toast({
+          title: 'Erro de criptografia',
+          description: encErr instanceof Error ? encErr.message : 'Falha ao criptografar dados do cartão.',
+          variant: 'destructive',
+        });
+        setIsProcessing(false);
+        updateProcessingStage("idle");
+        moveToStep(2);
+        return;
+      }
     }
 
     try {

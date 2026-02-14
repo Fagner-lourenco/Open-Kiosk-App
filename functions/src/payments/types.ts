@@ -21,13 +21,27 @@ export interface PaymentCustomer {
   phone?: string;
 }
 
+/**
+ * Card data for PagBank REST payments.
+ *
+ * Phase 0 Security Hardening: Raw PAN/CVV fields removed.
+ * The frontend encrypts card data using PagBank.js SDK (publicKey) and sends
+ * only the opaque `encrypted` token. The Cloud Function forwards it to PagBank
+ * without ever seeing raw card numbers.
+ *
+ * For card-present (PlugPag Phase 1+), this interface is NOT used —
+ * the terminal handles card data entirely on-device.
+ */
 export interface PaymentCard {
-  number: string;
-  expMonth: string;
-  expYear: string;
-  securityCode: string;
-  holderName: string;
-  holderTaxId: string;
+  /** Opaque encrypted blob from PagBank.js `PagSeguro.encryptCard()` */
+  encrypted: string;
+  /**
+   * PII — persist only if business-critical; never log/analytics.
+   * @pii
+   */
+  holderName?: string;
+  /** Holder tax ID (CPF). Used by PagBank for anti-fraud. */
+  holderTaxId?: string;
 }
 
 export interface CreatePaymentInput {
@@ -130,12 +144,29 @@ export interface ProviderCreatePaymentInput {
   expiresAt?: string;
 }
 
+/**
+ * Allowlisted metadata from the payment provider response.
+ * Never store the full raw response — filter to these safe fields only.
+ */
+export interface ProviderMetadata {
+  orderId?: string;
+  chargeId?: string;
+  status?: string;
+  cardBrand?: string;
+  cardLast4?: string;
+  nsu?: string;
+  authorizationCode?: string;
+}
+
 export interface ProviderCreatePaymentResult {
   status: PaymentStatus;
   providerOrderId?: string;
   providerPaymentId?: string;
   pix?: PaymentPixPayload;
-  raw?: unknown;
+  /** Allowlisted provider metadata. Never store full raw response. */
+  providerMetadata?: ProviderMetadata;
+  /** @deprecated Use providerMetadata. Will be removed. */
+  raw?: never;
 }
 
 export interface ProviderPaymentStatusResult {
@@ -143,7 +174,10 @@ export interface ProviderPaymentStatusResult {
   providerPaymentId?: string;
   providerOrderId?: string;
   pix?: PaymentPixPayload;
-  raw?: unknown;
+  /** Allowlisted provider metadata. Never store full raw response. */
+  providerMetadata?: ProviderMetadata;
+  /** @deprecated Use providerMetadata. Will be removed. */
+  raw?: never;
 }
 
 export interface PaymentProvider {
