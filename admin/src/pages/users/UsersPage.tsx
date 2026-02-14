@@ -50,6 +50,7 @@ import {
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { FilterBar } from '@/components/layout/FilterBar';
 
 interface FranchiseMember {
   id: string;
@@ -204,15 +205,17 @@ export function UsersPage() {
       )}
 
       {/* Search */}
-      <div className="relative max-w-md">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder="Buscar usuários..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="pl-10"
-        />
-      </div>
+      <FilterBar>
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar usuários..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </FilterBar>
 
       {/* Users Table */}
       <Card>

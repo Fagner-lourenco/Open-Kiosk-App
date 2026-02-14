@@ -54,8 +54,8 @@ export function RegisterPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h2 className="text-xl font-semibold text-gray-900">Criar conta</h2>
-        <p className="text-sm text-gray-500 mt-1">
+        <h2 className="text-xl font-semibold text-foreground">Criar conta</h2>
+        <p className="text-sm text-muted-foreground mt-1">
           Registre-se para gerenciar suas franquias
         </p>
       </div>
@@ -71,7 +71,7 @@ export function RegisterPage() {
         <div className="space-y-2">
           <Label htmlFor="name">Nome completo</Label>
           <div className="relative">
-            <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="name"
               type="text"
@@ -88,7 +88,7 @@ export function RegisterPage() {
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="email"
               type="email"
@@ -105,7 +105,7 @@ export function RegisterPage() {
         <div className="space-y-2">
           <Label htmlFor="password">Senha</Label>
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="password"
               type="password"
@@ -118,13 +118,13 @@ export function RegisterPage() {
               disabled={isLoading}
             />
           </div>
-          <p className="text-xs text-gray-500">Mínimo 6 caracteres</p>
+          <p className="text-xs text-muted-foreground">Mínimo 6 caracteres</p>
         </div>
 
         <div className="space-y-2">
           <Label htmlFor="confirmPassword">Confirmar senha</Label>
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="confirmPassword"
               type="password"
@@ -151,9 +151,9 @@ export function RegisterPage() {
       </form>
 
       <div className="text-center">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Já tem uma conta?{' '}
-          <Link to="/login" className="text-blue-600 hover:underline font-medium">
+          <Link to="/login" className="text-primary hover:text-primary/80 hover:underline font-medium">
             Fazer login
           </Link>
         </p>

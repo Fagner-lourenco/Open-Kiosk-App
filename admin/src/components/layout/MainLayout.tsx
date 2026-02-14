@@ -19,7 +19,7 @@ function LayoutContent() {
   const { collapsed } = useSidebar();
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div className="min-h-screen bg-muted safe-top safe-right">
       {/* Sidebar */}
       <Sidebar />
 
@@ -29,7 +29,7 @@ function LayoutContent() {
         <Header />
 
         {/* Page Content */}
-        <main className="p-6">
+        <main className="p-6 safe-bottom">
           <Outlet />
         </main>
       </div>

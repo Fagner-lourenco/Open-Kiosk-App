@@ -41,8 +41,8 @@ export function LoginPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h2 className="text-xl font-semibold text-gray-900">Bem-vindo de volta</h2>
-        <p className="text-sm text-gray-500 mt-1">
+        <h2 className="text-xl font-semibold text-foreground">Bem-vindo de volta</h2>
+        <p className="text-sm text-muted-foreground mt-1">
           Entre com sua conta para continuar
         </p>
       </div>
@@ -58,7 +58,7 @@ export function LoginPage() {
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="email"
               type="email"
@@ -78,13 +78,13 @@ export function LoginPage() {
             <Label htmlFor="password">Senha</Label>
             <Link
               to="/forgot-password"
-              className="text-xs text-blue-600 hover:underline"
+              className="text-xs text-primary hover:text-primary/80 hover:underline"
             >
               Esqueceu a senha?
             </Link>
           </div>
           <div className="relative">
-            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="password"
               type="password"
@@ -112,9 +112,9 @@ export function LoginPage() {
       </form>
 
       <div className="text-center">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-muted-foreground">
           Não tem uma conta?{' '}
-          <Link to="/register" className="text-blue-600 hover:underline font-medium">
+          <Link to="/register" className="text-primary hover:text-primary/80 hover:underline font-medium">
             Criar conta
           </Link>
         </p>

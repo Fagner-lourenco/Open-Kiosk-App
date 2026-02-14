@@ -11,6 +11,10 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Check, CreditCard, AlertCircle, Loader2, ExternalLink, Crown } from 'lucide-react';
 import { LoadingState } from '@/components/common/LoadingState';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useFranchise } from '../../context/FranchiseContext';
 import { 
@@ -116,36 +120,38 @@ export default function BillingPage() {
   const plans = getAvailablePlans();
   
   return (
-    <div className="container mx-auto p-6 max-w-6xl">
-      <h1 className="text-2xl font-bold mb-6">Faturamento</h1>
+    <div className="space-y-6">
+      <PageHeader title="Faturamento" />
       
       {/* Mensagem de sucesso */}
       {successMessage && (
-        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3">
-          <Check className="h-5 w-5 text-green-600" />
-          <span className="text-green-800">{successMessage}</span>
-        </div>
+        <Alert className="border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800">
+          <Check className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-green-800 dark:text-green-200">{successMessage}</AlertDescription>
+        </Alert>
       )}
       
       {/* Alerta de ação necessária */}
       {billing && needsUserAction(billing.planStatus) && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
-          <AlertCircle className="h-5 w-5 text-red-600" />
-          <div>
-            <span className="text-red-800 font-medium">Ação necessária: </span>
-            <span className="text-red-700">{getBillingStatusLabel(billing.planStatus)}</span>
-            <button 
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            <span className="font-medium">Ação necessária: </span>
+            <span>{getBillingStatusLabel(billing.planStatus)}</span>
+            <Button 
+              variant="link"
               onClick={handleManageBilling}
-              className="ml-4 text-red-600 underline hover:text-red-800"
+              className="ml-2 h-auto p-0 text-destructive underline"
             >
               Atualizar pagamento
-            </button>
-          </div>
-        </div>
+            </Button>
+          </AlertDescription>
+        </Alert>
       )}
       
       {/* Plano atual */}
-      <div className="bg-white rounded-lg border p-6 mb-8">
+      <Card>
+        <CardContent className="p-6">
         <div className="flex items-start justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -178,10 +184,10 @@ export default function BillingPage() {
           </div>
           
           {billing?.stripeSubscriptionId && (
-            <button
+            <Button
+              variant="outline"
               onClick={handleManageBilling}
               disabled={portalLoading}
-              className="flex items-center gap-2 px-4 py-2 border rounded-lg hover:bg-muted disabled:opacity-50"
             >
               {portalLoading ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -190,7 +196,7 @@ export default function BillingPage() {
               )}
               Gerenciar pagamento
               <ExternalLink className="h-3 w-3" />
-            </button>
+            </Button>
           )}
         </div>
         
@@ -206,7 +212,8 @@ export default function BillingPage() {
             ))}
           </ul>
         </div>
-      </div>
+        </CardContent>
+      </Card>
       
       {/* Seletor de intervalo */}
       <div className="flex items-center justify-center mb-8">
@@ -215,7 +222,7 @@ export default function BillingPage() {
             onClick={() => setSelectedInterval('monthly')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               selectedInterval === 'monthly' 
-                ? 'bg-white shadow text-foreground' 
+                ? 'bg-card shadow text-foreground' 
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -225,7 +232,7 @@ export default function BillingPage() {
             onClick={() => setSelectedInterval('yearly')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               selectedInterval === 'yearly' 
-                ? 'bg-white shadow text-foreground' 
+                ? 'bg-card shadow text-foreground' 
                 : 'text-muted-foreground hover:text-foreground'
             }`}
           >
@@ -247,9 +254,9 @@ export default function BillingPage() {
             : plan.pricing.monthly;
           
           return (
-            <div 
+            <Card 
               key={plan.id}
-              className={`relative bg-white rounded-lg border-2 p-6 ${
+              className={`relative border-2 p-6 ${
                 plan.popular ? 'border-primary' : 'border-border'
               } ${isCurrent ? 'ring-2 ring-primary ring-offset-2' : ''}`}
             >
@@ -282,16 +289,13 @@ export default function BillingPage() {
                 ))}
               </ul>
               
-              <button
+              <Button
                 onClick={() => handleUpgrade(plan.id as 'starter' | 'pro' | 'enterprise')}
                 disabled={isCurrent || checkoutLoading !== null}
-                className={`w-full mt-6 py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 ${
-                  isCurrent 
-                    ? 'bg-muted text-muted-foreground cursor-not-allowed'
-                    : plan.popular
-                      ? 'bg-primary text-white hover:bg-primary/90'
-                      : 'bg-gray-900 text-white hover:bg-gray-800'
-                } disabled:opacity-50`}
+                variant={isCurrent ? 'secondary' : plan.popular ? 'default' : 'outline'}
+                className={`w-full mt-6 py-3 ${
+                  !isCurrent && !plan.popular ? 'bg-foreground text-background hover:bg-foreground/90' : ''
+                } ${isCurrent ? 'cursor-not-allowed' : ''}`}
               >
                 {checkoutLoading === plan.id ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -300,15 +304,16 @@ export default function BillingPage() {
                 ) : (
                   'Selecionar plano'
                 )}
-              </button>
-            </div>
+              </Button>
+            </Card>
           );
         })}
       </div>
       
       {/* Histórico de billing */}
       {history.length > 0 && (
-        <div className="bg-white rounded-lg border p-6">
+        <Card>
+          <CardContent className="p-6">
           <h2 className="text-lg font-semibold mb-4">Histórico de pagamentos</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -342,7 +347,8 @@ export default function BillingPage() {
               </tbody>
             </table>
           </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

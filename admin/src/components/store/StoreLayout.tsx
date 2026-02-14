@@ -16,7 +16,8 @@ import { LoadingState } from '@/components/common/LoadingState';
 import { ErrorState } from '@/components/common/ErrorState';
 import { useStoreDetail, type StoreData } from '@/hooks/useStoreDetail';
 import { cn } from '@/lib/utils';
-import { STORE_NAV_ITEMS, STORE_NAV_GROUPS } from '@/config/storeNavConfig';
+import { STORE_NAV_ITEMS } from '@/config/storeNavConfig';
+import { StoreNavAccordion } from '@/components/store/StoreNavAccordion';
 
 /** Mapa de ?tab=X (legado) → sub-rota */
 const TAB_TO_ROUTE: Record<string, string> = {
@@ -82,73 +83,39 @@ export function StoreLayout() {
 
   if (!store || !franchiseId || !storeId) return null;
 
-  // Group navigation items
-  const groups = Object.entries(STORE_NAV_GROUPS);
-
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="-mx-6 -mt-6 mb-6 border-b border-border/60 bg-card px-6 py-5">
-        <div className="flex items-center gap-4">
-          <Link to="/stores">
-            <Button variant="outline" size="icon" className="h-8 w-8 rounded-lg" aria-label="Voltar para lojas">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-xl font-semibold tracking-tight text-foreground">{store.name}</h1>
-              <Badge
-                variant={store.isActive ? 'default' : 'secondary'}
-                className="text-[11px] px-2 py-0"
-              >
-                {store.isActive ? 'Ativa' : 'Inativa'}
-              </Badge>
+      <div className="-mx-6 -mt-6 mb-6 border-b border-border/40 bg-card/80 backdrop-blur-sm px-6 py-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Link to="/stores">
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground" aria-label="Voltar para lojas">
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            </Link>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-semibold tracking-tight text-foreground">{store.name}</h1>
+                <Badge
+                  variant={store.isActive ? 'default' : 'secondary'}
+                  className="text-[10px] px-1.5 py-0 h-5"
+                >
+                  {store.isActive ? 'Ativa' : 'Inativa'}
+                </Badge>
+              </div>
+              <p className="text-[13px] text-muted-foreground">{store.address || 'Sem endereço'}</p>
             </div>
-            <p className="mt-0.5 text-sm text-muted-foreground">{store.address || 'Sem endereço'}</p>
           </div>
         </div>
       </div>
 
       {/* Layout: Side nav + Content */}
-      <div className="flex gap-8">
-        {/* Side Navigation */}
-        <nav className="hidden w-52 shrink-0 md:block" aria-label="Navegação da loja">
-          <div className="sticky top-20 space-y-5">
-            {groups.map(([groupKey, groupLabel]) => {
-              const items = STORE_NAV_ITEMS.filter((item) => item.group === groupKey);
-              if (items.length === 0) return null;
-
-              return (
-                <div key={groupKey}>
-                  {groupKey !== 'overview' && (
-                    <p className="mb-1.5 px-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/70">
-                      {groupLabel}
-                    </p>
-                  )}
-                  <div className="space-y-0.5">
-                    {items.map((item) => (
-                      <NavLink
-                        key={item.href}
-                        to={`/stores/${storeId}/${item.href}`}
-                        end={item.href === ''}
-                        className={({ isActive }) =>
-                          cn(
-                            'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium transition-all duration-150',
-                            isActive
-                              ? 'bg-primary/10 text-primary shadow-sm shadow-primary/5'
-                              : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                          )
-                        }
-                      >
-                        <item.icon className="h-4 w-4 shrink-0" />
-                        {item.label}
-                      </NavLink>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+      <div className="flex gap-6">
+        {/* Side Navigation — Accordion */}
+        <nav className="hidden w-56 shrink-0 md:block" aria-label="Navegação da loja">
+          <div className="sticky top-20">
+            <StoreNavAccordion storeId={storeId} />
           </div>
         </nav>
 

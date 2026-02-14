@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { DangerZoneCard } from '@/components/common/DangerZoneCard';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface FranchiseSettings {
   name: string;
@@ -202,28 +203,25 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Configurações</h1>
-          <p className="text-muted-foreground">
-            Gerencie as configurações de {currentFranchise.name}
-          </p>
-        </div>
-        <Button onClick={handleSave} disabled={isSaving}>
-          {isSaving ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Salvando...
-            </>
-          ) : (
-            <>
-              <Save className="mr-2 h-4 w-4" />
-              Salvar Alterações
-            </>
-          )}
-        </Button>
-      </div>
+      <PageHeader
+        title="Configurações"
+        description={`Gerencie as configurações de ${currentFranchise.name}`}
+        actions={
+          <Button onClick={handleSave} disabled={isSaving}>
+            {isSaving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Salvando...
+              </>
+            ) : (
+              <>
+                <Save className="mr-2 h-4 w-4" />
+                Salvar Alterações
+              </>
+            )}
+          </Button>
+        }
+      />
 
       {error && (
         <Alert variant="destructive">

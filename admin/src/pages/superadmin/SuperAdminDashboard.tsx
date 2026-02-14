@@ -38,6 +38,8 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface FranchiseStats {
   id: string;
@@ -188,39 +190,37 @@ export default function SuperAdminDashboard() {
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-purple-100 rounded-lg">
-            <Shield className="h-6 w-6 text-purple-600" />
+      <PageHeader
+        title="Super Admin Dashboard"
+        description="Visão geral de todas as franquias da plataforma"
+        meta={
+          <Badge variant="outline" className="border-purple-200 bg-purple-50 text-purple-700">
+            <Shield className="mr-1 h-3 w-3" />
+            Super Admin
+          </Badge>
+        }
+        actions={
+          <div className="flex items-center gap-2">
+            <Button onClick={loadData} disabled={isLoading} variant="outline">
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </Button>
+            <Button onClick={() => navigate('/superadmin/franchises')}>
+              <Building2 className="h-4 w-4 mr-2" />
+              Gerenciar Franquias
+            </Button>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold">Super Admin Dashboard</h1>
-            <p className="text-muted-foreground">
-              Visão geral de todas as franquias da plataforma
-            </p>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <Button onClick={loadData} disabled={isLoading} variant="outline">
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Atualizar
-          </Button>
-          <Button onClick={() => navigate('/superadmin/franchises')}>
-            <Building2 className="h-4 w-4 mr-2" />
-            Gerenciar Franquias
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Error */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
-          <AlertCircle className="h-5 w-5 text-red-500" />
-          <span className="text-red-700">{error}</span>
-        </div>
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
 
       {/* Stats Cards */}

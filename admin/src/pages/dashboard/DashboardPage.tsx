@@ -25,6 +25,7 @@ import {
   Activity,
   Building2
 } from 'lucide-react';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface DashboardStats {
   totalStores: number;
@@ -225,30 +226,27 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-        <p className="text-muted-foreground">
-          Visão geral de {currentFranchise.name}
-        </p>
-      </div>
+      <PageHeader
+        title="Dashboard"
+        description={`Visão geral de ${currentFranchise.name}`}
+      />
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {statCards.map((stat) => (
           <Link key={stat.title} to={stat.href}>
-            <Card className="hover:shadow-md transition-shadow cursor-pointer">
-              <CardContent className="p-6">
+            <Card className="group hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 cursor-pointer">
+              <CardContent className="p-5">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
-                    <p className="text-2xl font-bold mt-1">
+                    <p className="text-[13px] font-medium text-muted-foreground">{stat.title}</p>
+                    <p className="text-2xl font-bold mt-1.5 tracking-tight">
                       {isLoading ? '...' : stat.value}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
                   </div>
-                  <div className={`p-3 rounded-full ${stat.bgColor}`}>
-                    <stat.icon className={`h-6 w-6 ${stat.color}`} />
+                  <div className={`p-3 rounded-xl ${stat.bgColor} group-hover:scale-110 transition-transform duration-200`}>
+                    <stat.icon className={`h-5 w-5 ${stat.color}`} />
                   </div>
                 </div>
               </CardContent>
@@ -259,9 +257,9 @@ export function DashboardPage() {
 
       {/* Quick Actions */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Lojas</CardTitle>
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">Lojas</CardTitle>
             <CardDescription>Gerencie suas lojas</CardDescription>
           </CardHeader>
           <CardContent>
@@ -293,9 +291,9 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Ações Rápidas</CardTitle>
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">Ações Rápidas</CardTitle>
             <CardDescription>Atalhos para tarefas comuns</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -323,9 +321,9 @@ export function DashboardPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Atividade Recente</CardTitle>
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">Atividade Recente</CardTitle>
             <CardDescription>Últimas ações na franquia</CardDescription>
           </CardHeader>
           <CardContent>

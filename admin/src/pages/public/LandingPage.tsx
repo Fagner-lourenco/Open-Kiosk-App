@@ -81,15 +81,15 @@ const plans = [
 
 export function LandingPage() {
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="border-b border-gray-200">
+      <header className="border-b">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center">
-              <Store className="h-5 w-5 text-white" />
+            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center">
+              <Store className="h-5 w-5 text-primary-foreground" />
             </div>
-            <span className="text-xl font-bold text-gray-900">Open Kiosk</span>
+            <span className="text-xl font-bold text-foreground">Open Kiosk</span>
           </div>
           <div className="flex items-center gap-4">
             <Link to="/login">
@@ -103,13 +103,13 @@ export function LandingPage() {
       </header>
 
       {/* Hero */}
-      <section className="py-20 bg-gradient-to-b from-blue-50 to-white">
+      <section className="py-20 bg-gradient-to-b from-primary/5 to-background">
         <div className="container mx-auto px-4 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
+          <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-6">
             Gerencie suas franquias<br />
-            <span className="text-blue-600">de forma inteligente</span>
+            <span className="text-primary">de forma inteligente</span>
           </h1>
-          <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
+          <p className="text-xl text-muted-foreground mb-8 max-w-2xl mx-auto">
             Plataforma completa para gestão de franquias, lojas e equipes.
             Controle total do seu negócio em um único lugar.
           </p>
@@ -133,24 +133,24 @@ export function LandingPage() {
       <section className="py-20">
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+            <h2 className="text-3xl font-bold text-foreground mb-4">
               Tudo que você precisa
             </h2>
-            <p className="text-gray-600 max-w-2xl mx-auto">
+            <p className="text-muted-foreground max-w-2xl mx-auto">
               Ferramentas poderosas para gerenciar cada aspecto do seu negócio.
             </p>
           </div>
           <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
             {features.map((feature) => (
-              <Card key={feature.title} className="border-gray-200">
+              <Card key={feature.title}>
                 <CardContent className="p-6">
-                  <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center mb-4">
-                    <feature.icon className="h-6 w-6 text-blue-600" />
+                  <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+                    <feature.icon className="h-6 w-6 text-primary" />
                   </div>
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                  <h3 className="text-lg font-semibold text-foreground mb-2">
                     {feature.title}
                   </h3>
-                  <p className="text-gray-600">{feature.description}</p>
+                  <p className="text-muted-foreground">{feature.description}</p>
                 </CardContent>
               </Card>
             ))}
@@ -159,13 +159,13 @@ export function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section className="py-20 bg-gray-50">
+      <section className="py-20 bg-muted/50">
         <div className="container mx-auto px-4">
           <div className="text-center mb-12">
-            <h2 className="text-3xl font-bold text-gray-900 mb-4">
+            <h2 className="text-3xl font-bold text-foreground mb-4">
               Planos para cada necessidade
             </h2>
-            <p className="text-gray-600 max-w-2xl mx-auto">
+            <p className="text-muted-foreground max-w-2xl mx-auto">
               Escolha o plano ideal para o tamanho do seu negócio.
             </p>
           </div>
@@ -173,25 +173,25 @@ export function LandingPage() {
             {plans.map((plan) => (
               <Card 
                 key={plan.name} 
-                className={`relative ${plan.popular ? 'border-blue-500 border-2' : 'border-gray-200'}`}
+                className={`relative ${plan.popular ? 'border-primary border-2' : ''}`}
               >
                 {plan.popular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-sm px-3 py-1 rounded-full">
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground text-sm px-3 py-1 rounded-full">
                     Mais Popular
                   </div>
                 )}
                 <CardContent className="p-6">
-                  <h3 className="text-xl font-semibold text-gray-900 mb-2">
+                  <h3 className="text-xl font-semibold text-foreground mb-2">
                     {plan.name}
                   </h3>
-                  <p className="text-gray-500 text-sm mb-4">{plan.description}</p>
+                  <p className="text-muted-foreground text-sm mb-4">{plan.description}</p>
                   <div className="mb-6">
-                    <span className="text-3xl font-bold text-gray-900">{plan.price}</span>
-                    {plan.period && <span className="text-gray-500">{plan.period}</span>}
+                    <span className="text-3xl font-bold text-foreground">{plan.price}</span>
+                    {plan.period && <span className="text-muted-foreground">{plan.period}</span>}
                   </div>
                   <ul className="space-y-3 mb-6">
                     {plan.features.map((feature) => (
-                      <li key={feature} className="flex items-center gap-2 text-sm text-gray-600">
+                      <li key={feature} className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Check className="h-4 w-4 text-green-500" />
                         {feature}
                       </li>
@@ -215,10 +215,10 @@ export function LandingPage() {
       {/* CTA */}
       <section className="py-20">
         <div className="container mx-auto px-4 text-center">
-          <h2 className="text-3xl font-bold text-gray-900 mb-4">
+          <h2 className="text-3xl font-bold text-foreground mb-4">
             Pronto para começar?
           </h2>
-          <p className="text-gray-600 mb-8 max-w-xl mx-auto">
+          <p className="text-muted-foreground mb-8 max-w-xl mx-auto">
             Crie sua conta gratuitamente e comece a gerenciar suas franquias hoje mesmo.
           </p>
           <Link to="/register">
@@ -231,16 +231,16 @@ export function LandingPage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-gray-200 py-8">
+      <footer className="border-t py-8">
         <div className="container mx-auto px-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center">
-                <Store className="h-4 w-4 text-white" />
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <Store className="h-4 w-4 text-primary-foreground" />
               </div>
-              <span className="font-semibold text-gray-900">Open Kiosk</span>
+              <span className="font-semibold text-foreground">Open Kiosk</span>
             </div>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               © {new Date().getFullYear()} Open Kiosk. Todos os direitos reservados.
             </p>
           </div>

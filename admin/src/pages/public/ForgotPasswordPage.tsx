@@ -56,12 +56,12 @@ export function ForgotPasswordPage() {
           <div className="mx-auto w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mb-4">
             <CheckCircle className="h-6 w-6 text-green-600" />
           </div>
-          <h2 className="text-xl font-semibold text-gray-900">Email enviado!</h2>
-          <p className="text-sm text-gray-500 mt-2">
+          <h2 className="text-xl font-semibold text-foreground">Email enviado!</h2>
+          <p className="text-sm text-muted-foreground mt-2">
             Enviamos um link de recuperação para{' '}
-            <strong className="text-gray-700">{email}</strong>
+            <strong className="text-foreground">{email}</strong>
           </p>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Verifique sua caixa de entrada e spam.
           </p>
         </div>
@@ -92,8 +92,8 @@ export function ForgotPasswordPage() {
   return (
     <div className="space-y-6">
       <div className="text-center">
-        <h2 className="text-xl font-semibold text-gray-900">Recuperar senha</h2>
-        <p className="text-sm text-gray-500 mt-1">
+        <h2 className="text-xl font-semibold text-foreground">Recuperar senha</h2>
+        <p className="text-sm text-muted-foreground mt-1">
           Digite seu email para receber um link de recuperação
         </p>
       </div>
@@ -109,7 +109,7 @@ export function ForgotPasswordPage() {
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
           <div className="relative">
-            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               id="email"
               type="email"
@@ -138,7 +138,7 @@ export function ForgotPasswordPage() {
       <div className="text-center">
         <Link 
           to="/login" 
-          className="text-sm text-gray-500 hover:text-gray-700 inline-flex items-center"
+          className="text-sm text-muted-foreground hover:text-foreground inline-flex items-center"
         >
           <ArrowLeft className="mr-1 h-4 w-4" />
           Voltar para login

@@ -100,13 +100,16 @@ export function Sidebar() {
                 key={item.href}
                 to={item.href}
                 className={cn(
-                  'flex items-center rounded-md text-[13px] font-medium transition-all duration-150',
+                  'group relative flex items-center rounded-md text-[13px] font-medium transition-all duration-150',
                   collapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2',
                   isActive
                     ? 'bg-[hsl(var(--sidebar-accent))] text-white'
-                    : 'text-[hsl(var(--sidebar-muted-foreground))] hover:bg-[hsl(var(--sidebar-accent))] hover:text-white',
+                    : 'text-[hsl(var(--sidebar-muted-foreground))] hover:bg-[hsl(var(--sidebar-accent))]/60 hover:text-white',
                 )}
               >
+                {isActive && !collapsed && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-[hsl(var(--sidebar-primary))]" />
+                )}
                 <item.icon
                   className={cn('h-[18px] w-[18px] shrink-0', isActive ? 'text-[hsl(var(--sidebar-primary))]' : '')}
                 />

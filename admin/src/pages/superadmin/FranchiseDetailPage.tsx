@@ -72,6 +72,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface FranchiseData {
   id: string;
@@ -282,55 +283,49 @@ export default function FranchiseDetailPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate('/superadmin/franchises')}
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Building2 className="h-6 w-6 text-blue-600" />
+      <div className="flex items-center gap-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => navigate('/superadmin/franchises')}
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <PageHeader
+          title={franchise.name}
+          description={franchise.ownerEmail || 'Sem proprietário definido'}
+          meta={
+            <>
+              <Badge className={getStatusBadge(franchise.status)}>
+                {franchise.status}
+              </Badge>
+              <Badge className={getPlanBadge(franchise.plan)}>
+                {franchise.plan}
+              </Badge>
+            </>
+          }
+          actions={
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={loadFranchise}>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Atualizar
+              </Button>
+              <Button variant="outline" onClick={handleAccessFranchise}>
+                <Eye className="h-4 w-4 mr-2" />
+                Acessar
+              </Button>
+              <Button
+                variant={isEditing ? 'default' : 'outline'}
+                onClick={() => setIsEditing(!isEditing)}
+              >
+                <Edit className="h-4 w-4 mr-2" />
+                {isEditing ? 'Cancelar' : 'Editar'}
+              </Button>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-2xl font-bold">{franchise.name}</h1>
-                <Badge className={getStatusBadge(franchise.status)}>
-                  {franchise.status}
-                </Badge>
-                <Badge className={getPlanBadge(franchise.plan)}>
-                  {franchise.plan}
-                </Badge>
-              </div>
-              <p className="text-muted-foreground">
-                {franchise.ownerEmail || 'Sem proprietário definido'}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={loadFranchise}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Atualizar
-          </Button>
-          <Button variant="outline" onClick={handleAccessFranchise}>
-            <Eye className="h-4 w-4 mr-2" />
-            Acessar
-          </Button>
-          <Button
-            variant={isEditing ? 'default' : 'outline'}
-            onClick={() => setIsEditing(!isEditing)}
-          >
-            <Edit className="h-4 w-4 mr-2" />
-            {isEditing ? 'Cancelar' : 'Editar'}
-          </Button>
-        </div>
+          }
+        />
       </div>
 
       <Tabs defaultValue="details" className="space-y-4">

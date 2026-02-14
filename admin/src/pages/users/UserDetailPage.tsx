@@ -47,6 +47,7 @@ import {
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
 import { ErrorState } from '@/components/common/ErrorState';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 interface UserData {
   id: string;
@@ -214,17 +215,13 @@ export function UserDetailPage() {
 
   return (
     <div className="space-y-6 max-w-3xl">
-      {/* Header */}
       <div className="flex items-center gap-4">
         <Link to="/team">
           <Button variant="ghost" size="icon" aria-label="Voltar para equipe">
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </Link>
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Detalhes do Usuário</h1>
-          <p className="text-muted-foreground">Gerenciar permissões e acessos</p>
-        </div>
+        <PageHeader title="Detalhes do Usuário" description="Gerenciar permissões e acessos" />
       </div>
 
       {error && (

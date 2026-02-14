@@ -22,7 +22,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { 
   TrendingUp, 
   DollarSign, 
@@ -32,13 +31,13 @@ import {
   Download,
   Calendar,
   Loader2,
-  CheckCircle,
   Package,
   BarChart3,
   PieChart as PieChartIcon
 } from 'lucide-react';
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { CHART_PRIMARY, CHART_SECONDARY, getChartColor } from '@/constants/chart-colors';
 import {
   LineChart,
@@ -88,7 +87,6 @@ export function ReportsPage() {
   const [selectedStore, setSelectedStore] = useState<string>('all');
   const [dateRange, setDateRange] = useState<string>('30days');
   const [isExporting, setIsExporting] = useState(false);
-  const [exportSuccess, setExportSuccess] = useState(false);
 
   const exportToCSV = () => {
     if (!reportData || !currentFranchise) return;
@@ -124,8 +122,6 @@ export function ReportsPage() {
     document.body.removeChild(link);
     
     setIsExporting(false);
-    setExportSuccess(true);
-    setTimeout(() => setExportSuccess(false), 3000);
   };
 
   const { data: reportData, isLoading } = useQuery({
@@ -289,37 +285,24 @@ export function ReportsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Relatórios</h1>
-          <p className="text-muted-foreground">
-            Análise de desempenho de {currentFranchise.name}
-          </p>
-        </div>
-        
-        {exportSuccess && (
-          <Alert className="border-green-200 bg-green-50 text-green-800 py-2">
-            <CheckCircle className="h-4 w-4" />
-            <AlertDescription>
-              Relatório exportado com sucesso!
-            </AlertDescription>
-          </Alert>
-        )}
-        
-        <Button 
-          variant="outline" 
-          onClick={exportToCSV}
-          disabled={isExporting || isLoading || !reportData}
-        >
-          {isExporting ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="mr-2 h-4 w-4" />
-          )}
-          Exportar
-        </Button>
-      </div>
+      <PageHeader
+        title="Relatórios"
+        description={`Análise de desempenho de ${currentFranchise.name}`}
+        actions={
+          <Button 
+            variant="outline" 
+            onClick={exportToCSV}
+            disabled={isExporting || isLoading || !reportData}
+          >
+            {isExporting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-2 h-4 w-4" />
+            )}
+            Exportar
+          </Button>
+        }
+      />
 
       {/* Filters */}
       <div className="flex items-center gap-4">

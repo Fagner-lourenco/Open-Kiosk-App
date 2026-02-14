@@ -44,6 +44,7 @@ import {
 import { useToast } from '@/hooks/useToast';
 import { LoadingState } from '@/components/common/LoadingState';
 import { DangerZoneCard } from '@/components/common/DangerZoneCard';
+import { PageHeader } from '@/components/layout/PageHeader';
 
 // Icons
 import { 
@@ -58,7 +59,6 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle,
-  ArrowLeft,
   Eye,
   EyeOff,
   LogOut,
@@ -261,18 +261,10 @@ export function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)} aria-label="Voltar">
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Minha Conta</h1>
-            <p className="text-muted-foreground">Gerencie seu perfil e configurações pessoais</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title="Minha Conta"
+        description="Gerencie seu perfil e configurações pessoais"
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Coluna esquerda - Info resumida */}

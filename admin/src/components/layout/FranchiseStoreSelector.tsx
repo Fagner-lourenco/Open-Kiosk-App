@@ -84,10 +84,10 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
 
   if (isLoading && !currentFranchise) {
     return (
-      <div className={cn('border-b border-border px-4 py-3', className)}>
-        <div className="flex w-full items-center justify-center rounded-lg bg-muted px-3 py-2">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">Carregando...</span>
+      <div className={cn('px-3 py-3', className)}>
+        <div className="flex w-full items-center justify-center rounded-lg bg-[hsl(var(--sidebar-accent))] px-3 py-2.5">
+          <Loader2 className="h-4 w-4 animate-spin text-[hsl(var(--sidebar-muted-foreground))]" />
+          <span className="ml-2 text-[13px] text-[hsl(var(--sidebar-muted-foreground))]">Carregando...</span>
         </div>
       </div>
     );
@@ -98,29 +98,31 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
   }
 
   return (
-    <div className={cn('border-b border-border px-4 py-3', className)}>
+      <div className={cn('px-3 py-3', className)}>
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             disabled={switching}
-            className="h-auto w-full justify-between bg-muted px-3 py-2 hover:bg-accent"
+            className="h-auto w-full justify-between rounded-lg bg-[hsl(var(--sidebar-accent))] px-3 py-2.5 hover:bg-[hsl(var(--sidebar-accent))]/80 border-0"
           >
-            <div className="flex items-center gap-2 min-w-0 text-left">
-              <Building2 className="h-4 w-4 shrink-0 text-primary" />
+            <div className="flex items-center gap-2.5 min-w-0 text-left">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[hsl(var(--sidebar-primary))]/20">
+                <Building2 className="h-3.5 w-3.5 text-[hsl(var(--sidebar-primary))]" />
+              </div>
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                <p className="text-[10px] uppercase tracking-wider font-semibold text-[hsl(var(--sidebar-muted-foreground))]/70">
                   Franquia
                 </p>
-                <p className="truncate text-sm font-medium text-foreground">
+                <p className="truncate text-[13px] font-medium text-white">
                   {currentFranchise.name}
                 </p>
               </div>
             </div>
             {switching ? (
-              <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[hsl(var(--sidebar-muted-foreground))]" />
             ) : (
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[hsl(var(--sidebar-muted-foreground))]" />
             )}
           </Button>
         </DropdownMenuTrigger>

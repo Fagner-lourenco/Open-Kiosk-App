@@ -51,6 +51,8 @@ import { ConfirmDeleteDialog } from '@/components/shared/ConfirmDeleteDialog';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { FilterBar } from '@/components/layout/FilterBar';
 
 interface FranchiseData {
   id: string;
@@ -185,50 +187,37 @@ export default function FranchisesPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-100 rounded-lg">
-            <Building2 className="h-6 w-6 text-blue-600" />
+      <PageHeader
+        title="Franquias"
+        description="Gerencie todas as franquias do sistema"
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={loadFranchises} disabled={isLoading}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
+              Atualizar
+            </Button>
+            <Button onClick={() => navigate('/superadmin/franchises/new')}>
+              <Plus className="h-4 w-4 mr-2" />
+              Nova Franquia
+            </Button>
           </div>
-          <div>
-            <h1 className="text-2xl font-bold">Franquias</h1>
-            <p className="text-muted-foreground">
-              Gerencie todas as franquias do sistema
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={loadFranchises} disabled={isLoading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
-            Atualizar
-          </Button>
-          <Button onClick={() => navigate('/superadmin/franchises/new')}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nova Franquia
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       {/* Search */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Buscar</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar por nome, email ou descrição..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-        </CardContent>
-      </Card>
+      <FilterBar>
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar por nome, email ou descrição..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+      </FilterBar>
 
       {/* Table */}
       <Card>
