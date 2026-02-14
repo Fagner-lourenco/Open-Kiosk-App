@@ -54,6 +54,18 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 224.3 76.3% 48%;
   }
+
+  /* Landing page — Beer Tech Premium (amarelo + preto)
+     Escopo: wrapper .landing-page na LandingPage */
+  .landing-page {
+    --primary: 43 96% 56%;
+    --primary-foreground: 0 0% 0%;
+    --ring: 43 96% 56%;
+    --accent: 45 93% 88%;
+    --accent-foreground: 222 47% 6%;
+    /* Melhor contraste: texto secundário mais legível */
+    --muted-foreground: 215 16% 42%;
+  }
 }
 
 @layer base {
@@ -105,5 +117,13 @@
   .scrollbar-thin::-webkit-scrollbar-thumb {
     background: hsl(var(--sidebar-muted));
     border-radius: 9999px;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
   }
 }
