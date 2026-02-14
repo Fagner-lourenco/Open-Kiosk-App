@@ -228,7 +228,7 @@ export function StoreOverviewPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between rounded-lg border p-4">
+            <div className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <Label htmlFor="isActive">Loja ativa</Label>
                 <p className="text-sm text-muted-foreground">

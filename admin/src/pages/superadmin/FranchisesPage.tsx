@@ -244,106 +244,108 @@ export default function FranchisesPage() {
               </p>
             </div>
           ) : (
-            <Table aria-label="Tabela de franquias">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Franquia</TableHead>
-                  <TableHead>Proprietário</TableHead>
-                  <TableHead className="text-center">Lojas</TableHead>
-                  <TableHead className="text-center">Membros</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Plano</TableHead>
-                  <TableHead>Criada em</TableHead>
-                  <TableHead className="w-12"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredFranchises.map((franchise) => (
-                  <TableRow key={franchise.id}>
-                    <TableCell>
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-muted rounded-lg">
-                          <Building2 className="h-4 w-4 text-muted-foreground" />
-                        </div>
-                        <div>
-                          <p className="font-medium">{franchise.name}</p>
-                          {franchise.description && (
-                            <p className="text-xs text-muted-foreground truncate max-w-[200px]">
-                              {franchise.description}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm text-muted-foreground">
-                        {franchise.ownerEmail || '-'}
-                      </span>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <Store className="h-4 w-4 text-muted-foreground" />
-                        <span>{franchise.storeCount}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                        <span>{franchise.memberCount}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusBadge(franchise.status)}>
-                        {franchise.status === 'active' ? 'Ativo' : 'Inativo'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getPlanBadge(franchise.plan)}>
-                        {franchise.plan}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {formatDate(franchise.createdAt)}
-                    </TableCell>
-                    <TableCell>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              aria-label={`Acoes para franquia ${franchise.name}`}
-                            >
-                              <MoreVertical className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onClick={() => navigate(`/superadmin/franchises/${franchise.id}`)}
-                          >
-                            <Eye className="h-4 w-4 mr-2" />
-                            Ver Detalhes
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => navigate(`/superadmin/franchises/${franchise.id}/edit`)}
-                          >
-                            <Edit className="h-4 w-4 mr-2" />
-                            Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-red-600"
-                            onClick={() => setDeleteTarget(franchise)}
-                          >
-                            <Trash2 className="h-4 w-4 mr-2" />
-                            Excluir
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
+            <div className="w-full overflow-x-auto">
+              <Table className="min-w-[900px]" aria-label="Tabela de franquias">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Franquia</TableHead>
+                    <TableHead>Proprietário</TableHead>
+                    <TableHead className="text-center">Lojas</TableHead>
+                    <TableHead className="text-center">Membros</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Plano</TableHead>
+                    <TableHead>Criada em</TableHead>
+                    <TableHead className="w-12"></TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {filteredFranchises.map((franchise) => (
+                    <TableRow key={franchise.id}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-muted rounded-lg">
+                            <Building2 className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{franchise.name}</p>
+                            {franchise.description && (
+                              <p className="text-xs text-muted-foreground truncate max-w-[200px]">
+                                {franchise.description}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-sm text-muted-foreground">
+                          {franchise.ownerEmail || '-'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Store className="h-4 w-4 text-muted-foreground" />
+                          <span>{franchise.storeCount}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <Users className="h-4 w-4 text-muted-foreground" />
+                          <span>{franchise.memberCount}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getStatusBadge(franchise.status)}>
+                          {franchise.status === 'active' ? 'Ativo' : 'Inativo'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getPlanBadge(franchise.plan)}>
+                          {franchise.plan}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        {formatDate(franchise.createdAt)}
+                      </TableCell>
+                      <TableCell>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Acoes para franquia ${franchise.name}`}
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={() => navigate(`/superadmin/franchises/${franchise.id}`)}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              Ver Detalhes
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => navigate(`/superadmin/franchises/${franchise.id}/edit`)}
+                            >
+                              <Edit className="h-4 w-4 mr-2" />
+                              Editar
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-red-600"
+                              onClick={() => setDeleteTarget(franchise)}
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              Excluir
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

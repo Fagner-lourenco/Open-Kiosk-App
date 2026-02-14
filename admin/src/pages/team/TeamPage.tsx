@@ -473,9 +473,9 @@ export function TeamPage() {
                     return (
                       <div 
                         key={member.id}
-                        className="flex items-center justify-between p-4 hover:bg-muted"
+                        className="flex flex-col gap-3 p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between"
                       >
-                        <div className="flex items-center gap-4">
+                        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                           <Avatar>
                             <AvatarImage src={member.photoURL} />
                             <AvatarFallback>
@@ -682,7 +682,7 @@ export function TeamPage() {
                   {paginatedInvitations.map((invite) => (
                     <div 
                       key={invite.id}
-                      className="flex items-center justify-between p-4 hover:bg-muted"
+                      className="flex flex-col gap-3 p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="flex items-center gap-4">
                         <div className="p-2 rounded-full bg-muted">
@@ -698,7 +698,7 @@ export function TeamPage() {
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-3">
+                      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                         {getInvitationStatusBadge(invite.status, invite.expiresAt)}
                         
                         {invite.status === 'pending' && invite.expiresAt > new Date() && (

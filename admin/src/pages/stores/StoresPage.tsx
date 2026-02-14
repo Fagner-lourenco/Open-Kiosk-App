@@ -258,7 +258,7 @@ export function StoresPage() {
 
       {/* Stats */}
       {stores.length > 0 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div className="flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span>
             {filteredStores.length} de {stores.length} loja(s)
           </span>

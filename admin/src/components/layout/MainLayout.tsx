@@ -29,7 +29,7 @@ function LayoutContent() {
         <Header />
 
         {/* Page Content */}
-        <main className="p-6 safe-bottom">
+        <main className="p-4 sm:p-6 safe-bottom">
           <Outlet />
         </main>
       </div>

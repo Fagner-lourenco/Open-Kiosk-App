@@ -311,79 +311,81 @@ export default function SuperAdminDashboard() {
               Nenhuma franquia encontrada
             </div>
           ) : (
-            <Table aria-label="Lista de franquias">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Nome</TableHead>
-                  <TableHead>Owner</TableHead>
-                  <TableHead>Plano</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Lojas</TableHead>
-                  <TableHead className="text-right">Membros</TableHead>
-                  <TableHead>Criado em</TableHead>
-                  <TableHead className="text-right">Ações</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {franchises.map((franchise) => (
-                  <TableRow key={franchise.id}>
-                    <TableCell className="font-medium">
-                      {franchise.name}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {franchise.ownerEmail || '-'}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getPlanBadge(franchise.plan)}>
-                        {franchise.plan || 'trial'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={getStatusBadge(franchise.status)}>
-                        {franchise.status || 'active'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {franchise.storeCount}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {franchise.memberCount}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(franchise.createdAt)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          title="Visualizar"
-                          aria-label={`Visualizar franquia ${franchise.name}`}
-                          disabled={actionLoading === franchise.id}
-                          onClick={() => handleViewFranchise(franchise.id)}
-                        >
-                          {actionLoading === franchise.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Eye className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon" 
-                          title="Configurar"
-                          aria-label={`Configurar franquia ${franchise.name}`}
-                          disabled={actionLoading === franchise.id}
-                          onClick={() => handleConfigureFranchise(franchise.id)}
-                        >
-                          <Settings className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            <div className="w-full overflow-x-auto">
+              <Table className="min-w-[900px]" aria-label="Lista de franquias">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Nome</TableHead>
+                    <TableHead>Owner</TableHead>
+                    <TableHead>Plano</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Lojas</TableHead>
+                    <TableHead className="text-right">Membros</TableHead>
+                    <TableHead>Criado em</TableHead>
+                    <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {franchises.map((franchise) => (
+                    <TableRow key={franchise.id}>
+                      <TableCell className="font-medium">
+                        {franchise.name}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {franchise.ownerEmail || '-'}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getPlanBadge(franchise.plan)}>
+                          {franchise.plan || 'trial'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={getStatusBadge(franchise.status)}>
+                          {franchise.status || 'active'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {franchise.storeCount}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {franchise.memberCount}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {formatDate(franchise.createdAt)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            title="Visualizar"
+                            aria-label={`Visualizar franquia ${franchise.name}`}
+                            disabled={actionLoading === franchise.id}
+                            onClick={() => handleViewFranchise(franchise.id)}
+                          >
+                            {actionLoading === franchise.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            title="Configurar"
+                            aria-label={`Configurar franquia ${franchise.name}`}
+                            disabled={actionLoading === franchise.id}
+                            onClick={() => handleConfigureFranchise(franchise.id)}
+                          >
+                            <Settings className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -241,7 +241,7 @@ export function UserDetailPage() {
       {/* User Profile Card */}
       <Card>
         <CardContent className="p-6">
-          <div className="flex items-start gap-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <Avatar className="h-20 w-20">
               <AvatarImage src={user.photoURL} />
               <AvatarFallback className="text-2xl">
@@ -286,7 +286,7 @@ export function UserDetailPage() {
               onValueChange={handleRoleChange}
               disabled={isSaving || user.role === 'owner'}
             >
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -328,7 +328,7 @@ export function UserDetailPage() {
               {stores.map((store) => (
                 <div 
                   key={store.id}
-                  className="flex items-center justify-between p-3 border rounded-lg"
+                  className="flex flex-col gap-2 p-3 border rounded-lg sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="flex items-center gap-3">
                     <Store className="h-5 w-5 text-muted-foreground" />

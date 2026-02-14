@@ -199,7 +199,7 @@ export function StoreCreatePage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-between p-4 border rounded-lg">
+            <div className="flex flex-col gap-3 p-4 border rounded-lg sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <Label htmlFor="isActive">Loja ativa</Label>
                 <p className="text-sm text-muted-foreground">
@@ -214,7 +214,7 @@ export function StoreCreatePage() {
               />
             </div>
 
-            <div className="flex items-center gap-4 pt-4 border-t">
+            <div className="flex flex-col gap-3 pt-4 border-t sm:flex-row sm:items-center">
               <Button type="submit" disabled={isLoading}>
                 {isLoading ? (
                   <>

@@ -152,7 +152,7 @@ export default function BillingPage() {
       {/* Plano atual */}
       <Card>
         <CardContent className="p-6">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <Crown className="h-5 w-5 text-amber-500" />
@@ -162,7 +162,7 @@ export default function BillingPage() {
             <p className="text-muted-foreground mt-1">{currentPlan.description}</p>
             
             {billing && (
-              <div className="mt-4 flex items-center gap-4">
+              <div className="mt-4 flex flex-wrap items-center gap-2 sm:gap-4">
                 <span className={`px-3 py-1 rounded-full text-sm font-medium ${
                   getBillingStatusColor(billing.planStatus) === 'green' ? 'bg-green-100 text-green-800' :
                   getBillingStatusColor(billing.planStatus) === 'yellow' ? 'bg-yellow-100 text-yellow-800' :

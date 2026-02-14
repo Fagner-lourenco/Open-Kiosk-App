@@ -305,11 +305,11 @@ export function ReportsPage() {
       />
 
       {/* Filters */}
-      <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center">
         <div className="flex items-center gap-2">
           <Store className="h-4 w-4 text-muted-foreground" />
           <Select value={selectedStore} onValueChange={setSelectedStore}>
-            <SelectTrigger className="w-[200px]">
+            <SelectTrigger className="w-full md:w-[200px]">
               <SelectValue placeholder="Selecione a loja" />
             </SelectTrigger>
             <SelectContent>
@@ -326,7 +326,7 @@ export function ReportsPage() {
         <div className="flex items-center gap-2">
           <Calendar className="h-4 w-4 text-muted-foreground" />
           <Select value={dateRange} onValueChange={setDateRange}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-full md:w-[180px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -412,7 +412,7 @@ export function ReportsPage() {
 
           {/* Charts Section */}
           <Tabs defaultValue="revenue">
-            <TabsList>
+            <TabsList className="flex flex-wrap">
               <TabsTrigger value="revenue">Receita</TabsTrigger>
               <TabsTrigger value="orders">Pedidos</TabsTrigger>
               <TabsTrigger value="products">Produtos</TabsTrigger>

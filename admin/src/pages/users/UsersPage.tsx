@@ -259,9 +259,9 @@ export function UsersPage() {
                 return (
                   <div 
                     key={member.id}
-                    className="flex items-center justify-between p-4 hover:bg-muted"
+                    className="flex flex-col gap-3 p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                       <Avatar>
                         <AvatarImage src={member.photoURL} />
                         <AvatarFallback>
@@ -354,11 +354,11 @@ export function UsersPage() {
 
       {/* Stats */}
       {members.length > 0 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground pt-4 border-t">
+        <div className="flex flex-col gap-2 text-sm text-muted-foreground pt-4 border-t sm:flex-row sm:items-center sm:justify-between">
           <span>
             {filteredMembers.length} de {members.length} usuário(s)
           </span>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <span>{members.filter(m => m.role === 'owner').length} proprietário(s)</span>
             <span>{members.filter(m => m.role === 'manager').length} gerente(s)</span>
             <span>{members.filter(m => m.role === 'employee').length} funcionário(s)</span>

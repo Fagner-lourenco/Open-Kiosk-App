@@ -375,7 +375,7 @@ export function AuditPage() {
         }
         description={`Histórico de atividades em ${currentFranchise.name}`}
         actions={
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             {exportSuccess && (
               <Alert className="border-green-200 bg-green-50 py-2 text-green-800">
                 <CheckCircle className="h-4 w-4" />
@@ -411,7 +411,7 @@ export function AuditPage() {
         </div>
 
         <Select value={actionFilter} onValueChange={setActionFilter}>
-          <SelectTrigger className="w-[200px]">
+          <SelectTrigger className="w-full md:w-[200px]">
             <SelectValue placeholder="Filtrar por ação" />
           </SelectTrigger>
           <SelectContent>

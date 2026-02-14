@@ -317,7 +317,7 @@ export default function CreateFranchisePage() {
         </Card>
 
         {/* Actions */}
-        <div className="flex items-center justify-end gap-3 mt-6">
+        <div className="flex flex-col gap-3 mt-6 sm:flex-row sm:items-center sm:justify-end">
           <Button
             type="button"
             variant="outline"

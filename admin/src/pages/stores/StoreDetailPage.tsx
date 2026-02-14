@@ -289,8 +289,8 @@ export function StoreDetailPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-4">
           <Link to="/stores">
             <Button variant="ghost" size="icon" aria-label="Voltar para lojas">
               <ArrowLeft className="h-4 w-4" />
@@ -306,7 +306,7 @@ export function StoreDetailPage() {
             <p className="text-muted-foreground">{store.address || 'Sem endereço'}</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isEditMode ? (
             <>
               <Button variant="outline" onClick={() => navigate(`/stores/${storeId}`)}>
@@ -466,7 +466,7 @@ export function StoreDetailPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div className="flex flex-col gap-3 p-4 border rounded-lg sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <Label htmlFor="isActive">Loja ativa</Label>
                     <p className="text-sm text-muted-foreground">

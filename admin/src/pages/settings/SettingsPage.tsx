@@ -240,7 +240,7 @@ export function SettingsPage() {
       )}
 
       <Tabs defaultValue="general">
-        <TabsList>
+        <TabsList className="flex flex-wrap">
           <TabsTrigger value="general">
             <Settings className="mr-2 h-4 w-4" />
             Geral
@@ -327,7 +327,7 @@ export function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <Label>Novos pedidos</Label>
                   <p className="text-sm text-muted-foreground">
@@ -345,7 +345,7 @@ export function SettingsPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <Label>Estoque baixo</Label>
                   <p className="text-sm text-muted-foreground">
@@ -363,7 +363,7 @@ export function SettingsPage() {
                 />
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <Label>Novos membros</Label>
                   <p className="text-sm text-muted-foreground">
@@ -464,7 +464,7 @@ export function SettingsPage() {
                 </AlertDescription>
               </Alert>
               
-              <div className="flex items-center justify-between p-4 border rounded-lg opacity-60">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg opacity-60 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h4 className="font-medium">App Autenticador</h4>
                   <p className="text-sm text-muted-foreground">
@@ -474,7 +474,7 @@ export function SettingsPage() {
                 <Badge variant="secondary">Em breve</Badge>
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg opacity-60">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg opacity-60 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h4 className="font-medium">SMS</h4>
                   <p className="text-sm text-muted-foreground">
@@ -484,7 +484,7 @@ export function SettingsPage() {
                 <Badge variant="secondary">Em breve</Badge>
               </div>
 
-              <div className="flex items-center justify-between p-4 border rounded-lg opacity-60">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg opacity-60 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h4 className="font-medium">Email</h4>
                   <p className="text-sm text-muted-foreground">
@@ -505,7 +505,7 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Sessão atual real */}
-              <div className="flex items-center justify-between p-4 border rounded-lg bg-green-50 border-green-200">
+              <div className="flex flex-col gap-3 p-4 border rounded-lg bg-green-50 border-green-200 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
                     <Shield className="h-5 w-5 text-green-600" />

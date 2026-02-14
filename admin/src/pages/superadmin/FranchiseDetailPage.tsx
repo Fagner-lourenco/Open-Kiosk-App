@@ -307,7 +307,7 @@ export default function FranchiseDetailPage() {
             </>
           }
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button variant="outline" onClick={loadFranchise}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Atualizar
@@ -329,7 +329,7 @@ export default function FranchiseDetailPage() {
       </div>
 
       <Tabs defaultValue="details" className="space-y-4">
-        <TabsList>
+        <TabsList className="flex flex-wrap">
           <TabsTrigger value="details">Detalhes</TabsTrigger>
           <TabsTrigger value="stores">
             Lojas ({stores.length})
@@ -568,38 +568,40 @@ export default function FranchiseDetailPage() {
                   <p className="text-muted-foreground">Nenhuma loja cadastrada</p>
                 </div>
               ) : (
-                <Table aria-label="Tabela de lojas da franquia">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Nome</TableHead>
-                      <TableHead>Endereço</TableHead>
-                      <TableHead>Telefone</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {stores.map((store) => (
-                      <TableRow key={store.id}>
-                        <TableCell className="font-medium">
-                          {store.name}
-                        </TableCell>
-                        <TableCell>{store.address || '-'}</TableCell>
-                        <TableCell>{store.phone || '-'}</TableCell>
-                        <TableCell>
-                          <Badge
-                            className={
-                              store.isActive !== false
-                                ? 'bg-green-100 text-green-800'
-                                : 'bg-muted text-foreground'
-                            }
-                          >
-                            {store.isActive !== false ? 'Ativa' : 'Inativa'}
-                          </Badge>
-                        </TableCell>
+                <div className="w-full overflow-x-auto">
+                  <Table className="min-w-[720px]" aria-label="Tabela de lojas da franquia">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Nome</TableHead>
+                        <TableHead>Endereço</TableHead>
+                        <TableHead>Telefone</TableHead>
+                        <TableHead>Status</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {stores.map((store) => (
+                        <TableRow key={store.id}>
+                          <TableCell className="font-medium">
+                            {store.name}
+                          </TableCell>
+                          <TableCell>{store.address || '-'}</TableCell>
+                          <TableCell>{store.phone || '-'}</TableCell>
+                          <TableCell>
+                            <Badge
+                              className={
+                                store.isActive !== false
+                                  ? 'bg-green-100 text-green-800'
+                                  : 'bg-muted text-foreground'
+                              }
+                            >
+                              {store.isActive !== false ? 'Ativa' : 'Inativa'}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -624,32 +626,34 @@ export default function FranchiseDetailPage() {
                   <p className="text-muted-foreground">Nenhum membro cadastrado</p>
                 </div>
               ) : (
-                <Table aria-label="Tabela de membros da franquia">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Nome</TableHead>
-                      <TableHead>Função</TableHead>
-                      <TableHead>Adicionado em</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {members.map((member) => (
-                      <TableRow key={member.id}>
-                        <TableCell className="font-medium">
-                          {member.email}
-                        </TableCell>
-                        <TableCell>{member.displayName || '-'}</TableCell>
-                        <TableCell>
-                          <Badge className={getRoleBadge(member.role)}>
-                            {member.role}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{formatDate(member.addedAt)}</TableCell>
+                <div className="w-full overflow-x-auto">
+                  <Table className="min-w-[720px]" aria-label="Tabela de membros da franquia">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Nome</TableHead>
+                        <TableHead>Função</TableHead>
+                        <TableHead>Adicionado em</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {members.map((member) => (
+                        <TableRow key={member.id}>
+                          <TableCell className="font-medium">
+                            {member.email}
+                          </TableCell>
+                          <TableCell>{member.displayName || '-'}</TableCell>
+                          <TableCell>
+                            <Badge className={getRoleBadge(member.role)}>
+                              {member.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{formatDate(member.addedAt)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
             </CardContent>
           </Card>
