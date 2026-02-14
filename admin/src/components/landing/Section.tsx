@@ -31,14 +31,14 @@ export default function Section({
   className,
 }: SectionProps) {
   return (
-    <section id={id} className={`scroll-mt-24 py-16 md:py-24 ${className ?? ''}`.trim()}>
+    <section id={id} className={`scroll-mt-20 md:scroll-mt-24 py-12 md:py-24 ${className ?? ''}`.trim()}>
       <div className="container mx-auto px-4">
-        <div className="mb-12 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-foreground">
+        <div className="mb-8 md:mb-12 text-center">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-foreground">
             {title}
           </h2>
           {subtitle && (
-            <p className="mt-4 text-muted-foreground max-w-2xl mx-auto">
+            <p className="mt-3 md:mt-4 text-[15px] text-muted-foreground max-w-2xl mx-auto leading-relaxed">
               {subtitle}
             </p>
           )}

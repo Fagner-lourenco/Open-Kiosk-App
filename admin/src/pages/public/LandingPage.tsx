@@ -33,6 +33,7 @@ import RegionsSection from '@/components/landing/RegionsSection';
 import WhatsAppGroupModal from '@/components/landing/WhatsAppGroupModal';
 import ExitIntentModal from '@/components/landing/ExitIntentModal';
 import HowItWorksTabs from '@/components/landing/HowItWorksTabs';
+import MobileCTABar from '@/components/landing/MobileCTABar';
 import { trackEvent, AnalyticsEvents } from '@/lib/analytics';
 
 /* ——— Cores constantes do tema dark (hero + footer) ——— */
@@ -115,7 +116,7 @@ export function LandingPage() {
 
       {/* ═══════════════════════ HERO (dark) ═══════════════════════ */}
       <section
-        className="relative overflow-hidden text-white py-24 md:py-36"
+        className="relative overflow-hidden text-white py-16 sm:py-24 md:py-36"
         style={{ background: DARK_BG }}
       >
         {/* Decorações */}
@@ -137,7 +138,7 @@ export function LandingPage() {
 
         <div className="container mx-auto px-4 text-center relative z-10">
           {/* Badge */}
-          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 backdrop-blur px-4 py-1.5 text-sm text-white/70 mb-8">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 backdrop-blur px-3 sm:px-4 py-1.5 text-xs sm:text-sm text-white/70 mb-6 sm:mb-8">
             <span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
@@ -145,22 +146,22 @@ export function LandingPage() {
             Atendendo eventos em todo o Sul do Brasil
           </div>
 
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.1]">
+          <h1 className="text-3xl sm:text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.1]">
             Chope self&#8209;service para{' '}
             <span className="text-amber-400">eventos</span> e{' '}
             <span className="text-amber-400">franquias</span>
           </h1>
 
-          <p className="mt-6 text-lg md:text-xl text-white/70 max-w-2xl mx-auto leading-relaxed">
+          <p className="mt-4 sm:mt-6 text-base sm:text-lg md:text-xl text-white/70 max-w-2xl mx-auto leading-relaxed">
             {HERO_SUBHEADLINE}
           </p>
 
           {/* CTAs */}
-          <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <div className="mt-8 sm:mt-10 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4">
             <a
               href="#contato-evento"
               onClick={() => trackEvent(AnalyticsEvents.HERO_CTA_EVENTO)}
-              className="inline-flex items-center gap-2 rounded-lg bg-amber-400 px-8 py-4 text-lg font-bold text-black shadow-lg shadow-amber-400/20 hover:bg-amber-300 hover:shadow-xl hover:shadow-amber-400/30 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F14]"
+              className="inline-flex w-full sm:w-auto h-12 items-center justify-center gap-2 rounded-lg bg-amber-400 px-8 text-lg font-bold text-black shadow-lg shadow-amber-400/20 hover:bg-amber-300 hover:shadow-xl hover:shadow-amber-400/30 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F14]"
             >
               Quero para meu evento
               <ArrowRight className="h-5 w-5" />
@@ -168,7 +169,7 @@ export function LandingPage() {
             <a
               href="#contato-franquia"
               onClick={() => trackEvent(AnalyticsEvents.HERO_CTA_FRANQUIA)}
-              className="inline-flex items-center gap-2 rounded-lg border border-white/20 bg-white/5 px-8 py-4 text-lg font-medium text-white hover:bg-white/10 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F14]"
+              className="inline-flex w-full sm:w-auto h-12 items-center justify-center gap-2 rounded-lg border border-white/20 bg-white/5 px-8 text-lg font-medium text-white hover:bg-white/10 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0F14]"
             >
               Quero ser franqueado
             </a>
@@ -180,14 +181,14 @@ export function LandingPage() {
           </p>
 
           {/* Stats */}
-          <div className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
+          <div className="mt-10 sm:mt-16 grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 max-w-4xl mx-auto">
             {[STATS.events, STATS.liters, STATS.people, STATS.satisfaction].map(
               (value) => (
                 <div
                   key={value}
-                  className="rounded-xl border border-white/10 bg-white/5 backdrop-blur p-5 hover:bg-white/10 transition-colors"
+                  className="rounded-xl border border-white/10 bg-white/5 backdrop-blur p-3 sm:p-5 hover:bg-white/10 transition-colors"
                 >
-                  <span className="text-lg md:text-xl font-bold text-amber-400">
+                  <span className="text-sm sm:text-lg md:text-xl font-bold text-amber-400">
                     {value}
                   </span>
                 </div>
@@ -209,9 +210,9 @@ export function LandingPage() {
         title="Como funciona"
         subtitle="Descubra como nossos totens transformam a experiência de consumo."
       >
-        <div className="grid gap-8 md:grid-cols-2">
+        <div className="grid gap-6 md:gap-8 md:grid-cols-2">
           {/* Eventos */}
-          <div className="bg-card rounded-xl border p-6 md:p-8 hover:shadow-lg transition-shadow">
+          <div className="bg-card rounded-xl border p-5 sm:p-6 md:p-8 hover:shadow-lg transition-shadow">
             <h3 className="text-2xl font-semibold mb-8">Para eventos</h3>
             <ol className="space-y-8 relative">
               <div className="absolute left-5 top-2 bottom-2 w-px bg-gradient-to-b from-primary/40 via-primary/20 to-transparent" />
@@ -234,7 +235,7 @@ export function LandingPage() {
           </div>
 
           {/* Franqueados */}
-          <div className="bg-card rounded-xl border p-6 md:p-8 hover:shadow-lg transition-shadow">
+          <div className="bg-card rounded-xl border p-5 sm:p-6 md:p-8 hover:shadow-lg transition-shadow">
             <h3 className="text-2xl font-semibold mb-8">Para franqueados</h3>
             <ol className="space-y-8 relative">
               <div className="absolute left-5 top-2 bottom-2 w-px bg-gradient-to-b from-primary/40 via-primary/20 to-transparent" />
@@ -278,8 +279,8 @@ export function LandingPage() {
           </p>
         </div>
 
-        <div className="grid gap-8 md:grid-cols-2 items-center">
-          <div className="space-y-6">
+        <div className="grid gap-6 md:gap-8 md:grid-cols-2 items-center">
+          <div className="space-y-5 sm:space-y-6">
             <div>
               <h4 className="text-xl font-semibold mb-3">O que entregamos</h4>
               <ul className="space-y-2.5 text-muted-foreground text-[15px]">
@@ -316,7 +317,7 @@ export function LandingPage() {
             </div>
           </div>
           <div className="flex items-center justify-center">
-            <div className="w-full h-72 bg-gradient-to-br from-primary/5 to-primary/10 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-primary/20 gap-3">
+            <div className="w-full h-56 sm:h-72 bg-gradient-to-br from-primary/5 to-primary/10 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-primary/20 gap-3">
               <Store className="h-14 w-14 text-primary/30" />
               <span className="text-sm text-muted-foreground">
                 Imagem do totem*
@@ -332,16 +333,16 @@ export function LandingPage() {
         title="Franquia"
         subtitle="Ofereça autosserviço no seu negócio e tenha receita recorrente."
       >
-        <div className="grid gap-8 md:grid-cols-2 items-center">
+        <div className="grid gap-6 md:gap-8 md:grid-cols-2 items-center">
           <div className="flex items-center justify-center order-2 md:order-1">
-            <div className="w-full h-72 bg-gradient-to-br from-primary/5 to-primary/10 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-primary/20 gap-3">
+            <div className="w-full h-56 sm:h-72 bg-gradient-to-br from-primary/5 to-primary/10 flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-primary/20 gap-3">
               <Store className="h-14 w-14 text-primary/30" />
               <span className="text-sm text-muted-foreground">
                 Imagem da franquia*
               </span>
             </div>
           </div>
-          <div className="space-y-6 order-1 md:order-2">
+          <div className="space-y-5 sm:space-y-6 order-1 md:order-2">
             <div>
               <h4 className="text-xl font-semibold mb-3">
                 O que está incluído
@@ -394,7 +395,7 @@ export function LandingPage() {
         subtitle="Administre seu negócio com tecnologia avançada."
         className="bg-muted/40"
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
           {/* Card grande (dashboard mock) */}
           {(() => {
             const feat = APP_FEATURES[0];
@@ -454,7 +455,7 @@ export function LandingPage() {
           {BENEFITS.map((benefit) => (
             <div
               key={benefit.title}
-              className="flex flex-col items-center text-center p-6 rounded-xl border bg-card hover:shadow-lg hover:border-primary/20 hover:-translate-y-1 transition-all duration-300 group"
+              className="flex flex-col items-center text-center p-5 sm:p-6 rounded-xl border bg-card hover:shadow-lg hover:border-primary/20 hover:-translate-y-1 transition-all duration-300 group"
             >
               <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 group-hover:bg-primary/20 group-hover:scale-110 transition-all duration-300">
                 <benefit.icon className="h-6 w-6 text-primary" />
@@ -484,7 +485,7 @@ export function LandingPage() {
         title="Planos e modelo comercial"
         subtitle="Escolha o formato ideal para o seu evento ou negócio."
       >
-        <div className="grid gap-8 md:grid-cols-2 max-w-4xl mx-auto">
+        <div className="grid gap-6 sm:gap-8 md:grid-cols-2 max-w-4xl mx-auto">
           {/* Evento */}
           <Card className="relative group hover:shadow-xl transition-all duration-300 border-primary/30 shadow-md">
             <div className="absolute -top-3 left-6 z-10">
@@ -591,9 +592,9 @@ export function LandingPage() {
         <span id="contato-franquia" className="sr-only" />
         <span id="contato-representante" className="sr-only" />
 
-        <div className="grid gap-10 md:grid-cols-[1fr_1.2fr] items-start max-w-5xl mx-auto">
-          {/* Sidebar com benefícios */}
-          <div className="bg-card rounded-xl border p-6 md:p-8 space-y-6">
+        <div className="grid gap-8 md:grid-cols-[1fr_1.2fr] items-start max-w-5xl mx-auto">
+          {/* Sidebar com benefícios — mobile: depois do form */}
+          <div className="bg-card rounded-xl border p-5 sm:p-6 md:p-8 space-y-5 sm:space-y-6 order-2 md:order-1">
             <h3 className="text-xl font-bold">O que você recebe</h3>
             <div className="space-y-4">
               {[
@@ -647,7 +648,7 @@ export function LandingPage() {
           </div>
 
           {/* Formulário */}
-          <div>
+          <div className="order-1 md:order-2">
             <ContactForm />
           </div>
         </div>
@@ -655,11 +656,11 @@ export function LandingPage() {
 
       {/* ═══════════════════════ FOOTER (dark) ═══════════════════════ */}
       <footer
-        className="py-12 text-white"
+        className="py-10 md:py-12 pb-24 md:pb-12 text-white"
         style={{ background: DARK_BG }}
       >
         <div className="container mx-auto px-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex flex-col items-center gap-5 md:flex-row md:justify-between md:gap-6">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-amber-400/20 flex items-center justify-center">
                 <Beer className="h-3.5 w-3.5 text-amber-400" />
@@ -667,7 +668,7 @@ export function LandingPage() {
               <span className="font-semibold">{BRAND_NAME}</span>
             </div>
 
-            <nav className="flex gap-4 text-sm text-white/50 flex-wrap justify-center">
+            <nav className="flex gap-3 sm:gap-4 text-sm text-white/50 flex-wrap justify-center">
               {NAV_ITEMS.map((item) => (
                 <a
                   key={item.href}
@@ -708,6 +709,8 @@ export function LandingPage() {
       />
 
       <ExitIntentModal cooldownDays={3} armAfterMs={10000} />
+
+      <MobileCTABar />
     </div>
   );
 }

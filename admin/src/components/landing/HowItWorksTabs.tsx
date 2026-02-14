@@ -88,7 +88,7 @@ export default function HowItWorksTabs() {
   return (
     <section
       id="como-funciona-autosservico"
-      className="scroll-mt-24 py-16 md:py-24 bg-muted/40"
+      className="scroll-mt-20 md:scroll-mt-24 py-12 md:py-24 bg-muted/40"
     >
       <div className="container mx-auto px-4">
         {/* Header */}
@@ -109,7 +109,7 @@ export default function HowItWorksTabs() {
             role="tablist"
             aria-label="Passos do autosserviço"
             className={cn(
-              'flex w-full max-w-2xl gap-2 overflow-x-auto',
+              'flex w-full max-w-3xl gap-2 overflow-x-auto',
               'rounded-2xl border bg-background/80 p-1.5 backdrop-blur',
               'scrollbar-none snap-x snap-mandatory',
             )}
@@ -130,7 +130,7 @@ export default function HowItWorksTabs() {
                   tabIndex={selected ? 0 : -1}
                   onClick={() => setActive(i)}
                   className={cn(
-                    'flex-1 min-w-0 snap-start whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
+                    'flex-none sm:flex-1 min-w-[170px] sm:min-w-0 snap-start whitespace-nowrap rounded-xl px-4 py-2.5 text-sm font-semibold transition-all',
                     'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2',
                     selected
                       ? 'bg-primary text-primary-foreground shadow-sm'
@@ -194,7 +194,7 @@ export default function HowItWorksTabs() {
             </div>
 
             {/* Mídia placeholder */}
-            <div className="relative min-h-[280px] md:min-h-full bg-gradient-to-br from-primary/10 via-primary/5 to-muted/50">
+            <div className="relative min-h-[220px] sm:min-h-[280px] md:min-h-full bg-gradient-to-br from-primary/10 via-primary/5 to-muted/50">
               {/* Overlay pattern */}
               <div
                 className="absolute inset-0 opacity-[0.04]"
