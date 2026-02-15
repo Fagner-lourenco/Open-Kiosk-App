@@ -154,6 +154,78 @@ export interface CreateOrderRequest {
   items?: Order['items'];
 }
 
+/**
+ * Dados do pagador retornados pela API de Payments (/v1/payments/{id})
+ * Disponível após o pagamento ser aprovado.
+ */
+export interface PaymentPayer {
+  id?: number;
+  first_name?: string;
+  last_name?: string;
+  email?: string;
+  identification?: {
+    type?: string;  // 'CPF', 'CNPJ'
+    number?: string;
+  };
+}
+
+/**
+ * Resposta da API /v1/payments/{id}
+ * Contém dados detalhados do pagamento incluindo pagador e cartão.
+ */
+export interface PaymentDetail {
+  id: number;
+  status: string;
+  status_detail?: string;
+  transaction_amount?: number;
+  currency_id?: string;
+  description?: string;
+  payment_method_id?: string;  // 'visa', 'master', 'pix', etc.
+  payment_type_id?: string;    // 'credit_card', 'debit_card', 'bank_transfer'
+  installments?: number;
+  payer: PaymentPayer;
+  card?: {
+    id?: number;
+    first_six_digits?: string;
+    last_four_digits?: string;
+    cardholder?: {
+      name?: string;
+      identification?: {
+        type?: string;
+        number?: string;
+      };
+    };
+  };
+  point_of_interaction?: {
+    type?: string;    // 'CHECKOUT', 'POS', 'MPOS'
+    business_info?: {
+      unit?: string;
+      sub_unit?: string;
+    };
+  };
+  date_approved?: string;
+  date_created?: string;
+  external_reference?: string;
+}
+
+/**
+ * Dados do cliente extraídos do pagamento MP para gravar no Firestore
+ */
+export interface MercadoPagoCustomerData {
+  customerName?: string;
+  customerEmail?: string;
+  customerIdentification?: string;
+  mpOrderId: string;
+  mpPaymentId?: string;
+  paymentMethodId?: string;   // 'visa', 'master', 'pix'
+  paymentTypeId?: string;     // 'credit_card', 'debit_card', 'bank_transfer'
+  cardBrand?: string;         // 'visa', 'master'
+  cardLastDigits?: string;    // '1234'
+  cardholderName?: string;
+  installments?: number;
+  dateApproved?: string;
+}
+
 export interface MercadoPagoError {
   status: number;
   error: string;

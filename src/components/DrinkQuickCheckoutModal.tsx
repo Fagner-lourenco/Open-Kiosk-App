@@ -160,8 +160,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       });
       updateProcessingStage("payment_approved");
       
+      // Buscar dados do pagador (nome, email, cartão) em background — não bloqueia dispense
+      const orderNumber = orderNumberRef.current;
+      paymentService.fetchPayerDataFromOrder(order, gatewayConfig)
+        .then(async (customerData) => {
+          if (customerData && orderNumber) {
+            await salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId());
+          }
+        })
+        .catch((err) => {
+          console.warn('[DrinkMP] Falha ao enriquecer com dados do pagador (não-bloqueante):', err);
+        });
+
       // Continuar com o fluxo pós-pagamento usando o orderNumber salvo
-      await finishPaymentFlow(orderNumberRef.current);
+      await finishPaymentFlow(orderNumber);
     },
     onError: (errorMsg) => {
       console.error('[DrinkMP] Erro no polling:', errorMsg);
@@ -836,6 +848,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
       if (response.status === 'paid') {
         updateProcessingStage("payment_approved");
+        // Enriquecer order com dados do cliente PagBank (fire-and-forget)
+        salesService.enrichOrderWithCustomerData(orderNumber, {
+          customerName: payerName || undefined,
+          customerEmail: payerEmail || undefined,
+          customerIdentification: payerTaxId || undefined,
+          gatewayProvider: 'pagbank',
+          gatewayOrderId: response.providerOrderId || undefined,
+          gatewayPaymentId: response.paymentId || undefined,
+          cardLastDigits: response.cardLast4 || undefined,
+        }, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
         try {
           await finishPaymentFlow(orderNumber);
         } catch (error) {
@@ -880,6 +902,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             });
             cleanupPagBankListener();
             updateProcessingStage("payment_approved");
+            // Enriquecer order com dados do cliente PagBank (fire-and-forget)
+            salesService.enrichOrderWithCustomerData(orderNumberRef.current, {
+              customerName: payerName || undefined,
+              customerEmail: payerEmail || undefined,
+              customerIdentification: payerTaxId || undefined,
+              gatewayProvider: 'pagbank',
+              gatewayOrderId: payment.providerOrderId || undefined,
+              gatewayPaymentId: payment.id || undefined,
+              cardLastDigits: (payment as any).cardLast4 || undefined,
+            }, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
             try {
               await finishPaymentFlow(orderNumberRef.current);
             } catch (error) {

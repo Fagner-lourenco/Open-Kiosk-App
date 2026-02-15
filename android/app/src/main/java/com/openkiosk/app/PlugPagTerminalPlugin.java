@@ -1,5 +1,9 @@
 package com.openkiosk.app;
 
+import android.Manifest;
+import android.content.Intent;
+import android.os.Build;
+import android.provider.Settings;
 import android.util.Log;
 
 import com.getcapacitor.JSObject;
@@ -7,69 +11,325 @@ import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.PermissionState;
+
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+import br.com.uol.pagseguro.plugpag.PlugPag;
+import br.com.uol.pagseguro.plugpag.PlugPagAbortResult;
+import br.com.uol.pagseguro.plugpag.PlugPagActivationData;
+import br.com.uol.pagseguro.plugpag.PlugPagAppIdentification;
+import br.com.uol.pagseguro.plugpag.PlugPagDevice;
+import br.com.uol.pagseguro.plugpag.PlugPagEventData;
+import br.com.uol.pagseguro.plugpag.PlugPagEventListener;
+import br.com.uol.pagseguro.plugpag.PlugPagInitializationResult;
+import br.com.uol.pagseguro.plugpag.PlugPagPaymentData;
+import br.com.uol.pagseguro.plugpag.PlugPagTransactionResult;
+import br.com.uol.pagseguro.plugpag.PlugPagVoidData;
+import br.com.uol.pagseguro.plugpag.IPlugPag;
 
 /**
- * PlugPagTerminalPlugin — Phase 1 Skeleton (mini-spike)
+ * PlugPagTerminalPlugin — Full integration with PagBank PlugPag SDK 4.11.0
  *
- * <p>Capacitor bridge for PagBank PlugPag SDK 4.x (Bluetooth Classic).
- * This skeleton provides lifecycle methods and call signatures; actual
- * PlugPag SDK dependency will be added when the .aar is integrated.
- *
- * <p>Thread model:
- *   - Capacitor plugin methods run on the WebView thread.
- *   - PlugPag SDK calls MUST run on a background thread (blocking I/O).
- *   - We use {@code execute(Runnable, ...)} for async bridge calls.
+ * <p>Capacitor bridge for card-present payments via Bluetooth Classic terminal.
  *
  * <p>Security invariants:
  *   - PAN/CVV/track data NEVER cross the bridge.
- *   - Only cardBrand, cardLast4, authCode, nsu, and status are returned.
- *   - holderName is PII — returned but callers must mask before persist.
+ *   - Only allowlisted fields returned to JS (see {@link #buildSafeResult}).
+ *   - holderName is PII — returned only if needed; callers must mask before persist.
+ *   - No sensitive data in logs.
+ *
+ * <p>Thread model:
+ *   - All PlugPag SDK calls run on a single-thread executor (blocking I/O).
+ *   - Capacitor plugin methods are non-blocking on the WebView thread.
+ *   - Events are dispatched to JS via notifyListeners().
  */
-@CapacitorPlugin(name = "PlugPagTerminal")
+@CapacitorPlugin(
+    name = "PlugPagTerminal",
+    permissions = {
+        @Permission(
+            alias = "bluetooth",
+            strings = {
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN
+            }
+        )
+    }
+)
 public class PlugPagTerminalPlugin extends Plugin {
     private static final String TAG = "PlugPagTerminal";
 
-    // PlugPag instance placeholder (will be: private PlugPag plugPag;)
-    private boolean initialized = false;
+    // Single-thread executor — PlugPag SDK is NOT thread-safe
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    private PlugPag plugPag;
+    private boolean btConnected = false;
+    private String connectedDeviceId;
 
     // =========================================================================
     // Lifecycle
     // =========================================================================
 
     /**
-     * Initialize PlugPag SDK with Bluetooth MAC address of the terminal.
+     * Initialize PlugPag SDK instance (does NOT connect yet).
+     * Must be called once before any other method.
      *
-     * Expected params:
-     *   macAddress: string   — e.g. "00:1B:66:XX:YY:ZZ"
-     *   appName:    string   — e.g. "OpenKiosk"
-     *   appVersion: string   — e.g. "1.0.0"
+     * Params: appName (string), appVersion (string)
      */
     @PluginMethod()
     public void initialize(PluginCall call) {
-        String macAddress = call.getString("macAddress", "");
         String appName = call.getString("appName", "OpenKiosk");
         String appVersion = call.getString("appVersion", "1.0.0");
 
-        if (macAddress == null || macAddress.isEmpty()) {
-            call.reject("macAddress é obrigatório");
+        Log.i(TAG, "initialize: app=" + appName + "/" + appVersion);
+
+        try {
+            PlugPagAppIdentification appId = new PlugPagAppIdentification(appName, appVersion);
+            plugPag = new PlugPag(getContext());
+
+            // Set event listener for SDK state changes
+            plugPag.setEventListener(new PlugPagEventListener() {
+                @Override
+                public int onEvent(PlugPagEventData eventData) {
+                    JSObject evt = new JSObject();
+                    evt.put("eventCode", eventData.getEventCode());
+                    evt.put("message", eventData.getCustomMessage());
+                    notifyListeners("plugpagEvent", evt);
+                    return 0;
+                }
+            });
+
+            JSObject ret = new JSObject();
+            ret.put("initialized", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            Log.e(TAG, "initialize failed", e);
+            call.reject("Falha ao inicializar PlugPag: " + e.getMessage(), "INIT_ERROR");
+        }
+    }
+
+    // =========================================================================
+    // Permissions
+    // =========================================================================
+
+    /**
+     * Request Bluetooth permissions (Android 12+).
+     * On older APIs, permissions are granted at install time.
+     */
+    @PluginMethod()
+    public void requestPermissions(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (getPermissionState("bluetooth") == PermissionState.GRANTED) {
+                JSObject ret = new JSObject();
+                ret.put("granted", true);
+                call.resolve(ret);
+                return;
+            }
+            requestPermissionForAlias("bluetooth", call, "btPermissionCallback");
+        } else {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            call.resolve(ret);
+        }
+    }
+
+    @PermissionCallback
+    private void btPermissionCallback(PluginCall call) {
+        boolean granted = getPermissionState("bluetooth") == PermissionState.GRANTED;
+        JSObject ret = new JSObject();
+        ret.put("granted", granted);
+        if (!granted) {
+            ret.put("message", "Permissão Bluetooth negada. Vá em Configurações para habilitar.");
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * Open device Bluetooth settings (for pairing).
+     */
+    @PluginMethod()
+    public void openBluetoothSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Não foi possível abrir configurações BT", "BT_SETTINGS_ERROR");
+        }
+    }
+
+    // =========================================================================
+    // Connection
+    // =========================================================================
+
+    /**
+     * Connect to the terminal via Bluetooth Classic.
+     *
+     * Params: deviceId (string) — Bluetooth MAC address e.g. "00:1B:66:XX:YY:ZZ"
+     */
+    @PluginMethod()
+    public void connect(PluginCall call) {
+        if (!assertInitialized(call)) return;
+
+        String deviceId = call.getString("deviceId", "");
+        if (deviceId == null || deviceId.isEmpty()) {
+            call.reject("deviceId (MAC address) é obrigatório", "INVALID_DEVICE");
             return;
         }
 
-        Log.i(TAG, "initialize: macAddress=" + macAddress + " app=" + appName + "/" + appVersion);
+        Log.i(TAG, "connect: deviceId=" + deviceId);
 
-        // TODO Phase 1: Instantiate PlugPag with PlugPagCustomPrinterLayout,
-        //               PlugPagAppIdentification, and Bluetooth connector.
-        //
-        // PlugPagAppIdentification appId = new PlugPagAppIdentification(appName, appVersion);
-        // plugPag = new PlugPag(getContext(), appId);
-        // plugPag.initBTConnection(new PlugPagDevice(macAddress));
+        executor.execute(() -> {
+            try {
+                PlugPagDevice device = new PlugPagDevice(deviceId);
+                int result = plugPag.initBTConnection(device);
 
-        this.initialized = true;
+                if (result == IPlugPag.RET_OK) {
+                    btConnected = true;
+                    connectedDeviceId = deviceId;
+                    Log.i(TAG, "BT connected successfully");
+
+                    JSObject ret = new JSObject();
+                    ret.put("connected", true);
+                    ret.put("deviceId", deviceId);
+                    call.resolve(ret);
+
+                    JSObject connEvt = new JSObject();
+                    connEvt.put("status", "connected");
+                    connEvt.put("deviceId", deviceId);
+                    notifyListeners("plugpagConnection", connEvt);
+                } else {
+                    btConnected = false;
+                    call.reject("Falha na conexão BT (código: " + result + ")", "BT_CONNECT_ERROR");
+
+                    JSObject connEvt = new JSObject();
+                    connEvt.put("status", "error");
+                    connEvt.put("deviceId", deviceId);
+                    connEvt.put("code", result);
+                    notifyListeners("plugpagConnection", connEvt);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "connect exception", e);
+                btConnected = false;
+                call.reject("Exceção ao conectar BT: " + e.getMessage(), "BT_CONNECT_EXCEPTION");
+            }
+        });
+    }
+
+    /**
+     * Disconnect from the terminal.
+     */
+    @PluginMethod()
+    public void disconnect(PluginCall call) {
+        Log.i(TAG, "disconnect");
+        btConnected = false;
+        connectedDeviceId = null;
 
         JSObject ret = new JSObject();
-        ret.put("connected", true);
-        ret.put("macAddress", macAddress);
+        ret.put("disconnected", true);
         call.resolve(ret);
+
+        JSObject connEvt = new JSObject();
+        connEvt.put("status", "disconnected");
+        notifyListeners("plugpagConnection", connEvt);
+    }
+
+    // =========================================================================
+    // Authentication
+    // =========================================================================
+
+    /**
+     * Check if terminal is authenticated (activated with PagBank).
+     */
+    @PluginMethod()
+    public void isAuthenticated(PluginCall call) {
+        if (!assertInitialized(call)) return;
+
+        executor.execute(() -> {
+            try {
+                boolean auth = plugPag.isAuthenticated();
+                JSObject ret = new JSObject();
+                ret.put("authenticated", auth);
+                call.resolve(ret);
+            } catch (Exception e) {
+                Log.e(TAG, "isAuthenticated exception", e);
+                call.reject("Erro ao verificar autenticação: " + e.getMessage(), "AUTH_CHECK_ERROR");
+            }
+        });
+    }
+
+    /**
+     * Request authentication (activation) with PagBank.
+     *
+     * Params: activationCode (string) — código de ativação do PagBank
+     */
+    @PluginMethod()
+    public void requestAuthentication(PluginCall call) {
+        if (!assertInitialized(call)) return;
+
+        String activationCode = call.getString("activationCode", "");
+        if (activationCode == null || activationCode.isEmpty()) {
+            call.reject("activationCode é obrigatório", "INVALID_ACTIVATION");
+            return;
+        }
+
+        Log.i(TAG, "requestAuthentication: starting activation flow");
+
+        executor.execute(() -> {
+            try {
+                PlugPagActivationData activationData = new PlugPagActivationData(activationCode);
+                PlugPagInitializationResult result = plugPag.initializeAndActivatePinpad(activationData);
+
+                if (result.getResult() == IPlugPag.RET_OK) {
+                    Log.i(TAG, "Authentication successful");
+                    JSObject ret = new JSObject();
+                    ret.put("authenticated", true);
+                    call.resolve(ret);
+
+                    JSObject authEvt = new JSObject();
+                    authEvt.put("status", "authenticated");
+                    notifyListeners("plugpagAuth", authEvt);
+                } else {
+                    String errorMsg = result.getErrorMessage() != null ? result.getErrorMessage() : "Erro de ativação";
+                    Log.w(TAG, "Authentication failed: " + errorMsg);
+                    call.reject("Ativação falhou: " + errorMsg, "AUTH_FAILED");
+
+                    JSObject authEvt = new JSObject();
+                    authEvt.put("status", "error");
+                    authEvt.put("message", errorMsg);
+                    notifyListeners("plugpagAuth", authEvt);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "requestAuthentication exception", e);
+                call.reject("Exceção na ativação: " + e.getMessage(), "AUTH_EXCEPTION");
+            }
+        });
+    }
+
+    /**
+     * Invalidate authentication (deactivation).
+     */
+    @PluginMethod()
+    public void invalidateAuthentication(PluginCall call) {
+        if (!assertInitialized(call)) return;
+
+        executor.execute(() -> {
+            try {
+                int result = plugPag.invalidateAuthentication();
+                JSObject ret = new JSObject();
+                ret.put("invalidated", result == IPlugPag.RET_OK);
+                call.resolve(ret);
+            } catch (Exception e) {
+                Log.e(TAG, "invalidateAuthentication exception", e);
+                call.reject("Erro ao invalidar autenticação: " + e.getMessage(), "DEAUTH_ERROR");
+            }
+        });
     }
 
     // =========================================================================
@@ -79,108 +339,222 @@ public class PlugPagTerminalPlugin extends Plugin {
     /**
      * Start a card-present payment on the PlugPag terminal.
      *
-     * Expected params:
-     *   amount:        number  — total in cents (e.g. 1500 = R$15,00)
-     *   type:          string  — "CREDIT" | "DEBIT"
-     *   installments:  number  — 1 for à vista (v1: always 1)
-     *   printReceipt:  boolean — whether the terminal should print receipt
-     *
-     * Resolves with: { approved, cardBrand, cardLast4, nsu, authCode, transactionId, message }
-     * Rejects with:  { code, message }
+     * Params:
+     *   amountCents:    number  — total in cents (e.g. 1500 = R$15,00)
+     *   type:           string  — "CREDIT" | "DEBIT"
+     *   installments:   number  — 1 for à vista (default)
+     *   userReference:  string  — order reference for reconciliation
+     *   printReceipt:   boolean — whether the terminal should print receipt
      */
     @PluginMethod()
     public void startPayment(PluginCall call) {
-        if (!initialized) {
-            call.reject("Terminal não inicializado. Chame initialize() primeiro.", "NOT_INITIALIZED");
-            return;
-        }
+        if (!assertReady(call)) return;
 
-        Integer amount = call.getInt("amount");
+        Integer amountCents = call.getInt("amountCents");
         String type = call.getString("type", "DEBIT");
         Integer installments = call.getInt("installments", 1);
+        String userReference = call.getString("userReference", "");
         Boolean printReceipt = call.getBoolean("printReceipt", false);
 
-        if (amount == null || amount <= 0) {
-            call.reject("amount obrigatório e > 0", "INVALID_AMOUNT");
+        if (amountCents == null || amountCents <= 0) {
+            call.reject("amountCents obrigatório e > 0", "INVALID_AMOUNT");
             return;
         }
 
-        Log.i(TAG, "startPayment: amount=" + amount + " type=" + type + " installments=" + installments);
+        int paymentType;
+        if ("CREDIT".equalsIgnoreCase(type)) {
+            paymentType = IPlugPag.TYPE_CREDITO;
+        } else if ("DEBIT".equalsIgnoreCase(type)) {
+            paymentType = IPlugPag.TYPE_DEBITO;
+        } else {
+            call.reject("type deve ser CREDIT ou DEBIT", "INVALID_TYPE");
+            return;
+        }
 
-        // TODO Phase 1: Execute on background thread
-        // execute(() -> {
-        //     PlugPagPaymentData paymentData = new PlugPagPaymentData(
-        //         type.equals("CREDIT") ? PlugPag.TYPE_CREDITO : PlugPag.TYPE_DEBITO,
-        //         amount,
-        //         installments != null ? installments : 1,
-        //         printReceipt != null && printReceipt
-        //             ? PlugPag.PRINTER_ON : PlugPag.PRINTER_OFF,
-        //         null // user reference
-        //     );
-        //
-        //     PlugPagTransactionResult result = plugPag.doPayment(paymentData);
-        //
-        //     if (result.getResult() == PlugPag.RET_OK) {
-        //         JSObject ret = new JSObject();
-        //         ret.put("approved", true);
-        //         ret.put("cardBrand", result.getCardBrand());
-        //         ret.put("cardLast4", result.getBin()); // last 4
-        //         ret.put("nsu", result.getNsu());
-        //         ret.put("authCode", result.getAutoCode());
-        //         ret.put("transactionId", result.getTransactionId());
-        //         ret.put("message", result.getMessage());
-        //         call.resolve(ret);
-        //     } else {
-        //         call.reject(result.getMessage(), String.valueOf(result.getResult()));
-        //     }
-        // });
+        int installmentType = (installments != null && installments > 1)
+            ? IPlugPag.INSTALLMENT_TYPE_PARC_VENDEDOR
+            : IPlugPag.INSTALLMENT_TYPE_A_VISTA;
 
-        // Skeleton: return mock structure for build validation
-        JSObject ret = new JSObject();
-        ret.put("approved", false);
-        ret.put("message", "SKELETON: PlugPag SDK não integrado ainda");
-        ret.put("cardBrand", null);
-        ret.put("cardLast4", null);
-        ret.put("nsu", null);
-        ret.put("authCode", null);
-        ret.put("transactionId", null);
-        call.resolve(ret);
+        Log.i(TAG, "startPayment: amountCents=" + amountCents + " type=" + type);
+
+        executor.execute(() -> {
+            try {
+                PlugPagPaymentData paymentData = new PlugPagPaymentData.Builder()
+                    .setType(paymentType)
+                    .setAmount(amountCents)
+                    .setInstallmentType(installmentType)
+                    .setInstallments(installments != null ? installments : 1)
+                    .setUserReference(userReference != null ? userReference : "")
+                    .setPaymentReceipt(printReceipt != null && printReceipt)
+                    .build();
+
+                PlugPagTransactionResult result = plugPag.doPayment(paymentData);
+
+                JSObject ret = buildSafeResult(result);
+                call.resolve(ret);
+
+                JSObject txEvt = new JSObject();
+                txEvt.put("status", ret.getBoolean("approved") ? "approved" : "rejected");
+                txEvt.put("result", ret);
+                notifyListeners("plugpagTransaction", txEvt);
+
+            } catch (Exception e) {
+                Log.e(TAG, "startPayment exception", e);
+                call.reject("Exceção no pagamento: " + e.getMessage(), "PAYMENT_EXCEPTION");
+            }
+        });
     }
 
     /**
      * Abort the current in-progress payment on the terminal.
-     * Should be called from the UI when user taps "Cancel".
      */
     @PluginMethod()
     public void abortPayment(PluginCall call) {
-        if (!initialized) {
-            call.reject("Terminal não inicializado.", "NOT_INITIALIZED");
-            return;
-        }
+        if (!assertInitialized(call)) return;
 
         Log.i(TAG, "abortPayment requested");
 
-        // TODO Phase 1:
-        // plugPag.abort();
-
-        JSObject ret = new JSObject();
-        ret.put("aborted", true);
-        call.resolve(ret);
+        executor.execute(() -> {
+            try {
+                PlugPagAbortResult result = plugPag.abort();
+                boolean aborted = (result != null && result.getResult() == IPlugPag.RET_OK);
+                JSObject ret = new JSObject();
+                ret.put("aborted", aborted);
+                call.resolve(ret);
+            } catch (Exception e) {
+                Log.e(TAG, "abortPayment exception", e);
+                call.reject("Exceção no cancelamento: " + e.getMessage(), "ABORT_EXCEPTION");
+            }
+        });
     }
 
     // =========================================================================
-    // PIX Mirroring (Phase 2+) — display QR on terminal screen
+    // Void (Estorno)
+    // =========================================================================
+
+    /**
+     * Void/refund a previous transaction.
+     *
+     * Params:
+     *   transactionCode: string — from original payment result
+     *   transactionId:   string — from original payment result
+     *   printReceipt:    boolean — print void receipt
+     *
+     * If no params provided, voids the last approved transaction.
+     */
+    @PluginMethod()
+    public void voidPayment(PluginCall call) {
+        if (!assertReady(call)) return;
+
+        String transactionCode = call.getString("transactionCode", null);
+        String transactionId = call.getString("transactionId", null);
+        Boolean printReceipt = call.getBoolean("printReceipt", false);
+
+        Log.i(TAG, "voidPayment requested");
+
+        executor.execute(() -> {
+            try {
+                PlugPagTransactionResult result;
+
+                if (transactionCode != null && transactionId != null) {
+                    PlugPagVoidData voidData = new PlugPagVoidData.Builder()
+                        .setTransactionCode(transactionCode)
+                        .setTransactionId(transactionId)
+                        .setVoidReceipt(printReceipt != null && printReceipt)
+                        .build();
+                    result = plugPag.voidPayment(voidData);
+                } else {
+                    result = plugPag.voidPayment();
+                }
+
+                JSObject ret = buildSafeResult(result);
+                call.resolve(ret);
+
+                JSObject txEvt = new JSObject();
+                txEvt.put("status", "voided");
+                txEvt.put("result", ret);
+                notifyListeners("plugpagTransaction", txEvt);
+
+            } catch (Exception e) {
+                Log.e(TAG, "voidPayment exception", e);
+                call.reject("Exceção no estorno: " + e.getMessage(), "VOID_EXCEPTION");
+            }
+        });
+    }
+
+    // =========================================================================
+    // Query
+    // =========================================================================
+
+    /**
+     * Get the last approved transaction on the terminal.
+     */
+    @PluginMethod()
+    public void getLastApprovedTransaction(PluginCall call) {
+        if (!assertReady(call)) return;
+
+        executor.execute(() -> {
+            try {
+                PlugPagTransactionResult result = plugPag.getLastApprovedTransaction();
+                if (result != null) {
+                    call.resolve(buildSafeResult(result));
+                } else {
+                    JSObject ret = new JSObject();
+                    ret.put("approved", false);
+                    ret.put("message", "Nenhuma transação aprovada encontrada");
+                    call.resolve(ret);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "getLastApprovedTransaction exception", e);
+                call.reject("Exceção ao buscar última transação: " + e.getMessage(), "QUERY_EXCEPTION");
+            }
+        });
+    }
+
+    // =========================================================================
+    // Status
+    // =========================================================================
+
+    /**
+     * Check terminal status — initialization, connection, authentication.
+     */
+    @PluginMethod()
+    public void getStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("initialized", plugPag != null);
+        ret.put("btConnected", btConnected);
+        ret.put("deviceId", connectedDeviceId);
+
+        if (plugPag != null) {
+            executor.execute(() -> {
+                try {
+                    boolean auth = plugPag.isAuthenticated();
+                    ret.put("authenticated", auth);
+                } catch (Exception e) {
+                    ret.put("authenticated", false);
+                }
+                call.resolve(ret);
+            });
+        } else {
+            ret.put("authenticated", false);
+            call.resolve(ret);
+        }
+    }
+
+    // =========================================================================
+    // PIX QR Display (Phase 2+)
     // =========================================================================
 
     /**
      * Display a PIX QR code on the terminal's screen.
-     * The QR is generated by PagBank REST API (same code shown on tablet).
+     * Uses PlugPag's showQrCode native method.
      *
-     * Expected params:
-     *   qrCodeText: string — EMV/BRCode payload
+     * Params: qrCodeText (string) — EMV/BRCode payload
      */
     @PluginMethod()
     public void displayPixQR(PluginCall call) {
+        if (!assertReady(call)) return;
+
         String qrCodeText = call.getString("qrCodeText", "");
         if (qrCodeText == null || qrCodeText.isEmpty()) {
             call.reject("qrCodeText obrigatório", "INVALID_QR");
@@ -189,42 +563,102 @@ public class PlugPagTerminalPlugin extends Plugin {
 
         Log.i(TAG, "displayPixQR: length=" + qrCodeText.length());
 
-        // TODO Phase 2: Use PlugPag's custom printer/display to show QR
-        // This allows the same QR to appear on both tablet and maquininha.
-
-        JSObject ret = new JSObject();
-        ret.put("displayed", false);
-        ret.put("message", "SKELETON: displayPixQR não implementado");
-        call.resolve(ret);
+        executor.execute(() -> {
+            try {
+                plugPag.showQrCode(qrCodeText, 256, 300, 0xFFFFFFFF);
+                JSObject ret = new JSObject();
+                ret.put("displayed", true);
+                call.resolve(ret);
+            } catch (Exception e) {
+                Log.w(TAG, "displayPixQR not supported on this terminal", e);
+                JSObject ret = new JSObject();
+                ret.put("displayed", false);
+                ret.put("message", "QR display não suportado neste terminal: " + e.getMessage());
+                call.resolve(ret);
+            }
+        });
     }
 
     // =========================================================================
-    // Status & Discovery
+    // Helpers — Security
     // =========================================================================
 
     /**
-     * Check if the terminal is connected and ready.
+     * Build a safe JSObject from PlugPagTransactionResult.
+     * SECURITY: Only allowlisted fields cross the bridge.
+     * PAN, CVV, track data, full card number are NEVER included.
      */
-    @PluginMethod()
-    public void getStatus(PluginCall call) {
+    private JSObject buildSafeResult(PlugPagTransactionResult result) {
         JSObject ret = new JSObject();
-        ret.put("initialized", initialized);
-        ret.put("connected", initialized); // TODO: real connectivity check via plugPag.isAuthenticated()
-        ret.put("sdkVersion", "skeleton-0.0.0");
-        call.resolve(ret);
+
+        if (result == null) {
+            ret.put("approved", false);
+            ret.put("message", "Resultado nulo do terminal");
+            return ret;
+        }
+
+        boolean approved = result.getResult() == IPlugPag.RET_OK;
+        ret.put("approved", approved);
+        ret.put("resultCode", result.getResult());
+        ret.put("message", safeString(result.getMessage()));
+        ret.put("errorCode", safeString(result.getErrorCode()));
+
+        // Transaction identifiers (safe for reconciliation)
+        ret.put("transactionCode", safeString(result.getTransactionCode()));
+        ret.put("transactionId", safeString(result.getTransactionId()));
+        ret.put("hostNsu", safeString(result.getHostNsu()));
+        ret.put("nsu", safeString(result.getNsu()));
+        ret.put("autoCode", safeString(result.getAutoCode()));
+        ret.put("userReference", safeString(result.getUserReference()));
+
+        // Terminal info
+        ret.put("terminalSerialNumber", safeString(result.getTerminalSerialNumber()));
+        ret.put("date", safeString(result.getDate()));
+        ret.put("time", safeString(result.getTime()));
+
+        // Card info (safe — only brand + last4, no PAN)
+        ret.put("cardBrand", safeString(result.getCardBrand()));
+        String bin = safeString(result.getBin());
+        if (bin != null && bin.length() > 4) {
+            bin = bin.substring(bin.length() - 4);
+        }
+        ret.put("cardLast4", bin);
+
+        // Payment type
+        ret.put("paymentType", result.getPaymentType());
+        ret.put("amount", safeString(result.getAmount()));
+
+        // holderName — PII, included but callers must mask before persist/log
+        ret.put("holderName", safeString(result.getHolderName()));
+
+        return ret;
     }
 
-    /**
-     * Disconnect and release PlugPag resources.
-     */
-    @PluginMethod()
-    public void disconnect(PluginCall call) {
-        Log.i(TAG, "disconnect");
-        // TODO Phase 1: plugPag.disconnect();
-        initialized = false;
+    private String safeString(String value) {
+        return (value != null && !value.isEmpty()) ? value : null;
+    }
 
-        JSObject ret = new JSObject();
-        ret.put("disconnected", true);
-        call.resolve(ret);
+    // =========================================================================
+    // Assertion helpers
+    // =========================================================================
+
+    private boolean assertInitialized(PluginCall call) {
+        if (plugPag == null) {
+            call.reject("PlugPag não inicializado. Chame initialize() primeiro.", "NOT_INITIALIZED");
+            return false;
+        }
+        return true;
+    }
+
+    private boolean assertReady(PluginCall call) {
+        if (plugPag == null) {
+            call.reject("PlugPag não inicializado. Chame initialize() primeiro.", "NOT_INITIALIZED");
+            return false;
+        }
+        if (!btConnected) {
+            call.reject("Terminal não conectado. Chame connect() primeiro.", "NOT_CONNECTED");
+            return false;
+        }
+        return true;
     }
 }

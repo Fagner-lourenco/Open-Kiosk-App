@@ -214,6 +214,18 @@ export interface PagBankProviderConfig {
   clientId?: string;
   merchantId?: string;
   publicKey?: string;
+  /** Configuração PlugPag (card-present via Bluetooth terminal) */
+  plugpag?: PlugPagConfig;
+}
+
+/** Configuração PlugPag para pagamento card-present */
+export interface PlugPagConfig {
+  /** Feature flag — habilita pagamento via terminal PlugPag */
+  enabled: boolean;
+  /** Bluetooth MAC address do terminal (e.g. "00:1B:66:XX:YY:ZZ") */
+  deviceId: string;
+  /** Código de ativação do PagBank para este terminal */
+  activationCode?: string;
 }
 
 /** Configuração específica do Mercado Pago (sem segredos) */

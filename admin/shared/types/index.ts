@@ -42,6 +42,7 @@ export {
   type PaymentEnvironment,
   type EnabledPaymentMethods,
   type PagBankProviderConfig,
+  type PlugPagConfig,
   type MercadoPagoProviderConfig,
   type PaymentGatewayConfig,
   type Store,

@@ -62,12 +62,22 @@ const EnabledPaymentMethodsSchema = z.object({
 });
 
 /**
+ * Schema de configuração PlugPag (card-present via Bluetooth terminal)
+ */
+const PlugPagConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  deviceId: z.string(),
+  activationCode: z.string().optional(),
+});
+
+/**
  * Schema de configuração de provedor PagBank (sem segredos)
  */
 const PagBankProviderConfigSchema = z.object({
   clientId: z.string().optional(),
   merchantId: z.string().optional(),
   publicKey: z.string().optional(),
+  plugpag: PlugPagConfigSchema.optional(),
 });
 
 /**

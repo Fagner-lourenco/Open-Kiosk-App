@@ -27,3 +27,29 @@ export interface SaleItem {
   currency?: string;
   [key: string]: any; // Permite flexibilidade para outros campos legados
 }
+
+/**
+ * Dados do cliente associados a um pedido.
+ * Gravados na coleção `orders/{orderNumber}` para ambos os gateways (MP e PagBank).
+ * Utilizados para ranking de clientes e analytics.
+ */
+export interface OrderCustomerData {
+  // Dados do cliente (para ranking / fidelidade)
+  customerName?: string;
+  customerEmail?: string;
+  customerIdentification?: string; // CPF/CNPJ
+
+  // Rastreamento do gateway
+  gatewayProvider?: 'mercado_pago' | 'pagbank';
+  gatewayOrderId?: string;    // MP orderId ou PagBank orderId
+  gatewayPaymentId?: string;  // MP paymentId ou PagBank chargeId
+
+  // Dados do pagamento
+  paymentMethodId?: string;   // 'visa', 'master', 'pix', etc.
+  paymentTypeId?: string;     // 'credit_card', 'debit_card', 'bank_transfer'
+  cardBrand?: string;
+  cardLastDigits?: string;
+  cardholderName?: string;
+  installments?: number;
+  dateApproved?: string;
+}

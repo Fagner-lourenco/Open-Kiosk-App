@@ -581,6 +581,52 @@ service cloud.firestore {
 
           allow delete: if false;
         }
+
+        // ────────────────────────────────────────────────────────────────────
+        // TV DASHBOARD — Coleções públicas (read via Anonymous Auth)
+        // ────────────────────────────────────────────────────────────────────
+
+        // TV Config (doc único)
+        match /tvConfig/{docId} {
+          // Qualquer usuário autenticado (inclui anonymous) pode ler
+          allow read: if isAuthenticated();
+          // Apenas admin/owner podem escrever
+          allow write: if isSuperAdmin() ||
+                         isFranchiseOwner(franchiseId) ||
+                         canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+        }
+
+        // Event Stats (doc único)
+        match /eventStats/{docId} {
+          allow read: if isAuthenticated();
+          // Apenas Cloud Functions escrevem
+          allow write: if false;
+        }
+
+        // Ranking Agregado (docs pre-agregados por cliente)
+        match /rankingAgg/{customerId} {
+          allow read: if isAuthenticated();
+          // Apenas Cloud Functions escrevem
+          allow write: if false;
+        }
+
+        // Challenges (desafios ativos)
+        match /challenges/{challengeId} {
+          allow read: if isAuthenticated();
+          // Admin/owner podem criar e gerenciar
+          allow write: if isSuperAdmin() ||
+                         isFranchiseOwner(franchiseId) ||
+                         canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+        }
+
+        // Prizes (prêmios — leitura pública não expõe código)
+        match /prizes/{prizeId} {
+          allow read: if isAuthenticated();
+          // Admin/owner podem criar e atualizar (resgate)
+          allow write: if isSuperAdmin() ||
+                         isFranchiseOwner(franchiseId) ||
+                         canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+        }
       }
       
       // ──────────────────────────────────────────────────────────────────────

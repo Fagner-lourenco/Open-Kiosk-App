@@ -8,6 +8,7 @@ import {
   Settings,
   Shield,
   Store,
+  Trophy,
   UsersRound,
 } from 'lucide-react';
 
@@ -27,6 +28,7 @@ export const PRIMARY_NAV_ITEMS: AdminNavItem[] = [
   { label: 'Lojas', href: '/stores', icon: Store },
   { label: 'Equipe', href: '/team', icon: UsersRound, requiredPermission: 'users:read' },
   { label: 'Relatórios', href: '/reports', icon: BarChart3, requiredPermission: 'reports:read' },
+  { label: 'Ranking', href: '/ranking', icon: Trophy, requiredPermission: 'reports:read' },
   { label: 'Auditoria', href: '/audit', icon: ClipboardList, requiredPermission: 'audit:read' },
   { label: 'Faturamento', href: '/billing', icon: CreditCard, requiredPermission: 'billing:read' },
   { label: 'Configurações', href: '/settings', icon: Settings, requiredPermission: 'settings:read' },

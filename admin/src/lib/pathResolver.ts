@@ -39,7 +39,10 @@ export type StoreSubcollection =
   | 'dispensers'
   | 'inventoryLogs'
   | 'dailyStats'
-  | 'metrics';
+  | 'metrics'
+  | 'rankingAgg'
+  | 'challenges'
+  | 'prizes';
 
 /**
  * Retorna o path de uma subcollection da loja
@@ -119,6 +122,41 @@ export function ordersPath(franchiseId: string, storeId: string): string {
 }
 
 /**
+ * Retorna o path do doc tvConfig de uma loja
+ */
+export function tvConfigPath(franchiseId: string, storeId: string): string {
+  return `${storePath(franchiseId, storeId)}/tvConfig/current`;
+}
+
+/**
+ * Retorna o path do doc eventStats de uma loja
+ */
+export function eventStatsPath(franchiseId: string, storeId: string): string {
+  return `${storePath(franchiseId, storeId)}/eventStats/current`;
+}
+
+/**
+ * Retorna o path da coleção de ranking agregado de uma loja
+ */
+export function rankingAggPath(franchiseId: string, storeId: string): string {
+  return storeSubPath(franchiseId, storeId, 'rankingAgg');
+}
+
+/**
+ * Retorna o path da coleção de desafios de uma loja
+ */
+export function challengesPath(franchiseId: string, storeId: string): string {
+  return storeSubPath(franchiseId, storeId, 'challenges');
+}
+
+/**
+ * Retorna o path da coleção de prêmios de uma loja
+ */
+export function prizesPath(franchiseId: string, storeId: string): string {
+  return storeSubPath(franchiseId, storeId, 'prizes');
+}
+
+/**
  * Retorna o path da coleção de notificações da franquia
  */
 export function franchiseNotificationsPath(franchiseId: string): string {
@@ -147,6 +185,11 @@ export const pathResolver = {
   auditLogsPath,
   franchisePath,
   userPath,
+  tvConfigPath,
+  eventStatsPath,
+  rankingAggPath,
+  challengesPath,
+  prizesPath,
 };
 
 export default pathResolver;

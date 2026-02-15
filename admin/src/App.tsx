@@ -52,6 +52,8 @@ import { AuditPage } from '@/pages/audit/AuditPage';
 import { SettingsPage } from '@/pages/settings/SettingsPage';
 import { ProfilePage } from '@/pages/profile/ProfilePage';
 import BillingPage from '@/pages/billing/BillingPage';
+import { RankingPage } from '@/pages/ranking/RankingPage';
+import { TvDashboardPage } from '@/pages/ranking/TvDashboardPage';
 
 // Super Admin Pages
 import { 
@@ -244,6 +246,9 @@ export default function App() {
           <Route path="/invite/:token" element={<InvitePage />} />
         </Route>
 
+        {/* Ranking Display Público (TV / Projetor) — SEM autenticação */}
+        <Route path="/ranking/display/:storeId" element={<TvDashboardPage />} />
+
         {/* Rotas Protegidas */}
         <Route
           element={
@@ -298,6 +303,15 @@ export default function App() {
               <ReportsPage />
             </PermissionGuard>
           } />
+          
+          {/* Ranking, TV Dashboard, Desafios & Prêmios — aceita reports:read OU settings:read */}
+          <Route path="ranking" element={
+            <PermissionGuard anyPermission={['reports:read', 'settings:read']}>
+              <RankingPage />
+            </PermissionGuard>
+          } />
+          
+
           
           {/* Auditoria - requer permissão de auditoria */}
           <Route path="audit" element={

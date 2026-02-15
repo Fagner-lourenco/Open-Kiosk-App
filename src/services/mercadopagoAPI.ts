@@ -11,7 +11,8 @@ import type {
   Terminal,
   TerminalsListResponse,
   Order,
-  CreateOrderRequest
+  CreateOrderRequest,
+  PaymentDetail
 } from '@/types/mercadopago';
 
 export class MercadoPagoAPI {
@@ -241,6 +242,15 @@ export class MercadoPagoAPI {
 
   async getOrder(orderId: string, signal?: AbortSignal): Promise<Order> {
     return this.request<Order>(`/v1/orders/${orderId}`, { signal });
+  }
+
+  /**
+   * Buscar detalhes de um pagamento (API clássica /v1/payments)
+   * Retorna dados do pagador (payer), cartão (card.cardholder) e método.
+   * Útil para extrair nome do cliente após pagamento aprovado.
+   */
+  async getPayment(paymentId: string, signal?: AbortSignal): Promise<PaymentDetail> {
+    return this.request<PaymentDetail>(`/v1/payments/${paymentId}`, { signal });
   }
 
   async cancelOrder(orderId: string): Promise<Order> {

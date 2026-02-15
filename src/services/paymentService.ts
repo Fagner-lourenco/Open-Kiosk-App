@@ -12,7 +12,8 @@ import { getPaymentConfig, type ResolvedPaymentConfig } from '@/config/paymentGa
 import { getFirebaseApp, getFirebaseDb, getCurrentFranchiseId, getCurrentStoreId } from '@/services/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { doc, onSnapshot } from 'firebase/firestore';
-import type { Order } from '@/types/mercadopago';
+import type { Order, MercadoPagoCustomerData } from '@/types/mercadopago';
+import type { OrderCustomerData } from '@/types/sales';
 import type { PaymentGatewayConfig } from '@/types/store';
 import type { CreatePaymentInput, CreatePaymentResponse, PaymentRecord } from '@/types/payments';
 
@@ -264,6 +265,14 @@ class PaymentService {
     }
 
     try {
+      // Validar valor mínimo (Mercado Pago exige >= R$1,00)
+      if (amount < MERCADO_PAGO_CONFIG.MIN_AMOUNT) {
+        throw new PaymentError(
+          'MP_MIN_AMOUNT',
+          `Valor mínimo para pagamento é R$ ${MERCADO_PAGO_CONFIG.MIN_AMOUNT.toFixed(2)}. Valor informado: R$ ${amount.toFixed(2)}`
+        );
+      }
+
       // Validar POS externo configurado
       if (!finalExternalPosId || finalExternalPosId.length === 0) {
         throw new PaymentError('MP_QR_ERROR', 'EXTERNAL_POS_ID não configurado. Configure no painel Admin > Pagamentos ou defina VITE_MP_EXTERNAL_POS_ID.');
@@ -361,6 +370,14 @@ class PaymentService {
     }
 
     try {
+      // Validar valor mínimo (Mercado Pago exige >= R$1,00)
+      if (amount < MERCADO_PAGO_CONFIG.MIN_AMOUNT) {
+        throw new PaymentError(
+          'MP_MIN_AMOUNT',
+          `Valor mínimo para pagamento é R$ ${MERCADO_PAGO_CONFIG.MIN_AMOUNT.toFixed(2)}. Valor informado: R$ ${amount.toFixed(2)}`
+        );
+      }
+
       // Se não tiver terminal_id, usar do config ou buscar primeiro disponível em modo PDV
       let finalTerminalId = terminalId || config.terminalId;
       
@@ -539,6 +556,99 @@ class PaymentService {
     }
 
     return mpAPI.getOrder(orderId, signal);
+  }
+
+  /**
+   * Buscar dados do cliente a partir de uma order aprovada do Mercado Pago.
+   * 
+   * A API de Orders (v1/orders) NÃO retorna dados do pagador.
+   * Para isso, usamos a API de Payments (v1/payments/{id}) que retorna:
+   * - payer.first_name, payer.last_name, payer.email
+   * - card.cardholder.name, card.last_four_digits
+   * - payment_method_id (visa, master, pix), installments
+   * 
+   * @param order - Order aprovada retornada pelo polling
+   * @param gatewayConfig - Config opcional do Firestore
+   * @returns Dados do cliente para gravar no Firestore, ou null em erro
+   */
+  async fetchPayerDataFromOrder(
+    order: Order,
+    gatewayConfig?: PaymentGatewayConfig | null
+  ): Promise<OrderCustomerData | null> {
+    try {
+      const config = getPaymentConfig(gatewayConfig);
+      const mpAPI = createMercadoPagoAPI({
+        accessToken: config.accessToken,
+        mode: config.mode,
+      });
+
+      if (!mpAPI) {
+        console.warn('[PaymentService] MP não configurado para fetch de payer data');
+        return null;
+      }
+
+      // Extrair payment ID da order — é o ID da transação de pagamento
+      const paymentId = order.transactions?.payments?.[0]?.id;
+      if (!paymentId) {
+        console.warn('[PaymentService] Order sem payment ID, não é possível buscar dados do pagador');
+        // Retornar ao menos os dados disponíveis na order
+        return {
+          gatewayProvider: 'mercado_pago',
+          gatewayOrderId: order.id,
+          cardLastDigits: order.transactions?.payments?.[0]?.card?.last_digits,
+        };
+      }
+
+      console.log('[PaymentService] Buscando dados do pagador via /v1/payments/', paymentId);
+
+      const payment = await mpAPI.getPayment(paymentId);
+
+      // Montar nome do cliente com prioridade:
+      // 1. cardholder.name (nome impresso no cartão — mais confiável para cartão)
+      // 2. payer.first_name + payer.last_name (dados do conta MP — melhor para PIX)
+      const cardholderName = payment.card?.cardholder?.name;
+      const payerFullName = [payment.payer?.first_name, payment.payer?.last_name]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+      
+      const customerName = cardholderName || payerFullName || undefined;
+
+      const result: OrderCustomerData = {
+        customerName,
+        customerEmail: payment.payer?.email || undefined,
+        customerIdentification: payment.payer?.identification?.number || undefined,
+        gatewayProvider: 'mercado_pago',
+        gatewayOrderId: order.id,
+        gatewayPaymentId: paymentId,
+        paymentMethodId: payment.payment_method_id || undefined,
+        paymentTypeId: payment.payment_type_id || undefined,
+        cardBrand: payment.payment_method_id || undefined,
+        cardLastDigits: payment.card?.last_four_digits || order.transactions?.payments?.[0]?.card?.last_digits || undefined,
+        cardholderName: cardholderName || undefined,
+        installments: payment.installments || undefined,
+        dateApproved: payment.date_approved || undefined,
+      };
+
+      console.log('[PaymentService] Dados do pagador obtidos:', {
+        customerName: result.customerName ? '***' : 'N/A',
+        hasEmail: !!result.customerEmail,
+        cardBrand: result.cardBrand,
+        cardLastDigits: result.cardLastDigits,
+        installments: result.installments,
+      });
+
+      return result;
+    } catch (error) {
+      // Não bloquear o fluxo principal — dados do pagador são opcionais
+      console.warn('[PaymentService] Erro ao buscar dados do pagador (não-bloqueante):', error);
+      return {
+        gatewayProvider: 'mercado_pago',
+        gatewayOrderId: order.id,
+        gatewayPaymentId: order.transactions?.payments?.[0]?.id,
+        cardLastDigits: order.transactions?.payments?.[0]?.card?.last_digits,
+      };
+    }
   }
 
   /**

@@ -39,6 +39,9 @@ export const MERCADO_PAGO_CONFIG = {
   // IMPORTANTE: Terminal Point é diferente de POS. Terminal = cartão físico, POS = QR/PIX
   TERMINAL_ID: import.meta.env.VITE_MP_TERMINAL_ID || '',
   
+  // Valor mínimo aceito pelo Mercado Pago (R$1,00)
+  MIN_AMOUNT: 1.0,
+
   // Timeouts otimizados para self-service (2 minutos = 120 segundos)
   QR_EXPIRATION_MINUTES: 2, // 2 minutos para QR (alinhado com Point)
   POINT_EXPIRATION_TIME: import.meta.env.VITE_MP_POINT_EXPIRATION || 'PT2M', // 2 minutos para terminal

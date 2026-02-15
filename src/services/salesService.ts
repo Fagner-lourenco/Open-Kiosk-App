@@ -7,6 +7,7 @@ import { PaymentMethod, SaleTimingData } from '@/types/sales';
 import { deviceHeartbeatService } from './deviceHeartbeatService';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 import type { DispenseStatus } from '@/types/payments';
+import type { OrderCustomerData } from '@/types/sales';
 
 class SalesService {
   private calculateSaleTimingData(now: Date): SaleTimingData {
@@ -434,6 +435,78 @@ class SalesService {
     } catch (error) {
       console.error(`[SalesService] Failed to update dispense status for ${orderNumber}:`, error);
       throw error;
+    }
+  }
+
+  /**
+   * Enriquecer pedido existente com dados do cliente vindos do pagamento.
+   * 
+   * Compatível com AMBOS os gateways (Mercado Pago e PagBank).
+   * Chamado APÓS pagamento aprovado.
+   * Atualiza o documento orders/{orderNumber} com dados do pagador para:
+   * - Ranking de clientes por consumo
+   * - Análise de comportamento (método, parcelas, bandeira)
+   * - Rastreabilidade de pagamento (gatewayOrderId, gatewayPaymentId)
+   * 
+   * NÃO bloqueante — falha aqui não afeta o fluxo de dispense.
+   */
+  async enrichOrderWithCustomerData(
+    orderNumber: string,
+    customerData: OrderCustomerData,
+    storeId?: string
+  ): Promise<void> {
+    try {
+      const effectiveStoreId = storeId || getCurrentStoreId();
+      if (!effectiveStoreId) {
+        console.warn('[SalesService] enrichOrderWithCustomerData: storeId ausente');
+        return;
+      }
+
+      const salesRef = getStoreCollection(effectiveStoreId, 'orders');
+      const docRef = doc(salesRef, orderNumber);
+
+      // Montar update data removendo campos undefined
+      const updateData: Record<string, unknown> = {
+        updatedAt: serverTimestamp(),
+      };
+
+      // Dados do cliente (para ranking)
+      if (customerData.customerName) updateData.customerName = customerData.customerName;
+      if (customerData.customerEmail) updateData.customerEmail = customerData.customerEmail;
+      if (customerData.customerIdentification) updateData.customerIdentification = customerData.customerIdentification;
+
+      // Dados de rastreamento do gateway (genérico)
+      if (customerData.gatewayProvider) updateData.gatewayProvider = customerData.gatewayProvider;
+      if (customerData.gatewayOrderId) updateData.gatewayOrderId = customerData.gatewayOrderId;
+      if (customerData.gatewayPaymentId) updateData.gatewayPaymentId = customerData.gatewayPaymentId;
+
+      // Backward compat: gravar também nos campos MP-legacy se for MP
+      if (customerData.gatewayProvider === 'mercado_pago') {
+        if (customerData.gatewayOrderId) updateData.mpOrderId = customerData.gatewayOrderId;
+        if (customerData.gatewayPaymentId) updateData.mpPaymentId = customerData.gatewayPaymentId;
+      }
+
+      // Dados do método de pagamento
+      if (customerData.paymentMethodId) updateData.paymentMethodId = customerData.paymentMethodId;
+      if (customerData.paymentTypeId) updateData.paymentTypeId = customerData.paymentTypeId;
+      if (customerData.cardBrand) updateData.cardBrand = customerData.cardBrand;
+      if (customerData.cardLastDigits) updateData.cardLastDigits = customerData.cardLastDigits;
+      if (customerData.cardholderName) updateData.cardholderName = customerData.cardholderName;
+      if (customerData.installments) updateData.installments = customerData.installments;
+      if (customerData.dateApproved) updateData.dateApproved = customerData.dateApproved;
+
+      await updateDoc(docRef, updateData);
+
+      console.log(`[SalesService] Pedido ${orderNumber} enriquecido com dados do cliente:`, {
+        provider: customerData.gatewayProvider,
+        hasName: !!customerData.customerName,
+        hasEmail: !!customerData.customerEmail,
+        gatewayPaymentId: customerData.gatewayPaymentId,
+        cardBrand: customerData.cardBrand,
+      });
+    } catch (error) {
+      // Não propagar — dados do cliente são enriquecimento opcional
+      console.warn(`[SalesService] Falha ao enriquecer pedido ${orderNumber} com dados do cliente:`, error);
     }
   }
 }

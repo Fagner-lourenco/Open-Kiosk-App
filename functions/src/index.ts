@@ -62,3 +62,17 @@ export { migrateDispensersToTaps } from './migrations/migrateDispensersToTaps';
 
 // Cleanup triggers (ADM-03/ADM-05)
 export { onDeleteStore } from './cleanup/onDeleteStore';
+
+// Ranking & TV Dashboard functions
+export {
+  onOrderUpdatedRanking,
+  recalculateRanking30min,
+  onOrderUpdatedChallenge,
+  onOrderUpdatedGoldenServe,
+  expirePrizes,
+  expireEventMode
+} from './ranking/rankingFunctions';
+
+// Callable for toggling event mode from Admin UI
+export { toggleEventMode } from './ranking/toggleEventMode';
+export { recalculateRanking30minNow } from './ranking/recalculate30minNow';
