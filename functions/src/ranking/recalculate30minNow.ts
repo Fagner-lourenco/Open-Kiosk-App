@@ -1,45 +1,10 @@
 import * as functions from 'firebase-functions';
 import { db, admin } from '../lib';
+import { maskName, getCustomerId, calcTotalMl, calcFavoriteDrink } from './helpers';
 
 interface RecalcInput {
   franchiseId: string;
   storeId: string;
-}
-
-function maskName(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length <= 1) return name;
-  return [parts[0], ...parts.slice(1).map((p) => `${p[0]?.toUpperCase()}.`)].join(' ');
-}
-
-function getCustomerId(order: any): string {
-  if (order.customerIdentification) {
-    const numeric = String(order.customerIdentification).replace(/\D/g, '');
-    if (numeric.length > 0) return numeric;
-  }
-  return String(order.customerName || 'unknown').toUpperCase().trim().replace(/\s+/g, '_');
-}
-
-function calcTotalMl(items?: any[]): number {
-  if (!items) return 0;
-  return items.reduce((sum, item) => {
-    if (item?.mlPerUnit && item.mlPerUnit > 0) {
-      return sum + item.mlPerUnit * (item.quantity || 1);
-    }
-    return sum;
-  }, 0);
-}
-
-function calcFavoriteDrink(items?: any[]): string {
-  if (!items || items.length === 0) return 'N/A';
-  const byDrink: Record<string, number> = {};
-  for (const item of items) {
-    if (!item?.mlPerUnit || item.mlPerUnit <= 0) continue;
-    const drink = String(item.title || 'Desconhecido').split(' - ')[0]?.trim() || 'Desconhecido';
-    byDrink[drink] = (byDrink[drink] || 0) + item.mlPerUnit * (item.quantity || 1);
-  }
-  const sorted = Object.entries(byDrink).sort(([, a], [, b]) => b - a);
-  return sorted[0]?.[0] || 'N/A';
 }
 
 export const recalculateRanking30minNow = functions

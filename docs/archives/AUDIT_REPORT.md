@@ -2461,3 +2461,854 @@ Output (`git status --porcelain`):
 ```
 
 Observação: o worktree permanece amplamente sujo por mudanças preexistentes fora do escopo estrito de documentação/testes deste ciclo.
+
+## 23) Ciclo contínuo - aprofundamento Admin + Functions + segurança callables (2026-02-16)
+
+### 23.1 Novos testes criados neste ciclo
+
+- `admin/src/__tests__/audit.admin.subcollection-cascade-contract.test.ts`
+- `functions/src/__tests__/audit.functions.cancel-payment-auth-contract.test.ts`
+- `functions/src/__tests__/audit.functions.cleanup-crosslayer-contract.test.ts`
+
+### 23.2 Execução focada dos novos testes
+
+Comandos:
+
+```bash
+cd D:\Open-Kiosk-App\admin
+npm run test -- src/__tests__/audit.admin.subcollection-cascade-contract.test.ts
+
+cd D:\Open-Kiosk-App\functions
+npm run test -- src/__tests__/audit.functions.cancel-payment-auth-contract.test.ts src/__tests__/audit.functions.cleanup-crosslayer-contract.test.ts
+```
+
+Resultados:
+
+- Admin (focado): **1 failed file**; **2 failed tests**
+- Functions (focado): **2 failed files**; **2 failed tests | 2 passed tests**
+
+### 23.3 Execução completa pós-ciclo
+
+Comandos:
+
+```bash
+cd D:\Open-Kiosk-App\admin && npm run test
+cd D:\Open-Kiosk-App\functions && npm run test
+cd D:\Open-Kiosk-App && npm run test
+```
+
+Resultados consolidados:
+
+- Admin: **6 failed | 32 passed files**; **7 failed | 186 passed tests**
+- Functions: **4 failed | 7 passed files**; **5 failed | 37 passed tests**
+- Kiosk/root: **1 failed | 23 passed files**; **1 failed | 807 passed tests**
+
+Falhas RED adicionais confirmadas neste ciclo:
+
+- `audit.admin.subcollection-cascade-contract.test.ts` (2 asserts)
+- `audit.functions.cancel-payment-auth-contract.test.ts` (1 assert)
+- `audit.functions.cleanup-crosslayer-contract.test.ts` (1 assert)
+
+### 23.4 Bugs novos confirmados com evidência real
+
+#### P0-06: `cancelPagBankPayment` permite execução sem autenticação
+
+- Reprodução:
+- `cd functions && npm run test -- src/__tests__/audit.functions.cancel-payment-auth-contract.test.ts`
+- Evidência:
+- teste `cancelPagBankPayment deve exigir usuario autenticado (RED)` resolveu com `{ canceled:false, reason:'cancel_requested' }` em vez de rejeitar.
+- Arquivo/função:
+- `functions/src/payments/index.ts` (`cancelPagBankPayment`).
+- Impacto:
+- qualquer cliente que consiga invocar a callable com IDs válidos pode marcar pagamentos com `cancelRequested=true` sem gate de auth/tenant.
+
+#### P1-10: exclusão de evento comercial sem cascade deixa `budgetLines` órfãs
+
+- Reprodução:
+- `cd admin && npm run test -- src/__tests__/audit.admin.subcollection-cascade-contract.test.ts`
+- Evidência:
+- assert `deleteEvent deve limpar budgetLines...` falha (`expected true, received false`).
+- Arquivo/função:
+- `admin/src/hooks/useCommercialEvents.ts` (`deleteEvent`).
+- Impacto:
+- dados órfãos em `franchises/{f}/stores/{s}/commercialEvents/{eventId}/budgetLines/*`.
+
+#### P1-11: exclusão de proposta sem cascade deixa `lines` órfãs
+
+- Reprodução:
+- `cd admin && npm run test -- src/__tests__/audit.admin.subcollection-cascade-contract.test.ts`
+- Evidência:
+- assert `deleteQuote deve limpar lines...` falha (`expected true, received false`).
+- Arquivo/função:
+- `admin/src/hooks/useQuotes.ts` (`deleteQuote`).
+- Impacto:
+- dados órfãos em `franchises/{f}/stores/{s}/quotes/{quoteId}/lines/*`.
+
+#### P1-12: cleanup de loja em Functions não cobre todos os paths usados por Admin/Kiosk
+
+- Reprodução:
+- `cd functions && npm run test -- src/__tests__/audit.functions.cleanup-crosslayer-contract.test.ts`
+- Evidência:
+- falha com `missingInCleanup = ['inventoryLogs', 'notifications']`.
+- Arquivo/função:
+- `functions/src/cleanup/onDeleteStore.ts`.
+- Impacto:
+- remoção de loja pode deixar dados operacionais órfãos em caminhos de loja ativos no app.
+
+### 23.5 Incompatibilidades ativas atualizadas (paths/schemas/types/status)
+
+- Path/security:
+- callable de cancelamento sem autenticação obrigatória (`functions/src/payments/index.ts`).
+- Path/cascade:
+- deletions de `commercialEvents` e `quotes` no Admin sem limpeza de subcoleções filhas.
+- Path cleanup cross-layer:
+- mismatch entre `StoreSubcollection` (Admin/Kiosk) e `STORE_SUBCOLLECTIONS` em Functions (`inventoryLogs`, `notifications`).
+
+### 23.6 Artefatos e limpeza
+
+- Durante os full runs, `functions/coverage` foi gerado e removido.
+- `coverage/` no root (arquivos rastreados) foi restaurado para `HEAD` com `git restore -- coverage`.
+- Estado final deste ciclo sem novos artifacts de build/cobertura fora do rastreamento esperado.
+
+### 23.7 Inventário determinístico regenerado
+
+`docs/archives/file_list.txt` atualizado com:
+
+- `generated_utc: 2026-02-16T16:04:55.118Z`
+- `commit: 64d6ba0`
+- `total_files: 1833`
+
+Validação 1:1:
+
+```json
+{
+  "actualCount": 1833,
+  "listedCount": 1833,
+  "missingFromList": 0,
+  "extraInList": 0
+}
+```
+
+### 23.8 Meta 98% (percentual faltante)
+
+Referência de cobertura real por arquivos de produção exercitados (baseline informado no projeto):
+
+- atual de referência: **7,78%**
+- meta: **98,00%**
+- faltante: **90,22 pontos percentuais**
+
+Observação:
+
+- os testes deste ciclo priorizaram encontrar bugs críticos (segurança, orfandade de dados e incompatibilidade de paths); isso aumenta robustez e detecção de falhas, mas não altera materialmente o gap da meta 98% sozinho.
+
+### 23.9 Validação final do ciclo
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ docs/DATABASE_MAP.md          |   19 +-
+ docs/archives/AUDIT_REPORT.md |  139 ++
+ docs/archives/file_list.txt   | 3642 +++++++++++++++++++++--------------------
+ 3 files changed, 1979 insertions(+), 1821 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+```
+
+### 23.10 Revalidação final pós-regeneração do inventário
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ docs/DATABASE_MAP.md          |   19 +-
+ docs/archives/AUDIT_REPORT.md |  165 ++
+ docs/archives/file_list.txt   | 3642 +++++++++++++++++++++--------------------
+ 3 files changed, 2005 insertions(+), 1821 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+```
+
+### 23.11 Validação final (encerramento desta execução)
+
+```text
+ docs/DATABASE_MAP.md          |   19 +-
+ docs/archives/AUDIT_REPORT.md |  191 +++
+ docs/archives/file_list.txt   | 3642 +++++++++++++++++++++--------------------
+ 3 files changed, 2031 insertions(+), 1821 deletions(-)
+
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+```
+
+## 24) Ciclo contínuo - normalização financeira Admin + autorização de cancelamento (2026-02-16)
+
+### 24.1 Escopo deste ciclo
+
+- aprofundamento no Admin (hooks financeiros) e Functions (callable de cancelamento PagBank).
+- criação de testes RED focados em:
+- enums/status fora do contrato,
+- coerção numérica em campos monetários,
+- autorização por tenant em callable crítica de pagamento.
+
+### 24.2 Testes executados (reais)
+
+Comandos executados:
+
+```bash
+cd D:\Open-Kiosk-App\admin && npm test -- src/__tests__/audit.admin.finpayments-normalization-contract.test.ts
+cd D:\Open-Kiosk-App\admin && npm test -- src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts
+cd D:\Open-Kiosk-App\functions && npm test -- src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts
+```
+
+Resultado resumido:
+
+- Admin (`audit.admin.finpayments-normalization-contract.test.ts`): **5 failed** (5 testes RED)
+- Admin (`audit.admin.finance-normalization-batch2-contracts.test.ts`): **6 failed** (6 testes RED)
+- Functions (`audit.functions.cancel-payment-authorization-contract.test.ts`): **2 failed** (2 testes RED)
+- Total do ciclo: **13 falhas RED reproduzidas**
+
+Evidências-chave:
+
+- `useFinPayments`: `direction/method/targetType` inválidos não sofrem fallback e `amount` string gera total string.
+- `useFinCategories/useLedger/useBills`: mesmo padrão de enum drift + tipo monetário string contaminando agregações.
+- `cancelPagBankPayment`: usuário autenticado sem acesso de tenant recebeu `{ canceled:false, reason:'cancel_requested' }` (deveria negar).
+
+### 24.3 Bugs novos confirmados com evidência
+
+#### P0-07: `cancelPagBankPayment` sem autorização por tenant (franchise/store)
+
+- Reprodução:
+- `cd functions && npm test -- src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts`
+- Evidência:
+- teste `cancelPagBankPayment deve negar usuario autenticado sem acesso a franquia/loja (RED)` falha com promise resolvida (`cancel_requested`) em vez de `permission-denied`.
+- Arquivo/função:
+- `functions/src/payments/index.ts` (`cancelPagBankPayment`).
+- Impacto:
+- usuário autenticado fora do tenant pode marcar cancelamento de pagamentos de outra loja/franquia se tiver IDs.
+
+#### P1-13: `useFinPayments` aceita enums inválidos e quebra classificação
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finpayments-normalization-contract.test.ts`
+- Evidência:
+- falhas RED para fallback de `direction`, `method`, `targetType`.
+- Arquivo/função:
+- `admin/src/hooks/useFinPayments.ts` (`normalizePayment`).
+- Impacto:
+- filtros `in/out`, método e alvo ficam fora do contrato tipado e podem quebrar relatórios/visões financeiras.
+
+#### P1-14: hooks financeiros adicionais aceitam enums/status inválidos
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts`
+- Evidência:
+- falhas RED em fallback de `useFinCategories.direction`, `useFinCategories.status`, `useLedger.method`, `useBills.status`.
+- Arquivos/funções:
+- `admin/src/hooks/useFinCategories.ts` (`normalizeCategory`)
+- `admin/src/hooks/useLedger.ts` (`normalizeEntry`)
+- `admin/src/hooks/useBills.ts` (`normalizeBill`)
+- Impacto:
+- derivações (`activeCategories`, `expenseCategories`, status em AP) ficam inconsistentes com regras de negócio.
+
+#### P1-15: campos monetários string contaminam agregações numéricas
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finpayments-normalization-contract.test.ts`
+- `cd admin && npm test -- src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts`
+- Evidência:
+- `totalIn`, `totalIncome`, `totalPayable` retornando `string` quando Firestore legado contém valores string.
+- Arquivos/funções:
+- `admin/src/hooks/useFinPayments.ts` (`amount`)
+- `admin/src/hooks/useLedger.ts` (`amount`)
+- `admin/src/hooks/useBills.ts` (`remaining`)
+- Impacto:
+- totais e saldo podem ser exibidos/calculados incorretamente (concatenação em vez de soma).
+
+#### P1-16: criação de pagamento no Admin sem validação de mínimo (`amount <= 0`)
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finpayments-normalization-contract.test.ts`
+- Evidência:
+- teste `nao deve persistir pagamento com amount <= 0 (RED)` falha por promise resolvida (sem rejeição de validação).
+- Arquivo/função:
+- `admin/src/hooks/useFinPayments.ts` (`createMutation.mutationFn`).
+- Impacto:
+- possibilidade de registrar pagamento inválido com valor zero/negativo no módulo financeiro.
+
+### 24.4 Mapa de fluxo confirmado (quem chama o quê)
+
+- `admin/src/components/store/finance/FinanceAPTab.tsx`:
+- chama `useBills()` + `useFinCategories()`.
+- `admin/src/components/store/finance/FinanceCashTab.tsx`:
+- chama `useLedger()` + `useFinCategories()`.
+- `admin/src/components/store/finance/FinanceOverviewTab.tsx`:
+- chama `useLedger()` + `useBills()` para totais/overdue.
+- `src/components/Checkout.tsx` e `src/components/DrinkQuickCheckoutModal.tsx`:
+- chamam `paymentService.cancelPagBankPayment()`.
+- `src/services/paymentService.ts`:
+- invoca callable `cancelPagBankPayment` via `httpsCallable(functions, 'cancelPagBankPayment')`.
+- `functions/src/payments/index.ts`:
+- handler de `cancelPagBankPayment` atualiza `payments/{paymentId}` sem guardas explícitas de authz por tenant.
+
+### 24.5 Meta 98% (atualização de faltante)
+
+Referência mantida para cobertura por arquivos de produção exercitados:
+
+- atual de referência: **7,78%**
+- meta: **98,00%**
+- faltante: **90,22 pontos percentuais**
+
+Observação:
+
+- este ciclo aumentou profundidade de detecção de bugs críticos no domínio financeiro e em segurança de callable; o delta em percentual de arquivos exercitados é marginal.
+
+### 24.6 Arquivos de teste adicionados neste ciclo
+
+- `admin/src/__tests__/audit.admin.finpayments-normalization-contract.test.ts`
+- `admin/src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts`
+- `functions/src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts`
+
+### 24.7 Inventário e validação final deste ciclo
+
+Inventário regenerado:
+
+- `generated_utc: 2026-02-16T16:19:44.338Z`
+- `commit: 64d6ba0`
+- `total_files: 1836`
+
+Validação 1:1 do inventário:
+
+```json
+{
+  "actualCount": 1836,
+  "listedCount": 1836,
+  "missingFromList": 0,
+  "extraInList": 0
+}
+```
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ docs/DATABASE_MAP.md          |   44 +-
+ docs/archives/AUDIT_REPORT.md |  332 ++++
+ docs/archives/file_list.txt   | 3599 +++++++++++++++++++++--------------------
+ 3 files changed, 2173 insertions(+), 1802 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+?? admin/src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finpayments-normalization-contract.test.ts
+?? functions/src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts
+```
+
+### 24.8 Revalidação final pós-atualização do relatório
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ docs/DATABASE_MAP.md          |   44 +-
+ docs/archives/AUDIT_REPORT.md |  378 +++++
+ docs/archives/file_list.txt   | 3599 +++++++++++++++++++++--------------------
+ 3 files changed, 2219 insertions(+), 1802 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+?? admin/src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finpayments-normalization-contract.test.ts
+?? functions/src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts
+```
+
+## 25) Ciclo contínuo - expansão Admin + Ranking Helpers (2026-02-16)
+
+### 25.1 Escopo deste ciclo
+
+- inclusão explícita de `functions/src/ranking/helpers.ts` no escopo de auditoria (conforme instrução do projeto).
+- expansão de contratos RED no Admin para hooks ainda suscetíveis a drift de enum/tipo:
+- `useInvoices`, `useQuotes`, `useDeals`, `useParties`.
+- auditoria de fluxo e consistência entre `ranking/helpers.ts` e `ranking/recalculate30minNow.ts`.
+
+### 25.2 Testes executados (reais)
+
+Comandos executados:
+
+```bash
+cd D:\Open-Kiosk-App\admin && npm test -- src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts
+cd D:\Open-Kiosk-App\functions && npm test -- src/__tests__/audit.functions.ranking-helpers-contract.test.ts src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts
+```
+
+Resultado resumido:
+
+- Admin (`audit.admin.finance-commercial-normalization-batch3-contracts.test.ts`): **9 failed** (9 RED)
+- Functions (`audit.functions.ranking-helpers-contract.test.ts`): **3 failed | 2 passed**
+- Functions (`audit.functions.ranking-helper-reuse-contract.test.ts`): **2 failed**
+- Total ciclo 25: **14 falhas RED novas** (com 2 asserts verdes de controle no helper)
+
+### 25.3 Bugs novos confirmados com evidência
+
+#### P1-17: `useInvoices` aceita status inválido e tipo monetário string
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts`
+- Evidência:
+- `status='liquidated'` permanece em runtime (sem fallback).
+- `remaining='20.5'` torna `totalReceivable` string.
+- Arquivo/função:
+- `admin/src/hooks/useInvoices.ts` (`normalizeInvoice`).
+- Impacto:
+- ranking de inadimplência/recebíveis pode ser calculado com tipo incorreto.
+
+#### P1-18: `useQuotes` aceita status inválido e `total` string
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts`
+- Evidência:
+- `status='approved'` não cai para status canônico.
+- `total='100.5'` torna `totalAcceptedValue` string.
+- Arquivo/função:
+- `admin/src/hooks/useQuotes.ts` (`normalizeQuote`).
+- Impacto:
+- pipeline comercial e KPIs de propostas aceitas podem ficar inconsistentes.
+
+#### P1-19: `useDeals` não valida `stage`, `valueEstimate` e limite de probabilidade
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts`
+- Evidência:
+- `stage='contract_signed'` é aceito sem fallback.
+- `valueEstimate='800.25'` contamina soma do pipeline.
+- `probability=250` gera `weightedPipelineValue > totalPipelineValue`.
+- Arquivo/função:
+- `admin/src/hooks/useDeals.ts` (`normalizeDeal` + cálculos derivados).
+- Impacto:
+- distorção de previsão comercial e priorização de oportunidades.
+
+#### P1-20: `useParties` aceita `status/type` fora do contrato
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts`
+- Evidência:
+- `status='disabled'` não volta para `active`.
+- `type='vendor'` não volta para `other`.
+- Arquivo/função:
+- `admin/src/hooks/useParties.ts` (`normalizeParty`).
+- Impacto:
+- filtros de partes ativas e classificação por tipo ficam instáveis.
+
+#### P1-21: `ranking/helpers.ts` conta `quantity=0` como `1`
+
+- Reprodução:
+- `cd functions && npm test -- src/__tests__/audit.functions.ranking-helpers-contract.test.ts`
+- Evidência:
+- `calcTotalMl` retornou `300` para item com `quantity=0`.
+- `calcFavoriteDrink` priorizou item com `quantity=0`.
+- Arquivo/função:
+- `functions/src/ranking/helpers.ts` (`calcTotalMl`, `calcFavoriteDrink`).
+- Impacto:
+- inflação de `totalMl`/`totalMl30min` e favoritismo incorreto em ranking/eventos.
+
+#### P1-22: drift de helpers no ranking (`recalculate30minNow` duplica lógica)
+
+- Reprodução:
+- `cd functions && npm test -- src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts`
+- Evidência:
+- ausência de import de `./helpers`.
+- presença de implementações locais de `maskName/getCustomerId/calcTotalMl/calcFavoriteDrink`.
+- Arquivo/função:
+- `functions/src/ranking/recalculate30minNow.ts`.
+- Impacto:
+- comportamento divergente entre cálculo agendado (`rankingFunctions`) e recálculo manual onCall.
+
+#### P2-03: `maskName` mantém espaços em nome único
+
+- Reprodução:
+- `cd functions && npm test -- src/__tests__/audit.functions.ranking-helpers-contract.test.ts`
+- Evidência:
+- `maskName('   Joao   ')` retornou `'   Joao   '`.
+- Arquivo/função:
+- `functions/src/ranking/helpers.ts` (`maskName`).
+- Impacto:
+- inconsistência visual/identidade em exibição de vencedores e ranking.
+
+### 25.4 Mapa de fluxo confirmado (quem chama o quê)
+
+- `admin/src/components/store/finance/FinanceARTab.tsx` e `admin/src/components/store/finance/FinanceOverviewTab.tsx`:
+- usam `useInvoices()` em leitura e agregados (`totalReceivable`, `totalReceived`).
+- `admin/src/components/store/commercial/CommercialQuotesTab.tsx`:
+- usa `useQuotes()` para funil de propostas e totais.
+- `admin/src/components/store/commercial/CommercialPipelineTab.tsx`:
+- usa `useDeals()` para pipeline e peso de probabilidade.
+- `admin/src/components/store/finance/FinanceSettingsTab.tsx`:
+- usa `useParties()` para cadastro e filtros de partes.
+- `functions/src/ranking/rankingFunctions.ts`:
+- importa e usa `maskName/getCustomerId/calcTotalMl/calcFavoriteDrink/todayYMD/generatePrizeCode` de `functions/src/ranking/helpers.ts`.
+- `functions/src/ranking/recalculate30minNow.ts`:
+- reimplementa localmente helpers equivalentes, sem reutilizar `functions/src/ranking/helpers.ts`.
+
+### 25.5 Meta 98% (percentual faltante)
+
+Referência mantida para cobertura por arquivos de produção exercitados:
+
+- atual de referência: **7,78%**
+- meta: **98,00%**
+- faltante: **90,22 pontos percentuais**
+
+Observação:
+
+- ciclo 25 expandiu profundidade em Admin + Ranking Functions e adicionou novos arquivos de produção exercitados/validados por testes reais; o salto percentual global por arquivo continua incremental.
+
+### 25.6 Arquivos de teste adicionados neste ciclo
+
+- `admin/src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts`
+- `functions/src/__tests__/audit.functions.ranking-helpers-contract.test.ts`
+- `functions/src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts`
+
+## 26) Ciclo contínuo - inclusão das mudanças recentes de Ranking/TV (2026-02-16)
+
+### 26.1 Arquivos adicionais auditados neste ciclo
+
+Arquivos de produção incluídos explicitamente no escopo desta rodada (além dos ciclos anteriores):
+
+- `admin/src/pages/ranking/EventConfigPage.tsx` (UI/page; exporta `TvConfigTab`, `ChallengesTab`, `PrizesTab`; importado por `admin/src/pages/ranking/RankingPage.tsx`)
+- `admin/src/pages/ranking/TvDashboardPage.tsx` (UI/page; exporta `TvDashboardPage`; importado por `admin/src/App.tsx` via rota pública)
+- `admin/src/pages/ranking/RankingDisplayPage.tsx` (arquivo legado removido)
+- `admin/src/utils/formatVolume.ts` (util compartilhado de formatação de volume)
+- `functions/src/ranking/rankingFunctions.ts` (triggers/schedules de ranking/prêmios/event mode)
+- `functions/src/ranking/recalculate30minNow.ts` (callable de recálculo 30min)
+- `functions/src/ranking/helpers.ts` (helper compartilhado de ranking)
+
+Evidência do estado de mudanças analisadas:
+
+```bash
+git status --porcelain
+```
+
+Incluindo, entre outros:
+- `M admin/src/pages/ranking/EventConfigPage.tsx`
+- `D admin/src/pages/ranking/RankingDisplayPage.tsx`
+- `M admin/src/pages/ranking/TvDashboardPage.tsx`
+- `M admin/src/utils/formatVolume.ts`
+- `M functions/src/ranking/rankingFunctions.ts`
+- `M functions/src/ranking/recalculate30minNow.ts`
+- `?? functions/src/ranking/helpers.ts`
+
+### 26.2 Comandos executados e resultados (reais)
+
+Comandos:
+
+```bash
+cd D:\Open-Kiosk-App\admin && npm run build
+cd D:\Open-Kiosk-App && cmd /c rmdir /s /q admin\dist
+cd D:\Open-Kiosk-App\admin && npm test -- src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts src/__tests__/audit.admin.customer-ranking-key-contract.test.ts src/__tests__/audit.admin.tv-event-validation-contract.test.ts src/__tests__/utils/formatVolume.coverage.test.ts
+cd D:\Open-Kiosk-App\functions && npm test -- src/__tests__/audit.functions.ranking-helpers-contract.test.ts src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts
+cd D:\Open-Kiosk-App\admin && npm test -- src/__tests__/audit.admin.tv-dashboard-migration-contract.test.ts
+```
+
+Resultado resumido:
+
+- `admin build`: **OK** (`tsc && vite build`), gerou `admin/dist` e foi removido em seguida para manter repo sem artefatos.
+- Admin suite (4 arquivos): **15 failed | 7 passed**
+- Functions suite (2 arquivos): **3 failed | 4 passed**
+- Novo teste de migração de telão: **4 passed**
+
+### 26.3 Bugs/incompatibilidades confirmados neste ciclo
+
+#### P1-23: validações numéricas de `tvEventService` aceitam strings não numéricas
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/audit.admin.tv-event-validation-contract.test.ts`
+- Evidência:
+- promessas **resolveram** em vez de rejeitar para entradas inválidas:
+- `rotationIntervalSec: 'abc'`
+- `maxDisplayPositions: 'abc'`
+- `milestone.targetMl: '500'`
+- `challenge.rule.threshold: 'x'`
+- Arquivo/função:
+- `admin/src/services/tvEventService.ts` (`updateTvConfig`, `setCollectiveGoal`, `createChallenge`)
+- Impacto:
+- payloads inválidos podem ser persistidos e contaminar config/eventStats/challenges com tipos fora do contrato.
+
+#### P2-04: drift de contrato de formatação em `formatVolume`
+
+- Reprodução:
+- `cd admin && npm test -- src/__tests__/utils/formatVolume.coverage.test.ts`
+- Evidência:
+- `formatVolumeCompact(9100)` retornou `9,1L` enquanto contrato testado anterior esperava `9.1L`.
+- `formatVolumeShort(1_200_000)` retornou `1KL` enquanto contrato testado anterior esperava `1K L`.
+- Arquivo/função:
+- `admin/src/utils/formatVolume.ts`
+- Impacto:
+- inconsistência de contrato de apresentação entre módulos/testes e risco de snapshots/integrações de UI quebrando por variação de locale/formato.
+
+#### P1-22 (status): drift de helper em `recalculate30minNow` foi mitigado
+
+- Reprodução:
+- `cd functions && npm test -- src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts`
+- Evidência:
+- suíte agora **passa** (`2 passed`), confirmando uso de import compartilhado de `./helpers`.
+- Arquivo/função:
+- `functions/src/ranking/recalculate30minNow.ts`
+- Status:
+- mitigado no estado atual do código.
+
+#### P1-21 e P2-03 permanecem abertos
+
+- `calcTotalMl`/`calcFavoriteDrink` ainda contam `quantity=0` como `1`.
+- `maskName` ainda retorna nome único sem trim final.
+- Evidência:
+- `cd functions && npm test -- src/__tests__/audit.functions.ranking-helpers-contract.test.ts` -> **3 failed**.
+
+### 26.4 Fluxo real (quem chama o quê) validado para os arquivos novos
+
+- Fluxo TV público:
+- `admin/src/App.tsx` (`/ranking/display/:storeId`) -> `admin/src/pages/ranking/TvDashboardPage.tsx` ->
+- `useTvDashboard` (`tvConfig/current`, `eventStats/current`)
+- `useTvRanking` (`rankingAgg`)
+- `useTvChallenges` (`challenges`)
+- `useTvWinners` (`prizes`)
+- Confirmação:
+- sem leitura direta de `orders` na página pública atual.
+
+- Fluxo de configuração Admin:
+- `admin/src/pages/ranking/RankingPage.tsx` -> tabs de `admin/src/pages/ranking/EventConfigPage.tsx` ->
+- `admin/src/services/tvEventService.ts` (`updateTvConfig`, `setCollectiveGoal`, `toggleEventMode`, `createChallenge`, `addPrizesBatch`, `redeemPrize`, `updateGoldenServeConfig`).
+
+- Fluxo Functions Ranking:
+- `functions/src/ranking/rankingFunctions.ts` e `functions/src/ranking/recalculate30minNow.ts` -> `functions/src/ranking/helpers.ts`.
+
+### 26.5 Novo teste adicionado neste ciclo
+
+- `admin/src/__tests__/audit.admin.tv-dashboard-migration-contract.test.ts` (rota pública, migração para hooks agregados, query `franchise`, remoção da página legada)
+
+### 26.6 Meta 98% (percentual faltante)
+
+Referência mantida para cobertura por arquivos de produção exercitados:
+
+- atual de referência: **7,78%**
+- meta: **98,00%**
+- faltante: **90,22 pontos percentuais**
+
+### 26.7 Inventário determinístico atualizado
+
+Inventário regenerado em `docs/archives/file_list.txt`:
+
+- `generated_utc: 2026-02-16T16:52:19.599Z`
+- `commit: 64d6ba0`
+- `total_files: 1846`
+
+Validação 1:1 do inventário:
+
+```json
+{
+  "actualCount": 1846,
+  "listedCount": 1846,
+  "missingFromList": 0,
+  "extraInList": 0
+}
+```
+
+### 26.8 Validação final deste ciclo
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ admin/src/hooks/useCustomerRanking.ts          |    4 +-
+ admin/src/pages/ranking/EventConfigPage.tsx    |   27 +-
+ admin/src/pages/ranking/RankingDisplayPage.tsx |  344 ---
+ admin/src/pages/ranking/TvDashboardPage.tsx    |    3 -
+ admin/src/services/tvEventService.ts           |   44 +
+ admin/src/utils/formatVolume.ts                |   10 +-
+ docs/DATABASE_MAP.md                           |   81 +-
+ docs/archives/AUDIT_REPORT.md                  |  676 +++++
+ docs/archives/file_list.txt                    | 3653 ++++++++++++------------
+ functions/src/ranking/rankingFunctions.ts      |  502 ++--
+ functions/src/ranking/recalculate30minNow.ts   |   37 +-
+ 11 files changed, 2860 insertions(+), 2521 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M admin/src/hooks/useCustomerRanking.ts
+ M admin/src/pages/ranking/EventConfigPage.tsx
+ D admin/src/pages/ranking/RankingDisplayPage.tsx
+ M admin/src/pages/ranking/TvDashboardPage.tsx
+ M admin/src/services/tvEventService.ts
+ M admin/src/utils/formatVolume.ts
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+ M functions/src/ranking/rankingFunctions.ts
+ M functions/src/ranking/recalculate30minNow.ts
+?? admin/src/__tests__/audit.admin.customer-ranking-key-contract.test.ts
+?? admin/src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finpayments-normalization-contract.test.ts
+?? admin/src/__tests__/audit.admin.tv-dashboard-migration-contract.test.ts
+?? admin/src/__tests__/audit.admin.tv-event-validation-contract.test.ts
+?? functions/src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts
+?? functions/src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts
+?? functions/src/__tests__/audit.functions.ranking-helpers-contract.test.ts
+?? functions/src/ranking/helpers.ts
+```
+
+### 26.10 Revalidação final (estado atual)
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ admin/src/hooks/useCustomerRanking.ts          |    4 +-
+ admin/src/pages/ranking/EventConfigPage.tsx    |   27 +-
+ admin/src/pages/ranking/RankingDisplayPage.tsx |  344 ---
+ admin/src/pages/ranking/TvDashboardPage.tsx    |    3 -
+ admin/src/services/tvEventService.ts           |   44 +
+ admin/src/utils/formatVolume.ts                |   10 +-
+ docs/DATABASE_MAP.md                           |   81 +-
+ docs/archives/AUDIT_REPORT.md                  |  851 ++++++
+ docs/archives/file_list.txt                    | 3653 ++++++++++++------------
+ functions/src/ranking/rankingFunctions.ts      |  502 ++--
+ functions/src/ranking/recalculate30minNow.ts   |   37 +-
+ 11 files changed, 3035 insertions(+), 2521 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M admin/src/hooks/useCustomerRanking.ts
+ M admin/src/pages/ranking/EventConfigPage.tsx
+ D admin/src/pages/ranking/RankingDisplayPage.tsx
+ M admin/src/pages/ranking/TvDashboardPage.tsx
+ M admin/src/services/tvEventService.ts
+ M admin/src/utils/formatVolume.ts
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+ M functions/src/ranking/rankingFunctions.ts
+ M functions/src/ranking/recalculate30minNow.ts
+?? admin/src/__tests__/audit.admin.customer-ranking-key-contract.test.ts
+?? admin/src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finpayments-normalization-contract.test.ts
+?? admin/src/__tests__/audit.admin.tv-dashboard-migration-contract.test.ts
+?? admin/src/__tests__/audit.admin.tv-event-validation-contract.test.ts
+?? functions/src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts
+?? functions/src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts
+?? functions/src/__tests__/audit.functions.ranking-helpers-contract.test.ts
+?? functions/src/ranking/helpers.ts
+```
+
+### 26.9 Revalidação final pós-atualização do relatório
+
+Comandos executados:
+
+```bash
+git diff --stat
+git status --porcelain
+```
+
+Output (`git diff --stat`):
+
+```text
+ admin/src/hooks/useCustomerRanking.ts          |    4 +-
+ admin/src/pages/ranking/EventConfigPage.tsx    |   27 +-
+ admin/src/pages/ranking/RankingDisplayPage.tsx |  344 ---
+ admin/src/pages/ranking/TvDashboardPage.tsx    |    3 -
+ admin/src/services/tvEventService.ts           |   44 +
+ admin/src/utils/formatVolume.ts                |   10 +-
+ docs/DATABASE_MAP.md                           |   81 +-
+ docs/archives/AUDIT_REPORT.md                  |  747 +++++
+ docs/archives/file_list.txt                    | 3653 ++++++++++++------------
+ functions/src/ranking/rankingFunctions.ts      |  502 ++--
+ functions/src/ranking/recalculate30minNow.ts   |   37 +-
+ 11 files changed, 2931 insertions(+), 2521 deletions(-)
+```
+
+Output (`git status --porcelain`):
+
+```text
+ M admin/src/hooks/useCustomerRanking.ts
+ M admin/src/pages/ranking/EventConfigPage.tsx
+ D admin/src/pages/ranking/RankingDisplayPage.tsx
+ M admin/src/pages/ranking/TvDashboardPage.tsx
+ M admin/src/services/tvEventService.ts
+ M admin/src/utils/formatVolume.ts
+ M docs/DATABASE_MAP.md
+ M docs/archives/AUDIT_REPORT.md
+ M docs/archives/file_list.txt
+ M functions/src/ranking/rankingFunctions.ts
+ M functions/src/ranking/recalculate30minNow.ts
+?? admin/src/__tests__/audit.admin.customer-ranking-key-contract.test.ts
+?? admin/src/__tests__/audit.admin.finance-commercial-normalization-batch3-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finance-normalization-batch2-contracts.test.ts
+?? admin/src/__tests__/audit.admin.finpayments-normalization-contract.test.ts
+?? admin/src/__tests__/audit.admin.tv-dashboard-migration-contract.test.ts
+?? admin/src/__tests__/audit.admin.tv-event-validation-contract.test.ts
+?? functions/src/__tests__/audit.functions.cancel-payment-authorization-contract.test.ts
+?? functions/src/__tests__/audit.functions.ranking-helper-reuse-contract.test.ts
+?? functions/src/__tests__/audit.functions.ranking-helpers-contract.test.ts
+?? functions/src/ranking/helpers.ts
+```

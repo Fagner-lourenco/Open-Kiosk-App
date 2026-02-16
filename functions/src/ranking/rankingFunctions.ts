@@ -15,139 +15,17 @@
 
 import * as functions from 'firebase-functions';
 import { db, admin, increment, serverTimestamp } from '../lib';
+import {
+  maskName,
+  getCustomerId,
+  calcTotalMl,
+  calcFavoriteDrink,
+  todayYMD,
+  generatePrizeCode,
+} from './helpers';
+import type { OrderData, RankingAggDoc, ChallengeDoc } from './helpers';
 
 const REGION = 'southamerica-east1';
-
-// ============================================================================
-// TIPOS
-// ============================================================================
-
-interface OrderData {
-  orderNumber?: string;
-  customerName?: string;
-  customerIdentification?: string;
-  customerEmail?: string;
-  total: number;
-  status: string;
-  paymentStatus?: string;
-  paymentMethod?: string;
-  date?: string;
-  timestamp?: admin.firestore.Timestamp;
-  createdAt?: admin.firestore.Timestamp;
-  items?: Array<{
-    productId: string;
-    title: string;
-    quantity: number;
-    price: number;
-    total: number;
-    mlPerUnit?: number;
-    sizeKey?: string;
-  }>;
-  franchiseId?: string;
-  storeId?: string;
-}
-
-interface RankingAggDoc {
-  customerId: string;
-  displayName: string;
-  totalMl: number;
-  totalMl30min: number;
-  totalSpent: number;
-  orderCount: number;
-  favoriteDrink: string;
-  lastOrderAt: admin.firestore.Timestamp;
-  date: string;
-  positionChange?: number;
-}
-
-interface ChallengeDoc {
-  id: string;
-  title: string;
-  rule: {
-    type: string;
-    threshold: number;
-    windowMinutes: number;
-  };
-  status: string;
-  startsAt: admin.firestore.Timestamp;
-  endsAt: admin.firestore.Timestamp;
-  completedCount: number;
-  rewardType: string;
-  rewardDescription: string;
-}
-
-// ============================================================================
-// HELPERS
-// ============================================================================
-
-/**
- * Mascara nome para LGPD: "João Miguel Santos" → "João M. S."
- */
-function maskName(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length <= 1) return name;
-  return [parts[0], ...parts.slice(1).map((p) => `${p[0]?.toUpperCase()}.`)].join(' ');
-}
-
-/**
- * Gera ID estável para o cliente
- */
-function getCustomerId(order: OrderData): string {
-  if (order.customerIdentification) {
-    const numeric = order.customerIdentification.replace(/\D/g, '');
-    if (numeric.length > 0) return numeric;
-  }
-  return order.customerName?.toUpperCase().trim().replace(/\s+/g, '_') || 'unknown';
-}
-
-/**
- * Calcula total de mL nos items do pedido
- */
-function calcTotalMl(items?: OrderData['items']): number {
-  if (!items) return 0;
-  return items.reduce((sum, item) => {
-    if (item.mlPerUnit && item.mlPerUnit > 0) {
-      return sum + item.mlPerUnit * item.quantity;
-    }
-    return sum;
-  }, 0);
-}
-
-/**
- * Determina bebida mais consumida em mL
- */
-function calcFavoriteDrink(items?: OrderData['items']): string {
-  if (!items) return 'N/A';
-  const breakdown: Record<string, number> = {};
-  for (const item of items) {
-    if (item.mlPerUnit && item.mlPerUnit > 0) {
-      const name = item.title?.split(' - ')[0]?.trim() || item.title || 'Desconhecido';
-      breakdown[name] = (breakdown[name] || 0) + item.mlPerUnit * item.quantity;
-    }
-  }
-  const sorted = Object.entries(breakdown).sort(([, a], [, b]) => b - a);
-  return sorted[0]?.[0] || 'N/A';
-}
-
-/**
- * Gera data YYYY-MM-DD de hoje
- */
-function todayYMD(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/**
- * Gera código aleatório de 8 chars para prêmios
- */
-function generatePrizeCode(): string {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return code;
-}
 
 // ============================================================================
 // 1. onOrderUpdatedRanking
@@ -192,78 +70,89 @@ export const onOrderUpdatedRanking = functions
     const eventStatsRef = db.doc(`${storePath}/eventStats/current`);
 
     try {
-      // Upsert ranking doc
-      const existingDoc = await rankingRef.get();
-      if (existingDoc.exists) {
-        await rankingRef.update({
-          totalMl: increment(totalMl),
-          totalSpent: increment(after.total || 0),
-          orderCount: increment(1),
-          lastOrderAt: after.timestamp || serverTimestamp(),
-          favoriteDrink: calcFavoriteDrink(after.items),
-          date,
-        });
-      } else {
-        const newDoc: RankingAggDoc = {
-          customerId,
-          displayName: maskName(after.customerName || 'Anônimo'),
-          totalMl,
-          totalMl30min: totalMl,
-          totalSpent: after.total || 0,
-          orderCount: 1,
-          favoriteDrink: calcFavoriteDrink(after.items),
-          lastOrderAt: (after.timestamp as admin.firestore.Timestamp) || admin.firestore.Timestamp.now(),
-          date,
-        };
-        await rankingRef.set(newDoc);
-      }
+      // Use transaction for atomic read-then-write (prevents race conditions
+      // when concurrent triggers fire for the same customer)
+      await db.runTransaction(async (tx) => {
+        const existingDoc = await tx.get(rankingRef);
+        const statsDoc = await tx.get(eventStatsRef);
+        const isNewCustomer = !existingDoc.exists;
 
-      // Upsert eventStats
-      const statsDoc = await eventStatsRef.get();
-      if (statsDoc.exists) {
-        const currentData = statsDoc.data();
-        // Reset se é um novo dia
-        if (currentData?.date !== date) {
-          await eventStatsRef.set({
+        // Upsert ranking doc
+        if (existingDoc.exists) {
+          tx.update(rankingRef, {
+            totalMl: increment(totalMl),
+            totalSpent: increment(after.total || 0),
+            orderCount: increment(1),
+            lastOrderAt: after.timestamp || serverTimestamp(),
+            favoriteDrink: calcFavoriteDrink(after.items),
+            date,
+          });
+        } else {
+          const newDoc: RankingAggDoc = {
+            customerId,
+            displayName: maskName(after.customerName || 'Anônimo'),
+            totalMl,
+            totalMl30min: totalMl,
+            totalSpent: after.total || 0,
+            orderCount: 1,
+            favoriteDrink: calcFavoriteDrink(after.items),
+            lastOrderAt: (after.timestamp as admin.firestore.Timestamp) || admin.firestore.Timestamp.now(),
+            date,
+          };
+          tx.set(rankingRef, newDoc);
+        }
+
+        // Upsert eventStats (with correct uniqueCustomers tracking)
+        if (statsDoc.exists) {
+          const currentData = statsDoc.data();
+          // Reset if it's a new day
+          if (currentData?.date !== date) {
+            tx.set(eventStatsRef, {
+              totalMl,
+              totalServes: 1,
+              uniqueCustomers: 1,
+              date,
+              goalEnabled: currentData?.goalEnabled || false,
+              goalTargetMl: currentData?.goalTargetMl || 100000,
+              goalLabel: currentData?.goalLabel || 'Meta do Dia',
+              milestones: currentData?.milestones || [],
+              eventMode: { enabled: false, label: '', endsAt: null },
+              updatedAt: serverTimestamp(),
+            }, { merge: false });
+          } else {
+            // Same day — increment counters, only increment uniqueCustomers for new customers
+            const updateData: Record<string, unknown> = {
+              totalMl: increment(totalMl),
+              totalServes: increment(1),
+              updatedAt: serverTimestamp(),
+            };
+            if (isNewCustomer) {
+              updateData.uniqueCustomers = increment(1);
+            }
+            tx.update(eventStatsRef, updateData);
+          }
+        } else {
+          tx.set(eventStatsRef, {
             totalMl,
             totalServes: 1,
             uniqueCustomers: 1,
             date,
-            goalEnabled: currentData?.goalEnabled || false,
-            goalTargetMl: currentData?.goalTargetMl || 100000,
-            goalLabel: currentData?.goalLabel || 'Meta do Dia',
-            milestones: currentData?.milestones || [],
+            goalEnabled: false,
+            goalTargetMl: 100000,
+            goalLabel: 'Meta do Dia',
+            milestones: [],
             eventMode: { enabled: false, label: '', endsAt: null },
-            updatedAt: serverTimestamp(),
-          }, { merge: false });
-        } else {
-          await eventStatsRef.update({
-            totalMl: increment(totalMl),
-            totalServes: increment(1),
             updatedAt: serverTimestamp(),
           });
         }
-      } else {
-        await eventStatsRef.set({
-          totalMl,
-          totalServes: 1,
-          uniqueCustomers: 1,
-          date,
-          goalEnabled: false,
-          goalTargetMl: 100000,
-          goalLabel: 'Meta do Dia',
-          milestones: [],
-          eventMode: { enabled: false, label: '', endsAt: null },
-          updatedAt: serverTimestamp(),
-        });
-      }
+      });
 
-      // Check milestones
+      // Check milestones (outside transaction — reads fresh data)
       await checkMilestones(franchiseId, storeId);
 
       console.log(`[ranking] ✅ Aggregated for ${customerId}`);
     } catch (error) {
-      console.error(`[ranking] ❌ Error aggregating:`, error);
+      console.error(`[ranking] ❌ Error aggregating for ${customerId}:`, error);
     }
   });
 
@@ -287,26 +176,28 @@ export const recalculateRanking30min = functions
 
     console.log('[ranking30m] Recalculating 30-min window...');
 
-    // Pegar todas as lojas ativas com ranking
-    const franchisesSnap = await db.collection('franchises').get();
+    // Single collectionGroup query to get all active stores (avoids N+1 franchise iteration)
+    const storesSnap = await db
+      .collectionGroup('stores')
+      .where('isActive', '==', true)
+      .get();
 
-    for (const franchiseDoc of franchisesSnap.docs) {
-      const storesSnap = await db
-        .collection(`franchises/${franchiseDoc.id}/stores`)
-        .where('isActive', '==', true)
-        .get();
+    for (const storeDoc of storesSnap.docs) {
+      try {
+        // Extract franchiseId and storeId from the doc path:
+        // franchises/{fid}/stores/{sid}
+        const pathParts = storeDoc.ref.path.split('/');
+        const franchiseId = pathParts[1];
+        const storeId = pathParts[3];
 
-      for (const storeDoc of storesSnap.docs) {
-        try {
-          await recalculate30minForStore(
-            franchiseDoc.id,
-            storeDoc.id,
-            thirtyMinTimestamp,
-            today
-          );
-        } catch (err) {
-          console.error(`[ranking30m] Error for store ${storeDoc.id}:`, err);
-        }
+        await recalculate30minForStore(
+          franchiseId,
+          storeId,
+          thirtyMinTimestamp,
+          today
+        );
+      } catch (err) {
+        console.error(`[ranking30m] Error for store ${storeDoc.id}:`, err);
       }
     }
 
@@ -623,6 +514,7 @@ async function generatePrize(
 
 /**
  * A cada 5 minutos, expira prêmios não resgatados (30 min após wonAt).
+ * Usa collectionGroup para evitar N+1 queries (franchise → store iteration).
  */
 export const expirePrizes = functions
   .region(REGION)
@@ -630,37 +522,35 @@ export const expirePrizes = functions
   .schedule('every 5 minutes')
   .onRun(async () => {
     const now = admin.firestore.Timestamp.now();
-
     console.log('[prizes] Checking for expired prizes...');
 
-    const franchisesSnap = await db.collection('franchises').get();
-
-    for (const fDoc of franchisesSnap.docs) {
-      const storesSnap = await db
-        .collection(`franchises/${fDoc.id}/stores`)
-        .where('isActive', '==', true)
+    try {
+      const expiredSnap = await db
+        .collectionGroup('prizes')
+        .where('status', '==', 'won')
+        .where('expiresAt', '<=', now)
         .get();
 
-      for (const sDoc of storesSnap.docs) {
-        try {
-          const expiredSnap = await db
-            .collection(`franchises/${fDoc.id}/stores/${sDoc.id}/prizes`)
-            .where('status', '==', 'won')
-            .where('expiresAt', '<=', now)
-            .get();
-
-          if (!expiredSnap.empty) {
-            const batch = db.batch();
-            expiredSnap.docs.forEach((doc) => {
-              batch.update(doc.ref, { status: 'expired' });
-            });
-            await batch.commit();
-            console.log(`[prizes] Expired ${expiredSnap.size} prizes in store ${sDoc.id}`);
-          }
-        } catch (err) {
-          console.error(`[prizes] Error expiring for store ${sDoc.id}:`, err);
-        }
+      if (expiredSnap.empty) {
+        console.log('[prizes] No expired prizes found');
+        return;
       }
+
+      // Firestore batch limit is 500, chunk if needed
+      const chunks: FirebaseFirestore.QueryDocumentSnapshot[][] = [];
+      for (let i = 0; i < expiredSnap.docs.length; i += 500) {
+        chunks.push(expiredSnap.docs.slice(i, i + 500));
+      }
+
+      for (const chunk of chunks) {
+        const batch = db.batch();
+        chunk.forEach((doc) => batch.update(doc.ref, { status: 'expired' }));
+        await batch.commit();
+      }
+
+      console.log(`[prizes] Expired ${expiredSnap.size} prizes total`);
+    } catch (err) {
+      console.error('[prizes] Error expiring prizes:', err);
     }
   });
 
@@ -670,6 +560,7 @@ export const expirePrizes = functions
 
 /**
  * A cada 1 minuto, desativa Modo Evento se expirado.
+ * Usa collectionGroup para evitar N+1 queries.
  */
 export const expireEventMode = functions
   .region(REGION)
@@ -678,40 +569,35 @@ export const expireEventMode = functions
   .onRun(async () => {
     const now = admin.firestore.Timestamp.now();
 
-    const franchisesSnap = await db.collection('franchises').get();
-
-    for (const fDoc of franchisesSnap.docs) {
-      const storesSnap = await db
-        .collection(`franchises/${fDoc.id}/stores`)
-        .where('isActive', '==', true)
+    try {
+      const activeEventsSnap = await db
+        .collectionGroup('eventStats')
+        .where('eventMode.enabled', '==', true)
         .get();
 
-      for (const sDoc of storesSnap.docs) {
-        try {
-          const statsRef = db.doc(
-            `franchises/${fDoc.id}/stores/${sDoc.id}/eventStats/current`
-          );
-          const statsDoc = await statsRef.get();
-          if (!statsDoc.exists) continue;
-
-          const data = statsDoc.data();
-          if (
-            data?.eventMode?.enabled &&
-            data?.eventMode?.endsAt &&
-            data.eventMode.endsAt.toMillis() <= now.toMillis()
-          ) {
-            await statsRef.update({
-              'eventMode.enabled': false,
-              'eventMode.label': '',
-              'eventMode.endsAt': null,
-              updatedAt: serverTimestamp(),
-            });
-            console.log(`[eventMode] Expired for store ${sDoc.id}`);
-          }
-        } catch (err) {
-          console.error(`[eventMode] Error for store ${sDoc.id}:`, err);
+      let expired = 0;
+      for (const doc of activeEventsSnap.docs) {
+        const data = doc.data();
+        if (
+          data?.eventMode?.endsAt &&
+          data.eventMode.endsAt.toMillis() <= now.toMillis()
+        ) {
+          await doc.ref.update({
+            'eventMode.enabled': false,
+            'eventMode.label': '',
+            'eventMode.endsAt': null,
+            updatedAt: serverTimestamp(),
+          });
+          expired++;
+          console.log(`[eventMode] Expired for doc ${doc.ref.path}`);
         }
       }
+
+      if (expired > 0) {
+        console.log(`[eventMode] Expired ${expired} event(s)`);
+      }
+    } catch (err) {
+      console.error('[eventMode] Error expiring event modes:', err);
     }
   });
 
@@ -725,48 +611,60 @@ async function checkMilestones(
 ): Promise<void> {
   const storePath = `franchises/${franchiseId}/stores/${storeId}`;
   const statsRef = db.doc(`${storePath}/eventStats/current`);
-  const statsDoc = await statsRef.get();
-  if (!statsDoc.exists) return;
 
-  const data = statsDoc.data();
-  if (!data?.goalEnabled || !data?.milestones) return;
+  // Use transaction to read + write milestones + eventMode atomically
+  await db.runTransaction(async (tx) => {
+    const statsDoc = await tx.get(statsRef);
+    if (!statsDoc.exists) return;
 
-  const totalMl = data.totalMl || 0;
-  const milestones = data.milestones as Array<{
-    targetMl: number;
-    label: string;
-    reached: boolean;
-  }>;
+    const data = statsDoc.data();
+    if (!data?.goalEnabled || !data?.milestones) return;
 
-  let updated = false;
-  for (const milestone of milestones) {
-    if (!milestone.reached && totalMl >= milestone.targetMl) {
-      milestone.reached = true;
-      updated = true;
+    const totalMl = data.totalMl || 0;
+    const milestones = data.milestones as Array<{
+      targetMl: number;
+      label: string;
+      reached: boolean;
+    }>;
 
-      // Se o milestone ativa modo evento (label contém "Modo Evento")
-      if (milestone.label.toLowerCase().includes('modo evento')) {
-        // Extrair duração do label (ex: "Modo Evento 10min")
-        const match = milestone.label.match(/(\d+)\s*min/i);
-        const minutes = match ? parseInt(match[1], 10) : 10;
-        const endsAt = admin.firestore.Timestamp.fromDate(
-          new Date(Date.now() + minutes * 60 * 1000)
-        );
+    let milestonesUpdated = false;
+    let activateEventMode = false;
+    let eventLabel = '';
+    let eventMinutes = 10;
 
-        await statsRef.update({
-          'eventMode.enabled': true,
-          'eventMode.label': milestone.label,
-          'eventMode.endsAt': endsAt,
-        });
-        console.log(`[milestone] 🔥 Event mode activated: ${milestone.label}`);
+    for (const milestone of milestones) {
+      if (!milestone.reached && totalMl >= milestone.targetMl) {
+        milestone.reached = true;
+        milestonesUpdated = true;
+
+        // Se o milestone ativa modo evento (label contém "Modo Evento")
+        if (milestone.label.toLowerCase().includes('modo evento')) {
+          const match = milestone.label.match(/(\d+)\s*min/i);
+          eventMinutes = match ? parseInt(match[1], 10) : 10;
+          activateEventMode = true;
+          eventLabel = milestone.label;
+        }
       }
     }
-  }
 
-  if (updated) {
-    await statsRef.update({
+    if (!milestonesUpdated) return;
+
+    // Build a single atomic update with all changes
+    const updatePayload: Record<string, unknown> = {
       milestones,
       updatedAt: serverTimestamp(),
-    });
-  }
+    };
+
+    if (activateEventMode) {
+      const endsAt = admin.firestore.Timestamp.fromDate(
+        new Date(Date.now() + eventMinutes * 60 * 1000)
+      );
+      updatePayload['eventMode.enabled'] = true;
+      updatePayload['eventMode.label'] = eventLabel;
+      updatePayload['eventMode.endsAt'] = endsAt;
+      console.log(`[milestone] 🔥 Event mode activated: ${eventLabel}`);
+    }
+
+    tx.update(statsRef, updatePayload);
+  });
 }

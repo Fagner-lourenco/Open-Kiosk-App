@@ -104,6 +104,16 @@ export async function updateTvConfig(
   storeId: string,
   updates: Partial<TvConfig>
 ): Promise<void> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+
+  // Validate numeric ranges if present
+  if (updates.rotationIntervalSec !== undefined && (updates.rotationIntervalSec < 3 || updates.rotationIntervalSec > 120)) {
+    throw new Error('rotationIntervalSec deve estar entre 3 e 120 segundos');
+  }
+  if (updates.maxDisplayPositions !== undefined && (updates.maxDisplayPositions < 1 || updates.maxDisplayPositions > 100)) {
+    throw new Error('maxDisplayPositions deve estar entre 1 e 100');
+  }
+
   const ref = docFromPath(tvConfigPath(franchiseId, storeId));
   await setDoc(ref, { ...updates, updatedAt: serverTimestamp() }, { merge: true });
 }
@@ -139,6 +149,14 @@ export async function setCollectiveGoal(
   goalLabel: string,
   milestones: GoalMilestone[]
 ): Promise<void> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+  if (!goalTargetMl || goalTargetMl <= 0) throw new Error('goalTargetMl deve ser maior que zero');
+  if (!goalLabel?.trim()) throw new Error('goalLabel é obrigatório');
+  for (const m of milestones) {
+    if (!m.targetMl || m.targetMl <= 0) throw new Error('Milestone targetMl deve ser maior que zero');
+    if (!m.label?.trim()) throw new Error('Milestone label é obrigatório');
+  }
+
   const ref = docFromPath(eventStatsPath(franchiseId, storeId));
   await setDoc(
     ref,
@@ -178,6 +196,10 @@ export async function toggleEventMode(
   label: string = '',
   durationMinutes: number = 10
 ): Promise<void> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+  if (enabled && durationMinutes < 1) throw new Error('durationMinutes deve ser pelo menos 1');
+  if (enabled && durationMinutes > 1440) throw new Error('durationMinutes não pode exceder 1440 (24h)');
+
   try {
     const functions = getFunctions(undefined, 'southamerica-east1');
     const toggleFn = httpsCallable(functions, 'toggleEventMode');
@@ -200,6 +222,12 @@ export async function createChallenge(
   storeId: string,
   challenge: Omit<Challenge, 'id' | 'createdAt' | 'updatedAt' | 'completedCount'>
 ): Promise<string> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+  if (!challenge.title?.trim()) throw new Error('Título do desafio é obrigatório');
+  if (!challenge.rule?.type) throw new Error('Tipo de regra é obrigatório');
+  if (!challenge.rule?.threshold || challenge.rule.threshold <= 0) throw new Error('Threshold deve ser maior que zero');
+  if (!challenge.rule?.windowMinutes || challenge.rule.windowMinutes <= 0) throw new Error('windowMinutes deve ser maior que zero');
+
   const colRef = colFromPath(challengesPath(franchiseId, storeId));
   const newRef = doc(colRef);
 
@@ -294,6 +322,10 @@ export async function addPrize(
   storeId: string,
   prize: Omit<Prize, 'id' | 'createdAt' | 'code' | 'status'>
 ): Promise<string> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+  if (!prize.type?.trim()) throw new Error('Tipo do prêmio é obrigatório');
+  if (!prize.description?.trim()) throw new Error('Descrição do prêmio é obrigatória');
+
   const colRef = colFromPath(prizesPath(franchiseId, storeId));
   const newRef = doc(colRef);
 
@@ -318,6 +350,14 @@ export async function addPrizesBatch(
   storeId: string,
   prizes: Array<Omit<Prize, 'id' | 'createdAt' | 'code' | 'status'>>,
 ): Promise<number> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+  if (!prizes || prizes.length === 0) throw new Error('Lista de prêmios não pode ser vazia');
+  if (prizes.length > 500) throw new Error('Máximo de 500 prêmios por lote (limite do Firestore batch)');
+  for (const p of prizes) {
+    if (!p.type?.trim()) throw new Error('Tipo do prêmio é obrigatório em todos os itens');
+    if (!p.description?.trim()) throw new Error('Descrição é obrigatória em todos os itens');
+  }
+
   const colRef = colFromPath(prizesPath(franchiseId, storeId));
   const batchOp = writeBatch(db);
 
@@ -346,6 +386,10 @@ export async function redeemPrize(
   code: string,
   redeemedByUserId: string
 ): Promise<{ success: boolean; prize?: Prize; error?: string }> {
+  if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
+  if (!code?.trim()) throw new Error('Código do prêmio é obrigatório');
+  if (!redeemedByUserId?.trim()) throw new Error('ID do atendente é obrigatório');
+
   const colRef = colFromPath(prizesPath(franchiseId, storeId));
   const q = query(colRef, where('code', '==', code.toUpperCase().trim()), limit(1));
   const snap = await getDocs(q);

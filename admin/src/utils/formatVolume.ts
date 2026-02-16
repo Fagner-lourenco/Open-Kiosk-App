@@ -10,7 +10,7 @@
  *
  * Variantes:
  *   - formatVolume(ml)        → "9,6 L"   (padrão, com espaço)
- *   - formatVolumeCompact(ml) → "9.6L"    (sem espaço, ponto decimal — telão)
+ *   - formatVolumeCompact(ml) → "9,6L"    (sem espaço, vírgula decimal — telão)
  *   - formatVolumeShort(ml)   → "91L"     (sem decimal, resumido para metas)
  */
 
@@ -28,7 +28,7 @@ export function formatVolume(ml: number): string {
   return `${formatted.replace(/,0$/, '')} L`;
 }
 
-// ─── Compacto (telão, sem espaço, ponto decimal) ────────────────────────────
+// ─── Compacto (telão, sem espaço) ────────────────────────────────────────
 
 export function formatVolumeCompact(ml: number): string {
   if (ml < 0) ml = 0;
@@ -37,15 +37,15 @@ export function formatVolumeCompact(ml: number): string {
   if (liters >= 1000) {
     return `${Math.round(liters).toLocaleString('pt-BR')}L`;
   }
-  const str = liters.toFixed(1);
-  return `${str.replace(/\.0$/, '')}L`;
+  const formatted = liters.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return `${formatted.replace(/,0$/, '')}L`;
 }
 
 // ─── Curto (metas, totais grandes) ──────────────────────────────────────────
 
 export function formatVolumeShort(ml: number): string {
   if (ml < 0) ml = 0;
-  if (ml >= 1_000_000) return `${(ml / 1_000_000).toFixed(0)}K L`;
+  if (ml >= 1_000_000) return `${(ml / 1_000_000).toFixed(0)}KL`;
   if (ml >= 1000) return `${Math.round(ml / 1000)}L`;
   return `${Math.round(ml)}mL`;
 }

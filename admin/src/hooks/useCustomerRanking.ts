@@ -84,7 +84,9 @@ function aggregateRanking(
     // Apenas pedidos completados (paid ou completed)
     if (order.status !== 'paid_pending_dispense' && order.status !== 'completed' && order.status !== 'dispensing') continue;
 
-    const key = order.customerIdentification || order.customerName.toUpperCase().trim();
+    const key = order.customerIdentification
+      ? String(order.customerIdentification).replace(/\D/g, '') || order.customerName.toUpperCase().trim().replace(/\s+/g, '_')
+      : order.customerName.toUpperCase().trim().replace(/\s+/g, '_');
     let entry = byCustomer.get(key);
 
     if (!entry) {

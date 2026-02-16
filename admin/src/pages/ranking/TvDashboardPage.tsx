@@ -863,6 +863,3 @@ export function TvDashboardPage() {
     </div>
   );
 }
-
-// Re-export with old name for backwards compatibility
-export { TvDashboardPage as RankingDisplayPage };

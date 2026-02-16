@@ -188,6 +188,7 @@ export function TvConfigTab({
       setLastSavedAt(new Date());
       audit(AuditActions.TV_CONFIG_UPDATE, { type: 'store', id: storeId, name: storeId }, { config });
       setMessage({ type: 'success', text: 'Configuração salva!' });
+      setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       console.error('[TvConfigTab] save error:', err);
       setMessage({ type: 'error', text: 'Erro ao salvar' });
@@ -211,6 +212,7 @@ export function TvConfigTab({
       setLastSavedAt(new Date());
       audit(AuditActions.EVENT_GOAL_SET, { type: 'store', id: storeId, name: storeId }, { goalTargetMl, goalLabel, milestones: milestones.length });
       setMessage({ type: 'success', text: 'Meta coletiva atualizada!' });
+      setTimeout(() => setMessage(null), 4000);
     } catch (err) {
       setMessage({ type: 'error', text: 'Erro ao salvar meta' });
     } finally {
@@ -223,8 +225,10 @@ export function TvConfigTab({
       await disableCollectiveGoal(franchiseId, storeId);
       audit(AuditActions.EVENT_GOAL_DISABLE, { type: 'store', id: storeId, name: storeId });
       setMessage({ type: 'success', text: 'Meta desabilitada' });
+      setTimeout(() => setMessage(null), 4000);
       loadData();
-    } catch {
+    } catch (err) {
+      console.error('[EventConfig] Erro ao desabilitar meta:', err);
       setMessage({ type: 'error', text: 'Erro ao desabilitar meta' });
     }
   };
@@ -234,8 +238,10 @@ export function TvConfigTab({
       await toggleEventMode(franchiseId, storeId, enabled, eventModeLabel, eventModeDuration);
       audit(AuditActions.EVENT_MODE_TOGGLE, { type: 'store', id: storeId, name: storeId }, { enabled, label: eventModeLabel, durationMinutes: eventModeDuration });
       setMessage({ type: 'success', text: enabled ? 'Modo evento ativado!' : 'Modo evento desativado' });
+      setTimeout(() => setMessage(null), 4000);
       loadData();
-    } catch {
+    } catch (err) {
+      console.error('[EventConfig] Erro ao alterar modo evento:', err);
       setMessage({ type: 'error', text: 'Erro ao alterar modo evento' });
     }
   };
@@ -677,6 +683,7 @@ export function ChallengesTab({
       });
 
       setMessage({ type: 'success', text: 'Desafio criado!' });
+      setTimeout(() => setMessage(null), 4000);
       audit(AuditActions.CHALLENGE_CREATE, { type: 'challenge', id: 'new', name: newTitle }, { durationMinutes: newDuration, ruleType: newRuleType });
       setShowCreate(false);
       resetCreateForm();
@@ -693,8 +700,10 @@ export function ChallengesTab({
       await activateChallenge(franchiseId, storeId, ch.id, ch.durationMinutes);
       audit(AuditActions.CHALLENGE_ACTIVATE, { type: 'challenge', id: ch.id, name: ch.title });
       setMessage({ type: 'success', text: `"${ch.title}" ativado!` });
+      setTimeout(() => setMessage(null), 4000);
       loadChallenges();
-    } catch {
+    } catch (err) {
+      console.error('[EventConfig] Erro ao ativar desafio:', err);
       setMessage({ type: 'error', text: 'Erro ao ativar' });
     }
   };
@@ -703,8 +712,10 @@ export function ChallengesTab({
     try {
       await updateChallengeStatus(franchiseId, storeId, ch.id, 'cancelled');
       setMessage({ type: 'success', text: 'Desafio cancelado' });
+      setTimeout(() => setMessage(null), 4000);
       loadChallenges();
-    } catch {
+    } catch (err) {
+      console.error('[EventConfig] Erro ao cancelar desafio:', err);
       setMessage({ type: 'error', text: 'Erro ao cancelar' });
     }
   };
@@ -714,7 +725,8 @@ export function ChallengesTab({
       await deleteChallenge(franchiseId, storeId, ch.id);
       audit(AuditActions.CHALLENGE_DELETE, { type: 'challenge', id: ch.id, name: ch.title });
       loadChallenges();
-    } catch {
+    } catch (err) {
+      console.error('[EventConfig] Erro ao remover desafio:', err);
       setMessage({ type: 'error', text: 'Erro ao remover' });
     }
   };
@@ -1058,6 +1070,7 @@ export function PrizesTab({
       const result = await redeemPrize(franchiseId, storeId, redeemCode, user.uid);
       if (result.success) {
         setMessage({ type: 'success', text: `Prêmio resgatado: ${result.prize?.description}` });
+        setTimeout(() => setMessage(null), 4000);
         audit(AuditActions.PRIZE_REDEEM, { type: 'prize', id: redeemCode, name: result.prize?.description || redeemCode });
         setRedeemCode('');
         loadData();
@@ -1088,6 +1101,7 @@ export function PrizesTab({
       }
 
       setMessage({ type: 'success', text: `${addCount} prêmio(s) adicionado(s) ao pool!` });
+      setTimeout(() => setMessage(null), 4000);
       audit(AuditActions.PRIZE_ADD, { type: 'prize', id: 'batch', name: addDescription }, { count: addCount, type: addType, value: addValue });
       setAddDescription('');
       setAddCount(1);
@@ -1106,7 +1120,8 @@ export function PrizesTab({
       audit(AuditActions.GOLDEN_SERVE_UPDATE, { type: 'store', id: storeId, name: storeId }, { goldenConfig });
       setMessage({ type: 'success', text: 'Serve dourado atualizado!' });
       setTimeout(() => setMessage(null), 3000);
-    } catch {
+    } catch (err) {
+      console.error('[EventConfig] Erro ao salvar serve dourado:', err);
       setMessage({ type: 'error', text: 'Erro ao salvar serve dourado' });
     } finally {
       setSavingGolden(false);

@@ -1,7 +1,7 @@
 ﻿# DATABASE_MAP (Fonte de Verdade do Código)
 
-Atualizado em: 2026-02-16T15:19:21Z (UTC)
-Commit auditado: `c6fc597`
+Atualizado em: 2026-02-16T16:44:41.939Z (UTC)
+Commit auditado: `64d6ba0`
 Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.indexes.json`
 
 ## 1) Base canônica Firestore
@@ -45,6 +45,13 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - `customers`, `deals`, `calendarItems`, `commercialEvents`, `quotes` por hooks em `admin/src/hooks/useCustomers.ts`, `admin/src/hooks/useDeals.ts`, `admin/src/hooks/useCalendarItems.ts`, `admin/src/hooks/useCommercialEvents.ts`, `admin/src/hooks/useQuotes.ts`.
 - Financeiro (flat `fin*` dentro da loja):
 - `finAccounts`, `finCategories`, `finCostCenters`, `finParties`, `finLedger`, `finInvoices`, `finBills`, `finPayments` via hooks `useFin*` e `admin/src/lib/pathResolver.ts`.
+- Telão público de ranking:
+- rota `admin/src/App.tsx` (`/ranking/display/:storeId`) usa `admin/src/pages/ranking/TvDashboardPage.tsx` e hooks agregados:
+- `admin/src/hooks/useTvDashboard.ts` -> `tvConfig/current`, `eventStats/current`
+- `admin/src/hooks/useTvRanking.ts` -> `rankingAgg`
+- `admin/src/hooks/useTvChallenges.ts` -> `challenges`
+- `admin/src/hooks/useTvWinners.ts` -> `prizes`
+- página legada `admin/src/pages/ranking/RankingDisplayPage.tsx` removida no estado atual.
 
 ### Functions (`functions/src`)
 
@@ -58,6 +65,8 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - `franchises/{franchiseId}/stores/{storeId}/payments/{paymentId}` e notificações em `franchises/{franchiseId}/notifications` (`functions/src/payments/*.ts`).
 - Analytics/ERP/Ranking:
 - leituras/escritas em `orders`, `dailyStats`, `metrics`, `taps`, `kegs`, `servingSessions`, `wastageEvents`, `rankingAgg`, `eventStats`, `tvConfig`, `challenges`, `prizes` (`functions/src/analytics/*.ts`, `functions/src/erp/*.ts`, `functions/src/ranking/*.ts`).
+- Ranking helper compartilhado:
+- `functions/src/ranking/helpers.ts` (máscara LGPD, chave de cliente, agregação mL, bebida favorita, data do dia, código de prêmio).
 - Cleanup/Migrations:
 - `onDeleteStore` em `functions/src/cleanup/onDeleteStore.ts`.
 - `cleanupOldNotifications` remove notificacoes antigas quando `isRead=true` ou `isDismissed=true`, com processamento em lotes (`functions/src/erp/cleanupOldNotifications.ts`).
@@ -111,6 +120,9 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - `customers`, `deals`, `calendarItems`, `commercialEvents`, `quotes`.
 - Financeiro:
 - `finAccounts`, `finCategories`, `finCostCenters`, `finParties`, `finLedger`, `finInvoices`, `finBills`, `finPayments`.
+- Drift de schema/tipo observado no código legado:
+- enums fora do contrato podem chegar e ser aceitos na leitura (`useFinPayments`, `useFinCategories`, `useLedger`, `useBills`).
+- campos monetários podem chegar como `string` e contaminar agregações (`finPayments.amount`, `finLedger.amount`, `finBills.remaining`).
 
 ## 4) Triggers/Functions relacionadas
 
@@ -118,8 +130,7 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - Auth: `onUserCreated`, `setCustomClaims`, `setAdminClaims`, `syncMembershipClaims`, `getClaimsForUser`, `refreshUserToken`.
 - Invitations: `sendInvitationEmail`, `acceptInvitation`, `validateInvitationToken`.
 - Billing: `stripeWebhook`, `createCheckoutSession`, `createBillingPortalSession`.
-- Payments: `createPayment`, `pagbankWebhook`, `syncPendingPayments`, `onPaymentUpdated`.
-- Payments (implementada fora do entrypoint): `cancelPagBankPayment` existe em `functions/src/payments/index.ts`, mas nao esta exportada em `functions/src/index.ts`.
+- Payments: `createPayment`, `pagbankWebhook`, `cancelPagBankPayment`, `syncPendingPayments`, `onPaymentUpdated`.
 - Analytics: `aggregateDailySales`, `aggregateDailySalesHTTP`, `getMetricsAdmin`, `onOrderCreated`, `onOrderUpdated`.
 - ERP: `onServingSessionCreated`, `onWastageEventCreated`, `aggregateOperationalDaily`, `checkKegLevels`, `checkMaintenanceOverdue`, `resetTapDailyCounters`, `cleanupOldNotifications`.
 - Ranking: `onOrderUpdatedRanking`, `recalculateRanking30min`, `onOrderUpdatedChallenge`, `onOrderUpdatedGoldenServe`, `expirePrizes`, `expireEventMode`, `toggleEventMode`, `recalculateRanking30minNow`.
@@ -154,8 +165,8 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - `docs/archives/AUDIT_REPORT.md#7-incompatibilidades-detectadas`
 - Tipo de data divergente (`string ISO` vs `Timestamp`) em fallback de cancelamento PagBank:
 - `docs/archives/AUDIT_REPORT.md#7-incompatibilidades-detectadas`
-- Callable de cancelamento usada no Kiosk e ausente no entrypoint de Functions (`cancelPagBankPayment`):
-- `docs/archives/AUDIT_REPORT.md#6-bugs-encontrados-reproducao-real`
+- Callable de cancelamento PagBank sem autorização por tenant (franchise/store):
+- `docs/archives/AUDIT_REPORT.md#24-ciclo-contínuo---normalização-financeira-admin--autorização-de-cancelamento-2026-02-16`
 - Contrato de status de pedidos Kiosk (`paid_pending_dispense`, `dispensing`, `failed_dispense`) nao tratado explicitamente em `functions/src/analytics/aggOrders.ts`:
 - `docs/archives/AUDIT_REPORT.md#6-bugs-encontrados-reproducao-real`
 - `aggregateDailySales` assume `status='completed'` e `paymentStatus='paid'` quando campos faltam, com risco de inflar receita:
@@ -201,4 +212,62 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - Cleanup de exclusão de loja em Functions não cobre `inventoryLogs`:
 - `functions/src/cleanup/onDeleteStore.ts`.
 - evidência: `docs/archives/AUDIT_REPORT.md#22-ciclo-contínuo---aprofundamento-admin--functions-2026-02-16`
+
+## 8) Conflitos adicionais (ciclo 23)
+
+- Callable de cancelamento PagBank sem gate de autenticação:
+- `functions/src/payments/index.ts` (`cancelPagBankPayment`) não valida `context.auth`/tenant antes de atualizar `payments/{paymentId}`.
+- evidência: `docs/archives/AUDIT_REPORT.md#23-ciclo-contínuo---aprofundamento-admin--functions--segurança-callables-2026-02-16`
+
+- Cleanup de loja não cobre integralmente subcoleções mapeadas por Admin/Kiosk:
+- faltantes confirmados por contrato cruzado: `inventoryLogs` e `notifications`.
+- evidência: `docs/archives/AUDIT_REPORT.md#23-ciclo-contínuo---aprofundamento-admin--functions--segurança-callables-2026-02-16`
+
+- Exclusão de entidade pai no Admin sem cascade de subcoleções:
+- `useCommercialEvents.deleteEvent` remove apenas `commercialEvents/{eventId}` e deixa `budgetLines/*`.
+- `useQuotes.deleteQuote` remove apenas `quotes/{quoteId}` e deixa `lines/*`.
+- evidência: `docs/archives/AUDIT_REPORT.md#23-ciclo-contínuo---aprofundamento-admin--functions--segurança-callables-2026-02-16`
+
+## 9) Conflitos adicionais (ciclo 24)
+
+- Normalização de enums/status no financeiro do Admin aceita valores inválidos:
+- `useFinPayments`, `useFinCategories`, `useLedger`, `useBills`.
+- impacto: filtros e derivados (`in/out`, `active`, `draft`) ficam inconsistentes com contrato tipado.
+- evidência: `docs/archives/AUDIT_REPORT.md#24-ciclo-contínuo---normalização-financeira-admin--autorização-de-cancelamento-2026-02-16`
+
+- Coerção numérica ausente em campos monetários legados:
+- `finPayments.amount`, `finLedger.amount`, `finBills.remaining` podem ser `string`, gerando totais string (`totalIn`, `totalIncome`, `totalPayable`).
+- evidência: `docs/archives/AUDIT_REPORT.md#24-ciclo-contínuo---normalização-financeira-admin--autorização-de-cancelamento-2026-02-16`
+
+- `cancelPagBankPayment` sem guardas explícitas de `requireAuth` + autorização por franquia/loja no handler:
+- callable permite marcar `cancelRequested=true` sem validação de tenant.
+- evidência: `docs/archives/AUDIT_REPORT.md#24-ciclo-contínuo---normalização-financeira-admin--autorização-de-cancelamento-2026-02-16`
+
+## 10) Conflitos adicionais (ciclo 25)
+
+- Normalização em `useInvoices`, `useQuotes`, `useDeals` e `useParties` segue aceitando enums fora do contrato e tipos monetários string:
+- `status` inválido entra sem fallback, `total/remaining/valueEstimate` string contamina agregações.
+- evidência: `docs/archives/AUDIT_REPORT.md#25-ciclo-contínuo---expansão-admin--ranking-helpers-2026-02-16`
+
+- `ranking/helpers.ts` e `recalculate30minNow.ts` têm drift de implementação:
+- `recalculate30minNow.ts` foi atualizado para reutilizar helper compartilhado (`import './helpers'`), mitigando o drift desta parte.
+- evidência: `docs/archives/AUDIT_REPORT.md#25-ciclo-contínuo---expansão-admin--ranking-helpers-2026-02-16`
+
+- Agregação de volume em ranking conta `quantity=0` como `1` (`quantity || 1`):
+- afeta `calcTotalMl` e `calcFavoriteDrink`, impactando `rankingAgg.totalMl`, janela `totalMl30min` e favoritismo de bebida.
+- evidência: `docs/archives/AUDIT_REPORT.md#25-ciclo-contínuo---expansão-admin--ranking-helpers-2026-02-16`
+
+## 11) Conflitos adicionais (ciclo 26)
+
+- Validação numérica incompleta em `tvEventService`:
+- `admin/src/services/tvEventService.ts` aceita payloads não-numéricos por coerção implícita em comparações de faixa (`'abc'`, `'500'`, `'x'`), em pontos como `updateTvConfig`, `setCollectiveGoal` e `createChallenge`.
+- evidência: `docs/archives/AUDIT_REPORT.md#263-bugsincompatibilidades-confirmados-neste-ciclo`
+
+- Drift de contrato de apresentação em `formatVolume`:
+- `admin/src/utils/formatVolume.ts` passou a retornar compactação com vírgula decimal (`9,1L`) e sufixo curto sem espaço (`1KL`), enquanto suíte de contrato existente ainda valida formato antigo.
+- evidência: `docs/archives/AUDIT_REPORT.md#263-bugsincompatibilidades-confirmados-neste-ciclo`
+
+- Migração de telão confirmada para documentos agregados:
+- `TvDashboardPage` não consulta mais `orders` diretamente; consumo passa por `rankingAgg/eventStats/challenges/prizes`.
+- evidência: `docs/archives/AUDIT_REPORT.md#264-fluxo-real-quem-chama-o-quê-validado-para-os-arquivos-novos`
 
