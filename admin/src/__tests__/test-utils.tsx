@@ -1,0 +1,80 @@
+/**
+ * ============================================================================
+ * Test Utilities — Wrapper para hooks com QueryClientProvider
+ * ============================================================================
+ */
+
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { renderHook, type RenderHookOptions } from '@testing-library/react';
+import { vi } from 'vitest';
+import { getDocs, setDoc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+
+// ─── Test IDs ───────────────────────────────────────────────────────────────
+
+export const TEST_FRANCHISE_ID = 'test-franchise';
+export const TEST_STORE_ID = 'test-store';
+export const TEST_USER_ID = 'test-user-id';
+
+// ─── Timestamp helpers ──────────────────────────────────────────────────────
+
+export function makeTimestamp(dateStr = '2026-01-15T10:00:00Z') {
+  return Timestamp.fromDate(new Date(dateStr));
+}
+
+// ─── Firestore mock helpers ─────────────────────────────────────────────────
+
+export function mockGetDocsReturn(docs: Array<{ id: string; data: Record<string, unknown> }>) {
+  (getDocs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    docs: docs.map((d) => ({
+      id: d.id,
+      data: () => d.data,
+      exists: () => true,
+    })),
+  });
+}
+
+export function mockGetDocsEmpty() {
+  (getDocs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ docs: [] });
+}
+
+export function resetFirestoreMocks() {
+  (getDocs as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue({ docs: [] });
+  (setDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
+  (updateDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
+  (deleteDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
+}
+
+// ─── QueryClient wrapper ───────────────────────────────────────────────────
+
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+        staleTime: 0,
+      },
+      mutations: {
+        retry: false,
+      },
+    },
+  });
+}
+
+export function createWrapper() {
+  const queryClient = createTestQueryClient();
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  return { Wrapper, queryClient };
+}
+
+export function renderHookWithProviders<TResult>(
+  hook: () => TResult,
+  options?: Omit<RenderHookOptions<unknown>, 'wrapper'>,
+) {
+  const { Wrapper, queryClient } = createWrapper();
+  const result = renderHook(hook, { wrapper: Wrapper, ...options });
+  return { ...result, queryClient };
+}

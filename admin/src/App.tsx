@@ -44,6 +44,19 @@ import {
   StoreMembersPage,
   StoreReportsPage,
   StoreSettingsPage,
+  // Commercial (CRM)
+  CommercialPipelinePage,
+  CommercialCalendarPage,
+  CommercialEventsPage,
+  CommercialCustomersPage,
+  CommercialQuotesPage,
+  // Finance
+  FinanceOverviewPage,
+  FinanceARPage,
+  FinanceAPPage,
+  FinanceCashPage,
+  FinanceReportsPage,
+  FinanceSettingsPage,
 } from '@/pages/stores/StoreSubPages';
 import { TeamPage } from '@/pages/team/TeamPage';
 import { UserDetailPage } from '@/pages/users/UserDetailPage';
@@ -278,6 +291,19 @@ export default function App() {
             <Route path="members" element={<StoreMembersPage />} />
             <Route path="reports" element={<StoreReportsPage />} />
             <Route path="settings" element={<StoreSettingsPage />} />
+            {/* Comercial (CRM) */}
+            <Route path="commercial/pipeline" element={<CommercialPipelinePage />} />
+            <Route path="commercial/calendar" element={<CommercialCalendarPage />} />
+            <Route path="commercial/events" element={<CommercialEventsPage />} />
+            <Route path="commercial/customers" element={<CommercialCustomersPage />} />
+            <Route path="commercial/quotes" element={<CommercialQuotesPage />} />
+            {/* Financeiro */}
+            <Route path="finance/overview" element={<FinanceOverviewPage />} />
+            <Route path="finance/ar" element={<FinanceARPage />} />
+            <Route path="finance/ap" element={<FinanceAPPage />} />
+            <Route path="finance/cash" element={<FinanceCashPage />} />
+            <Route path="finance/reports" element={<FinanceReportsPage />} />
+            <Route path="finance/settings" element={<FinanceSettingsPage />} />
           </Route>
           
           {/* Equipe - requer permissão de gestão de usuários */}

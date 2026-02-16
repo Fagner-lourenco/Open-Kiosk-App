@@ -17,13 +17,26 @@ import {
   BarChart3,
   Users,
   Settings,
+  // Commercial (CRM)
+  Kanban,
+  CalendarDays,
+  PartyPopper,
+  Contact,
+  FileText,
+  // Finance
+  PieChart,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  Wallet,
+  TrendingUp,
+  SlidersHorizontal,
 } from 'lucide-react';
 
 export interface StoreNavItem {
   label: string;
   href: string; // sub-path relativo a /stores/:storeId
   icon: LucideIcon;
-  group: 'overview' | 'operação' | 'catalogo' | 'gestao';
+  group: 'overview' | 'operação' | 'catalogo' | 'gestao' | 'comercial' | 'financeiro';
 }
 
 export const STORE_NAV_GROUPS: Record<string, string> = {
@@ -31,6 +44,8 @@ export const STORE_NAV_GROUPS: Record<string, string> = {
   operação: 'Operação',
   catalogo: 'Catálogo',
   gestao: 'Gestão',
+  comercial: 'Comercial',
+  financeiro: 'Financeiro',
 };
 
 export const STORE_NAV_ITEMS: StoreNavItem[] = [
@@ -52,4 +67,19 @@ export const STORE_NAV_ITEMS: StoreNavItem[] = [
   { label: 'Equipe', href: 'members', icon: Users, group: 'gestao' },
   { label: 'Relatórios', href: 'reports', icon: BarChart3, group: 'gestao' },
   { label: 'Configurações', href: 'settings', icon: Settings, group: 'gestao' },
+
+  // Comercial (CRM)
+  { label: 'Pipeline', href: 'commercial/pipeline', icon: Kanban, group: 'comercial' },
+  { label: 'Agenda', href: 'commercial/calendar', icon: CalendarDays, group: 'comercial' },
+  { label: 'Eventos', href: 'commercial/events', icon: PartyPopper, group: 'comercial' },
+  { label: 'Clientes', href: 'commercial/customers', icon: Contact, group: 'comercial' },
+  { label: 'Propostas', href: 'commercial/quotes', icon: FileText, group: 'comercial' },
+
+  // Financeiro
+  { label: 'Visão Geral', href: 'finance/overview', icon: PieChart, group: 'financeiro' },
+  { label: 'Contas a Receber', href: 'finance/ar', icon: ArrowDownCircle, group: 'financeiro' },
+  { label: 'Contas a Pagar', href: 'finance/ap', icon: ArrowUpCircle, group: 'financeiro' },
+  { label: 'Caixa & Bancos', href: 'finance/cash', icon: Wallet, group: 'financeiro' },
+  { label: 'Relatórios', href: 'finance/reports', icon: TrendingUp, group: 'financeiro' },
+  { label: 'Configurações', href: 'finance/settings', icon: SlidersHorizontal, group: 'financeiro' },
 ];

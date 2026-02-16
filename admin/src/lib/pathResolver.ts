@@ -42,7 +42,26 @@ export type StoreSubcollection =
   | 'metrics'
   | 'rankingAgg'
   | 'challenges'
-  | 'prizes';
+  | 'prizes'
+  // Commercial (CRM)
+  | 'customers'
+  | 'deals'
+  | 'calendarItems'
+  | 'commercialEvents'
+  | 'quotes';
+
+/**
+ * Subcoleções do módulo financeiro (dentro de .../finance/)
+ */
+export type FinanceSubcollection =
+  | 'accounts'
+  | 'categories'
+  | 'costCenters'
+  | 'parties'
+  | 'ledger'
+  | 'invoices'
+  | 'bills'
+  | 'finPayments';
 
 /**
  * Retorna o path de uma subcollection da loja
@@ -170,6 +189,65 @@ export function billingEventsPath(franchiseId: string): string {
   return `franchises/${franchiseId}/billingEvents`;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// FINANCE — coleções flat sob a loja com prefixo "fin"
+// ════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Mapa que converte o nome lógico (usado nos hooks) para o nome real da
+ * collection no Firestore. Mantemos as coleções financeiras como top-level
+ * subcollections da loja (ímpar de segmentos) para compatibilidade com o SDK.
+ *
+ * Antes:  franchises/{fId}/stores/{sId}/finance/ledger      (6 segs — INVÁLIDO)
+ * Agora:  franchises/{fId}/stores/{sId}/finLedger            (5 segs — OK)
+ */
+const FINANCE_COLLECTION_MAP: Record<FinanceSubcollection, string> = {
+  accounts: 'finAccounts',
+  categories: 'finCategories',
+  costCenters: 'finCostCenters',
+  parties: 'finParties',
+  ledger: 'finLedger',
+  invoices: 'finInvoices',
+  bills: 'finBills',
+  finPayments: 'finPayments',
+};
+
+/**
+ * Retorna o path de uma subcoleção financeira da loja
+ * Ex: franchises/{fId}/stores/{sId}/finLedger
+ */
+export function financeSubPath(
+  franchiseId: string,
+  storeId: string,
+  subcollection: FinanceSubcollection
+): string {
+  if (!franchiseId) {
+    throw new Error('[PathResolver] franchiseId obrigatório para financeSubPath');
+  }
+  const colName = FINANCE_COLLECTION_MAP[subcollection];
+  return `franchises/${franchiseId}/stores/${storeId}/${colName}`;
+}
+
+/**
+ * Retorna o path de um documento específico dentro de uma subcoleção financeira
+ */
+export function financeDocPath(
+  franchiseId: string,
+  storeId: string,
+  subcollection: FinanceSubcollection,
+  docId: string
+): string {
+  return `${financeSubPath(franchiseId, storeId, subcollection)}/${docId}`;
+}
+
+/**
+ * Retorna o path da coleção de resumo financeiro consolidado da franquia
+ * Ex: franchises/{fId}/financeSummary
+ */
+export function financeSummaryPath(franchiseId: string): string {
+  return `franchises/${franchiseId}/financeSummary`;
+}
+
 /**
  * Helpers para migração de dados
  */
@@ -190,6 +268,9 @@ export const pathResolver = {
   rankingAggPath,
   challengesPath,
   prizesPath,
+  financeSubPath,
+  financeDocPath,
+  financeSummaryPath,
 };
 
 export default pathResolver;

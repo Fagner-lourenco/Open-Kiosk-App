@@ -583,6 +583,260 @@ service cloud.firestore {
         }
 
         // ────────────────────────────────────────────────────────────────────
+        // COMERCIAL (CRM) — Pipeline, Agenda, Clientes, Eventos, Propostas
+        // ────────────────────────────────────────────────────────────────────
+
+        match /customers/{customerId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /deals/{dealId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+
+          // Atividades dentro de um deal
+          match /activities/{activityId} {
+            allow read: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+            allow create, update: if isSuperAdmin() ||
+                                     isFranchiseOwner(franchiseId) ||
+                                     canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+            allow delete: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+          }
+        }
+
+        match /calendarItems/{itemId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /commercialEvents/{eventId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+
+          // Budget lines dentro de um evento
+          match /budgetLines/{lineId} {
+            allow read: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+            allow create, update: if isSuperAdmin() ||
+                                     isFranchiseOwner(franchiseId) ||
+                                     canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+            allow delete: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+          }
+        }
+
+        match /quotes/{quoteId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+
+          // Linhas da proposta
+          match /lines/{lineId} {
+            allow read: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+            allow create, update: if isSuperAdmin() ||
+                                     isFranchiseOwner(franchiseId) ||
+                                     canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+            allow delete: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+          }
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // FINANCEIRO — Contas, Categorias, Lançamentos, Faturas, Pagamentos
+        // Coleções flat sob a loja com prefixo "fin" (5 segmentos = collection válida)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /finAccounts/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /finCategories/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /finCostCenters/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /finParties/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /finLedger/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /finInvoices/{invoiceId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+
+          // Linhas da fatura (subcollection)
+          match /lines/{lineId} {
+            allow read: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+            allow create, update: if isSuperAdmin() ||
+                                     isFranchiseOwner(franchiseId) ||
+                                     canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+            allow delete: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+          }
+        }
+
+        match /finBills/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create, update: if isSuperAdmin() ||
+                                   isFranchiseOwner(franchiseId) ||
+                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        match /finPayments/{docId} {
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          allow create: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+          // Pagamentos são imutáveis — apenas create + delete
+          allow update: if false;
+
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
+        }
+
+        // ────────────────────────────────────────────────────────────────────
         // TV DASHBOARD — Coleções públicas (read via Anonymous Auth)
         // ────────────────────────────────────────────────────────────────────
 
@@ -710,6 +964,19 @@ service cloud.firestore {
         
         // Logs de auditoria são imutáveis (não podem ser alterados ou deletados)
         allow update, delete: if false;
+      }
+
+      // ──────────────────────────────────────────────────────────────────────
+      // FINANCE SUMMARY (Consolidado por franquia)
+      // ──────────────────────────────────────────────────────────────────────
+
+      match /financeSummary/{periodId} {
+        allow read: if isSuperAdmin() ||
+                      isFranchiseOwner(franchiseId) ||
+                      isOwnerOrAdmin(franchiseId);
+
+        // Escrita somente via Cloud Functions
+        allow create, update, delete: if false;
       }
       
     }

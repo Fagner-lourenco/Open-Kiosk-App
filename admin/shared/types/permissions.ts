@@ -118,7 +118,20 @@ export type Permission =
   | 'reports:op' // alias para reports:operational (spec original)
 
   // === Notificacoes Operacionais ===
-  | 'notifications:read';
+  | 'notifications:read'
+
+  // === Comercial (CRM) ===
+  | 'commercial:read'
+  | 'commercial:create'
+  | 'commercial:update'
+  | 'commercial:delete'
+
+  // === Financeiro ===
+  | 'finance:read'
+  | 'finance:create'
+  | 'finance:update'
+  | 'finance:delete'
+  | 'finance:configure';
 
 /**
  * Mapeamento unificado de roles para permissoes
@@ -148,6 +161,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'maintenance:read', 'maintenance:write',
     'reports:operational', 'reports:op',
     'notifications:read',
+    'commercial:read', 'commercial:create', 'commercial:update', 'commercial:delete',
+    'finance:read', 'finance:create', 'finance:update', 'finance:delete', 'finance:configure',
   ],
 
   owner: [
@@ -172,6 +187,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'maintenance:read', 'maintenance:write',
     'reports:operational', 'reports:op',
     'notifications:read',
+    'commercial:read', 'commercial:create', 'commercial:update', 'commercial:delete',
+    'finance:read', 'finance:create', 'finance:update', 'finance:delete', 'finance:configure',
   ],
 
   admin: [
@@ -195,6 +212,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'maintenance:read', 'maintenance:write',
     'reports:operational', 'reports:op',
     'notifications:read',
+    'commercial:read', 'commercial:create', 'commercial:update', 'commercial:delete',
+    'finance:read', 'finance:create', 'finance:update', 'finance:delete', 'finance:configure',
   ],
 
   manager: [
@@ -216,6 +235,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'maintenance:read', 'maintenance:write',
     'reports:operational', 'reports:op',
     'notifications:read',
+    'commercial:read', 'commercial:create', 'commercial:update',
+    'finance:read', 'finance:create',
   ],
 
   operator: [
@@ -231,6 +252,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'tap_assignments:read',
     'serving:read', 'serving:create',
     'notifications:read',
+    'commercial:read',
+    'finance:read',
   ],
 
   employee: [
@@ -246,6 +269,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'tap_assignments:read',
     'serving:read', 'serving:create',
     'notifications:read',
+    'commercial:read',
+    'finance:read',
   ],
 
   technician: [
@@ -277,6 +302,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'maintenance:read',
     'reports:operational', 'reports:op',
     'notifications:read',
+    'commercial:read',
+    'finance:read',
   ],
 };
 
@@ -382,4 +409,13 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'reports:operational': 'Ver relatorios operacionais',
   'reports:op': 'Ver relatorios operacionais (alias)',
   'notifications:read': 'Ver notificacoes operacionais',
+  'commercial:read': 'Ver comercial (CRM)',
+  'commercial:create': 'Criar registros comerciais',
+  'commercial:update': 'Editar registros comerciais',
+  'commercial:delete': 'Excluir registros comerciais',
+  'finance:read': 'Ver financeiro',
+  'finance:create': 'Criar lancamentos financeiros',
+  'finance:update': 'Editar lancamentos financeiros',
+  'finance:delete': 'Excluir lancamentos financeiros',
+  'finance:configure': 'Configurar financeiro (contas/categorias)',
 };

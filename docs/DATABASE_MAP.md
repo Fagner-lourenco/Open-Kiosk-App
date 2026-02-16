@@ -44,30 +44,47 @@
    - 5.5 [wastageEvents](#55-wastageevents)
    - 5.6 [maintenanceLogs](#56-maintenancelogs)
    - 5.7 [notifications (subcoleção loja)](#57-notifications-subcoleção-loja)
-6. [Coleções de Migração](#6-coleções-de-migração)
-7. [Collection Group Queries](#7-collection-group-queries)
-8. [Indexes Compostos](#8-indexes-compostos)
+6. [CRM / Comercial](#6-crm--comercial)
+   - 6.1 [customers](#61-customers)
+   - 6.2 [deals](#62-deals)
+   - 6.3 [activities (subcoleção de deals)](#63-activities-subcoleção-de-deals)
+   - 6.4 [calendarItems](#64-calendaritems)
+   - 6.5 [commercialEvents](#65-commercialevents)
+   - 6.6 [quotes](#66-quotes)
+7. [Financeiro](#7-financeiro)
+   - 7.1 [accounts](#71-accounts)
+   - 7.2 [categories](#72-categories)
+   - 7.3 [costCenters](#73-costcenters)
+   - 7.4 [parties](#74-parties)
+   - 7.5 [ledger](#75-ledger)
+   - 7.6 [invoices](#76-invoices)
+   - 7.7 [bills](#77-bills)
+   - 7.8 [finPayments](#78-finpayments)
+   - 7.9 [financeSummary](#79-financesummary)
+8. [Coleções de Migração](#8-coleções-de-migração)
+9. [Collection Group Queries](#9-collection-group-queries)
+10. [Indexes Compostos](#10-indexes-compostos)
 
 ### Parte II — Armazenamento Local (Browser / Dispositivo)
-9. [Visão Geral do Armazenamento Local](#9-visão-geral-do-armazenamento-local)
-10. [Firestore Offline Cache (SDK)](#10-firestore-offline-cache-sdk)
-11. [IndexedDB — kiosk_cache](#11-indexeddb--kiosk_cache)
-    - 11.1 [settings (store)](#111-settings-store)
-    - 11.2 [products (store)](#112-products-store)
-    - 11.3 [videos (store)](#113-videos-store)
-    - 11.4 [syncQueue (store)](#114-syncqueue-store)
-    - 11.5 [syncDLQ (store)](#115-syncdlq-store)
-    - 11.6 [taps (store)](#116-taps-store)
-    - 11.7 [failedDispenses (store)](#117-faileddispenses-store)
-12. [Cache API — kiosk-video-cache-v1](#12-cache-api--kiosk-video-cache-v1)
-13. [localStorage — Chaves do Kiosk](#13-localstorage--chaves-do-kiosk)
-14. [localStorage — Chaves do Admin](#14-localstorage--chaves-do-admin)
-15. [Limpeza Automática (Cleanup)](#15-limpeza-automática-cleanup)
+11. [Visão Geral do Armazenamento Local](#11-visão-geral-do-armazenamento-local)
+12. [Firestore Offline Cache (SDK)](#12-firestore-offline-cache-sdk)
+13. [IndexedDB — kiosk_cache](#13-indexeddb--kiosk_cache)
+    - 13.1 [settings (store)](#131-settings-store)
+    - 13.2 [products (store)](#132-products-store)
+    - 13.3 [videos (store)](#133-videos-store)
+    - 13.4 [syncQueue (store)](#134-syncqueue-store)
+    - 13.5 [syncDLQ (store)](#135-syncdlq-store)
+    - 13.6 [taps (store)](#136-taps-store)
+    - 13.7 [failedDispenses (store)](#137-faileddispenses-store)
+14. [Cache API — kiosk-video-cache-v1](#14-cache-api--kiosk-video-cache-v1)
+15. [localStorage — Chaves do Kiosk](#15-localstorage--chaves-do-kiosk)
+16. [localStorage — Chaves do Admin](#16-localstorage--chaves-do-admin)
+17. [Limpeza Automática (Cleanup)](#17-limpeza-automática-cleanup)
 
 ### Parte III — Resumos  
-16. [Matriz Coleção × Consumidor (Firestore)](#16-matriz-coleção--consumidor-firestore)
-17. [Fluxo Offline-First (Kiosk)](#17-fluxo-offline-first-kiosk)
-18. [Notas Importantes](#18-notas-importantes)
+18. [Matriz Coleção × Consumidor (Firestore)](#18-matriz-coleção--consumidor-firestore)
+19. [Fluxo Offline-First (Kiosk)](#19-fluxo-offline-first-kiosk)
+20. [Notas Importantes](#20-notas-importantes)
 
 ---
 
@@ -96,6 +113,7 @@ Firestore (root)
 │   ├── notifications/{notifId}                           ← Alertas franchise
 │   ├── billingEvents/{eventId}                           ← Histórico billing
 │   ├── metrics/{metricId}                                ← KPIs franchise
+│   ├── financeSummary/{periodId}                         ← Resumo financeiro consolidado
 │   │
 │   └── stores/{storeId}                                  ← Configuração da loja
 │       ├── products/{productId}                          ← Catálogo
@@ -116,7 +134,28 @@ Firestore (root)
 │       ├── servingSessions/{eventId}                     ← Log de dispensação
 │       ├── wastageEvents/{wastageId}                     ← Registro de perdas
 │       ├── maintenanceLogs/{logId}                       ← Manutenção
-│       └── notifications/{notifId}                       ← Alertas operacionais
+│       ├── notifications/{notifId}                       ← Alertas operacionais
+│       │
+│       │  ── CRM / Comercial ──
+│       ├── customers/{customerId}                        ← Clientes B2B/B2C
+│       ├── deals/{dealId}                                ← Negociações (pipeline)
+│       │   └── activities/{activityId}                   ← Atividades do deal
+│       ├── calendarItems/{itemId}                        ← Agenda comercial
+│       ├── commercialEvents/{eventId}                    ← Eventos/feiras
+│       │   └── budgetLines/{lineId}                      ← Orçamento do evento
+│       ├── quotes/{quoteId}                              ← Propostas comerciais
+│       │   └── lines/{lineId}                            ← Itens da proposta
+│       │
+│       │  ── Financeiro ──
+│       ├── finAccounts/{accountId}                       ← Contas bancárias/caixa
+│       ├── finCategories/{categoryId}                    ← Categorias financeiras
+│       ├── finCostCenters/{centerId}                     ← Centros de custo
+│       ├── finParties/{partyId}                          ← Fornecedores/clientes fin.
+│       ├── finLedger/{entryId}                           ← Lançamentos financeiros
+│       ├── finInvoices/{invoiceId}                       ← Contas a receber
+│       │   └── lines/{lineId}                            ← Itens da fatura
+│       ├── finBills/{billId}                             ← Contas a pagar
+│       └── finPayments/{paymentId}                       ← Pagamentos financeiros
 │
 └── migrations/                                           ← Logs de migração
     ├── paymentGatewayConfig/{runId}/stores/{sId}
@@ -1178,7 +1217,582 @@ Types: `shared/types/operations.ts`
 
 ---
 
-## 6. Coleções de Migração
+## 6. CRM / Comercial
+
+Subcoleções sob `franchises/{franchiseId}/stores/{storeId}/` que sustentam o módulo de CRM e gestão comercial.
+
+---
+
+### 6.1 `customers`
+
+**Path:** `franchises/{fId}/stores/{sId}/customers/{customerId}`
+**Type:** `admin/src/types/commercial.ts → Customer`
+**Descrição:** Cadastro de clientes B2B e B2C vinculados a uma loja.
+
+#### Campos principais
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string` | ID do documento |
+| `type` | `'company' \| 'person'` | Tipo de cliente |
+| `name` | `string` | Nome / razão social |
+| `doc` | `string?` | CPF ou CNPJ |
+| `phones` | `string[]` | Telefones |
+| `emails` | `string[]` | Emails de contato |
+| `address` | `CustomerAddress?` | Endereço (`street`, `city`, `state`, `zip`) |
+| `source` | `CustomerSource?` | Origem: `instagram \| indicacao \| inbound \| outbound \| evento_passado` |
+| `status` | `'active' \| 'archived'` | Status do cliente |
+| `tags` | `string[]` | Tags de classificação |
+| `ownerUserId` | `string` | UID do responsável |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+**Rules:** Leitura/escrita requer autenticação + role `manager` ou superior na loja.
+**Indexes:** `status ↑, name ↑` (ver seção 10).
+
+#### Consumidores
+
+| Artefato | Tipo | Caminho |
+|----------|------|---------|
+| `useCustomers` | Hook | `admin/src/hooks/useCustomers.ts` |
+| `CommercialCustomersTab` | UI Component | `admin/src/components/store/commercial/CommercialCustomersTab.tsx` |
+
+---
+
+### 6.2 `deals`
+
+**Path:** `franchises/{fId}/stores/{sId}/deals/{dealId}`
+**Type:** `admin/src/types/commercial.ts → Deal`
+**Descrição:** Negociações do pipeline comercial, vinculadas a clientes.
+
+#### Campos principais
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string` | ID do documento |
+| `title` | `string` | Título da negociação |
+| `customerId` | `string` | ID do cliente |
+| `stage` | `DealStage` | Estágio: `lead \| qualify \| proposal \| negotiation \| won \| lost` |
+| `valueEstimate` | `number` | Valor estimado (R$) |
+| `probability` | `number` | Probabilidade de fechamento (0–100) |
+| `expectedCloseAt` | `Timestamp?` | Previsão de fechamento |
+| `eventStartAt` | `Timestamp?` | Início do evento vinculado |
+| `eventEndAt` | `Timestamp?` | Fim do evento vinculado |
+| `nextActionAt` | `Timestamp?` | Data da próxima ação |
+| `ownerUserId` | `string` | Vendedor responsável |
+| `lostReason` | `string?` | Motivo da perda |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+**Rules:** Leitura/escrita requer autenticação + role `manager` ou superior na loja.
+**Indexes:** `stage ↑, nextActionAt ↑` · `ownerUserId ↑, stage ↑, updatedAt ↓` (ver seção 10).
+
+#### Consumidores
+
+| Artefato | Tipo | Caminho |
+|----------|------|---------|
+| `useDeals` | Hook | `admin/src/hooks/useDeals.ts` |
+| `CommercialPipelineTab` | UI Component | `admin/src/components/store/commercial/CommercialPipelineTab.tsx` |
+
+---
+
+### 6.3 `activities` (subcoleção de deals)
+
+**Path:** `franchises/{fId}/stores/{sId}/deals/{dealId}/activities/{activityId}`
+**Type:** `admin/src/types/commercial.ts → Activity`
+**Descrição:** Registro de atividades (ligações, WhatsApp, emails, visitas, tarefas) vinculadas a um deal.
+
+#### Campos principais
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string` | ID do documento |
+| `type` | `'call' \| 'whatsapp' \| 'email' \| 'visit' \| 'task'` | Tipo da atividade |
+| `dueAt` | `Timestamp` | Prazo / data prevista |
+| `doneAt` | `Timestamp?` | Data de conclusão |
+| `status` | `'open' \| 'done' \| 'canceled'` | Status |
+| `summary` | `string` | Resumo da atividade |
+| `notes` | `string?` | Observações |
+| `createdBy` | `string` | UID do criador |
+| `createdAt` | `Timestamp` | Data de criação |
+
+**Rules:** Leitura/escrita requer autenticação + role `manager` ou superior na loja.
+**Indexes:** `status ↑, dueAt ↑` (ver seção 10).
+
+> **Nota:** Activities ainda não possuem hook/UI dedicados — serão implementadas como submodelo de deals em PR futuro.
+
+---
+
+### 6.4 `calendarItems`
+
+**Path:** `franchises/{fId}/stores/{sId}/calendarItems/{itemId}`
+**Type:** `admin/src/types/commercial.ts → CalendarItem`
+**Descrição:** Itens da agenda comercial (eventos, tarefas, lembretes, visitas).
+
+#### Campos principais
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string` | ID do documento |
+| `type` | `'event' \| 'task' \| 'reminder' \| 'visit'` | Tipo do item |
+| `title` | `string` | Título |
+| `startAt` | `Timestamp` | Início |
+| `endAt` | `Timestamp?` | Fim |
+| `allDay` | `boolean` | Dia inteiro |
+| `ownerUserId` | `string` | Responsável |
+| `relatedType` | `'deal' \| 'customer' \| 'commercialEvent' \| 'quote'?` | Tipo do vínculo |
+| `relatedId` | `string?` | ID do item vinculado |
+| `status` | `'tentative' \| 'confirmed' \| 'canceled' \| 'done'` | Status |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+**Rules:** Leitura/escrita requer autenticação + role `manager` ou superior na loja.
+**Indexes:** `ownerUserId ↑, startAt ↑` · `status ↑, startAt ↑` (ver seção 10).
+
+#### Consumidores
+
+| Artefato | Tipo | Caminho |
+|----------|------|---------|
+| `useCalendarItems` | Hook | `admin/src/hooks/useCalendarItems.ts` |
+| `CommercialCalendarTab` | UI Component | `admin/src/components/store/commercial/CommercialCalendarTab.tsx` |
+
+---
+
+### 6.5 `commercialEvents`
+
+**Path:** `franchises/{fId}/stores/{sId}/commercialEvents/{eventId}`
+**Type:** `admin/src/types/commercial.ts → CommercialEvent`
+**Descrição:** Eventos comerciais, feiras e ações promocionais com controle orçamentário.
+
+#### Campos principais
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento (gerado pelo Firestore) |
+| `customerId` | `string` | ID do cliente vinculado (`customers/{id}`) |
+| `dealId` | `string?` | Deal vinculado (`deals/{id}`) |
+| `quoteId` | `string?` | Proposta vinculada (`quotes/{id}`) |
+| `title` | `string` | Título do evento |
+| `description` | `string?` | Descrição |
+| `status` | `'draft' \| 'scheduled' \| 'confirmed' \| 'in_progress' \| 'done' \| 'canceled'` | Status |
+| `locationType` | `'on_site' \| 'external'` | Tipo do local |
+| `address` | `CustomerAddress?` | Endereço (se `external`) |
+| `startAt` | `Timestamp` | Data/hora de início |
+| `endAt` | `Timestamp?` | Data/hora de fim |
+| `attendeesEstimate` | `number?` | Estimativa de participantes |
+| `pricingModel` | `'per_liter' \| 'per_hour' \| 'package'?` | Modelo de precificação |
+| `notesInternal` | `string?` | Notas internas |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+**Subcoleção:** `budgetLines/{lineId}` — linhas de orçamento do evento.
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `type` | `'staff' \| 'transport' \| 'beverage' \| 'rental' \| 'fee' \| 'discount'` | Tipo da linha |
+| `categoryId` | `string?` | Ref para `finCategories/{id}` |
+| `qty` | `number` | Quantidade |
+| `unitCost` | `number` | Custo unitário |
+| `totalCost` | `number` | Custo total (qty × unitCost, calculado) |
+| `supplierId` | `string?` | Fornecedor |
+| `paidBy` | `'store' \| 'client' \| 'split'` | Quem paga |
+
+**Rules:** Leitura/escrita requer autenticação + role `manager` ou superior na loja.
+**Indexes:** `status ↑, startAt ↑` (ver seção 10).
+
+#### Consumidores
+
+| Artefato | Tipo | Caminho |
+|----------|------|---------|
+| `useCommercialEvents` | Hook | `admin/src/hooks/useCommercialEvents.ts` |
+| `CommercialEventsTab` | UI Component | `admin/src/components/store/commercial/CommercialEventsTab.tsx` |
+
+---
+
+### 6.6 `quotes`
+
+**Path:** `franchises/{fId}/stores/{sId}/quotes/{quoteId}`
+**Type:** `admin/src/types/commercial.ts → Quote`
+**Descrição:** Propostas comerciais enviadas a clientes, com itens detalhados e totais calculados.
+
+#### Campos principais
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento (gerado pelo Firestore) |
+| `customerId` | `string` | ID do cliente vinculado (`customers/{id}`) |
+| `dealId` | `string?` | Deal vinculado (`deals/{id}`) |
+| `eventId` | `string?` | Evento vinculado (`commercialEvents/{id}`) |
+| `status` | `'draft' \| 'sent' \| 'accepted' \| 'rejected' \| 'expired'` | Status |
+| `validUntil` | `Timestamp?` | Validade da proposta |
+| `subtotal` | `number` | Soma dos itens |
+| `discounts` | `number` | Descontos aplicados |
+| `fees` | `number` | Taxas adicionais |
+| `total` | `number` | Total final (subtotal − discounts + fees) |
+| `paymentTerms` | `string?` | Condições de pagamento |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+**Subcoleção:** `lines/{lineId}` — itens da proposta.
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `type` | `'keg' \| 'service' \| 'transport' \| 'staff' \| 'package'` | Tipo do item |
+| `description` | `string` | Descrição do item |
+| `qty` | `number` | Quantidade |
+| `unitPrice` | `number` | Preço unitário |
+| `total` | `number` | Total da linha (qty × unitPrice, calculado) |
+| `productId` | `string?` | Produto vinculado (`products/{id}`) |
+
+**Rules:** Leitura/escrita requer autenticação + role `manager` ou superior na loja.
+**Indexes:** `status ↑, createdAt ↓` (ver seção 10).
+
+#### Consumidores
+
+| Artefato | Tipo | Caminho |
+|----------|------|---------|
+| `useQuotes` | Hook | `admin/src/hooks/useQuotes.ts` |
+| `CommercialQuotesTab` | UI Component | `admin/src/components/store/commercial/CommercialQuotesTab.tsx` |
+
+---
+
+## 7. Financeiro
+
+Subcoleções flat sob `franchises/{franchiseId}/stores/{storeId}/` com prefixo `fin` que compõem o módulo financeiro da loja, mais `financeSummary` no nível de franquia.
+
+---
+
+### 7.1 `finAccounts`
+
+**Path:** `franchises/{fId}/stores/{sId}/finAccounts/{accountId}`
+**Type:** `admin/src/types/finance.ts → FinAccount`
+**Descrição:** Contas bancárias, caixas PIX e clearing de cartão vinculados à loja.
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `name` | `string` | Nome da conta |
+| `type` | `'cash' \| 'bank' \| 'pix' \| 'card_clearing'` | Tipo de conta |
+| `currency` | `string` | Moeda (ex: `'BRL'`) |
+| `openingBalance` | `number` | Saldo de abertura |
+| `openingAt` | `Timestamp?` | Data de abertura |
+| `status` | `'active' \| 'inactive'` | Status |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useFinAccounts` | `admin/src/hooks/useFinAccounts.ts` | CRUD completo + `activeAccounts`, `totalBalance` |
+| `FinanceCashTab` | `admin/src/components/store/finance/FinanceCashTab.tsx` | Grid de cards de contas, criar/editar/excluir |
+| `FinanceOverviewTab` | `admin/src/components/store/finance/FinanceOverviewTab.tsx` | KPI saldo total de contas |
+| `FinanceReportsTab` | `admin/src/components/store/finance/FinanceReportsTab.tsx` | Mapa de nomes de contas |
+| `FinanceSettingsTab` | `admin/src/components/store/finance/FinanceSettingsTab.tsx` | — (lida por aba separada) |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** Nenhum composto adicional necessário (query por `name asc`).
+
+---
+
+### 7.2 `finCategories`
+
+**Path:** `franchises/{fId}/stores/{sId}/finCategories/{categoryId}`
+**Type:** `admin/src/types/finance.ts → FinCategory`
+**Descrição:** Categorias financeiras (receita = `in`, despesa = `out`) para classificação de lançamentos.
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `direction` | `'in' \| 'out'` | Receita ou despesa |
+| `name` | `string` | Nome da categoria |
+| `parentId` | `string?` | Categoria pai (hierarquia) |
+| `status` | `'active' \| 'inactive'` | Status |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useFinCategories` | `admin/src/hooks/useFinCategories.ts` | CRUD + `activeCategories`, `incomeCategories`, `expenseCategories` |
+| `FinanceSettingsTab` | `admin/src/components/store/finance/FinanceSettingsTab.tsx` | Tabela de categorias, criar/editar/inativar |
+| `FinanceCashTab` | `admin/src/components/store/finance/FinanceCashTab.tsx` | Select de categorias no LedgerDialog |
+| `FinanceAPTab` | `admin/src/components/store/finance/FinanceAPTab.tsx` | Select de categorias no BillDialog |
+| `FinanceReportsTab` | `admin/src/components/store/finance/FinanceReportsTab.tsx` | DRE por categorias, análise por categoria |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** Nenhum composto adicional necessário (query por `name asc`).
+
+---
+
+### 7.3 `finCostCenters`
+
+**Path:** `franchises/{fId}/stores/{sId}/finCostCenters/{centerId}`
+**Type:** `admin/src/types/finance.ts → CostCenter`
+**Descrição:** Centros de custo para alocação de despesas e receitas.
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `name` | `string` | Nome do centro de custo |
+| `status` | `'active' \| 'inactive'` | Status |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useCostCenters` | `admin/src/hooks/useCostCenters.ts` | CRUD + `activeCostCenters` |
+| `FinanceSettingsTab` | `admin/src/components/store/finance/FinanceSettingsTab.tsx` | Tabela de centros de custo, criar/editar/inativar |
+| `FinanceAPTab` | `admin/src/components/store/finance/FinanceAPTab.tsx` | Select de centro de custo no BillDialog |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** Nenhum composto adicional necessário (query por `name asc`).
+
+---
+
+### 7.4 `finParties`
+
+**Path:** `franchises/{fId}/stores/{sId}/finParties/{partyId}`
+**Type:** `admin/src/types/finance.ts → Party`
+**Descrição:** Terceiros financeiros (fornecedores, clientes, funcionários) usados em lançamentos, faturas e contas.
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `type` | `'customer' \| 'supplier' \| 'employee' \| 'other'` | Tipo |
+| `name` | `string` | Nome |
+| `doc` | `string?` | CPF/CNPJ |
+| `contacts` | `PartyContact[]` | Lista de contatos (`phone?`, `email?`) |
+| `bankInfo` | `PartyBankInfo?` | Info bancária (`bankName?`, `agency?`, `account?`, `pixKey?`) |
+| `customerId` | `string?` | Ref em `customers` (se for cliente comercial) |
+| `status` | `'active' \| 'inactive'` | Status |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useParties` | `admin/src/hooks/useParties.ts` | CRUD + `activeParties`, `suppliers`, `employees` |
+| `FinanceSettingsTab` | `admin/src/components/store/finance/FinanceSettingsTab.tsx` | Tabela de terceiros, criar/editar/excluir |
+| `FinanceCashTab` | `admin/src/components/store/finance/FinanceCashTab.tsx` | Select de terceiros no LedgerDialog |
+| `FinanceARTab` | `admin/src/components/store/finance/FinanceARTab.tsx` | Select de parties no InvoiceDialog + nome no grid |
+| `FinanceAPTab` | `admin/src/components/store/finance/FinanceAPTab.tsx` | Select de parties no BillDialog + nome no grid |
+| `FinanceOverviewTab` | `admin/src/components/store/finance/FinanceOverviewTab.tsx` | Mapa de nomes para itens vencidos |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** Nenhum composto adicional necessário (query por `name asc`).
+
+---
+
+### 7.5 `finLedger`
+
+**Path:** `franchises/{fId}/stores/{sId}/finLedger/{entryId}`
+**Type:** `admin/src/types/finance.ts → LedgerEntry`
+**Descrição:** Lançamentos financeiros (entradas/saídas) centralizados — fonte da verdade do fluxo de caixa.
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `direction` | `'in' \| 'out'` | Entrada ou saída |
+| `status` | `'pending' \| 'paid' \| 'reconciled' \| 'canceled'` | Status |
+| `competenceDate` | `Timestamp` | Data de competência (contábil) |
+| `cashDate` | `Timestamp?` | Data de caixa (efetiva) |
+| `amount` | `number` | Valor |
+| `accountId` | `string` | Conta vinculada (→ `accounts`) |
+| `categoryId` | `string` | Categoria financeira (→ `categories`) |
+| `costCenterId` | `string?` | Centro de custo (→ `costCenters`) |
+| `partyId` | `string?` | Terceiro vinculado (→ `parties`) |
+| `method` | `'pix' \| 'card' \| 'cash' \| 'transfer'` | Método de pagamento |
+| `sourceType` | `'kiosk_order' \| 'commercial_event' \| 'invoice' \| 'bill' \| 'manual'` | Origem |
+| `sourceId` | `string` | ID do documento de origem (idempotência) |
+| `description` | `string` | Descrição do lançamento |
+| `attachments` | `string[]` | URLs do Storage |
+| `createdBy` | `string` | UID do criador |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useLedger` | `admin/src/hooks/useLedger.ts` | CRUD + `incomeEntries`, `expenseEntries`, `totalIncome`, `totalExpenses`, `balance`, `pendingEntries` |
+| `FinanceCashTab` | `admin/src/components/store/finance/FinanceCashTab.tsx` | Tabela de extrato, criar lançamento, ações rápidas (pagar/conciliar) |
+| `FinanceOverviewTab` | `admin/src/components/store/finance/FinanceOverviewTab.tsx` | KPIs receita/despesa/fluxo líquido, últimos lançamentos |
+| `FinanceReportsTab` | `admin/src/components/store/finance/FinanceReportsTab.tsx` | DRE, fluxo mensal, análise por categoria |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** `competenceDate desc` (query padrão).
+
+---
+
+### 7.6 `finInvoices` + subcoleção `lines`
+
+**Path:** `franchises/{fId}/stores/{sId}/finInvoices/{invoiceId}`
+**Lines path:** `franchises/{fId}/stores/{sId}/finInvoices/{invoiceId}/lines/{lineId}`
+**Type:** `admin/src/types/finance.ts → Invoice`, `InvoiceLine`
+**Descrição:** Contas a receber (faturas emitidas). Cada fatura pode ter linhas detalhando os itens.
+
+#### Campos (Invoice)
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `partyId` | `string` | Terceiro / cliente (→ `parties`) |
+| `status` | `'draft' \| 'issued' \| 'partially_paid' \| 'paid' \| 'overdue' \| 'canceled'` | Status |
+| `issueDate` | `Timestamp` | Data de emissão |
+| `dueDate` | `Timestamp` | Data de vencimento |
+| `subtotal` | `number` | Subtotal |
+| `discounts` | `number` | Descontos |
+| `fees` | `number` | Taxas/acréscimos |
+| `total` | `number` | Total da fatura |
+| `paidTotal` | `number` | Total já pago |
+| `remaining` | `number` | Saldo restante |
+| `sourceType` | `'commercial_event' \| 'kiosk' \| 'manual'` | Origem |
+| `sourceId` | `string?` | ID do documento de origem |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Campos (InvoiceLine)
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `description` | `string` | Descrição do item |
+| `qty` | `number` | Quantidade |
+| `unitPrice` | `number` | Preço unitário |
+| `total` | `number` | Total da linha (`qty * unitPrice`) |
+| `categoryId` | `string?` | Categoria financeira |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useInvoices` | `admin/src/hooks/useInvoices.ts` | CRUD invoices + `fetchInvoiceLines`, `createInvoiceLine`, `deleteInvoiceLine`, `overdueInvoices`, `totalReceivable`, `totalReceived` |
+| `FinanceARTab` | `admin/src/components/store/finance/FinanceARTab.tsx` | Tabela de faturas, CRUD dialog, InvoiceDetailDialog (linhas), syncTotals |
+| `FinanceOverviewTab` | `admin/src/components/store/finance/FinanceOverviewTab.tsx` | KPI a receber, vencidas, barra de progresso |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** `dueDate desc` (query padrão).
+
+---
+
+### 7.7 `finBills`
+
+**Path:** `franchises/{fId}/stores/{sId}/finBills/{billId}`
+**Type:** `admin/src/types/finance.ts → Bill`
+**Descrição:** Contas a pagar (despesas e obrigações com fornecedores/terceiros).
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `partyId` | `string` | Terceiro / fornecedor (→ `parties`) |
+| `status` | `'draft' \| 'scheduled' \| 'partially_paid' \| 'paid' \| 'overdue' \| 'canceled'` | Status |
+| `issueDate` | `Timestamp` | Data de emissão |
+| `dueDate` | `Timestamp` | Data de vencimento |
+| `total` | `number` | Valor total |
+| `paidTotal` | `number` | Valor já pago |
+| `remaining` | `number` | Saldo restante |
+| `categoryId` | `string` | Categoria financeira (→ `categories`) |
+| `costCenterId` | `string?` | Centro de custo (→ `costCenters`) |
+| `attachments` | `string[]` | URLs de anexos |
+| `createdAt` | `Timestamp` | Data de criação |
+| `updatedAt` | `Timestamp` | Última atualização |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useBills` | `admin/src/hooks/useBills.ts` | CRUD + `overdueBills`, `totalPayable`, `totalPaid` |
+| `FinanceAPTab` | `admin/src/components/store/finance/FinanceAPTab.tsx` | Tabela de contas a pagar, CRUD dialog, ação marcar como paga |
+| `FinanceOverviewTab` | `admin/src/components/store/finance/FinanceOverviewTab.tsx` | KPI a pagar, vencidas, próximos pagamentos, barra de progresso |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** `dueDate asc` (query padrão).
+
+---
+
+### 7.8 `finPayments`
+
+**Path:** `franchises/{fId}/stores/{sId}/finPayments/{paymentId}`
+**Type:** `admin/src/types/finance.ts → FinPayment`
+**Descrição:** Registros de pagamentos financeiros, vinculando faturas/contas a contas bancárias.
+
+#### Campos
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento |
+| `direction` | `'in' \| 'out'` | Direção do pagamento |
+| `date` | `Timestamp` | Data do pagamento |
+| `amount` | `number` | Valor pago |
+| `method` | `'pix' \| 'card' \| 'cash' \| 'transfer'` | Método |
+| `accountId` | `string` | Conta destino/origem (→ `accounts`) |
+| `targetType` | `'invoice' \| 'bill' \| 'ledger'` | Tipo do documento alvo |
+| `targetId` | `string` | ID do documento alvo |
+| `notes` | `string?` | Observações |
+| `createdBy` | `string` | UID do criador |
+| `createdAt` | `Timestamp` | Data de criação |
+
+#### Consumidores
+
+| Consumidor | Arquivo | Uso |
+|------------|---------|-----|
+| `useFinPayments` | `admin/src/hooks/useFinPayments.ts` | CRUD + `inPayments`, `outPayments`, `totalIn`, `totalOut` |
+
+**Rules:** Leitura/escrita requer autenticação + role com permissão `finance:read`/`finance:write`.
+**Indexes:** `date desc` (query padrão).
+
+---
+
+### 7.9 `financeSummary`
+
+**Path:** `franchises/{franchiseId}/financeSummary/{periodId}`
+**Type:** `admin/src/types/finance.ts → FinanceSummary`
+**Descrição:** Resumo financeiro consolidado por período (mensal) no nível da franquia, agregando dados de todas as lojas. Materializado via Cloud Functions.
+
+#### Campos (FinanceSummary)
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `id` | `string?` | ID do documento (ex: `'2026-02'`) |
+| `totalRevenue` | `number` | Receita total consolidada |
+| `totalExpenses` | `number` | Despesas totais consolidadas |
+| `balance` | `number` | Saldo do período |
+| `byStore` | `Record<string, StoreFinanceSummary>` | Breakdown por loja |
+| `updatedAt` | `Timestamp` | Data de geração/atualização |
+
+**`StoreFinanceSummary` (embedded):**
+
+| Campo | Tipo | Descrição |
+|-------|------|-----------|
+| `revenue` | `number` | Receita da loja |
+| `expenses` | `number` | Despesas da loja |
+| `balance` | `number` | Saldo da loja |
+
+**Rules:** Leitura requer autenticação + role `admin` ou superior na franquia. Escrita somente via Cloud Functions.
+**Indexes:** Nenhum composto adicional necessário.
+
+---
+
+## 8. Coleções de Migração
 
 **Path:** `migrations/{migrationName}/{runId}/*`  
 **Descrição:** Registros de execução de migrações de dados (apenas Cloud Functions).
@@ -1190,7 +1804,7 @@ Types: `shared/types/operations.ts`
 
 ---
 
-## 7. Collection Group Queries
+## 9. Collection Group Queries
 
 | Collection Group | Quem usa | Filtros | Objetivo |
 |------------------|----------|---------|----------|
@@ -1204,7 +1818,7 @@ Types: `shared/types/operations.ts`
 
 ---
 
-## 8. Indexes Compostos
+## 10. Indexes Compostos
 
 Definidos em `firestore.indexes.json`:
 
@@ -1225,12 +1839,26 @@ Definidos em `firestore.indexes.json`:
 | `auditLogs` | COLLECTION | `target.type ↑, timestamp ↓` | Por tipo de alvo |
 | `orders` | COLLECTION | `status ↑, timestamp ↓` | Por status |
 | `members` | Field Override | `userId` — COLLECTION + COLLECTION_GROUP | collectionGroup support |
+| `deals` | COLLECTION | `stage ↑, nextActionAt ↑` | Pipeline por estágio |
+| `deals` | COLLECTION | `ownerUserId ↑, stage ↑, updatedAt ↓` | Deals do vendedor |
+| `calendarItems` | COLLECTION | `ownerUserId ↑, startAt ↑` | Agenda do vendedor |
+| `calendarItems` | COLLECTION | `status ↑, startAt ↑` | Agenda ativa |
+| `customers` | COLLECTION | `status ↑, name ↑` | Clientes por status |
+| `commercialEvents` | COLLECTION | `status ↑, startAt ↑` | Eventos por status |
+| `quotes` | COLLECTION | `status ↑, createdAt ↓` | Propostas por status |
+| `ledger` | COLLECTION | `accountId ↑, cashDate ↓` | Extrato por conta |
+| `ledger` | COLLECTION | `status ↑, cashDate ↓` | Lançamentos por status |
+| `ledger` | COLLECTION | `direction ↑, categoryId ↑, cashDate ↓` | Relatório por cat. |
+| `ledger` | COLLECTION | `sourceType ↑, sourceId ↑` | Rastreio origem |
+| `invoices` | COLLECTION | `status ↑, dueDate ↑` | A receber por vencimento |
+| `bills` | COLLECTION | `status ↑, dueDate ↑` | A pagar por vencimento |
+| `activities` | COLLECTION | `status ↑, dueAt ↑` | Atividades pendentes |
 
 ---
 
 # PARTE II — ARMAZENAMENTO LOCAL (BROWSER / DISPOSITIVO)
 
-## 9. Visão Geral do Armazenamento Local
+## 11. Visão Geral do Armazenamento Local
 
 O Kiosk App opera em modo **offline-first** com 4 camadas de armazenamento local:
 
@@ -1256,7 +1884,7 @@ O Kiosk App opera em modo **offline-first** com 4 camadas de armazenamento local
 
 ---
 
-## 10. Firestore Offline Cache (SDK)
+## 12. Firestore Offline Cache (SDK)
 
 **Gerenciado por:** Firebase SDK v9+  
 **Configuração:** `src/services/firebase.ts`
@@ -1291,7 +1919,7 @@ db = initializeFirestore(app, {
 
 ---
 
-## 11. IndexedDB — `kiosk_cache`
+## 13. IndexedDB — `kiosk_cache`
 
 **DB Name:** `kiosk_cache`  
 **Version:** `3`  
@@ -1299,7 +1927,7 @@ db = initializeFirestore(app, {
 **Fallback:** localStorage quando IndexedDB falha (Safari Private Browsing, quota = 0)  
 **Teste de disponibilidade:** `testIndexedDBFunctional()` — abre DB teste, tenta write, remove. Retesta a cada 60s.
 
-### 11.1 `settings` (store)
+### 13.1 `settings` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1315,7 +1943,7 @@ db = initializeFirestore(app, {
 
 ---
 
-### 11.2 `products` (store)
+### 13.2 `products` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1332,7 +1960,7 @@ db = initializeFirestore(app, {
 
 ---
 
-### 11.3 `videos` (store)
+### 13.3 `videos` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1349,7 +1977,7 @@ db = initializeFirestore(app, {
 
 ---
 
-### 11.4 `syncQueue` (store)
+### 13.4 `syncQueue` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1378,7 +2006,7 @@ db = initializeFirestore(app, {
 
 ---
 
-### 11.5 `syncDLQ` (store)
+### 13.5 `syncDLQ` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1394,7 +2022,7 @@ db = initializeFirestore(app, {
 
 ---
 
-### 11.6 `taps` (store)
+### 13.6 `taps` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1410,7 +2038,7 @@ db = initializeFirestore(app, {
 
 ---
 
-### 11.7 `failedDispenses` (store)
+### 13.7 `failedDispenses` (store)
 
 | Aspecto | Valor |
 |---------|-------|
@@ -1432,7 +2060,7 @@ db = initializeFirestore(app, {
 
 ---
 
-## 12. Cache API — `kiosk-video-cache-v1`
+## 14. Cache API — `kiosk-video-cache-v1`
 
 **Cache name:** `kiosk-video-cache-v1`  
 **Limite:** 500 MB  
@@ -1458,7 +2086,7 @@ db = initializeFirestore(app, {
 
 ---
 
-## 13. localStorage — Chaves do Kiosk
+## 15. localStorage — Chaves do Kiosk
 
 Todas as chaves usadas pelo Kiosk App (`src/`):
 
@@ -1515,7 +2143,7 @@ Todas as chaves usadas pelo Kiosk App (`src/`):
 
 ---
 
-## 14. localStorage — Chaves do Admin
+## 16. localStorage — Chaves do Admin
 
 Todas as chaves usadas pelo Admin App (`admin/src/`):
 
@@ -1528,7 +2156,7 @@ Todas as chaves usadas pelo Admin App (`admin/src/`):
 
 ---
 
-## 15. Limpeza Automática (Cleanup)
+## 17. Limpeza Automática (Cleanup)
 
 **Gerenciado por:** `src/services/cleanupService.ts`  
 **Execução:** A cada 1 hora em background
@@ -1545,7 +2173,7 @@ Todas as chaves usadas pelo Admin App (`admin/src/`):
 
 # PARTE III — RESUMOS
 
-## 16. Matriz Coleção × Consumidor (Firestore)
+## 18. Matriz Coleção × Consumidor (Firestore)
 
 Legenda: **R** = Read, **W** = Write, **L** = Listen (onSnapshot), **D** = Delete, **B** = Batch, **T** = Transaction
 
@@ -1585,7 +2213,7 @@ Legenda: **R** = Read, **W** = Write, **L** = Listen (onSnapshot), **D** = Delet
 
 ---
 
-## 17. Fluxo Offline-First (Kiosk)
+## 19. Fluxo Offline-First (Kiosk)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -1620,7 +2248,7 @@ Legenda: **R** = Read, **W** = Write, **L** = Listen (onSnapshot), **D** = Delet
 
 ---
 
-## 18. Notas Importantes
+## 20. Notas Importantes
 
 1. **Total de coleções Firestore:** **27 coleções/subcoleções** distintas + 2 de migração.
 
