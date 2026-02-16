@@ -27,6 +27,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   LedgerEntry,
   LedgerDirection,
@@ -116,6 +118,7 @@ function normalizeEntry(id: string, data: Record<string, unknown>): LedgerEntry 
 export function useLedger(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = ledgerKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   const {
     data: entries = [],
@@ -160,9 +163,10 @@ export function useLedger(franchiseId: string, storeId: string) {
       await setDoc(ref, data);
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Lançamento criado');
+      audit(AuditActions.LEDGER_CREATE, { type: 'ledger', id: _id, name: variables.description }, { direction: variables.direction, amount: variables.amount, storeId });
     },
     onError: () => toast.error('Erro ao criar lançamento'),
   });
@@ -190,9 +194,10 @@ export function useLedger(franchiseId: string, storeId: string) {
       if (rest.attachments !== undefined) data.attachments = rest.attachments;
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Lançamento atualizado');
+      audit(AuditActions.LEDGER_UPDATE, { type: 'ledger', id: variables.entryId, name: variables.description || variables.entryId }, { storeId });
     },
     onError: () => toast.error('Erro ao atualizar lançamento'),
   });
@@ -201,9 +206,10 @@ export function useLedger(franchiseId: string, storeId: string) {
     mutationFn: async (entryId: string) => {
       await deleteDoc(ledgerDocRef(franchiseId, storeId, entryId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Lançamento excluído');
+      audit(AuditActions.LEDGER_DELETE, { type: 'ledger', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir lançamento'),
   });

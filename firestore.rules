@@ -267,7 +267,30 @@ service cloud.firestore {
                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager'])) ||
                        (hasStoreAccess(franchiseId, storeId) &&
                         request.resource.data.diff(resource.data).affectedKeys()
-                          .hasOnly(['stock', 'inStock', 'totalMlAvailable', 'updatedAt']));
+                          .hasOnly([
+                            'stock',
+                            'inStock',
+                            'totalMlAvailable',
+                            'updatedAt',
+                            'dispenseStatus',
+                            'dispensedAt',
+                            'completedAt',
+                            'customerName',
+                            'customerEmail',
+                            'customerIdentification',
+                            'gatewayProvider',
+                            'gatewayOrderId',
+                            'gatewayPaymentId',
+                            'mpOrderId',
+                            'mpPaymentId',
+                            'paymentMethodId',
+                            'paymentTypeId',
+                            'cardBrand',
+                            'cardLastDigits',
+                            'cardholderName',
+                            'installments',
+                            'dateApproved'
+                          ]));
           
           // Owner da franquia ou admin podem deletar produtos
           allow delete: if isSuperAdmin() || 
@@ -298,10 +321,35 @@ service cloud.firestore {
           // Restringe a apenas owner/admin da franquia
           allow update: if (isSuperAdmin() || 
                            isFranchiseOwner(franchiseId) ||
-                           canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin'])) &&
+                           canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'operator'])) &&
                         // Apenas permite atualizar campos específicos de status
                         request.resource.data.diff(resource.data).affectedKeys()
-                          .hasOnly(['status', 'paymentStatus', 'cancelledAt', 'refundedAt', 'notes', 'updatedAt']);
+                          .hasOnly([
+                            'status',
+                            'paymentStatus',
+                            'dispenseStatus',
+                            'dispensedAt',
+                            'completedAt',
+                            'cancelledAt',
+                            'refundedAt',
+                            'notes',
+                            'updatedAt',
+                            'customerName',
+                            'customerEmail',
+                            'customerIdentification',
+                            'gatewayProvider',
+                            'gatewayOrderId',
+                            'gatewayPaymentId',
+                            'mpOrderId',
+                            'mpPaymentId',
+                            'paymentMethodId',
+                            'paymentTypeId',
+                            'cardBrand',
+                            'cardLastDigits',
+                            'cardholderName',
+                            'installments',
+                            'dateApproved'
+                          ]);
           
           // Pedidos nunca podem ser deletados (audit trail)
           allow delete: if false;
@@ -1152,3 +1200,4 @@ service cloud.firestore {
     }
   }
 }
+

@@ -31,6 +31,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 
 // ============================================================================
 // TYPES
@@ -136,6 +138,7 @@ export function useMaintenance(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch maintenance logs (last 100) ───────────────────────────────────
   const {
@@ -184,9 +187,10 @@ export function useMaintenance(franchiseId: string, storeId: string) {
         storeId,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });
       toast.success('Manutenção agendada');
+      audit(AuditActions.MAINTENANCE_SCHEDULE, { type: 'maintenance', id: '', name: variables.type }, { tapId: variables.tapId, storeId });
     },
     onError: () => {
       toast.error('Erro ao agendar manutencao');
@@ -209,9 +213,10 @@ export function useMaintenance(franchiseId: string, storeId: string) {
         updatedBy: uid,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });
       toast.success('Manutenção concluida');
+      audit(AuditActions.MAINTENANCE_COMPLETE, { type: 'maintenance', id: variables.logId, name: variables.logId }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao concluir manutencao');
@@ -230,9 +235,10 @@ export function useMaintenance(franchiseId: string, storeId: string) {
         updatedBy: uid,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });
       toast.success('Manutenção cancelada');
+      audit(AuditActions.MAINTENANCE_CANCEL, { type: 'maintenance', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao cancelar manutencao');

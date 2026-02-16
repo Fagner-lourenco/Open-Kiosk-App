@@ -10,6 +10,17 @@ import { renderHook, type RenderHookOptions } from '@testing-library/react';
 import { vi } from 'vitest';
 import { getDocs, setDoc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
 
+vi.mock('@/context/FranchiseContext', () => ({
+  useFranchise: vi.fn(() => ({
+    currentFranchise: { id: 'test-franchise', name: 'Franchise Test' },
+    franchises: [{ id: 'test-franchise', name: 'Franchise Test' }],
+    selectedStoreId: 'test-store',
+    setSelectedStoreId: vi.fn(),
+    refreshFranchises: vi.fn(),
+  })),
+  FranchiseProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 // ─── Test IDs ───────────────────────────────────────────────────────────────
 
 export const TEST_FRANCHISE_ID = 'test-franchise';

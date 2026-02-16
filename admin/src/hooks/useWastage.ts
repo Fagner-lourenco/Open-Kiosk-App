@@ -30,6 +30,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 
 // ============================================================================
 // TYPES
@@ -111,6 +113,7 @@ export function useWastage(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch wastage events (last 100) ─────────────────────────────────────
   const {
@@ -165,9 +168,10 @@ export function useWastage(franchiseId: string, storeId: string) {
         storeId,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: wastageKeys.all(franchiseId, storeId) });
       toast.success('Perda registrada com sucesso');
+      audit(AuditActions.WASTAGE_CREATE, { type: 'wastage', id: '', name: variables.type }, { tapId: variables.tapId, mlLost: variables.mlLost, reason: variables.reason, storeId });
     },
     onError: () => {
       toast.error('Erro ao registrar perda');

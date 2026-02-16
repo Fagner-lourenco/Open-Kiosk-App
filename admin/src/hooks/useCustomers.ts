@@ -26,6 +26,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   Customer,
   CustomerType,
@@ -56,19 +58,33 @@ function customerDocRef(franchiseId: string, storeId: string, customerId: string
 }
 
 /** Converte Firestore doc → Customer com Timestamps normalizados */
+const CUSTOMER_TYPES: CustomerType[] = ['company', 'person'];
+const CUSTOMER_STATUSES: CustomerStatus[] = ['active', 'archived'];
+const CUSTOMER_SOURCES: CustomerSource[] = [
+  'instagram',
+  'indicacao',
+  'inbound',
+  'outbound',
+  'evento_passado',
+];
+
 function normalizeCustomer(id: string, data: Record<string, unknown>): Customer {
+  const type = data.type as CustomerType;
+  const status = data.status as CustomerStatus;
+  const source = data.source as CustomerSource;
+
   return {
     id,
-    type: (data.type as CustomerType) || 'person',
+    type: CUSTOMER_TYPES.includes(type) ? type : 'person',
     name: (data.name as string) || '',
     doc: (data.doc as string) || undefined,
-    tags: (data.tags as string[]) || [],
-    phones: (data.phones as string[]) || [],
-    emails: (data.emails as string[]) || [],
+    tags: Array.isArray(data.tags) ? (data.tags as string[]) : [],
+    phones: Array.isArray(data.phones) ? (data.phones as string[]) : [],
+    emails: Array.isArray(data.emails) ? (data.emails as string[]) : [],
     address: (data.address as CustomerAddress) || undefined,
-    source: (data.source as CustomerSource) || undefined,
+    source: CUSTOMER_SOURCES.includes(source) ? source : undefined,
     ownerUserId: (data.ownerUserId as string) || '',
-    status: (data.status as CustomerStatus) || 'active',
+    status: CUSTOMER_STATUSES.includes(status) ? status : 'active',
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
   };
@@ -110,6 +126,7 @@ export function useCustomers(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch all customers ─────────────────────────────────────────────────
   const {
@@ -150,9 +167,10 @@ export function useCustomers(franchiseId: string, storeId: string) {
       });
       return newRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all(franchiseId, storeId) });
       toast.success('Cliente cadastrado com sucesso');
+      audit(AuditActions.CUSTOMER_CREATE, { type: 'customer', id: _id, name: variables.name }, { type: variables.type, storeId });
     },
     onError: () => {
       toast.error('Erro ao cadastrar cliente');
@@ -173,9 +191,10 @@ export function useCustomers(franchiseId: string, storeId: string) {
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all(franchiseId, storeId) });
       toast.success('Cliente atualizado com sucesso');
+      audit(AuditActions.CUSTOMER_UPDATE, { type: 'customer', id: variables.customerId, name: variables.name || variables.customerId }, { updatedFields: Object.keys(variables).filter(k => k !== 'customerId'), storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar cliente');
@@ -188,9 +207,10 @@ export function useCustomers(franchiseId: string, storeId: string) {
       const ref = customerDocRef(franchiseId, storeId, customerId);
       await deleteDoc(ref);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: customerKeys.all(franchiseId, storeId) });
       toast.success('Cliente excluído com sucesso');
+      audit(AuditActions.CUSTOMER_DELETE, { type: 'customer', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao excluir cliente');

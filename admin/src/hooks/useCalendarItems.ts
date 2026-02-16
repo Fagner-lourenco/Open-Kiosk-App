@@ -26,6 +26,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   CalendarItem,
   CalendarItemType,
@@ -55,18 +57,24 @@ function calendarDocRef(franchiseId: string, storeId: string, itemId: string) {
 }
 
 /** Converte Firestore doc → CalendarItem */
+const CALENDAR_ITEM_TYPES: CalendarItemType[] = ['event', 'task', 'reminder', 'visit'];
+const CALENDAR_ITEM_STATUSES: CalendarItemStatus[] = ['tentative', 'confirmed', 'canceled', 'done'];
+
 function normalizeCalendarItem(id: string, data: Record<string, unknown>): CalendarItem {
+  const type = data.type as CalendarItemType;
+  const status = data.status as CalendarItemStatus;
+
   return {
     id,
-    type: (data.type as CalendarItemType) || 'task',
+    type: CALENDAR_ITEM_TYPES.includes(type) ? type : 'task',
     title: (data.title as string) || '',
     startAt: data.startAt as Timestamp,
-    endAt: data.endAt as Timestamp | undefined,
+    endAt: data.endAt instanceof Timestamp ? data.endAt : undefined,
     allDay: (data.allDay as boolean) || false,
     ownerUserId: (data.ownerUserId as string) || '',
     relatedType: data.relatedType as CalendarRelatedType | undefined,
     relatedId: data.relatedId as string | undefined,
-    status: (data.status as CalendarItemStatus) || 'tentative',
+    status: CALENDAR_ITEM_STATUSES.includes(status) ? status : 'tentative',
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
   };
@@ -107,6 +115,7 @@ export function useCalendarItems(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch all calendar items ────────────────────────────────────────────
   const {
@@ -146,9 +155,10 @@ export function useCalendarItems(franchiseId: string, storeId: string) {
       });
       return newRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: calendarKeys.all(franchiseId, storeId) });
       toast.success('Item da agenda criado');
+      audit(AuditActions.CALENDAR_CREATE, { type: 'calendar', id: _id, name: variables.title }, { calendarType: variables.type, storeId });
     },
     onError: () => {
       toast.error('Erro ao criar item da agenda');
@@ -178,9 +188,10 @@ export function useCalendarItems(franchiseId: string, storeId: string) {
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: calendarKeys.all(franchiseId, storeId) });
       toast.success('Item da agenda atualizado');
+      audit(AuditActions.CALENDAR_UPDATE, { type: 'calendar', id: variables.itemId, name: variables.title || variables.itemId }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar item da agenda');
@@ -193,9 +204,10 @@ export function useCalendarItems(franchiseId: string, storeId: string) {
       const ref = calendarDocRef(franchiseId, storeId, itemId);
       await deleteDoc(ref);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: calendarKeys.all(franchiseId, storeId) });
       toast.success('Item da agenda excluído');
+      audit(AuditActions.CALENDAR_DELETE, { type: 'calendar', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao excluir item da agenda');
@@ -205,14 +217,14 @@ export function useCalendarItems(franchiseId: string, storeId: string) {
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   const upcomingItems = calendarItems.filter((item) => {
-    if (!item.startAt) return false;
-    const startDate = item.startAt instanceof Timestamp ? item.startAt.toDate() : new Date();
+    if (!(item.startAt instanceof Timestamp)) return false;
+    const startDate = item.startAt.toDate();
     return startDate >= new Date() && item.status !== 'canceled';
   });
 
   const todayItems = calendarItems.filter((item) => {
-    if (!item.startAt) return false;
-    const startDate = item.startAt instanceof Timestamp ? item.startAt.toDate() : new Date();
+    if (!(item.startAt instanceof Timestamp)) return false;
+    const startDate = item.startAt.toDate();
     const today = new Date();
     return (
       startDate.toDateString() === today.toDateString() &&

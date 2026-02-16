@@ -26,6 +26,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   CommercialEvent,
   CommercialEventStatus,
@@ -191,6 +193,7 @@ export interface UpdateBudgetLineInput {
 export function useCommercialEvents(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { log: audit } = useAudit();
 
   // ── Fetch all events ────────────────────────────────────────────────────
   const {
@@ -234,9 +237,10 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
       });
       return newRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: commercialEventKeys.all(franchiseId, storeId) });
       toast.success('Evento criado com sucesso');
+      audit(AuditActions.COMMERCIAL_EVENT_CREATE, { type: 'commercial_event', id: _id, name: variables.title }, { customerId: variables.customerId, storeId });
     },
     onError: () => {
       toast.error('Erro ao criar evento');
@@ -266,9 +270,10 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: commercialEventKeys.all(franchiseId, storeId) });
       toast.success('Evento atualizado');
+      audit(AuditActions.COMMERCIAL_EVENT_UPDATE, { type: 'commercial_event', id: variables.eventId, name: variables.title || variables.eventId }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar evento');
@@ -281,9 +286,10 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
       const ref = eventDocRef(franchiseId, storeId, eventId);
       await deleteDoc(ref);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: commercialEventKeys.all(franchiseId, storeId) });
       toast.success('Evento excluído');
+      audit(AuditActions.COMMERCIAL_EVENT_DELETE, { type: 'commercial_event', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao excluir evento');
@@ -334,10 +340,12 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
         if (value === undefined) continue;
         cleanFields[key] = value === null ? null : value;
       }
-      // Recalculate totalCost if qty or unitCost changed
-      if (cleanFields.qty !== undefined || cleanFields.unitCost !== undefined) {
-        const qty = (cleanFields.qty as number) ?? input.qty ?? 0;
-        const unitCost = (cleanFields.unitCost as number) ?? input.unitCost ?? 0;
+      // Recalculate totalCost only when both operands are explicitly provided.
+      const hasQty = typeof cleanFields.qty === 'number';
+      const hasUnitCost = typeof cleanFields.unitCost === 'number';
+      if (hasQty && hasUnitCost) {
+        const qty = cleanFields.qty as number;
+        const unitCost = cleanFields.unitCost as number;
         cleanFields.totalCost = qty * unitCost;
       }
       await updateDoc(ref, cleanFields);

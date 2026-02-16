@@ -27,9 +27,16 @@ export interface Order {
   subtotal?: number;
   tax?: number;
   discount?: number;
-  status: 'pending' | 'processing' | 'completed' | 'cancelled';
+  status:
+    | 'pending'
+    | 'processing'
+    | 'completed'
+    | 'cancelled'
+    | 'paid_pending_dispense'
+    | 'dispensing'
+    | 'failed_dispense';
   paymentMethod: 'cash' | 'card' | 'pix' | 'pix_qr' | 'mercadopago' | string;
-  paymentStatus: 'pending' | 'paid' | 'refunded' | 'failed';
+  paymentStatus: 'pending' | 'paid' | 'refunded' | 'failed' | 'canceled' | 'expired';
   timestamp?: Timestamp;
   createdAt?: Timestamp;
   paidAt?: Timestamp;

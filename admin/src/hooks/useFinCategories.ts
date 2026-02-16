@@ -25,6 +25,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   FinCategory,
   FinCategoryDirection,
@@ -83,6 +85,7 @@ function normalizeCategory(id: string, data: Record<string, unknown>): FinCatego
 export function useFinCategories(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = finCategoryKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   const {
     data: categories = [],
@@ -113,9 +116,10 @@ export function useFinCategories(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Categoria criada');
+      audit(AuditActions.FIN_CATEGORY_CREATE, { type: 'fin_category', id: _id, name: variables.name }, { direction: variables.direction, storeId });
     },
     onError: () => toast.error('Erro ao criar categoria'),
   });
@@ -131,9 +135,10 @@ export function useFinCategories(franchiseId: string, storeId: string) {
       if (rest.status !== undefined) data.status = rest.status;
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Categoria atualizada');
+      audit(AuditActions.FIN_CATEGORY_UPDATE, { type: 'fin_category', id: variables.categoryId, name: variables.name || variables.categoryId }, { storeId });
     },
     onError: () => toast.error('Erro ao atualizar categoria'),
   });
@@ -142,9 +147,10 @@ export function useFinCategories(franchiseId: string, storeId: string) {
     mutationFn: async (categoryId: string) => {
       await deleteDoc(categoryDocRef(franchiseId, storeId, categoryId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Categoria excluída');
+      audit(AuditActions.FIN_CATEGORY_DELETE, { type: 'fin_category', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir categoria'),
   });

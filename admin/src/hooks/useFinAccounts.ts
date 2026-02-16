@@ -26,6 +26,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type { FinAccount, FinAccountType, FinAccountStatus } from '@/types/finance';
 
 // ─── Query Keys ─────────────────────────────────────────────────────────────
@@ -66,15 +68,30 @@ function accountDocRef(franchiseId: string, storeId: string, accountId: string) 
   return doc(db, financeDocPath(franchiseId, storeId, 'accounts', accountId));
 }
 
+const FIN_ACCOUNT_TYPES: FinAccountType[] = ['cash', 'bank', 'pix', 'card_clearing'];
+const FIN_ACCOUNT_STATUSES: FinAccountStatus[] = ['active', 'inactive'];
+
+function toNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
 function normalizeAccount(id: string, data: Record<string, unknown>): FinAccount {
+  const type = data.type as FinAccountType;
+  const status = data.status as FinAccountStatus;
+
   return {
     id,
     name: (data.name as string) || '',
-    type: (data.type as FinAccountType) || 'cash',
+    type: FIN_ACCOUNT_TYPES.includes(type) ? type : 'cash',
     currency: (data.currency as string) || 'BRL',
-    openingBalance: (data.openingBalance as number) || 0,
-    openingAt: data.openingAt as Timestamp | undefined,
-    status: (data.status as FinAccountStatus) || 'active',
+    openingBalance: toNumber(data.openingBalance, 0),
+    openingAt: data.openingAt instanceof Timestamp ? data.openingAt : undefined,
+    status: FIN_ACCOUNT_STATUSES.includes(status) ? status : 'active',
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
   };
@@ -85,6 +102,7 @@ function normalizeAccount(id: string, data: Record<string, unknown>): FinAccount
 export function useFinAccounts(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = finAccountKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   // ── List ────────────────────────────────────────────────────────────────
 
@@ -124,9 +142,10 @@ export function useFinAccounts(franchiseId: string, storeId: string) {
       await setDoc(ref, data);
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Conta criada com sucesso');
+      audit(AuditActions.FIN_ACCOUNT_CREATE, { type: 'fin_account', id: _id, name: variables.name }, { accountType: variables.type, storeId });
     },
     onError: () => {
       toast.error('Erro ao criar conta');
@@ -150,9 +169,10 @@ export function useFinAccounts(franchiseId: string, storeId: string) {
       }
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Conta atualizada com sucesso');
+      audit(AuditActions.FIN_ACCOUNT_UPDATE, { type: 'fin_account', id: variables.accountId, name: variables.name || variables.accountId }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar conta');
@@ -166,9 +186,10 @@ export function useFinAccounts(franchiseId: string, storeId: string) {
       const ref = accountDocRef(franchiseId, storeId, accountId);
       await deleteDoc(ref);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Conta excluída com sucesso');
+      audit(AuditActions.FIN_ACCOUNT_DELETE, { type: 'fin_account', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao excluir conta');

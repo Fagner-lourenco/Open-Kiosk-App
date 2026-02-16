@@ -25,6 +25,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   FinPayment,
   FinPaymentDirection,
@@ -84,6 +86,7 @@ function normalizePayment(id: string, data: Record<string, unknown>): FinPayment
 export function useFinPayments(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = finPaymentKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   const {
     data: payments = [],
@@ -118,9 +121,10 @@ export function useFinPayments(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Pagamento registrado');
+      audit(AuditActions.PAYMENT_CREATE, { type: 'payment', id: _id, name: _id }, { amount: variables.amount, method: variables.method, direction: variables.direction, storeId });
     },
     onError: () => toast.error('Erro ao registrar pagamento'),
   });
@@ -129,9 +133,10 @@ export function useFinPayments(franchiseId: string, storeId: string) {
     mutationFn: async (paymentId: string) => {
       await deleteDoc(paymentDocRef(franchiseId, storeId, paymentId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Pagamento excluído');
+      audit(AuditActions.PAYMENT_DELETE, { type: 'payment', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir pagamento'),
   });

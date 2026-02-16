@@ -190,7 +190,19 @@ vi.mock('firebase/firestore', () => ({
   initializeFirestore: vi.fn(),
   persistentLocalCache: vi.fn(),
   persistentMultipleTabManager: vi.fn(),
+  CACHE_SIZE_UNLIMITED: -1,
 }));
+
+// ============================================================
+// MOCK VIRTUAL MODULES
+// ============================================================
+vi.mock('virtual:pwa-register/react', () => ({
+  useRegisterSW: vi.fn(() => ({
+    needRefresh: [false, vi.fn()],
+    offlineReady: [false, vi.fn()],
+    updateServiceWorker: vi.fn(),
+  })),
+}), { virtual: true });
 
 // ============================================================
 // MOCK CAPACITOR

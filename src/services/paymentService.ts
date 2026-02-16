@@ -321,6 +321,9 @@ class PaymentService {
         message: 'QR Code gerado. Aguardando pagamento...'
       };
     } catch (error) {
+      if (error instanceof PaymentError) {
+        throw error;
+      }
       console.error('[PaymentService] Erro ao criar QR Code Mercado Pago:', error);
       throw new PaymentError(
         'MP_QR_ERROR',
@@ -814,24 +817,13 @@ class PaymentService {
     } catch (error) {
       // Fallback: marcar localmente como cancel_requested
       // O webhook/polling deverá detectar e reconciliar
-      console.warn('[PaymentService] cancelPagBankPayment Cloud Function failed, marking cancel_requested:', error);
-      try {
-        const db = getFirebaseDb();
-        const paymentRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'payments', paymentId);
-        const { updateDoc } = await import('firebase/firestore');
-        await updateDoc(paymentRef, {
-          cancelRequested: true,
-          cancelRequestedAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        });
-        return { canceled: false, reason: 'cancel_requested_locally' };
-      } catch (fbErr) {
-        console.error('[PaymentService] Failed to mark cancel_requested in Firestore:', fbErr);
-        return { canceled: false, reason: 'error' };
-      }
+      console.warn('[PaymentService] cancelPagBankPayment Cloud Function failed:', error);
+      return { canceled: false, reason: 'cancel_function_unavailable' };
     }
   }
 }
 
 export const paymentService = new PaymentService();
+
+
 

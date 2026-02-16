@@ -27,6 +27,8 @@ import { db } from '@/lib/firebase';
 import { generateInvitationToken } from '@/lib/invitationToken';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -118,6 +120,7 @@ export function TeamPage() {
   const PAGE_SIZE = 20;
   const { currentFranchise, refreshFranchises } = useFranchise();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   
@@ -222,9 +225,11 @@ export function TeamPage() {
       const memberRef = doc(db, 'franchises', currentFranchise.id, 'members', memberId);
       await updateDoc(memberRef, { role: newRole, updatedAt: new Date() });
     },
-    onSuccess: () => {
+    onSuccess: (_data, { memberId, newRole }) => {
       queryClient.invalidateQueries({ queryKey: ['franchise-members', currentFranchise?.id] });
       refreshFranchises();
+      const member = members.find(m => m.id === memberId);
+      audit(AuditActions.USER_ROLE_CHANGE, { type: 'user', id: memberId, name: member?.email || memberId }, { newRole, previousRole: member?.role });
     },
     onError: (err) => {
       console.error('Error changing role:', err);
@@ -238,9 +243,11 @@ export function TeamPage() {
       if (!currentFranchise) throw new Error('No franchise selected');
       await deleteDoc(doc(db, 'franchises', currentFranchise.id, 'members', memberId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, memberId) => {
       queryClient.invalidateQueries({ queryKey: ['franchise-members', currentFranchise?.id] });
       refreshFranchises();
+      const member = removeMember;
+      audit(AuditActions.USER_REMOVE, { type: 'user', id: memberId, name: member?.email || memberId }, { displayName: member?.displayName, role: member?.role });
       setRemoveMember(null);
     },
     onError: (err) => {
@@ -274,9 +281,10 @@ export function TeamPage() {
       const docRef = await addDoc(collection(db, 'invitations'), inviteData);
       return docRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_data, { email, role }) => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
       setShowInviteDialog(false);
+      audit(AuditActions.USER_INVITE, { type: 'user', id: email, name: email }, { role, franchiseName: currentFranchise?.name });
       setInviteEmail('');
       setInviteRole('employee');
     },
@@ -293,8 +301,10 @@ export function TeamPage() {
         revokedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, inviteId) => {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      const invite = invitations.find(i => i.id === inviteId);
+      audit(AuditActions.USER_INVITE_REVOKE, { type: 'invitation', id: inviteId, name: invite?.email || inviteId });
     },
   });
 

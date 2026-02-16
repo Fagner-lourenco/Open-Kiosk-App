@@ -26,6 +26,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type { Bill, BillStatus } from '@/types/finance';
 
 // ─── Query Keys ─────────────────────────────────────────────────────────────
@@ -95,6 +97,7 @@ function normalizeBill(id: string, data: Record<string, unknown>): Bill {
 export function useBills(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = billKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   const {
     data: bills = [],
@@ -131,9 +134,10 @@ export function useBills(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Conta a pagar criada');
+      audit(AuditActions.BILL_CREATE, { type: 'bill', id: _id, name: _id }, { total: variables.total, partyId: variables.partyId, storeId });
     },
     onError: () => toast.error('Erro ao criar conta a pagar'),
   });
@@ -155,9 +159,10 @@ export function useBills(franchiseId: string, storeId: string) {
       if (rest.attachments !== undefined) data.attachments = rest.attachments;
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Conta a pagar atualizada');
+      audit(AuditActions.BILL_UPDATE, { type: 'bill', id: variables.billId, name: variables.billId }, { status: variables.status, storeId });
     },
     onError: () => toast.error('Erro ao atualizar conta a pagar'),
   });
@@ -166,9 +171,10 @@ export function useBills(franchiseId: string, storeId: string) {
     mutationFn: async (billId: string) => {
       await deleteDoc(billDocRef(franchiseId, storeId, billId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Conta a pagar excluída');
+      audit(AuditActions.BILL_DELETE, { type: 'bill', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir conta a pagar'),
   });

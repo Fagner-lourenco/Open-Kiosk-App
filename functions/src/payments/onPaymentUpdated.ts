@@ -61,8 +61,8 @@ export const onPaymentUpdated = functions
     }
 
     const orderId = (after.orderId as string) || paymentId;
-    const amount = (after.amount as number) || 0;
-    const amountStr = (amount / 100).toFixed(2); // assume cents
+    const amount = Number(after.amount) || 0;
+    const amountStr = amount.toFixed(2);
 
     let title: string;
     let message: string;

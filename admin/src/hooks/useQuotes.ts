@@ -26,6 +26,8 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type {
   Quote,
   QuoteStatus,
@@ -171,6 +173,7 @@ export interface UpdateQuoteLineInput {
 export function useQuotes(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { log: audit } = useAudit();
 
   // ── Fetch all quotes ────────────────────────────────────────────────────
   const {
@@ -211,9 +214,10 @@ export function useQuotes(franchiseId: string, storeId: string) {
       });
       return newRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: quoteKeys.all(franchiseId, storeId) });
       toast.success('Proposta criada com sucesso');
+      audit(AuditActions.QUOTE_CREATE, { type: 'quote', id: _id, name: _id }, { customerId: variables.customerId, storeId });
     },
     onError: () => {
       toast.error('Erro ao criar proposta');
@@ -243,9 +247,10 @@ export function useQuotes(franchiseId: string, storeId: string) {
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: quoteKeys.all(franchiseId, storeId) });
       toast.success('Proposta atualizada');
+      audit(AuditActions.QUOTE_UPDATE, { type: 'quote', id: variables.quoteId, name: variables.quoteId }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar proposta');
@@ -258,9 +263,10 @@ export function useQuotes(franchiseId: string, storeId: string) {
       const ref = quoteDocRef(franchiseId, storeId, quoteId);
       await deleteDoc(ref);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: quoteKeys.all(franchiseId, storeId) });
       toast.success('Proposta excluída');
+      audit(AuditActions.QUOTE_DELETE, { type: 'quote', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao excluir proposta');
@@ -310,10 +316,12 @@ export function useQuotes(franchiseId: string, storeId: string) {
         if (value === undefined) continue;
         cleanFields[key] = value === null ? null : value;
       }
-      // Recalculate total if qty or unitPrice changed
-      if (cleanFields.qty !== undefined || cleanFields.unitPrice !== undefined) {
-        const qty = (cleanFields.qty as number) ?? input.qty ?? 0;
-        const unitPrice = (cleanFields.unitPrice as number) ?? input.unitPrice ?? 0;
+      // Recalculate total only when both operands are explicitly provided.
+      const hasQty = typeof cleanFields.qty === 'number';
+      const hasUnitPrice = typeof cleanFields.unitPrice === 'number';
+      if (hasQty && hasUnitPrice) {
+        const qty = cleanFields.qty as number;
+        const unitPrice = cleanFields.unitPrice as number;
         cleanFields.total = qty * unitPrice;
       }
       await updateDoc(ref, cleanFields);

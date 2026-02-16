@@ -10,6 +10,8 @@ import { doc, deleteDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +44,7 @@ export function StoresPage() {
   const PAGE_SIZE = 20;
   const { currentFranchise, stores, loading, refreshStores } = useFranchise();
   const { isSuperAdmin } = useAuth();
+  const { log: audit } = useAudit();
   const [searchQuery, setSearchQuery] = useState('');
   const [page, setPage] = useState(1);
   const [deleteStoreId, setDeleteStoreId] = useState<string | null>(null);
@@ -54,6 +57,8 @@ export function StoresPage() {
     setIsDeleting(true);
     try {
       await deleteDoc(doc(db, `franchises/${currentFranchise.id}/stores/${deleteStoreId}`));
+      const store = stores.find(s => s.id === deleteStoreId);
+      audit(AuditActions.STORE_DELETE, { type: 'store', id: deleteStoreId, name: store?.name || deleteStoreName }, { deletedFrom: 'stores_list' });
       await refreshStores();
       setDeleteStoreId(null);
     } catch (error) {

@@ -80,6 +80,7 @@ vi.mock('sonner', () => ({
         loading: vi.fn(),
         dismiss: vi.fn(),
     }),
+    Toaster: vi.fn(() => null),
 }));
 
 // ─── Mock AuthContext ───────────────────────────────────────────────────────
@@ -95,6 +96,7 @@ vi.mock('@/context/AuthContext', () => ({
         resetPassword: vi.fn(),
         refreshClaims: vi.fn(),
     })),
+    AuthProvider: ({ children }: { children: unknown }) => children,
 }));
 
 // ─── Mock useToast hook ─────────────────────────────────────────────────────

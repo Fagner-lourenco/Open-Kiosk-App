@@ -15,6 +15,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   ReactNode,
 } from 'react';
 import {
@@ -29,6 +30,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from './AuthContext';
+import { logLogin } from '@/services/auditService';
 
 // ============================================================================
 // TIPOS
@@ -336,6 +338,38 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
   useEffect(() => {
     loadFranchises();
   }, [loadFranchises]);
+
+  // Registra login de auditoria quando a franquia fica disponível
+  // Isso cobre o caso em que claims.franchiseId não está definido no token
+  const auditLoginFiredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!user || !currentFranchise) return;
+
+    // Evita registrar múltiplas vezes para a mesma franquia na sessão
+    const loginKey = `audit_login:${user.uid}:${currentFranchise.id}`;
+    if (auditLoginFiredRef.current === loginKey) return;
+    if (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(loginKey) === '1') {
+      auditLoginFiredRef.current = loginKey;
+      return;
+    }
+
+    auditLoginFiredRef.current = loginKey;
+    logLogin(currentFranchise.id, {
+      id: user.uid,
+      email: user.email || '',
+      name: user.displayName || undefined,
+    })
+      .then(() => {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem(loginKey, '1');
+        }
+      })
+      .catch((err) => {
+        console.warn('[audit] Falha ao registrar login (FranchiseContext):', err);
+        // Reseta para tentar novamente caso seja erro transiente
+        auditLoginFiredRef.current = null;
+      });
+  }, [user, currentFranchise]);
 
   // Selecionar franquia
   // Aceita lista opcional de franquias para evitar race condition

@@ -31,6 +31,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { kegKeys } from './useKegs';
 import type { TapOperationalState, TapAssignment } from '@shared/types/operations';
 
@@ -128,6 +130,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch tap operational states (lazy-init if missing) ─────────────────
   const {
@@ -295,11 +298,12 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
 
       await batch.commit();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: tapKeys.all(franchiseId, storeId) });
       queryClient.invalidateQueries({ queryKey: tapKeys.assignments(franchiseId, storeId) });
       queryClient.invalidateQueries({ queryKey: kegKeys.all(franchiseId, storeId) });
       toast.success('Barril conectado com sucesso');
+      audit(AuditActions.TAP_CONNECT, { type: 'tap', id: variables.tapId, name: `Tap ${variables.tapId}` }, { kegId: variables.kegId, storeId });
     },
     onError: () => {
       toast.error('Erro ao conectar barril');
@@ -359,11 +363,12 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
 
       await batch.commit();
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: tapKeys.all(franchiseId, storeId) });
       queryClient.invalidateQueries({ queryKey: tapKeys.assignments(franchiseId, storeId) });
       queryClient.invalidateQueries({ queryKey: kegKeys.all(franchiseId, storeId) });
       toast.success('Barril desconectado');
+      audit(AuditActions.TAP_DISCONNECT, { type: 'tap', id: variables.tapId, name: `Tap ${variables.tapId}` }, { reason: variables.reason, storeId });
     },
     onError: (err: Error) => {
       toast.error(err.message || 'Erro ao desconectar barril');

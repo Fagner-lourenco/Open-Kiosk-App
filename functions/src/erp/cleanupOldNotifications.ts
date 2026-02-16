@@ -5,8 +5,8 @@
  *
  * Schedule: 0 3 * * * (03:00 BRT daily)
  *
- * Deletes notifications older than 30 days (both read and dismissed).
- * Keeps unread notifications regardless of age to avoid data loss.
+ * Deletes notifications older than 30 days when they are read OR dismissed.
+ * Keeps unread + non-dismissed notifications regardless of age to avoid data loss.
  *
  * @author Open Kiosk Project
  * @version 1.0.0
@@ -36,25 +36,47 @@ export const cleanupOldNotifications = functions
     for (const franchiseDoc of franchisesSnap.docs) {
       const franchiseId = franchiseDoc.id;
       const notificationsRef = db.collection(`franchises/${franchiseId}/notifications`);
+      let deletedForFranchise = 0;
 
-      // Delete old dismissed or read notifications
-      const oldNotificationsSnap = await notificationsRef
-        .where('createdAt', '<', cutoff)
-        .where('isRead', '==', true)
-        .limit(BATCH_SIZE)
-        .get();
+      while (true) {
+        // Firestore does not support OR with simple where-chain in all environments,
+        // so we query read and dismissed separately and merge by doc id.
+        const [readSnap, dismissedSnap] = await Promise.all([
+          notificationsRef
+            .where('createdAt', '<', cutoff)
+            .where('isRead', '==', true)
+            .limit(BATCH_SIZE)
+            .get(),
+          notificationsRef
+            .where('createdAt', '<', cutoff)
+            .where('isDismissed', '==', true)
+            .limit(BATCH_SIZE)
+            .get(),
+        ]);
 
-      if (oldNotificationsSnap.empty) continue;
+        const docsById = new Map<string, FirebaseFirestore.QueryDocumentSnapshot>();
+        for (const doc of readSnap.docs) docsById.set(doc.id, doc);
+        for (const doc of dismissedSnap.docs) docsById.set(doc.id, doc);
 
-      const batch = db.batch();
-      oldNotificationsSnap.docs.forEach(doc => {
-        batch.delete(doc.ref);
-      });
+        const docsToDelete = Array.from(docsById.values()).slice(0, BATCH_SIZE);
+        if (docsToDelete.length === 0) break;
 
-      await batch.commit();
-      totalDeleted += oldNotificationsSnap.size;
+        const batch = db.batch();
+        docsToDelete.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
 
-      console.log(`[Cleanup] Deleted ${oldNotificationsSnap.size} old notifications for franchise ${franchiseId}`);
+        deletedForFranchise += docsToDelete.length;
+        totalDeleted += docsToDelete.length;
+
+        // If we didn't fill the batch, there is likely no more work for this franchise.
+        if (docsToDelete.length < BATCH_SIZE) break;
+      }
+
+      if (deletedForFranchise > 0) {
+        console.log(`[Cleanup] Deleted ${deletedForFranchise} old notifications for franchise ${franchiseId}`);
+      }
     }
 
     console.log(`[Cleanup] Done. Total deleted: ${totalDeleted}`);

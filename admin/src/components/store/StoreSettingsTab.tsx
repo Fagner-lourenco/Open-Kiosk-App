@@ -11,6 +11,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -659,6 +661,7 @@ function AttractVideoCard({ settings, franchiseId, storeId, onVideoConfigChange 
 export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { log: audit } = useAudit();
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   
@@ -856,6 +859,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
       queryClient.invalidateQueries({ queryKey: ['store-settings', franchiseId, storeId] });
       queryClient.invalidateQueries({ queryKey: ['stores'] });
       toast.success('Configurações salvas com sucesso');
+      audit(AuditActions.STORE_SETTINGS_UPDATE, { type: 'store', id: storeId, name: storeId }, { updatedFields: Object.keys(settings || {}) });
       setHasChanges(false);
     },
     onError: () => {

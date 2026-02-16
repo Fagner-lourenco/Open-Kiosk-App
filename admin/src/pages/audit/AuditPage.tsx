@@ -47,10 +47,21 @@ import {
   AlertCircle,
   LogIn,
   LogOut,
-  CheckCircle
+  CheckCircle,
+  Beer,
+  Wrench,
+  Tv,
+  CreditCard,
+  Users,
+  CalendarDays,
+  FileText,
+  DollarSign,
+  Package,
+  Handshake,
 } from 'lucide-react';
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
+import { getActionLabel as getServiceActionLabel } from '@/services/auditService';
 
 interface AuditLog {
   id: string;
@@ -129,28 +140,84 @@ const actionIcons: Record<string, any> = {
   'user.login': LogIn,
   'user.logout': LogOut,
   'user.invite': UserPlus,
+  'user.role_change': Shield,
+  'user.remove': Trash2,
+  'user.profile_update': User,
+  'user.password_change': Shield,
   'store.create': Store,
   'store.update': Edit,
   'store.delete': Trash2,
+  'store.settings_update': Settings,
+  'store.member_add': UserPlus,
+  'store.member_remove': Users,
+  'product.create': Package,
+  'product.update': Package,
+  'product.delete': Package,
   'settings.update': Settings,
+  'franchise.delete': Trash2,
+  'keg.create': Beer,
+  'keg.status_update': Beer,
+  'tap.connect': Beer,
+  'tap.disconnect': Beer,
+  'wastage.create': AlertCircle,
+  'maintenance.schedule': Wrench,
+  'maintenance.complete': Wrench,
+  'maintenance.cancel': Wrench,
+  'tv.config_update': Tv,
+  'event.mode_toggle': Tv,
+  'challenge.create': Activity,
+  'billing.checkout': CreditCard,
+  'billing.portal_open': CreditCard,
+  'customer.create': Users,
+  'customer.update': Users,
+  'customer.delete': Users,
+  'deal.create': Handshake,
+  'deal.update': Handshake,
+  'deal.delete': Handshake,
+  'deal.stage_change': Handshake,
+  'commercial_event.create': CalendarDays,
+  'commercial_event.update': CalendarDays,
+  'commercial_event.delete': CalendarDays,
+  'quote.create': FileText,
+  'quote.update': FileText,
+  'quote.delete': FileText,
+  'bill.create': DollarSign,
+  'bill.update': DollarSign,
+  'bill.delete': DollarSign,
+  'ledger.create': DollarSign,
+  'ledger.update': DollarSign,
+  'ledger.delete': DollarSign,
+  'invoice.create': FileText,
+  'invoice.update': FileText,
+  'invoice.delete': FileText,
+  'payment.create': CreditCard,
+  'payment.delete': CreditCard,
+  'calendar.create': CalendarDays,
+  'calendar.update': CalendarDays,
+  'calendar.delete': CalendarDays,
+  'party.create': Users,
+  'party.update': Users,
+  'party.delete': Users,
   'default': Activity,
 };
 
-const actionLabels: Record<string, string> = {
-  'user.login': 'Login',
-  'user.logout': 'Logout',
-  'user.invite': 'Convite enviado',
-  'user.accept_invite': 'Convite aceito',
-  'store.create': 'Loja criada',
-  'store.update': 'Loja atualizada',
-  'store.delete': 'Loja excluída',
-  'settings.update': 'Configurações alteradas',
-  'product.create': 'Produto criado',
-  'product.update': 'Produto atualizado',
-  'product.delete': 'Produto excluído',
-  'order.create': 'Pedido criado',
-  'order.update': 'Pedido atualizado',
-};
+/** Category groups for the filter dropdown */
+const filterGroups = [
+  { label: 'Autenticação', actions: ['user.login', 'user.logout'] },
+  { label: 'Equipe', actions: ['user.invite', 'user.role_change', 'user.remove', 'user.invite_revoke'] },
+  { label: 'Perfil', actions: ['user.profile_update', 'user.password_change'] },
+  { label: 'Lojas', actions: ['store.create', 'store.update', 'store.delete', 'store.settings_update', 'store.member_add', 'store.member_remove'] },
+  { label: 'Produtos', actions: ['product.create', 'product.update', 'product.delete'] },
+  { label: 'Barris/Torneiras', actions: ['keg.create', 'keg.status_update', 'tap.connect', 'tap.disconnect'] },
+  { label: 'Perdas/Manutenção', actions: ['wastage.create', 'maintenance.schedule', 'maintenance.complete', 'maintenance.cancel'] },
+  { label: 'TV/Eventos/Ranking', actions: ['tv.config_update', 'event.mode_toggle', 'event.goal_set', 'event.goal_disable', 'challenge.create', 'challenge.activate', 'challenge.delete', 'prize.add', 'prize.redeem', 'golden_serve.update'] },
+  { label: 'Cobrança', actions: ['billing.checkout', 'billing.portal_open'] },
+  { label: 'CRM', actions: ['customer.create', 'customer.update', 'customer.delete', 'deal.create', 'deal.update', 'deal.stage_change', 'deal.delete'] },
+  { label: 'Comercial', actions: ['commercial_event.create', 'commercial_event.update', 'commercial_event.delete', 'quote.create', 'quote.update', 'quote.delete'] },
+  { label: 'Financeiro', actions: ['bill.create', 'bill.update', 'bill.delete', 'ledger.create', 'ledger.update', 'ledger.delete', 'invoice.create', 'invoice.update', 'invoice.delete', 'payment.create', 'payment.delete', 'fin_category.create', 'fin_category.update', 'fin_category.delete', 'fin_account.create', 'fin_account.update', 'fin_account.delete', 'cost_center.create', 'cost_center.update', 'cost_center.delete'] },
+  { label: 'Agenda/Partes', actions: ['calendar.create', 'calendar.update', 'calendar.delete', 'party.create', 'party.update', 'party.delete'] },
+  { label: 'Configurações', actions: ['settings.update', 'franchise.delete'] },
+];
 
 export function AuditPage() {
   const { currentFranchise } = useFranchise();
@@ -170,7 +237,7 @@ export function AuditPage() {
     const headers = ['Data/Hora', 'Ação', 'Usuário', 'Email', 'Alvo', 'IP'];
     const rows = filteredLogs.map(log => [
       log.timestamp.toLocaleString('pt-BR'),
-      actionLabels[log.action] || log.action,
+      getServiceActionLabel(log.action),
       log.actor.name || '-',
       log.actor.email,
       log.target?.name || log.target?.id || '-',
@@ -349,7 +416,7 @@ export function AuditPage() {
   };
 
   const getActionLabel = (action: string) => {
-    return actionLabels[action] || action;
+    return getServiceActionLabel(action);
   };
 
   const getActionBadgeVariant = (action: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
@@ -411,16 +478,23 @@ export function AuditPage() {
         </div>
 
         <Select value={actionFilter} onValueChange={setActionFilter}>
-          <SelectTrigger className="w-full md:w-[200px]">
+          <SelectTrigger className="w-full md:w-[280px]">
             <SelectValue placeholder="Filtrar por ação" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent className="max-h-80">
             <SelectItem value="all">Todas as ações</SelectItem>
-            <SelectItem value="user.login">Login</SelectItem>
-            <SelectItem value="user.invite">Convites</SelectItem>
-            <SelectItem value="store.create">Lojas criadas</SelectItem>
-            <SelectItem value="store.update">Lojas atualizadas</SelectItem>
-            <SelectItem value="settings.update">Configurações</SelectItem>
+            {filterGroups.map((group) => (
+              <div key={group.label}>
+                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                  {group.label}
+                </div>
+                {group.actions.map((action) => (
+                  <SelectItem key={action} value={action}>
+                    {getServiceActionLabel(action)}
+                  </SelectItem>
+                ))}
+              </div>
+            ))}
           </SelectContent>
         </Select>
       </FilterBar>
@@ -515,6 +589,19 @@ export function AuditPage() {
                           <span>IP: {log.ip}</span>
                         )}
                       </div>
+
+                      {log.details && Object.keys(log.details).length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {Object.entries(log.details)
+                            .filter(([key]) => !['claims'].includes(key))
+                            .slice(0, 6)
+                            .map(([key, val]) => (
+                              <Badge key={key} variant="outline" className="text-xs font-normal">
+                                {key}: {typeof val === 'object' ? JSON.stringify(val) : String(val)}
+                              </Badge>
+                            ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 );

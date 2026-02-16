@@ -25,6 +25,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type { Keg, KegStatus } from '@shared/types/operations';
 
 // ============================================================================
@@ -107,6 +109,7 @@ export function useKegs(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch all kegs ──────────────────────────────────────────────────────
   const {
@@ -177,9 +180,10 @@ export function useKegs(franchiseId: string, storeId: string) {
       });
       return newRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: kegKeys.all(franchiseId, storeId) });
       toast.success('Barril cadastrado com sucesso');
+      audit(AuditActions.KEG_CREATE, { type: 'keg', id: _id, name: variables.productId }, { volumeMl: variables.volumeMl, storeId });
     },
     onError: () => {
       toast.error('Erro ao cadastrar barril');
@@ -205,9 +209,10 @@ export function useKegs(franchiseId: string, storeId: string) {
         ...extra,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: kegKeys.all(franchiseId, storeId) });
       toast.success('Status do barril atualizado');
+      audit(AuditActions.KEG_STATUS_UPDATE, { type: 'keg', id: variables.kegId, name: variables.kegId }, { newStatus: variables.status, storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar status do barril');

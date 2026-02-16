@@ -27,6 +27,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type { Invoice, InvoiceStatus, InvoiceSourceType, InvoiceLine } from '@/types/finance';
 
 // ─── Query Keys ─────────────────────────────────────────────────────────────
@@ -140,6 +142,7 @@ function normalizeInvoiceLine(id: string, data: Record<string, unknown>): Invoic
 export function useInvoices(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = invoiceKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   // ── List ────────────────────────────────────────────────────────────────
 
@@ -183,9 +186,10 @@ export function useInvoices(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Fatura criada');
+      audit(AuditActions.INVOICE_CREATE, { type: 'invoice', id: _id, name: _id }, { partyId: variables.partyId, total: variables.total, storeId });
     },
     onError: () => toast.error('Erro ao criar fatura'),
   });
@@ -209,9 +213,10 @@ export function useInvoices(franchiseId: string, storeId: string) {
       if (rest.remaining !== undefined) data.remaining = rest.remaining;
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Fatura atualizada');
+      audit(AuditActions.INVOICE_UPDATE, { type: 'invoice', id: variables.invoiceId, name: variables.invoiceId }, { status: variables.status, storeId });
     },
     onError: () => toast.error('Erro ao atualizar fatura'),
   });
@@ -222,9 +227,10 @@ export function useInvoices(franchiseId: string, storeId: string) {
     mutationFn: async (invoiceId: string) => {
       await deleteDoc(invoiceDocRef(franchiseId, storeId, invoiceId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Fatura excluída');
+      audit(AuditActions.INVOICE_DELETE, { type: 'invoice', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir fatura'),
   });

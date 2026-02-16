@@ -25,6 +25,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type { CostCenter, CostCenterStatus } from '@/types/finance';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -73,6 +75,7 @@ function normalizeCenter(id: string, data: Record<string, unknown>): CostCenter 
 export function useCostCenters(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = costCenterKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   const {
     data: costCenters = [],
@@ -101,9 +104,10 @@ export function useCostCenters(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Centro de custo criado');
+      audit(AuditActions.COST_CENTER_CREATE, { type: 'cost_center', id: _id, name: variables.name }, { storeId });
     },
     onError: () => toast.error('Erro ao criar centro de custo'),
   });
@@ -117,9 +121,10 @@ export function useCostCenters(franchiseId: string, storeId: string) {
       if (rest.status !== undefined) data.status = rest.status;
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Centro de custo atualizado');
+      audit(AuditActions.COST_CENTER_UPDATE, { type: 'cost_center', id: variables.centerId, name: variables.name || variables.centerId }, { storeId });
     },
     onError: () => toast.error('Erro ao atualizar centro de custo'),
   });
@@ -128,9 +133,10 @@ export function useCostCenters(franchiseId: string, storeId: string) {
     mutationFn: async (centerId: string) => {
       await deleteDoc(centerDocRef(franchiseId, storeId, centerId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Centro de custo excluído');
+      audit(AuditActions.COST_CENTER_DELETE, { type: 'cost_center', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir centro de custo'),
   });

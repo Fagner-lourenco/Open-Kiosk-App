@@ -17,6 +17,8 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { useFranchise } from '../../context/FranchiseContext';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { 
   getFranchiseBilling, 
   getBillingHistory, 
@@ -39,6 +41,7 @@ import {
 
 export default function BillingPage() {
   const { currentFranchise } = useFranchise();
+  const { log: audit } = useAudit();
   const [searchParams] = useSearchParams();
   
   const franchiseId = currentFranchise?.id;
@@ -87,6 +90,7 @@ export default function BillingPage() {
     try {
       const { url } = await createCheckoutSession(plan, selectedInterval);
       if (url) {
+        audit(AuditActions.BILLING_CHECKOUT, { type: 'billing', id: plan, name: plan }, { interval: selectedInterval, currentPlan: billing?.plan });
         window.location.href = url;
       }
     } catch (error) {
@@ -102,6 +106,7 @@ export default function BillingPage() {
     
     try {
       const url = await openBillingPortal();
+      audit(AuditActions.BILLING_PORTAL_OPEN, { type: 'billing', id: 'portal', name: 'Portal de Cobrança' });
       window.open(url, '_blank');
     } catch (error) {
       console.error('Erro ao abrir portal:', error);

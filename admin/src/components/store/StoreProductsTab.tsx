@@ -11,6 +11,8 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { collection, query, getDocs, doc, deleteDoc, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -63,6 +65,7 @@ interface StoreProductsTabProps {
 export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { log: audit } = useAudit();
   
   // State
   const [searchTerm, setSearchTerm] = useState('');
@@ -108,15 +111,17 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
     mutationFn: async (productData: Omit<Product, 'id'>) => {
       const productsRef = collection(db, 'franchises', franchiseId, 'stores', storeId, 'products');
       const sanitizedProduct = sanitizeFirestoreData(productData) as typeof productData;
-      await addDoc(productsRef, {
+      const docRef = await addDoc(productsRef, {
         ...sanitizedProduct,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+      return { id: docRef.id, name: sanitizedProduct.title };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['store-products', franchiseId, storeId] });
       toast.success('Produto criado com sucesso!');
+      audit(AuditActions.PRODUCT_CREATE, { type: 'product', id: result.id, name: result.name }, { storeId });
       setShowCreateDialog(false);
     },
     onError: () => {
@@ -134,9 +139,10 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, { id, ...productData }) => {
       queryClient.invalidateQueries({ queryKey: ['store-products', franchiseId, storeId] });
       toast.success('Produto atualizado com sucesso!');
+      audit(AuditActions.PRODUCT_UPDATE, { type: 'product', id, name: (productData as any).name || id }, { storeId });
       setEditingProduct(null);
     },
     onError: () => {
@@ -148,10 +154,13 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
   const deleteProductMutation = useMutation({
     mutationFn: async (productId: string) => {
       await deleteDoc(doc(db, 'franchises', franchiseId, 'stores', storeId, 'products', productId));
+      return productId;
     },
-    onSuccess: () => {
+    onSuccess: (_data, productId) => {
       queryClient.invalidateQueries({ queryKey: ['store-products', franchiseId, storeId] });
       toast.success('Produto excluído com sucesso');
+      const product = productToDelete;
+      audit(AuditActions.PRODUCT_DELETE, { type: 'product', id: productId, name: product?.title || productId }, { storeId });
       setProductToDelete(null);
     },
     onError: () => {

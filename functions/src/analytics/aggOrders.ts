@@ -1,28 +1,17 @@
 /**
  * ============================================================================
- * Aggregate Orders - Cloud Functions para Materialização de Métricas
+ * Aggregate Orders - Cloud Functions para Materializacao de Metricas
  * ============================================================================
- * 
+ *
  * Triggers onCreate e onUpdate para orders que atualizam:
- * - analytics/daily/{YYYY-MM-DD} - Agregados diários globais
+ * - analytics/daily/{YYYY-MM-DD} - Agregados diarios globais
  * - analytics/hourly/{YYYY-MM-DD-HH} - Agregados por hora
- * - franchises/{franchiseId}/stores/{storeId}/metrics/current - Métricas da loja
- * - franchises/{franchiseId}/metrics/current - Métricas agregadas da franquia
- * 
- * Usa FieldValue.increment para operações atômicas e idempotentes.
- * 
- * @author Open Kiosk Project
- * @version 1.0.0
- * 
- * 🔧 v4.0.7: Refatorado para usar módulos lib/
+ * - franchises/{franchiseId}/stores/{storeId}/metrics/current - Metricas da loja
+ * - franchises/{franchiseId}/metrics/current - Metricas agregadas da franquia
  */
 
 import * as functions from 'firebase-functions';
 import { db, admin } from '../lib';
-
-// ============================================================================
-// TIPOS
-// ============================================================================
 
 interface OrderData {
   total: number;
@@ -33,13 +22,6 @@ interface OrderData {
   franchiseId?: string;
   createdAt?: admin.firestore.Timestamp;
   timestamp?: admin.firestore.Timestamp;
-  items?: Array<{
-    productId: string;
-    title: string;
-    quantity: number;
-    price: number;
-    total: number;
-  }>;
 }
 
 interface MetricsUpdate {
@@ -55,41 +37,45 @@ interface MetricsUpdate {
   [key: string]: admin.firestore.FieldValue | string | undefined;
 }
 
-// ============================================================================
-// HELPERS
-// ============================================================================
+const CANCELED_STATUSES = ['canceled', 'cancelled'] as const;
+const PAID_ORDER_STATUSES = ['completed', 'paid', 'paid_pending_dispense', 'dispensing'] as const;
+const PAID_PAYMENT_STATUSES = ['paid', 'completed', 'dispensed'] as const;
+const PENDING_ORDER_STATUSES = ['pending', 'paid_pending_dispense', 'dispensing', 'failed_dispense'] as const;
 
-/**
- * Extrai data no formato YYYY-MM-DD de um Timestamp
- */
+function normalizeStatus(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
 function getDateKey(timestamp: admin.firestore.Timestamp | undefined): string {
   const date = timestamp?.toDate() || new Date();
   return date.toISOString().split('T')[0];
 }
 
-/**
- * Extrai data e hora no formato YYYY-MM-DD-HH de um Timestamp
- */
 function getHourKey(timestamp: admin.firestore.Timestamp | undefined): string {
   const date = timestamp?.toDate() || new Date();
   const dateStr = date.toISOString().split('T')[0];
-  const hour = date.getHours().toString().padStart(2, '0');
+  const hour = date.getUTCHours().toString().padStart(2, '0');
   return `${dateStr}-${hour}`;
 }
 
-/**
- * Verifica se o pedido está "pago" (completed + paid)
- */
+function isCancelledStatus(status: string): boolean {
+  return CANCELED_STATUSES.includes(status as (typeof CANCELED_STATUSES)[number]);
+}
+
+function isPendingStatus(status: string): boolean {
+  return PENDING_ORDER_STATUSES.includes(status as (typeof PENDING_ORDER_STATUSES)[number]);
+}
+
 function isPaidOrder(order: OrderData): boolean {
+  const orderStatus = normalizeStatus(order.status);
+  const paymentStatus = normalizeStatus(order.paymentStatus);
+
   return (
-    (order.status === 'completed' || order.status === 'paid') &&
-    (order.paymentStatus === 'paid' || order.paymentStatus === 'completed')
+    PAID_ORDER_STATUSES.includes(orderStatus as (typeof PAID_ORDER_STATUSES)[number]) &&
+    PAID_PAYMENT_STATUSES.includes(paymentStatus as (typeof PAID_PAYMENT_STATUSES)[number])
   );
 }
 
-/**
- * Atualiza métricas de forma atômica usando FieldValue.increment
- */
 async function updateMetrics(
   docRef: admin.firestore.DocumentReference,
   order: OrderData,
@@ -99,35 +85,35 @@ async function updateMetrics(
 ): Promise<void> {
   const increment = admin.firestore.FieldValue.increment;
   const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
-  
+
   const updates: MetricsUpdate = {
     revenue: increment(0),
     orders: increment(0),
     lastUpdate: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
-  
+
   if (context?.franchiseId) {
     updates.franchiseId = context.franchiseId;
   }
   if (context?.storeId) {
     updates.storeId = context.storeId;
   }
-  
+
+  const status = normalizeStatus(order.status);
+
   if (isNew) {
-    // Novo pedido
     updates.orders = increment(1);
-    
+
     if (isPaidOrder(order)) {
       updates.revenue = increment(order.total || 0);
       updates.paidOrders = increment(1);
-    } else if (order.status === 'cancelled') {
+    } else if (isCancelledStatus(status)) {
       updates.cancelledOrders = increment(1);
     } else {
       updates.pendingOrders = increment(1);
     }
-    
-    // Incrementar contador de método de pagamento
+
     if (order.paymentMethod) {
       updates[`paymentMethods.${order.paymentMethod}.count`] = increment(1);
       if (isPaidOrder(order)) {
@@ -135,42 +121,37 @@ async function updateMetrics(
       }
     }
   } else if (previousOrder) {
-    // Atualização de pedido existente - calcular delta
+    const previousStatus = normalizeStatus(previousOrder.status);
     const wasPaid = isPaidOrder(previousOrder);
     const isNowPaid = isPaidOrder(order);
-    
+
     if (!wasPaid && isNowPaid) {
-      // Pedido foi pago
       updates.revenue = increment(order.total || 0);
       updates.paidOrders = increment(1);
-      updates.pendingOrders = increment(-1);
+      if (isPendingStatus(previousStatus)) {
+        updates.pendingOrders = increment(-1);
+      }
     } else if (wasPaid && !isNowPaid) {
-      // Pedido foi revertido (estorno)
       updates.revenue = increment(-(previousOrder.total || 0));
       updates.paidOrders = increment(-1);
     }
-    
-    if (order.status === 'cancelled' && previousOrder.status !== 'cancelled') {
+
+    if (isCancelledStatus(status) && !isCancelledStatus(previousStatus)) {
       updates.cancelledOrders = increment(1);
-      if (previousOrder.status === 'pending') {
+      if (isPendingStatus(previousStatus)) {
         updates.pendingOrders = increment(-1);
+      }
+    } else if (!isCancelledStatus(status) && isCancelledStatus(previousStatus)) {
+      updates.cancelledOrders = increment(-1);
+      if (isPendingStatus(status) && !isNowPaid) {
+        updates.pendingOrders = increment(1);
       }
     }
   }
-  
-  // Usar set com merge para criar documento se não existir
+
   await docRef.set(updates, { merge: true });
 }
 
-// ============================================================================
-// TRIGGERS
-// ============================================================================
-
-/**
- * Trigger: onCreate - Novo pedido criado
- * 
- * Path: franchises/{franchiseId}/stores/{storeId}/orders/{orderId}
- */
 export const onOrderCreated = functions
   .region('southamerica-east1')
   .firestore
@@ -178,50 +159,34 @@ export const onOrderCreated = functions
   .onCreate(async (snap, context) => {
     const order = snap.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
-    
-    console.log(`[aggOrders] onCreate: ${orderId} in store ${storeId}`);
-    
-    // Adicionar IDs ao order se não existirem
+
     order.franchiseId = franchiseId;
     order.storeId = storeId;
-    
+
     const timestamp = order.createdAt || order.timestamp;
     const dateKey = getDateKey(timestamp);
     const hourKey = getHourKey(timestamp);
-    
+
     try {
-      // 1. Atualizar analytics/daily
       const dailyRef = db.doc(`analytics/daily/${dateKey}`);
       await updateMetrics(dailyRef, order, true);
-      
-      // 2. Atualizar analytics/hourly
+
       const hourlyRef = db.doc(`analytics/hourly/${hourKey}`);
       await updateMetrics(hourlyRef, order, true);
-      
-      // 3. Atualizar métricas da loja
-      const storeMetricsRef = db.doc(
-        `franchises/${franchiseId}/stores/${storeId}/metrics/current`
-      );
+
+      const storeMetricsRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/metrics/current`);
       await updateMetrics(storeMetricsRef, order, true, undefined, { franchiseId, storeId });
-      
-      // 4. Atualizar métricas da franquia
-      const franchiseMetricsRef = db.doc(
-        `franchises/${franchiseId}/metrics/current`
-      );
+
+      const franchiseMetricsRef = db.doc(`franchises/${franchiseId}/metrics/current`);
       await updateMetrics(franchiseMetricsRef, order, true, undefined, { franchiseId });
-      
-      console.log(`[aggOrders] ✅ Metrics updated for order ${orderId}`);
+
+      console.log(`[aggOrders] Metrics updated for order ${orderId}`);
     } catch (error) {
-      console.error(`[aggOrders] ❌ Error updating metrics:`, error);
+      console.error('[aggOrders] Error updating metrics:', error);
       throw error;
     }
   });
 
-/**
- * Trigger: onUpdate - Pedido atualizado
- * 
- * Path: franchises/{franchiseId}/stores/{storeId}/orders/{orderId}
- */
 export const onOrderUpdated = functions
   .region('southamerica-east1')
   .firestore
@@ -230,8 +195,7 @@ export const onOrderUpdated = functions
     const before = change.before.data() as OrderData;
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
-    
-    // Ignorar se não houve mudança relevante
+
     if (
       before.status === after.status &&
       before.paymentStatus === after.paymentStatus &&
@@ -240,44 +204,32 @@ export const onOrderUpdated = functions
       console.log(`[aggOrders] onUpdate: ${orderId} - no relevant changes`);
       return;
     }
-    
-    console.log(`[aggOrders] onUpdate: ${orderId} - status: ${before.status} -> ${after.status}`);
-    
-    // Adicionar IDs
+
     after.franchiseId = franchiseId;
     after.storeId = storeId;
     before.franchiseId = franchiseId;
     before.storeId = storeId;
-    
+
     const timestamp = after.createdAt || after.timestamp || before.createdAt || before.timestamp;
     const dateKey = getDateKey(timestamp);
     const hourKey = getHourKey(timestamp);
-    
+
     try {
-      // 1. Atualizar analytics/daily
       const dailyRef = db.doc(`analytics/daily/${dateKey}`);
       await updateMetrics(dailyRef, after, false, before);
-      
-      // 2. Atualizar analytics/hourly
+
       const hourlyRef = db.doc(`analytics/hourly/${hourKey}`);
       await updateMetrics(hourlyRef, after, false, before);
-      
-      // 3. Atualizar métricas da loja
-      const storeMetricsRef = db.doc(
-        `franchises/${franchiseId}/stores/${storeId}/metrics/current`
-      );
+
+      const storeMetricsRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/metrics/current`);
       await updateMetrics(storeMetricsRef, after, false, before, { franchiseId, storeId });
-      
-      // 4. Atualizar métricas da franquia
-      const franchiseMetricsRef = db.doc(
-        `franchises/${franchiseId}/metrics/current`
-      );
+
+      const franchiseMetricsRef = db.doc(`franchises/${franchiseId}/metrics/current`);
       await updateMetrics(franchiseMetricsRef, after, false, before, { franchiseId });
-      
-      console.log(`[aggOrders] ✅ Metrics updated for order update ${orderId}`);
+
+      console.log(`[aggOrders] Metrics updated for order update ${orderId}`);
     } catch (error) {
-      console.error(`[aggOrders] ❌ Error updating metrics:`, error);
+      console.error('[aggOrders] Error updating metrics:', error);
       throw error;
     }
   });
-

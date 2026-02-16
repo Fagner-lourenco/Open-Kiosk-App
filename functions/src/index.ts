@@ -41,7 +41,7 @@ export {
 } from './analytics/aggOrders';
 
 // Payments (PagBank + generic)
-export { createPayment, pagbankWebhook, syncPendingPayments } from './payments';
+export { createPayment, pagbankWebhook, cancelPagBankPayment, syncPendingPayments } from './payments';
 export { onPaymentUpdated } from './payments/onPaymentUpdated';
 
 // ERP Vertical — Triggers

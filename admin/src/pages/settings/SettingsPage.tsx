@@ -174,6 +174,19 @@ export function SettingsPage() {
     setError(null);
 
     try {
+      // Log deletion BEFORE actually deleting (audit subcollection will be deleted too)
+      if (user) {
+        try {
+          await logUserAction(
+            currentFranchise.id,
+            AuditActions.FRANCHISE_DELETE,
+            { id: user.uid, email: user.email || '', name: user.displayName || undefined },
+            { type: 'franchise', id: currentFranchise.id, name: currentFranchise.name },
+            { franchiseName: currentFranchise.name }
+          );
+        } catch { /* best effort */ }
+      }
+
       // Delete all subcollections first
       const subcollections = ['stores', 'members', 'invitations', 'auditLogs'];
       

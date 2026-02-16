@@ -26,6 +26,8 @@ import {
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/useToast';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { customerKeys } from '@/hooks/useCustomers';
 import type {
   Deal,
@@ -110,6 +112,7 @@ export function useDeals(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { log: audit } = useAudit();
 
   // ── Fetch all deals ─────────────────────────────────────────────────────
   const {
@@ -151,9 +154,10 @@ export function useDeals(franchiseId: string, storeId: string) {
       });
       return newRef.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: dealKeys.all(franchiseId, storeId) });
       toast.success('Negociação criada com sucesso');
+      audit(AuditActions.DEAL_CREATE, { type: 'deal', id: _id, name: variables.title }, { customerId: variables.customerId, storeId });
     },
     onError: () => {
       toast.error('Erro ao criar negociação');
@@ -184,9 +188,10 @@ export function useDeals(franchiseId: string, storeId: string) {
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: dealKeys.all(franchiseId, storeId) });
       toast.success('Negociação atualizada');
+      audit(AuditActions.DEAL_UPDATE, { type: 'deal', id: variables.dealId, name: variables.title || variables.dealId }, { updatedFields: Object.keys(variables).filter(k => k !== 'dealId'), storeId });
     },
     onError: () => {
       toast.error('Erro ao atualizar negociação');
@@ -202,8 +207,9 @@ export function useDeals(franchiseId: string, storeId: string) {
         updatedAt: serverTimestamp(),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: dealKeys.all(franchiseId, storeId) });
+      audit(AuditActions.DEAL_STAGE_CHANGE, { type: 'deal', id: variables.dealId, name: variables.dealId }, { newStage: variables.stage, storeId });
     },
     onError: () => {
       toast.error('Erro ao mover negociação');
@@ -216,11 +222,12 @@ export function useDeals(franchiseId: string, storeId: string) {
       const ref = dealDocRef(franchiseId, storeId, dealId);
       await deleteDoc(ref);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: dealKeys.all(franchiseId, storeId) });
       // Also invalidate customers (deal counts may change)
       queryClient.invalidateQueries({ queryKey: customerKeys.all(franchiseId, storeId) });
       toast.success('Negociação excluída');
+      audit(AuditActions.DEAL_DELETE, { type: 'deal', id: variables, name: variables }, { storeId });
     },
     onError: () => {
       toast.error('Erro ao excluir negociação');

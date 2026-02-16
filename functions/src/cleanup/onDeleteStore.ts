@@ -1,9 +1,8 @@
 /**
  * ADM-03/ADM-05: Cascade delete subcollections when a store is deleted.
  *
- * Firestore does NOT auto-delete subcollections. This trigger ensures
- * orphaned documents (products, orders, payments, settings, taps, etc.)
- * are cleaned up when a store document is removed.
+ * Firestore does not auto-delete subcollections. This trigger removes
+ * known store subcollections and nested descendants when a store doc is removed.
  *
  * @module cleanup/onDeleteStore
  */
@@ -22,14 +21,35 @@ const STORE_SUBCOLLECTIONS = [
   'servingSessions',
   'wastageEvents',
   'maintenanceLogs',
+  'dailyStats',
+  'metrics',
+  'kegs',
+  'tapAssignments',
+  'devices',
+  'hardware',
+  'tvConfig',
+  'eventStats',
+  'finAccounts',
+  'finBills',
+  'finCategories',
+  'finCostCenters',
+  'finLedger',
+  'finInvoices',
+  'finParties',
+  'finPayments',
+  'calendarItems',
+  'customers',
+  'deals',
+  'commercialEvents',
+  'quotes',
+  'rankingAgg',
+  'challenges',
+  'prizes',
 ] as const;
 
 const BATCH_LIMIT = 400; // Firestore batch max is 500, keep margin
 
-/**
- * Delete all documents in a subcollection, in batches.
- */
-async function deleteSubcollection(parentPath: string, subcollection: string): Promise<number> {
+async function deleteSubcollectionBatch(parentPath: string, subcollection: string): Promise<number> {
   const collRef = db.collection(`${parentPath}/${subcollection}`);
   let totalDeleted = 0;
 
@@ -43,10 +63,26 @@ async function deleteSubcollection(parentPath: string, subcollection: string): P
     await batch.commit();
     totalDeleted += snap.size;
 
-    if (snap.size < BATCH_LIMIT) break; // last batch
+    if (snap.size < BATCH_LIMIT) break;
   }
 
   return totalDeleted;
+}
+
+/**
+ * Delete a known subcollection and all nested descendants.
+ */
+async function deleteSubcollection(parentPath: string, subcollection: string): Promise<number> {
+  const collRef = db.collection(`${parentPath}/${subcollection}`);
+  const probe = await collRef.limit(1).get();
+  if (probe.empty) return 0;
+
+  if (typeof (db as any).recursiveDelete === 'function') {
+    await (db as any).recursiveDelete(collRef);
+    return -1;
+  }
+
+  return deleteSubcollectionBatch(parentPath, subcollection);
 }
 
 /**
@@ -55,7 +91,7 @@ async function deleteSubcollection(parentPath: string, subcollection: string): P
 export const onDeleteStore = functions
   .region('southamerica-east1')
   .firestore.document('franchises/{franchiseId}/stores/{storeId}')
-  .onDelete(async (snapshot, context) => {
+  .onDelete(async (_snapshot, context) => {
     const { franchiseId, storeId } = context.params;
     const storePath = `franchises/${franchiseId}/stores/${storeId}`;
 
@@ -66,7 +102,7 @@ export const onDeleteStore = functions
     for (const sub of STORE_SUBCOLLECTIONS) {
       try {
         const count = await deleteSubcollection(storePath, sub);
-        if (count > 0) {
+        if (count !== 0) {
           results[sub] = count;
         }
       } catch (err) {

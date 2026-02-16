@@ -322,24 +322,25 @@ function InvoiceDetailDialog({
   const [loadingLines, setLoadingLines] = useState(false);
   const [showAddLine, setShowAddLine] = useState(false);
 
-  const loadLines = useCallback(async () => {
-    if (!invoice?.id) return;
+  const loadLines = useCallback(async (): Promise<InvoiceLine[]> => {
+    if (!invoice?.id) return [];
     setLoadingLines(true);
     try {
       const data = await fetchInvoiceLines(invoice.id);
       setLines(data);
+      return data;
     } finally {
       setLoadingLines(false);
     }
   }, [invoice?.id, fetchInvoiceLines]);
 
   useEffect(() => {
-    if (open && invoice?.id) loadLines();
+    if (open && invoice?.id) void loadLines();
   }, [open, invoice?.id, loadLines]);
 
   const linesTotal = lines.reduce((s, l) => s + l.total, 0);
 
-  const syncTotals = useCallback(async () => {
+  const syncTotals = useCallback(async (lines: InvoiceLine[]) => {
     if (!invoice?.id) return;
     const subtotal = lines.reduce((s, l) => s + l.total, 0);
     const total = subtotal - (invoice.discounts || 0) + (invoice.fees || 0);
@@ -349,7 +350,7 @@ function InvoiceDetailDialog({
       total,
       remaining: total - (invoice.paidTotal || 0),
     });
-  }, [invoice, lines, updateInvoice]);
+  }, [invoice, updateInvoice]);
 
   if (!invoice) return null;
 
@@ -414,8 +415,8 @@ function InvoiceDetailDialog({
                               onClick={async () => {
                                 if (!invoice.id || !line.id) return;
                                 await deleteInvoiceLine({ invoiceId: invoice.id, lineId: line.id });
-                                await loadLines();
-                                await syncTotals();
+                                const freshLines = await loadLines();
+                                await syncTotals(freshLines);
                               }}
                             >
                               <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -441,8 +442,8 @@ function InvoiceDetailDialog({
         onSubmit={async (data) => {
           if (!invoice.id) return;
           await createInvoiceLine({ invoiceId: invoice.id, ...data });
-          await loadLines();
-          await syncTotals();
+          const freshLines = await loadLines();
+          await syncTotals(freshLines);
         }}
         isPending={isCreatingLine}
       />

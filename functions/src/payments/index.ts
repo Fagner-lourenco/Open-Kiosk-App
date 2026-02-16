@@ -1,5 +1,5 @@
 import * as functions from 'firebase-functions';
-import { db } from '../lib';
+import { db, admin } from '../lib';
 import type { CreatePaymentInput, PaymentStatus } from './types';
 import {
   createPaymentIntent,
@@ -135,8 +135,8 @@ export const cancelPagBankPayment = functions
     await paymentRef.set(
       {
         cancelRequested: true,
-        cancelRequestedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        cancelRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       },
       { merge: true }
     );

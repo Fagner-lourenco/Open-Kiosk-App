@@ -387,12 +387,13 @@ function QuoteDetailDialog({
   const [loadingLines, setLoadingLines] = useState(false);
   const [showAddLine, setShowAddLine] = useState(false);
 
-  const loadLines = useCallback(async () => {
-    if (!quote?.id) return;
+  const loadLines = useCallback(async (): Promise<QuoteLine[]> => {
+    if (!quote?.id) return [];
     setLoadingLines(true);
     try {
       const data = await fetchQuoteLines(quote.id);
       setLines(data);
+      return data;
     } finally {
       setLoadingLines(false);
     }
@@ -400,14 +401,14 @@ function QuoteDetailDialog({
 
   useEffect(() => {
     if (open && quote?.id) {
-      loadLines();
+      void loadLines();
     }
   }, [open, quote?.id, loadLines]);
 
   const linesTotal = lines.reduce((s, l) => s + l.total, 0);
 
   // Sync totals back to quote when lines change
-  const syncTotals = useCallback(async () => {
+  const syncTotals = useCallback(async (lines: QuoteLine[]) => {
     if (!quote?.id) return;
     const subtotal = lines.reduce((s, l) => s + l.total, 0);
     await updateQuote({
@@ -415,7 +416,7 @@ function QuoteDetailDialog({
       subtotal,
       total: subtotal - (quote.discounts || 0) + (quote.fees || 0),
     });
-  }, [quote, lines, updateQuote]);
+  }, [quote, updateQuote]);
 
   if (!quote) return null;
 
@@ -495,8 +496,8 @@ function QuoteDetailDialog({
                               onClick={async () => {
                                 if (!quote.id || !line.id) return;
                                 await deleteQuoteLine({ quoteId: quote.id, lineId: line.id });
-                                await loadLines();
-                                await syncTotals();
+                                const freshLines = await loadLines();
+                                await syncTotals(freshLines);
                               }}
                             >
                               <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -534,8 +535,8 @@ function QuoteDetailDialog({
         onSubmit={async (data) => {
           if (!quote.id) return;
           await createQuoteLine({ quoteId: quote.id, ...data });
-          await loadLines();
-          await syncTotals();
+          const freshLines = await loadLines();
+          await syncTotals(freshLines);
         }}
         isPending={isCreatingLine}
       />

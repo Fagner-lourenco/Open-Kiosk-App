@@ -11,6 +11,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { collection, query, getDocs, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
@@ -79,6 +81,7 @@ const ROLE_COLORS: Record<string, string> = {
 export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { log: audit } = useAudit();
   const { user: currentUser } = useAuth();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -145,9 +148,11 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
         }),
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, { userId, role }) => {
       queryClient.invalidateQueries({ queryKey: ['store', franchiseId, storeId] });
       toast.success('Membro adicionado com sucesso');
+      const member = franchiseMembers.find(m => m.userId === userId);
+      audit(AuditActions.STORE_MEMBER_ADD, { type: 'store', id: storeId, name: storeId }, { memberId: userId, memberEmail: member?.email, role });
       setIsAddDialogOpen(false);
       setSelectedUserId('');
       setSelectedRole('operator');
@@ -170,9 +175,10 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
         operators: updatedOperators,
       });
     },
-    onSuccess: () => {
+    onSuccess: (_data, member) => {
       queryClient.invalidateQueries({ queryKey: ['store', franchiseId, storeId] });
       toast.success('Membro removido da loja');
+      audit(AuditActions.STORE_MEMBER_REMOVE, { type: 'store', id: storeId, name: storeId }, { memberId: member.id, memberEmail: member.email });
       setMemberToRemove(null);
     },
     onError: () => {

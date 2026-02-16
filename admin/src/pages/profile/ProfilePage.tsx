@@ -22,6 +22,8 @@ import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useFranchise } from '@/context/FranchiseContext';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 
 // UI Components
 import { Button } from '@/components/ui/button';
@@ -78,6 +80,7 @@ export function ProfilePage() {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { currentFranchise, currentMembership } = useFranchise();
+  const { log: audit } = useAudit();
   const { toast } = useToast();
 
   // Estados
@@ -171,6 +174,7 @@ export function ProfilePage() {
 
       setHasChanges(false);
       toast.success('Perfil atualizado com sucesso');
+      audit(AuditActions.USER_PROFILE_UPDATE, { type: 'user', id: user.uid, name: profile.displayName }, { phone: profile.phone });
     } catch (error) {
       console.error('Error saving profile:', error);
       toast.error('Erro ao salvar perfil');
@@ -207,6 +211,7 @@ export function ProfilePage() {
       await updatePassword(auth.currentUser, newPassword);
 
       toast.success('Senha alterada com sucesso');
+      audit(AuditActions.USER_PASSWORD_CHANGE, { type: 'user', id: user?.uid || '', name: user?.displayName || user?.email || '' });
       setShowPasswordDialog(false);
       setCurrentPassword('');
       setNewPassword('');

@@ -25,6 +25,8 @@ import {
 import { db } from '@/lib/firebase';
 import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
+import { useAudit } from '@/hooks/useAudit';
+import { AuditActions } from '@/services/auditService';
 import type { Party, PartyType, PartyContact, PartyBankInfo } from '@/types/finance';
 import type { Timestamp } from 'firebase/firestore';
 
@@ -88,6 +90,7 @@ function normalizeParty(id: string, data: Record<string, unknown>): Party {
 export function useParties(franchiseId: string, storeId: string) {
   const queryClient = useQueryClient();
   const qKey = partyKeys.all(franchiseId, storeId);
+  const { log: audit } = useAudit();
 
   const {
     data: parties = [],
@@ -121,9 +124,10 @@ export function useParties(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => {
+    onSuccess: (_id, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Parte criada com sucesso');
+      audit(AuditActions.PARTY_CREATE, { type: 'party', id: _id, name: variables.name }, { partyType: variables.type, storeId });
     },
     onError: () => toast.error('Erro ao criar parte'),
   });
@@ -142,9 +146,10 @@ export function useParties(franchiseId: string, storeId: string) {
       if (rest.status !== undefined) data.status = rest.status;
       await updateDoc(ref, data);
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Parte atualizada');
+      audit(AuditActions.PARTY_UPDATE, { type: 'party', id: variables.partyId, name: variables.name || variables.partyId }, { storeId });
     },
     onError: () => toast.error('Erro ao atualizar parte'),
   });
@@ -153,9 +158,10 @@ export function useParties(franchiseId: string, storeId: string) {
     mutationFn: async (partyId: string) => {
       await deleteDoc(partyDocRef(franchiseId, storeId, partyId));
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
       toast.success('Parte excluída');
+      audit(AuditActions.PARTY_DELETE, { type: 'party', id: variables, name: variables }, { storeId });
     },
     onError: () => toast.error('Erro ao excluir parte'),
   });

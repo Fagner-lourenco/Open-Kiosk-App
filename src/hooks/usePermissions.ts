@@ -26,11 +26,11 @@ import { useAuth } from '../context/AuthContext';
 import { 
   Permission, 
   ROLE_PERMISSIONS, 
-} from '@shared/types/permissions';
+} from '../../shared/types/permissions';
 import { 
   UserRole, 
   ROLE_HIERARCHY, 
-} from '@shared/types/roles';
+} from '../../shared/types/roles';
 
 export interface UsePermissionsReturn {
   /** Role do usuário atual */
