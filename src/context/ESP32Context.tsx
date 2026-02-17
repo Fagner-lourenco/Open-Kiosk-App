@@ -1051,6 +1051,15 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           if (progressSnap && progressSnap.orderId === orderId) {
             console.error(`[ESP32Context] Dispense timeout para ${orderId} - sem resposta do ESP32`);
             addLog('error', `Timeout: ESP32 não respondeu para ${orderId}`);
+
+            // 🔧 FIX: Enviar comando stop ao ESP32 para fechar a solenoide
+            try {
+              await esp32Service.sendCommand('stop', {});
+              addLog('sent', `stop (timeout safety) para ${orderId}`);
+            } catch (e) {
+              console.error('[ESP32Context] Falha ao enviar stop no timeout:', e);
+            }
+
             await updateDispenseStatusWithRetry(orderId, 'failed_dispense');
             await persistFailedDispense(orderId, 'timeout');
             setIsDispensing(false);

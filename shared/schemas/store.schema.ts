@@ -221,13 +221,7 @@ export const CreateStoreSchema = z.object({
     .min(3)
     .max(50)
     .regex(/^[a-z0-9-]+$/)
-    .optional()
-    .transform((val, ctx) => {
-      if (val) return val;
-      // Gera slug a partir do nome se não fornecido
-      const name = ctx.path.length > 0 ? '' : '';
-      return name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    }),
+    .optional(),
   franchiseId: z.string().optional(),
   address: StoreAddressSchema.partial().optional(),
   contact: StoreContactSchema.partial().optional(),

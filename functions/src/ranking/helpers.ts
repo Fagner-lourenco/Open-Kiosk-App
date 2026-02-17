@@ -80,8 +80,9 @@ export interface ChallengeDoc {
  * Mascara nome para LGPD: "João Miguel Santos" → "João M. S."
  */
 export function maskName(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length <= 1) return name;
+  const trimmed = name.trim();
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+  if (parts.length <= 1) return trimmed;
   return [parts[0], ...parts.slice(1).map((p) => `${p[0]?.toUpperCase()}.`)].join(' ');
 }
 
@@ -105,7 +106,8 @@ export function calcTotalMl(items?: OrderItem[] | any[]): number {
   if (!items) return 0;
   return items.reduce((sum, item) => {
     if (item?.mlPerUnit && item.mlPerUnit > 0) {
-      return sum + item.mlPerUnit * (item.quantity || 1);
+      const qty = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 0;
+      return sum + item.mlPerUnit * qty;
     }
     return sum;
   }, 0);
@@ -120,7 +122,8 @@ export function calcFavoriteDrink(items?: OrderItem[] | any[]): string {
   for (const item of items) {
     if (item?.mlPerUnit && item.mlPerUnit > 0) {
       const name = String(item.title || 'Desconhecido').split(' - ')[0]?.trim() || 'Desconhecido';
-      breakdown[name] = (breakdown[name] || 0) + item.mlPerUnit * (item.quantity || 1);
+      const qty = typeof item.quantity === 'number' && item.quantity > 0 ? item.quantity : 0;
+      breakdown[name] = (breakdown[name] || 0) + item.mlPerUnit * qty;
     }
   }
   const sorted = Object.entries(breakdown).sort(([, a], [, b]) => b - a);
@@ -128,11 +131,14 @@ export function calcFavoriteDrink(items?: OrderItem[] | any[]): string {
 }
 
 /**
- * Gera data YYYY-MM-DD de hoje
+ * Gera data YYYY-MM-DD de hoje em BRT (UTC-3)
+ * 🔧 FIX R9-04: Usar BRT para coincidir com o campo `date` escrito pelo kiosk no browser
  */
 export function todayYMD(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  // Converter UTC para BRT (UTC-3)
+  const brt = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+  return `${brt.getUTCFullYear()}-${String(brt.getUTCMonth() + 1).padStart(2, '0')}-${String(brt.getUTCDate()).padStart(2, '0')}`;
 }
 
 /**

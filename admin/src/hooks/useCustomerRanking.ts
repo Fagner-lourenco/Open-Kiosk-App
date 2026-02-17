@@ -81,8 +81,10 @@ function aggregateRanking(
   for (const order of orders) {
     // Apenas pedidos com nome do cliente
     if (!order.customerName) continue;
-    // Apenas pedidos completados (paid ou completed)
+    // Apenas pedidos completados (paid ou completed) — excluir cancelados/reembolsados
     if (order.status !== 'paid_pending_dispense' && order.status !== 'completed' && order.status !== 'dispensing') continue;
+    // Excluir pedidos cancelados/reembolsados via paymentStatus
+    if (order.paymentStatus === 'cancelled' || order.paymentStatus === 'refunded') continue;
 
     const key = order.customerIdentification
       ? String(order.customerIdentification).replace(/\D/g, '') || order.customerName.toUpperCase().trim().replace(/\s+/g, '_')

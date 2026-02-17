@@ -12,17 +12,14 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db, admin } from '../lib';
 
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
 
-export const checkMaintenanceOverdue = functions
-  .region('southamerica-east1')
-  .pubsub
-  .schedule('0 8 * * *')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => {
+export const checkMaintenanceOverdue = onSchedule(
+  { schedule: '0 8 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  async () => {
     console.log('[ERP:Maintenance] Checking overdue maintenance');
 
     const now = new Date();

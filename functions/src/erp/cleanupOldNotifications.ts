@@ -12,18 +12,15 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db, admin } from '../lib';
 
 const RETENTION_DAYS = 30;
 const BATCH_SIZE = 400; // Firestore batch limit is 500
 
-export const cleanupOldNotifications = functions
-  .region('southamerica-east1')
-  .pubsub
-  .schedule('0 3 * * *')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => {
+export const cleanupOldNotifications = onSchedule(
+  { schedule: '0 3 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  async () => {
     console.log('[Cleanup] Starting notification cleanup');
 
     const cutoffDate = new Date();

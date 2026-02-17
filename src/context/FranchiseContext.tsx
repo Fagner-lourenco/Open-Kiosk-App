@@ -205,6 +205,15 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
           const hasAccess = franchises.some((f) => f.id === franchiseIdToLoad);
           if (hasAccess) {
             await loadFranchise(franchiseIdToLoad, user.uid);
+            // Restaurar loja selecionada anteriormente
+            if (savedStoreId) {
+              const matchingStore = stores.find(
+                s => s.storeId === savedStoreId && s.franchiseId === franchiseIdToLoad
+              );
+              if (matchingStore) {
+                setCurrentStore(matchingStore);
+              }
+            }
           } else if (franchises.length > 0) {
             // Seleciona a primeira franquia disponível
             await loadFranchise(franchises[0].id, user.uid);
@@ -317,16 +326,52 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
       const franchises = await franchiseService.getUserFranchises(user.uid);
       setUserFranchises(franchises);
       
-      // Atualiza lista de lojas
+      // Atualiza lista de lojas com dados reais (mesma lógica do useEffect inicial)
       const stores: StoreInfo[] = [];
       for (const franchise of franchises) {
-        stores.push({
-          franchiseId: franchise.id,
-          franchiseName: franchise.name,
-          storeId: franchise.id,
-          storeName: franchise.name,
-          role: 'owner', // Default role para franquias do usuário
-        });
+        let role: UserRole = 'owner';
+        let storeAccessList: string[] = ['*'];
+        
+        if (franchise.ownerId !== user.uid) {
+          const membership = await franchiseService.getMembership(franchise.id, user.uid);
+          role = membership?.role || 'operator';
+          storeAccessList = membership?.storeAccess || [];
+        }
+
+        try {
+          const franchiseStores = await franchiseService.getFranchiseStores(franchise.id);
+          
+          if (franchiseStores.length > 0) {
+            for (const store of franchiseStores) {
+              const hasAccess = storeAccessList.includes('*') || storeAccessList.includes(store.id);
+              if (hasAccess && store.isActive) {
+                stores.push({
+                  franchiseId: franchise.id,
+                  franchiseName: franchise.name,
+                  storeId: store.id,
+                  storeName: store.name,
+                  role,
+                });
+              }
+            }
+          } else {
+            stores.push({
+              franchiseId: franchise.id,
+              franchiseName: franchise.name,
+              storeId: franchise.id,
+              storeName: franchise.name,
+              role,
+            });
+          }
+        } catch {
+          stores.push({
+            franchiseId: franchise.id,
+            franchiseName: franchise.name,
+            storeId: franchise.id,
+            storeName: franchise.name,
+            role,
+          });
+        }
       }
       setUserStores(stores);
     } catch (err) {

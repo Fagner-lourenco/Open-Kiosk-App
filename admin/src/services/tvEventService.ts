@@ -28,6 +28,7 @@ import {
   orderBy,
   limit,
   writeBatch,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -106,6 +107,14 @@ export async function updateTvConfig(
 ): Promise<void> {
   if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
 
+  // Validate numeric types
+  if (updates.rotationIntervalSec !== undefined && typeof updates.rotationIntervalSec !== 'number') {
+    throw new Error('rotationIntervalSec deve ser um número');
+  }
+  if (updates.maxDisplayPositions !== undefined && typeof updates.maxDisplayPositions !== 'number') {
+    throw new Error('maxDisplayPositions deve ser um número');
+  }
+
   // Validate numeric ranges if present
   if (updates.rotationIntervalSec !== undefined && (updates.rotationIntervalSec < 3 || updates.rotationIntervalSec > 120)) {
     throw new Error('rotationIntervalSec deve estar entre 3 e 120 segundos');
@@ -153,6 +162,7 @@ export async function setCollectiveGoal(
   if (!goalTargetMl || goalTargetMl <= 0) throw new Error('goalTargetMl deve ser maior que zero');
   if (!goalLabel?.trim()) throw new Error('goalLabel é obrigatório');
   for (const m of milestones) {
+    if (typeof m.targetMl !== 'number') throw new Error('Milestone targetMl deve ser um número');
     if (!m.targetMl || m.targetMl <= 0) throw new Error('Milestone targetMl deve ser maior que zero');
     if (!m.label?.trim()) throw new Error('Milestone label é obrigatório');
   }
@@ -194,7 +204,8 @@ export async function toggleEventMode(
   storeId: string,
   enabled: boolean,
   label: string = '',
-  durationMinutes: number = 10
+  durationMinutes: number = 10,
+  activateDynamicPricing: boolean = false
 ): Promise<void> {
   if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
   if (enabled && durationMinutes < 1) throw new Error('durationMinutes deve ser pelo menos 1');
@@ -203,7 +214,7 @@ export async function toggleEventMode(
   try {
     const functions = getFunctions(undefined, 'southamerica-east1');
     const toggleFn = httpsCallable(functions, 'toggleEventMode');
-    await toggleFn({ franchiseId, storeId, enabled, label, durationMinutes });
+    await toggleFn({ franchiseId, storeId, enabled, label, durationMinutes, activateDynamicPricing });
   } catch (err) {
     console.error('[tvEventService] toggleEventMode error:', err);
     throw err;
@@ -225,6 +236,7 @@ export async function createChallenge(
   if (!franchiseId || !storeId) throw new Error('franchiseId e storeId são obrigatórios');
   if (!challenge.title?.trim()) throw new Error('Título do desafio é obrigatório');
   if (!challenge.rule?.type) throw new Error('Tipo de regra é obrigatório');
+  if (typeof challenge.rule?.threshold !== 'number') throw new Error('Threshold deve ser um número');
   if (!challenge.rule?.threshold || challenge.rule.threshold <= 0) throw new Error('Threshold deve ser maior que zero');
   if (!challenge.rule?.windowMinutes || challenge.rule.windowMinutes <= 0) throw new Error('windowMinutes deve ser maior que zero');
 
@@ -398,34 +410,42 @@ export async function redeemPrize(
     return { success: false, error: 'Código não encontrado' };
   }
 
-  const prizeDoc = snap.docs[0];
-  const prize = prizeDoc.data() as Prize;
+  const prizeDocRef = snap.docs[0].ref;
 
-  if (prize.status === 'redeemed') {
-    return { success: false, error: 'Prêmio já foi resgatado' };
-  }
+  // Usar transaction para evitar resgate duplo (TOCTOU race condition)
+  return await runTransaction(db, async (transaction) => {
+    const prizeSnap = await transaction.get(prizeDocRef);
+    if (!prizeSnap.exists()) {
+      return { success: false, error: 'Código não encontrado' };
+    }
+    const prize = prizeSnap.data() as Prize;
 
-  if (prize.status === 'expired') {
-    return { success: false, error: 'Prêmio expirado' };
-  }
+    if (prize.status === 'redeemed') {
+      return { success: false, error: 'Prêmio já foi resgatado' };
+    }
 
-  if (prize.status !== 'won') {
-    return { success: false, error: 'Prêmio não está disponível para resgate' };
-  }
+    if (prize.status === 'expired') {
+      return { success: false, error: 'Prêmio expirado' };
+    }
 
-  // Verifica expiração
-  if (prize.expiresAt && prize.expiresAt.toMillis() < Date.now()) {
-    await updateDoc(prizeDoc.ref, { status: 'expired' });
-    return { success: false, error: 'Prêmio expirado' };
-  }
+    if (prize.status !== 'won') {
+      return { success: false, error: 'Prêmio não está disponível para resgate' };
+    }
 
-  await updateDoc(prizeDoc.ref, {
-    status: 'redeemed',
-    redeemedAt: serverTimestamp(),
-    redeemedBy: redeemedByUserId,
+    // Verifica expiração
+    if (prize.expiresAt && prize.expiresAt.toMillis() < Date.now()) {
+      transaction.update(prizeDocRef, { status: 'expired' });
+      return { success: false, error: 'Prêmio expirado' };
+    }
+
+    transaction.update(prizeDocRef, {
+      status: 'redeemed',
+      redeemedAt: serverTimestamp(),
+      redeemedBy: redeemedByUserId,
+    });
+
+    return { success: true, prize: { ...prize, status: 'redeemed' as const } };
   });
-
-  return { success: true, prize: { ...prize, status: 'redeemed' } };
 }
 
 /**

@@ -7,7 +7,8 @@
  * @module cleanup/onDeleteStore
  */
 
-import * as functions from 'firebase-functions';
+import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import * as logger from 'firebase-functions/logger';
 import { db } from '../lib';
 
 /** Known subcollections under franchises/{fId}/stores/{sId} */
@@ -45,6 +46,8 @@ const STORE_SUBCOLLECTIONS = [
   'rankingAgg',
   'challenges',
   'prizes',
+  'inventoryLogs',
+  'notifications',
 ] as const;
 
 const BATCH_LIMIT = 400; // Firestore batch max is 500, keep margin
@@ -88,14 +91,15 @@ async function deleteSubcollection(parentPath: string, subcollection: string): P
 /**
  * Firestore trigger: when a store doc is deleted, cascade-delete subcollections.
  */
-export const onDeleteStore = functions
-  .region('southamerica-east1')
-  .firestore.document('franchises/{franchiseId}/stores/{storeId}')
-  .onDelete(async (_snapshot, context) => {
-    const { franchiseId, storeId } = context.params;
+export const onDeleteStore = onDocumentDeleted(
+  { document: 'franchises/{franchiseId}/stores/{storeId}', region: 'southamerica-east1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const { franchiseId, storeId } = event.params;
     const storePath = `franchises/${franchiseId}/stores/${storeId}`;
 
-    functions.logger.info('[onDeleteStore] Cascade delete started', { franchiseId, storeId });
+    logger.info('[onDeleteStore] Cascade delete started', { franchiseId, storeId });
 
     const results: Record<string, number> = {};
 
@@ -106,7 +110,7 @@ export const onDeleteStore = functions
           results[sub] = count;
         }
       } catch (err) {
-        functions.logger.error(`[onDeleteStore] Failed to delete ${sub}`, {
+        logger.error(`[onDeleteStore] Failed to delete ${sub}`, {
           franchiseId,
           storeId,
           error: err instanceof Error ? err.message : String(err),
@@ -114,7 +118,7 @@ export const onDeleteStore = functions
       }
     }
 
-    functions.logger.info('[onDeleteStore] Cascade delete completed', {
+    logger.info('[onDeleteStore] Cascade delete completed', {
       franchiseId,
       storeId,
       deleted: results,

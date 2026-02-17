@@ -23,6 +23,7 @@ import {
   getDoc,
   doc,
   writeBatch,
+  runTransaction,
   where,
   orderBy,
   serverTimestamp,
@@ -213,7 +214,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
     enabled: !!franchiseId && !!storeId,
   });
 
-  // ── Connect keg to tap (atomic batch) ───────────────────────────────────
+  // ── Connect keg to tap (atomic transaction) ─────────────────────────────
   const connectMutation = useMutation({
     mutationFn: async ({
       tapId,
@@ -223,80 +224,84 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
       kegId: string;
       productId?: string;
     }) => {
-      const batch = writeBatch(db);
       const now = serverTimestamp();
       const uid = user?.uid || '';
 
-      // 1. If tap has an existing active assignment, remove it
-      const existingAssignment = assignments.find(
-        (a) => a.tapId === tapId && a.status === 'active'
-      );
-      if (existingAssignment) {
-        const oldAssRef = doc(
+      await runTransaction(db, async (txn) => {
+        // 1. If tap has an existing active assignment, remove it (read inside transaction)
+        const freshSnap = await getDocs(query(
           assignmentsRef(franchiseId, storeId),
-          existingAssignment.assignmentId
-        );
-        batch.update(oldAssRef, {
-          status: 'removed',
-          removedAt: now,
-          removedBy: uid,
-          removalReason: 'swap',
+          where('tapId', '==', tapId),
+          where('status', '==', 'active')
+        ));
+        const existingAssignment = freshSnap.docs.length > 0
+          ? normalizeAssignment(freshSnap.docs[0].id, freshSnap.docs[0].data())
+          : null;
+        if (existingAssignment) {
+          const oldAssRef = doc(
+            assignmentsRef(franchiseId, storeId),
+            existingAssignment.assignmentId
+          );
+          txn.update(oldAssRef, {
+            status: 'removed',
+            removedAt: now,
+            removedBy: uid,
+            removalReason: 'swap',
+            updatedAt: now,
+            updatedBy: uid,
+          });
+
+          // Mark old keg as depleted (or returned)
+          const oldKegRef = kegDocRef(franchiseId, storeId, existingAssignment.kegId);
+          txn.update(oldKegRef, {
+            status: 'depleted',
+            tapId: null,
+            depletedAt: now,
+            updatedAt: now,
+            updatedBy: uid,
+          });
+        }
+
+        // 2. Create new TapAssignment
+        const newAssRef = doc(assignmentsRef(franchiseId, storeId));
+        txn.set(newAssRef, {
+          assignmentId: newAssRef.id,
+          tapId,
+          kegId,
+          status: 'active',
+          attachedAt: now,
+          attachedBy: uid,
+          removedAt: null,
+          removedBy: null,
+          removalReason: null,
+          totalMlDispensed: 0,
+          totalSessions: 0,
+          totalWastageMl: 0,
+          createdAt: now,
+          createdBy: uid,
           updatedAt: now,
           updatedBy: uid,
         });
 
-        // Mark old keg as depleted (or returned)
-        const oldKegRef = kegDocRef(franchiseId, storeId, existingAssignment.kegId);
-        batch.update(oldKegRef, {
-          status: 'depleted',
-          tapId: null,
-          depletedAt: now,
+        // 3. Update Keg status to tapped
+        const kegRef = kegDocRef(franchiseId, storeId, kegId);
+        txn.update(kegRef, {
+          status: 'tapped',
+          tapId,
+          tappedAt: now,
           updatedAt: now,
           updatedBy: uid,
         });
-      }
 
-      // 2. Create new TapAssignment
-      const newAssRef = doc(assignmentsRef(franchiseId, storeId));
-      batch.set(newAssRef, {
-        assignmentId: newAssRef.id,
-        tapId,
-        kegId,
-        status: 'active',
-        attachedAt: now,
-        attachedBy: uid,
-        removedAt: null,
-        removedBy: null,
-        removalReason: null,
-        totalMlDispensed: 0,
-        totalSessions: 0,
-        totalWastageMl: 0,
-        createdAt: now,
-        createdBy: uid,
-        updatedAt: now,
-        updatedBy: uid,
+        // 4. Update Tap operational state
+        const tapRef = tapDocRef(franchiseId, storeId, tapId);
+        txn.update(tapRef, {
+          currentKegId: kegId,
+          status: 'active',
+          updatedAt: now,
+          updatedBy: uid,
+        });
       });
-
-      // 3. Update Keg status to tapped
-      const kegRef = kegDocRef(franchiseId, storeId, kegId);
-      batch.update(kegRef, {
-        status: 'tapped',
-        tapId,
-        tappedAt: now,
-        updatedAt: now,
-        updatedBy: uid,
-      });
-
-      // 4. Update Tap operational state
-      const tapRef = tapDocRef(franchiseId, storeId, tapId);
-      batch.update(tapRef, {
-        currentKegId: kegId,
-        status: 'active',
-        updatedAt: now,
-        updatedBy: uid,
-      });
-
-      await batch.commit();
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: tapKeys.all(franchiseId, storeId) });
@@ -319,10 +324,14 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
       tapId: string;
       reason?: string;
     }) => {
-      const activeAssignment = assignments.find(
-        (a) => a.tapId === tapId && a.status === 'active'
-      );
-      if (!activeAssignment) throw new Error('Nenhum barril conectado a esta torneira');
+      // Fresh query to avoid stale cache race condition
+      const freshSnap = await getDocs(query(
+        assignmentsRef(franchiseId, storeId),
+        where('tapId', '==', tapId),
+        where('status', '==', 'active')
+      ));
+      if (freshSnap.empty) throw new Error('Nenhum barril conectado a esta torneira');
+      const activeAssignment = normalizeAssignment(freshSnap.docs[0].id, freshSnap.docs[0].data());
 
       const batch = writeBatch(db);
       const now = serverTimestamp();

@@ -38,8 +38,12 @@ import {
   ChevronUp,
   ChevronDown,
   Beer,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { formatVolumeCompact, formatVolumeShort } from '@/utils/formatVolume';
+import { useTvDynamicPricing } from '@/hooks/useTvDynamicPricing';
+import type { DynamicPricingConfig, HappyHourParams, KegProgressiveParams } from '@shared/types/dynamicPricing';
 
 // ============================================================================
 // HELPERS
@@ -696,6 +700,141 @@ function TvFooter() {
 }
 
 // ============================================================================
+// DYNAMIC PRICING TICKER — ESTILO BOLSA DE VALORES
+// ============================================================================
+
+/**
+ * Gera itens de "ticker" simulando as regras ativas.
+ * Cada item é uma faixa/janela com delta% e indicador ↑/↓.
+ */
+function buildTickerItems(config: DynamicPricingConfig) {
+  const items: { label: string; delta: number; ruleLabel: string; active: boolean }[] = [];
+
+  const now = new Date();
+
+  for (const rule of config.rules.filter(r => r.enabled)) {
+    if (rule.type === 'happy_hour') {
+      const params = rule.params as HappyHourParams;
+      for (const w of params.windows) {
+        // Determinar se estamos na janela
+        const [sh, sm] = w.startTime.split(':').map(Number);
+        const [eh, em] = w.endTime.split(':').map(Number);
+        const startMin = sh * 60 + sm;
+        const endMin = eh * 60 + em;
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+
+        let active = false;
+        if (startMin <= endMin) {
+          active = nowMin >= startMin && nowMin < endMin;
+        } else {
+          // midnight crossing
+          active = nowMin >= startMin || nowMin < endMin;
+        }
+
+        items.push({
+          label: `${w.startTime}–${w.endTime}`,
+          delta: w.deltaPercent,
+          ruleLabel: rule.label,
+          active,
+        });
+      }
+    } else if (rule.type === 'keg_progressive') {
+      const params = rule.params as KegProgressiveParams;
+      for (const tier of params.tiers) {
+        items.push({
+          label: `Barril ${tier.minPercent}–${tier.maxPercent}%`,
+          delta: tier.deltaPercent,
+          ruleLabel: rule.label,
+          active: tier.deltaPercent !== 0, // sempre "ativo" como indicador
+        });
+      }
+    }
+  }
+
+  return items;
+}
+
+function DynamicPricingTickerPanel({ config }: { config: DynamicPricingConfig }) {
+  const [clock, setClock] = useState(new Date());
+
+  // Atualiza a cada 30s para reavaliar janelas ativas
+  useEffect(() => {
+    const t = setInterval(() => setClock(new Date()), 30_000);
+    return () => clearInterval(t);
+  }, []);
+
+  const tickerItems = useMemo(() => buildTickerItems(config), [config, clock]);
+
+  const activeItems = tickerItems.filter(item => item.active && item.delta !== 0);
+  const hasActivePromo = activeItems.length > 0;
+
+  return (
+    <div className="space-y-2">
+      {/* Header */}
+      <div className="flex items-center gap-2 mb-1">
+        <div className={`w-2 h-2 rounded-full ${hasActivePromo ? 'bg-green-400 animate-pulse' : 'bg-white/20'}`} />
+        <h3 className="text-xs sm:text-sm font-semibold tracking-wider uppercase text-white/70">
+          Preço Dinâmico
+        </h3>
+        {hasActivePromo && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium border border-green-500/20">
+            ATIVO
+          </span>
+        )}
+      </div>
+
+      {/* Ticker items */}
+      <div className="space-y-1">
+        {tickerItems.map((item, idx) => (
+          <div
+            key={idx}
+            className={`flex items-center justify-between py-1.5 px-2 rounded-lg transition-all duration-500 ${
+              item.active && item.delta !== 0
+                ? item.delta < 0
+                  ? 'bg-green-500/10 border border-green-500/20'
+                  : 'bg-red-500/10 border border-red-500/20'
+                : 'bg-white/[0.02] border border-white/[0.04]'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-[10px] sm:text-xs text-white/50 truncate">
+                {item.ruleLabel}
+              </span>
+              <span className="text-[10px] text-white/30">{item.label}</span>
+            </div>
+
+            <div className="flex items-center gap-1 shrink-0">
+              {item.delta === 0 ? (
+                <span className="text-xs text-white/30 font-mono">—</span>
+              ) : item.delta < 0 ? (
+                <>
+                  <TrendingDown className="h-3.5 w-3.5 text-green-400" />
+                  <span className="text-xs sm:text-sm font-bold text-green-400 font-mono tabular-nums">
+                    {item.delta}%
+                  </span>
+                </>
+              ) : (
+                <>
+                  <TrendingUp className="h-3.5 w-3.5 text-red-400" />
+                  <span className="text-xs sm:text-sm font-bold text-red-400 font-mono tabular-nums">
+                    +{item.delta}%
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Limite de variação */}
+      <div className="text-[10px] text-white/25 text-center mt-1">
+        Variação máx: ±{config.maxVariationPercent}%
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
 // MAIN COMPONENT
 // ============================================================================
 
@@ -737,6 +876,7 @@ export function TvDashboardPage() {
   const { ranking } = useTvRanking(fid, sid, tvConfig.rankingWindow, tvConfig.maxDisplayPositions);
   const { challenges } = useTvChallenges(fid, sid);
   const { winners } = useTvWinners(fid, sid);
+  const { config: dpConfig, isEnabled: dpEnabled } = useTvDynamicPricing(fid, sid);
 
   const activePanels = tvConfig.panels || ['ranking', 'goal', 'challenge', 'winners'];
 
@@ -785,7 +925,8 @@ export function TvDashboardPage() {
   const showGoal = activePanels.includes('goal') && eventStats.goalEnabled;
   const showChallenge = activePanels.includes('challenge');
   const showWinners = activePanels.includes('winners');
-  const hasSidebar = showGoal || showChallenge || showWinners;
+  const showDynamicPricing = dpEnabled;
+  const hasSidebar = showGoal || showChallenge || showWinners || showDynamicPricing;
 
   // Rotation interval for auto-cycling panels (default 10s)
   const rotationInterval = (tvConfig.rotationIntervalSec || 10) * 1000;
@@ -851,6 +992,11 @@ export function TvDashboardPage() {
               {showWinners && (
                 <div className={`${GLASS_PANEL} rounded-xl sm:rounded-2xl p-3 sm:p-5 flex-1 min-h-0 overflow-hidden`}>
                   <WinnersPanel winners={winners} rotationInterval={rotationInterval} />
+                </div>
+              )}
+              {showDynamicPricing && (
+                <div className={`${GLASS_PANEL} rounded-xl sm:rounded-2xl p-3 sm:p-5 flex-1 min-h-0 overflow-hidden`}>
+                  <DynamicPricingTickerPanel config={dpConfig} />
                 </div>
               )}
             </div>

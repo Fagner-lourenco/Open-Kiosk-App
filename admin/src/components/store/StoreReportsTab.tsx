@@ -129,7 +129,8 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
       const ordersQuery = query(
         ordersRef,
         where('timestamp', '>=', Timestamp.fromDate(startDate)),
-        orderBy('timestamp', 'desc')
+        orderBy('timestamp', 'desc'),
+        firestoreLimit(5000)
       );
       const snapshot = await getDocs(ordersQuery);
       return snapshot.docs.map(doc => ({
@@ -150,7 +151,8 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
         ordersRef,
         where('timestamp', '>=', Timestamp.fromDate(previousPeriodStart)),
         where('timestamp', '<', Timestamp.fromDate(previousPeriodEnd)),
-        orderBy('timestamp', 'desc')
+        orderBy('timestamp', 'desc'),
+        firestoreLimit(5000)
       );
       const snapshot = await getDocs(ordersQuery);
       return snapshot.docs.map(doc => ({
@@ -177,13 +179,14 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
 
   // Calculate metrics
   const metrics = useMemo(() => {
-    const completedOrders = orders.filter(o => o.status === 'completed' && o.paymentStatus === 'paid');
+    // Pedidos pagos = paymentStatus 'paid' (inclui paid_pending_dispense, dispensing, completed, failed_dispense)
+    const completedOrders = orders.filter(o => o.paymentStatus === 'paid');
     const totalRevenue = completedOrders.reduce((sum, o) => sum + o.total, 0);
     const totalOrders = orders.length;
     const avgTicket = completedOrders.length > 0 ? totalRevenue / completedOrders.length : 0;
 
     // Previous period metrics
-    const prevCompletedOrders = previousOrders.filter(o => o.status === 'completed' && o.paymentStatus === 'paid');
+    const prevCompletedOrders = previousOrders.filter(o => o.paymentStatus === 'paid');
     const prevRevenue = prevCompletedOrders.reduce((sum, o) => sum + o.total, 0);
     const prevOrders = previousOrders.length;
     const prevAvgTicket = prevCompletedOrders.length > 0 ? prevRevenue / prevCompletedOrders.length : 0;
@@ -196,7 +199,8 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
     // Revenue by day
     const revenueByDay: Record<string, number> = {};
     completedOrders.forEach(order => {
-      const date = order.timestamp.toDate().toISOString().split('T')[0];
+      const d = order.timestamp.toDate();
+      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       revenueByDay[date] = (revenueByDay[date] || 0) + order.total;
     });
 

@@ -6,8 +6,9 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { removeMember as removeMemberService } from '@/services/userService';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -166,7 +167,7 @@ export function UserDetailPage() {
     
     try {
       // Remove from members subcollection
-      await deleteDoc(doc(db, 'franchises', currentFranchise.id, 'members', userId));
+      await removeMemberService(currentFranchise.id, userId);
       await refreshFranchises();
       navigate('/team');
     } catch (err) {

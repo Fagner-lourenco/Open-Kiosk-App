@@ -21,7 +21,7 @@
  *   { commit: true }    → execute
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db, admin, requireAuth } from '../lib';
 
 interface MigrateInput {
@@ -63,18 +63,19 @@ function convertDispensersToTaps(dispensers: any[]): TapConfigMigrated[] {
   }));
 }
 
-export const migrateDispensersToTaps = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: MigrateInput, context) => {
+export const migrateDispensersToTaps = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as MigrateInput;
     // Auth guard — same pattern as unifyStoreSettings
-    requireAuth(context);
+    requireAuth(request);
 
-    const role = context.auth?.token?.role as string | undefined;
+    const role = request.auth?.token?.role as string | undefined;
     const isSuperAdmin = role === 'superadmin';
     const isOwnerAdmin = role === 'owner' || role === 'admin';
 
     if (!isSuperAdmin && !isOwnerAdmin) {
-      throw new functions.https.HttpsError('permission-denied', 'Requires superadmin, owner, or admin role.');
+      throw new HttpsError('permission-denied', 'Requires superadmin, owner, or admin role.');
     }
 
     const dryRun = data.dryRun ?? !data.commit;
@@ -200,6 +201,6 @@ export const migrateDispensersToTaps = functions
 
     } catch (err: any) {
       console.error('[migrateDispensersToTaps] Fatal error:', err);
-      throw new functions.https.HttpsError('internal', err.message);
+      throw new HttpsError('internal', err.message);
     }
   });

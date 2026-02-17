@@ -8,7 +8,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, type RenderHookOptions } from '@testing-library/react';
 import { vi } from 'vitest';
-import { getDocs, setDoc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { addDoc, getDocs, setDoc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
 
 vi.mock('@/context/FranchiseContext', () => ({
   useFranchise: vi.fn(() => ({
@@ -50,7 +50,22 @@ export function mockGetDocsEmpty() {
 }
 
 export function resetFirestoreMocks() {
-  (getDocs as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue({ docs: [] });
+  (getDocs as ReturnType<typeof vi.fn>).mockReset().mockImplementation((queryRef: unknown) => {
+    const path = (queryRef as { path?: string } | undefined)?.path || '';
+    // Subcollection cascade: return a dummy doc so cascade-delete loops execute
+    if (/\/(budgetLines|lines)$/.test(path)) {
+      return Promise.resolve({
+        docs: [{
+          id: 'cascade-line-1',
+          data: () => ({}),
+          exists: () => true,
+          ref: { path: `${path}/cascade-line-1`, type: 'doc' },
+        }],
+      });
+    }
+    return Promise.resolve({ docs: [] });
+  });
+  (addDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue({ id: 'mock-id' });
   (setDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (updateDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (deleteDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);

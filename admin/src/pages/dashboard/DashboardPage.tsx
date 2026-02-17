@@ -7,7 +7,7 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, orderBy, limit, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ordersPath } from '@/lib/pathResolver';
 import { useFranchise } from '@/context/FranchiseContext';
@@ -76,9 +76,11 @@ export function DashboardPage() {
       );
       const totalUsers = membersSnapshot.size || 1;
 
-      // Get recent orders (mock for now - would come from actual orders collection)
+      // Get recent orders — filtrar pelo mês corrente para exibir receita mensal
       let totalRevenue = 0;
       let totalOrders = 0;
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
       // Try to get orders from stores
       for (const store of storesSnapshot.docs) {
@@ -87,15 +89,18 @@ export function DashboardPage() {
         const ordersSnapshot = await getDocs(
           query(
             collection(db, ...pathSegments),
-            orderBy('timestamp', 'desc'),
-            limit(100)
+            where('timestamp', '>=', Timestamp.fromDate(startOfMonth)),
+            orderBy('timestamp', 'desc')
           )
         );
         
         ordersSnapshot.docs.forEach(doc => {
           const order = doc.data();
           totalOrders++;
-          totalRevenue += order.total || 0;
+          // Apenas pedidos pagos contam como receita (exclui cancelados/reembolsados)
+          if (order.paymentStatus === 'paid') {
+            totalRevenue += order.total || 0;
+          }
         });
       }
 
@@ -116,14 +121,14 @@ export function DashboardPage() {
         let description = data.description || data.action || 'Ação realizada';
         if (data.action && !data.description) {
           const actionLabels: Record<string, string> = {
-            'store.created': 'Nova loja criada',
-            'store.updated': 'Loja atualizada',
-            'member.added': 'Membro adicionado',
-            'member.removed': 'Membro removido',
-            'settings.updated': 'Configurações atualizadas',
-            'product.created': 'Produto criado',
-            'product.updated': 'Produto atualizado',
-            'order.created': 'Novo pedido recebido',
+            'store.create': 'Nova loja criada',
+            'store.update': 'Loja atualizada',
+            'user.invite': 'Convite enviado',
+            'user.remove': 'Membro removido',
+            'settings.update': 'Configurações atualizadas',
+            'product.create': 'Produto criado',
+            'product.update': 'Produto atualizado',
+            'order.create': 'Novo pedido recebido',
           };
           description = actionLabels[data.action] || data.action;
         }

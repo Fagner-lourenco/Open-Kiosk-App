@@ -37,15 +37,16 @@ export function formatVolumeCompact(ml: number): string {
   if (liters >= 1000) {
     return `${Math.round(liters).toLocaleString('pt-BR')}L`;
   }
-  const formatted = liters.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  return `${formatted.replace(/,0$/, '')}L`;
+  // Compact usa ponto decimal (padrão internacional) para exibição no telão
+  const str = liters.toFixed(1).replace(/\.0$/, '');
+  return `${str}L`;
 }
 
 // ─── Curto (metas, totais grandes) ──────────────────────────────────────────
 
 export function formatVolumeShort(ml: number): string {
   if (ml < 0) ml = 0;
-  if (ml >= 1_000_000) return `${(ml / 1_000_000).toFixed(0)}KL`;
+  if (ml >= 1_000_000) return `${(ml / 1_000_000).toFixed(0)}K L`;
   if (ml >= 1000) return `${Math.round(ml / 1000)}L`;
   return `${Math.round(ml)}mL`;
 }

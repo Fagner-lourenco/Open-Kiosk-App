@@ -215,8 +215,9 @@ describe('AuthService - Testes Expandidos de Cobertura', () => {
   describe('logout', () => {
     it('realiza logout com sucesso', async () => {
       await authService.logout();
-      // Deve completar sem erro
-      expect(true).toBe(true);
+      // Após logout, deve limpar sessão offline
+      const offlineSession = localStorage.getItem('openKiosk_offlineSession');
+      expect(offlineSession).toBeNull();
     });
 
     it('limpa sessão offline do localStorage', async () => {
@@ -584,8 +585,8 @@ describe('AuthService - Testes Expandidos de Cobertura', () => {
     it('limpa timers e listeners', () => {
       authService.initialize();
       authService.destroy();
-      // Deve estar limpo
-      expect(true).toBe(true);
+      // Após destroy, não deve estar inicializado
+      expect(authService.isInitialized()).toBe(false);
     });
 
     it('permite reinicializar após destroy', () => {

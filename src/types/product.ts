@@ -39,4 +39,7 @@ export interface CartItem {
   sizeKey?: string;
   sizeLabel?: string;
   mlPerUnit?: number;
+
+  /** Snapshot de preço dinâmico (quando DP ativo) */
+  pricingSnapshot?: import('../../shared/types/dynamicPricing').PricingSnapshot;
 }

@@ -55,15 +55,19 @@ function dealDocRef(franchiseId: string, storeId: string, dealId: string) {
   return doc(db, 'franchises', franchiseId, 'stores', storeId, 'deals', dealId);
 }
 
+const VALID_DEAL_STAGES: DealStage[] = ['lead', 'qualify', 'proposal', 'negotiation', 'won', 'lost'];
+
 /** Converte Firestore doc → Deal */
 function normalizeDeal(id: string, data: Record<string, unknown>): Deal {
+  const stg = data.stage as string;
+  const rawProb = Number(data.probability) || 0;
   return {
     id,
     title: (data.title as string) || '',
     customerId: (data.customerId as string) || '',
-    stage: (data.stage as DealStage) || 'lead',
-    valueEstimate: (data.valueEstimate as number) || 0,
-    probability: (data.probability as number) || 0,
+    stage: VALID_DEAL_STAGES.includes(stg as DealStage) ? (stg as DealStage) : 'lead',
+    valueEstimate: Number(data.valueEstimate) || 0,
+    probability: Math.min(100, Math.max(0, rawProb)),
     expectedCloseAt: data.expectedCloseAt as Timestamp | undefined,
     eventStartAt: data.eventStartAt as Timestamp | undefined,
     eventEndAt: data.eventEndAt as Timestamp | undefined,

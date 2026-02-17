@@ -84,7 +84,7 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
         return {
           orders: yesterdayOrders.length,
           revenue: yesterdayOrders
-            .filter(o => o.status === 'completed' && o.paymentStatus === 'paid')
+            .filter(o => o.paymentStatus === 'paid')
             .reduce((sum, o) => sum + (o.total || 0), 0),
         };
       } catch {
@@ -97,12 +97,12 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
   // Calculate stats
   const stats: OrderStats = {
     total: orders.length,
-    pending: orders.filter(o => o.status === 'pending').length,
-    processing: orders.filter(o => o.status === 'processing').length,
+    pending: orders.filter(o => o.status === 'paid_pending_dispense').length,
+    processing: orders.filter(o => o.status === 'dispensing').length,
     completed: orders.filter(o => o.status === 'completed').length,
     cancelled: orders.filter(o => o.status === 'cancelled').length,
     revenue: orders
-      .filter(o => o.status === 'completed' && o.paymentStatus === 'paid')
+      .filter(o => o.paymentStatus === 'paid')
       .reduce((sum, o) => sum + (o.total || 0), 0),
     avgTicket: 0,
     ordersYesterday: yesterdayStats?.orders,
@@ -110,7 +110,7 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
   };
 
   // Calculate average ticket
-  const paidOrders = orders.filter(o => o.status === 'completed' && o.paymentStatus === 'paid');
+  const paidOrders = orders.filter(o => o.paymentStatus === 'paid');
   stats.avgTicket = paidOrders.length > 0 ? stats.revenue / paidOrders.length : 0;
 
   // Handlers
@@ -133,8 +133,8 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
       toast.error('Usuário não autenticado');
       return;
     }
-    if (!(order.status === 'pending' || order.status === 'processing')) {
-      toast.warning('Somente pedidos pendentes ou em processamento podem ser cancelados');
+    if (!(order.status === 'paid_pending_dispense' || order.status === 'dispensing')) {
+      toast.warning('Somente pedidos aguardando dispensa ou dispensando podem ser cancelados');
       return;
     }
 
@@ -168,8 +168,8 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
       toast.error('Usuário não autenticado');
       return;
     }
-    if (!(order.status === 'completed' && order.paymentStatus === 'paid')) {
-      toast.warning('Somente pedidos concluídos e pagos podem ser estornados');
+    if (order.paymentStatus !== 'paid') {
+      toast.warning('Somente pedidos pagos podem ser estornados');
       return;
     }
 

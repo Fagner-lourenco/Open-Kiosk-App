@@ -14,6 +14,7 @@ import {
   limit,
   startAfter,
   serverTimestamp,
+  Timestamp,
   QueryDocumentSnapshot,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -177,6 +178,12 @@ export const AuditActions = {
   COST_CENTER_UPDATE: 'cost_center.update',
   COST_CENTER_DELETE: 'cost_center.delete',
 
+  // ── Dynamic Pricing ────────────────────────────────────────────────────
+  DYNAMIC_PRICING_UPDATE: 'dynamic_pricing.update',
+  DYNAMIC_PRICING_TOGGLE: 'dynamic_pricing.toggle',
+  DYNAMIC_PRICING_RULE_ADD: 'dynamic_pricing.rule_add',
+  DYNAMIC_PRICING_RULE_REMOVE: 'dynamic_pricing.rule_remove',
+
   // ── Calendar / Parties ────────────────────────────────────────────────
   CALENDAR_CREATE: 'calendar.create',
   CALENDAR_UPDATE: 'calendar.update',
@@ -216,6 +223,14 @@ export async function getAuditLogs(
 
   if (filter?.targetType) {
     q = query(q, where('target.type', '==', filter.targetType));
+  }
+
+  if (filter?.startDate) {
+    q = query(q, where('timestamp', '>=', Timestamp.fromDate(filter.startDate)));
+  }
+
+  if (filter?.endDate) {
+    q = query(q, where('timestamp', '<=', Timestamp.fromDate(filter.endDate)));
   }
 
   // Pagination

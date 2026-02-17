@@ -1,7 +1,7 @@
 ﻿# DATABASE_MAP (Fonte de Verdade do Código)
 
-Atualizado em: 2026-02-16T16:44:41.939Z (UTC)
-Commit auditado: `64d6ba0`
+Atualizado em: 2026-02-16T17:19:58.713Z (UTC)
+Commit auditado: `e2a602c`
 Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.indexes.json`
 
 ## 1) Base canônica Firestore
@@ -151,9 +151,9 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - `docs/archives/AUDIT_REPORT.md#7-incompatibilidades-detectadas`
 - Path legado de auditoria (`audit_logs`) coexistindo com canônico (`franchises/{f}/auditLogs`):
 - `docs/archives/AUDIT_REPORT.md#7-incompatibilidades-detectadas`
-- `setAdminClaims` mantém escrita dupla em `audit_logs` + `franchises/{f}/auditLogs`:
+- ~~`setAdminClaims` mantém escrita dupla em `audit_logs` + `franchises/{f}/auditLogs`~~ **(✅ FIXED — dual-write removido, apenas path canônico)**:
 - `docs/archives/AUDIT_REPORT.md#20-ciclo-contínuo-aprofundamento-de-auditoria-em-admin--functions-2026-02-16`
-- Ação de auditoria de claims usa `set_admin_claims` (snake_case) fora do padrão dotted do Admin:
+- ~~Ação de auditoria de claims usa `set_admin_claims` (snake_case) fora do padrão dotted do Admin~~ **(✅ FIXED — alterado para `auth.setClaims`)**:
 - `docs/archives/AUDIT_REPORT.md#20-ciclo-contínuo-aprofundamento-de-auditoria-em-admin--functions-2026-02-16`
 - Exclusão de franquia no Admin tenta apagar `invitations` como subcoleção local da franquia:
 - `docs/archives/AUDIT_REPORT.md#20-ciclo-contínuo-aprofundamento-de-auditoria-em-admin--functions-2026-02-16`
@@ -165,7 +165,7 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - `docs/archives/AUDIT_REPORT.md#7-incompatibilidades-detectadas`
 - Tipo de data divergente (`string ISO` vs `Timestamp`) em fallback de cancelamento PagBank:
 - `docs/archives/AUDIT_REPORT.md#7-incompatibilidades-detectadas`
-- Callable de cancelamento PagBank sem autorização por tenant (franchise/store):
+- ~~Callable de cancelamento PagBank sem autorização por tenant (franchise/store)~~ **(✅ FIXED — `requireAuth` + `requireFranchiseAccess` adicionados)**:
 - `docs/archives/AUDIT_REPORT.md#24-ciclo-contínuo---normalização-financeira-admin--autorização-de-cancelamento-2026-02-16`
 - Contrato de status de pedidos Kiosk (`paid_pending_dispense`, `dispensing`, `failed_dispense`) nao tratado explicitamente em `functions/src/analytics/aggOrders.ts`:
 - `docs/archives/AUDIT_REPORT.md#6-bugs-encontrados-reproducao-real`
@@ -209,18 +209,18 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - hard-delete direto em telas: `admin/src/pages/team/TeamPage.tsx`, `admin/src/pages/users/UsersPage.tsx`, `admin/src/pages/users/UserDetailPage.tsx`.
 - evidência: `docs/archives/AUDIT_REPORT.md#22-ciclo-contínuo---aprofundamento-admin--functions-2026-02-16`
 
-- Cleanup de exclusão de loja em Functions não cobre `inventoryLogs`:
+- ~~Cleanup de exclusão de loja em Functions não cobre `inventoryLogs`~~ **(✅ FIXED — `inventoryLogs` adicionado a `STORE_SUBCOLLECTIONS`)**:
 - `functions/src/cleanup/onDeleteStore.ts`.
 - evidência: `docs/archives/AUDIT_REPORT.md#22-ciclo-contínuo---aprofundamento-admin--functions-2026-02-16`
 
 ## 8) Conflitos adicionais (ciclo 23)
 
-- Callable de cancelamento PagBank sem gate de autenticação:
+- ~~Callable de cancelamento PagBank sem gate de autenticação~~ **(✅ FIXED — `requireAuth(request)` adicionado)**:
 - `functions/src/payments/index.ts` (`cancelPagBankPayment`) não valida `context.auth`/tenant antes de atualizar `payments/{paymentId}`.
 - evidência: `docs/archives/AUDIT_REPORT.md#23-ciclo-contínuo---aprofundamento-admin--functions--segurança-callables-2026-02-16`
 
-- Cleanup de loja não cobre integralmente subcoleções mapeadas por Admin/Kiosk:
-- faltantes confirmados por contrato cruzado: `inventoryLogs` e `notifications`.
+- ~~Cleanup de loja não cobre integralmente subcoleções mapeadas por Admin/Kiosk~~ **(✅ FIXED — `inventoryLogs` e `notifications` adicionados)**:
+- ~~faltantes confirmados por contrato cruzado: `inventoryLogs` e `notifications`~~ **(corrigido)**.
 - evidência: `docs/archives/AUDIT_REPORT.md#23-ciclo-contínuo---aprofundamento-admin--functions--segurança-callables-2026-02-16`
 
 - Exclusão de entidade pai no Admin sem cascade de subcoleções:
@@ -270,4 +270,14 @@ Escopo: `admin/src`, `src`, `functions/src`, `firestore.rules`, `firestore.index
 - Migração de telão confirmada para documentos agregados:
 - `TvDashboardPage` não consulta mais `orders` diretamente; consumo passa por `rankingAgg/eventStats/challenges/prizes`.
 - evidência: `docs/archives/AUDIT_REPORT.md#264-fluxo-real-quem-chama-o-quê-validado-para-os-arquivos-novos`
+
+## 12) Conflitos adicionais (ciclo 27)
+
+- Gate de status insuficiente no trigger de ranking:
+- `functions/src/ranking/rankingFunctions.ts` (`onOrderUpdatedRanking`) ainda permite caminho de agregação quando `customerName` aparece sem validação explícita de `after.status` elegível.
+- evidência: `docs/archives/AUDIT_REPORT.md#274-bugs-novos-confirmados-com-evidência`
+
+- Autorização incompleta no recálculo manual de ranking:
+- `functions/src/ranking/recalculate30minNow.ts` autoriza por role, mas não valida `members/{uid}.isActive`.
+- evidência: `docs/archives/AUDIT_REPORT.md#274-bugs-novos-confirmados-com-evidência`
 

@@ -132,6 +132,11 @@ const reconstructFirestoreTypes = (data: unknown): unknown => {
     return data;
   }
 
+  // 🔧 FIX R9-01: Preservar Date objects (IndexedDB structured clone preserva Dates)
+  if (data instanceof Date) {
+    return data;
+  }
+
   // Check for arrays
   if (Array.isArray(data)) {
     return data.map(item => reconstructFirestoreTypes(item));
@@ -268,6 +273,8 @@ export const processQueue = async (): Promise<void> => {
   syncInProgress = true;
   updateStatus({ isSyncing: true });
 
+  let retryScheduled = false;
+
   try {
     const queue = await cacheGetAll<SyncQueueItem>(STORES.SYNC_QUEUE);
 
@@ -277,7 +284,6 @@ export const processQueue = async (): Promise<void> => {
         pendingCount: 0,
         lastSyncAt: Date.now(),
       });
-      syncInProgress = false;
       return;
     }
 
@@ -342,11 +348,14 @@ export const processQueue = async (): Promise<void> => {
         )
         : 100;
 
+      // Manter syncInProgress=true durante o delay para evitar processamento concorrente
+      // O setTimeout cuidará de resetar e re-invocar processQueue
+      retryScheduled = true;
+      updateStatus({ isSyncing: false });
       setTimeout(() => {
         syncInProgress = false;
         processQueue();
       }, delay);
-      return;
     }
   } catch (error) {
     console.error('[SyncService] Error processing queue:', error);
@@ -354,10 +363,12 @@ export const processQueue = async (): Promise<void> => {
       lastError: error instanceof Error ? error.message : 'Unknown error',
     });
   } finally {
-    // SEMPRE resetar syncInProgress, mesmo em caso de erro
-    // Evita travamento permanente da sincronização
-    syncInProgress = false;
-    updateStatus({ isSyncing: false });
+    // Resetar syncInProgress apenas se NÃO agendou retry
+    // Quando retryScheduled=true, o setTimeout cuidará de resetar
+    if (!retryScheduled) {
+      syncInProgress = false;
+      updateStatus({ isSyncing: false });
+    }
   }
 };
 

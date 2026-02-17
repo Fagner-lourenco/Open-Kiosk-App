@@ -10,7 +10,7 @@
  * - franchises/{franchiseId}/metrics/current - Metricas agregadas da franquia
  */
 
-import * as functions from 'firebase-functions';
+import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { db, admin } from '../lib';
 
 interface OrderData {
@@ -152,11 +152,12 @@ async function updateMetrics(
   await docRef.set(updates, { merge: true });
 }
 
-export const onOrderCreated = functions
-  .region('southamerica-east1')
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/orders/{orderId}')
-  .onCreate(async (snap, context) => {
+export const onOrderCreated = onDocumentCreated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/orders/{orderId}', region: 'southamerica-east1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const context = { params: event.params };
     const order = snap.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
 
@@ -185,13 +186,15 @@ export const onOrderCreated = functions
       console.error('[aggOrders] Error updating metrics:', error);
       throw error;
     }
-  });
+  }
+);
 
-export const onOrderUpdated = functions
-  .region('southamerica-east1')
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/orders/{orderId}')
-  .onUpdate(async (change, context) => {
+export const onOrderUpdated = onDocumentUpdated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/orders/{orderId}', region: 'southamerica-east1' },
+  async (event) => {
+    if (!event.data) return;
+    const change = { before: event.data.before, after: event.data.after };
+    const context = { params: event.params };
     const before = change.before.data() as OrderData;
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
@@ -232,4 +235,5 @@ export const onOrderUpdated = functions
       console.error('[aggOrders] Error updating metrics:', error);
       throw error;
     }
-  });
+  }
+);

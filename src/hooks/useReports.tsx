@@ -43,7 +43,7 @@ export const useReports = (storeId?: string) => {
         return {
           totalSales: 0,
           totalOrders: 0,
-          currency: 'INR'
+          currency: 'BRL'
         };
       }
 
@@ -64,7 +64,7 @@ export const useReports = (storeId?: string) => {
 
       const totalSales = salesData.reduce((sum, sale) => sum + Number(sale.total || sale.total_amount || 0), 0);
       const totalOrders = salesData.length;
-      const currency = salesData[0]?.currency || 'INR';
+      const currency = salesData[0]?.currency || 'BRL';
 
       return {
         totalSales,
@@ -76,7 +76,7 @@ export const useReports = (storeId?: string) => {
       return {
         totalSales: 0,
         totalOrders: 0,
-        currency: 'INR'
+        currency: 'BRL'
       };
     }
   };
@@ -121,7 +121,7 @@ export const useReports = (storeId?: string) => {
         }
 
         const saleDate = sale.timestamp.toDate();
-        const dateKey = saleDate.toISOString().split('T')[0]; // YYYY-MM-DD format
+        const dateKey = `${saleDate.getFullYear()}-${String(saleDate.getMonth() + 1).padStart(2, '0')}-${String(saleDate.getDate()).padStart(2, '0')}`; // YYYY-MM-DD local
         const saleAmount = Number(sale.total || sale.total_amount || 0);
 
         const existing = dailySales.get(dateKey);
@@ -132,7 +132,7 @@ export const useReports = (storeId?: string) => {
           dailySales.set(dateKey, {
             sales: saleAmount,
             orders: 1,
-            currency: sale.currency || 'INR'
+            currency: sale.currency || 'BRL'
           });
         }
       });
@@ -204,7 +204,7 @@ export const useReports = (storeId?: string) => {
               title: item.title || 'Untitled',
               quantity: item.quantity || 0,
               revenue: total,
-              currency: sale.currency || 'INR' // fallback
+              currency: sale.currency || 'BRL' // fallback
             });
           }
         });
@@ -271,7 +271,7 @@ export const useReports = (storeId?: string) => {
       const totalSales = salesData.reduce((sum, sale) => sum + Number(sale.total || sale.total_amount || 0), 0);
       const totalOrders = salesData.length;
       const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
-      const currency = salesData[0]?.currency || 'INR';
+      const currency = salesData[0]?.currency || 'BRL';
 
       return [{
         period: `${period} - ${targetDate.toDateString()}`,
@@ -350,7 +350,7 @@ export const useReports = (storeId?: string) => {
               title: item.title || 'Untitled',
               quantity: item.quantity || 0,
               revenue: total,
-              currency: sale.currency || 'INR'
+              currency: sale.currency || 'BRL'
             });
           }
         });

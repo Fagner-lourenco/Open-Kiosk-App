@@ -1,4 +1,6 @@
-import * as functions from 'firebase-functions';
+import { HttpsError } from 'firebase-functions/v2/https';
+import type { CallableRequest } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import crypto from 'crypto';
 import { db, admin, requireAuth, requireFranchiseAccess, sanitizeForLog } from '../lib';
 import { createPagBankProvider, type PagBankProviderConfig } from './providers/pagbank';
@@ -32,7 +34,7 @@ export const parseReferenceId = (referenceId?: string | null): {
 };
 
 const assertStoreAccess = async (
-  context: functions.https.CallableContext,
+  context: CallableRequest,
   franchiseId: string,
   storeId: string
 ): Promise<void> => {
@@ -43,13 +45,13 @@ const assertStoreAccess = async (
 
   const storeIdClaim = context.auth!.token.storeId as string | undefined;
   if (storeIdClaim && storeIdClaim !== storeId) {
-    throw new functions.https.HttpsError('permission-denied', 'Sem acesso a esta loja');
+    throw new HttpsError('permission-denied', 'Sem acesso a esta loja');
   }
 
   const storeAccess = context.auth!.token.storeAccess as string[] | undefined;
   if (Array.isArray(storeAccess) && storeAccess.length > 0) {
     if (storeAccess.includes('*') || storeAccess.includes(storeId)) return;
-    throw new functions.https.HttpsError('permission-denied', 'Sem acesso a esta loja');
+    throw new HttpsError('permission-denied', 'Sem acesso a esta loja');
   }
 
   const memberDoc = await db
@@ -57,26 +59,25 @@ const assertStoreAccess = async (
     .get();
 
   if (!memberDoc.exists) {
-    throw new functions.https.HttpsError('permission-denied', 'Sem acesso a esta loja');
+    throw new HttpsError('permission-denied', 'Sem acesso a esta loja');
   }
 
   const membership = memberDoc.data() as { storeAccess?: string[] } | undefined;
   const accessList = Array.isArray(membership?.storeAccess) ? membership?.storeAccess : [];
   if (accessList.includes('*') || accessList.includes(storeId)) return;
 
-  throw new functions.https.HttpsError('permission-denied', 'Sem acesso a esta loja');
+  throw new HttpsError('permission-denied', 'Sem acesso a esta loja');
 };
 
 const resolvePagBankConfig = (environment: 'sandbox' | 'production'): PagBankProviderConfig => {
-  const config = functions.config().pagbank || {};
-  const configuredEnv = config.env === 'production' ? 'production' : 'sandbox';
+  const configuredEnv = process.env.PAGBANK_ENV === 'production' ? 'production' : 'sandbox';
   const resolvedEnv = environment || configuredEnv;
   const authToken =
-    (resolvedEnv === 'production' ? config.auth_token_production : config.auth_token_sandbox) ||
-    config.auth_token;
+    (resolvedEnv === 'production' ? process.env.PAGBANK_AUTH_TOKEN_PRODUCTION : process.env.PAGBANK_AUTH_TOKEN_SANDBOX) ||
+    process.env.PAGBANK_AUTH_TOKEN;
 
   if (!authToken) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'failed-precondition',
       'PagBank auth_token nao configurado nas Functions.'
     );
@@ -85,7 +86,7 @@ const resolvePagBankConfig = (environment: 'sandbox' | 'production'): PagBankPro
   return {
     environment: resolvedEnv,
     authToken,
-    webhookUrl: config.webhook_url,
+    webhookUrl: process.env.PAGBANK_WEBHOOK_URL,
   };
 };
 
@@ -94,45 +95,45 @@ const resolvePagBankConfig = (environment: 'sandbox' | 'production'): PagBankPro
 
 const ensureMethodAllowed = (configProvider: string, method: PaymentMethod): void => {
   if (configProvider !== 'pagbank') {
-    throw new functions.https.HttpsError('failed-precondition', 'Gateway nao suportado para createPayment.');
+    throw new HttpsError('failed-precondition', 'Gateway nao suportado para createPayment.');
   }
   if (!['pix', 'credit', 'debit'].includes(method)) {
-    throw new functions.https.HttpsError('invalid-argument', 'Metodo de pagamento invalido.');
+    throw new HttpsError('invalid-argument', 'Metodo de pagamento invalido.');
   }
 };
 
 export const createPaymentIntent = async (
   data: CreatePaymentInput,
-  context: functions.https.CallableContext
+  context: CallableRequest
 ): Promise<CreatePaymentResponse> => {
   requireAuth(context);
 
   const { franchiseId, storeId, method, amount, currency } = data;
 
   if (!franchiseId || !storeId) {
-    throw new functions.https.HttpsError('invalid-argument', 'franchiseId e storeId sao obrigatorios.');
+    throw new HttpsError('invalid-argument', 'franchiseId e storeId sao obrigatorios.');
   }
   if (!method) {
-    throw new functions.https.HttpsError('invalid-argument', 'Metodo de pagamento obrigatorio.');
+    throw new HttpsError('invalid-argument', 'Metodo de pagamento obrigatorio.');
   }
   if (!amount || amount <= 0) {
-    throw new functions.https.HttpsError('invalid-argument', 'Valor invalido.');
+    throw new HttpsError('invalid-argument', 'Valor invalido.');
   }
   if (!currency) {
-    throw new functions.https.HttpsError('invalid-argument', 'Moeda obrigatoria.');
+    throw new HttpsError('invalid-argument', 'Moeda obrigatoria.');
   }
   if (!Array.isArray(data.items) || data.items.length === 0) {
-    throw new functions.https.HttpsError('invalid-argument', 'Itens do pedido sao obrigatorios.');
+    throw new HttpsError('invalid-argument', 'Itens do pedido sao obrigatorios.');
   }
   if (!data.customer?.name || !data.customer?.taxId) {
-    throw new functions.https.HttpsError('invalid-argument', 'Dados do cliente obrigatorios.');
+    throw new HttpsError('invalid-argument', 'Dados do cliente obrigatorios.');
   }
   if ((method === 'credit' || method === 'debit') && !data.card) {
-    throw new functions.https.HttpsError('invalid-argument', 'Dados do cartao obrigatorios.');
+    throw new HttpsError('invalid-argument', 'Dados do cartao obrigatorios.');
   }
   if (data.card) {
     if (!data.card.encrypted) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'invalid-argument',
         'Campo card.encrypted obrigatorio. Dados raw de cartao (PAN/CVV) nao sao aceitos.'
       );
@@ -145,27 +146,56 @@ export const createPaymentIntent = async (
   const storeRef = db.doc(`franchises/${franchiseId}/stores/${storeId}`);
   const storeSnap = await storeRef.get();
   if (!storeSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Loja nao encontrada.');
+    throw new HttpsError('not-found', 'Loja nao encontrada.');
+  }
+
+  // ====================================================================
+  // Dynamic Pricing — Server-side bounds check
+  // Quando DP está ativo, valida que o amount está dentro dos limites
+  // permitidos (basePrice * (1 ± maxVariationPercent/100))
+  // ====================================================================
+  const storeData = storeSnap.data();
+  const dpConfig = storeData?.dynamicPricingConfig;
+  if (dpConfig?.enabled && dpConfig.maxVariationPercent > 0) {
+    const maxVar = dpConfig.maxVariationPercent / 100;
+    const itemsTotal = (data.items || []).reduce(
+      (sum: number, item: { unitAmount?: number; quantity?: number }) =>
+        sum + ((item.unitAmount || 0) * (item.quantity || 1)),
+      0,
+    );
+    // Verificar se o valor cobrado não excede os limites dinâmicos
+    // Permitir ±maxVariationPercent do total dos itens + margem de 5% para impostos
+    if (itemsTotal > 0) {
+      const maxAllowed = itemsTotal * (1 + maxVar) * 1.30; // 30% de margem para impostos
+      const minAllowed = itemsTotal * (1 - maxVar) * 0.70;
+      if (amount > maxAllowed || amount < minAllowed) {
+        console.warn(`[createPayment] Amount ${amount} fora dos limites DP [${minAllowed.toFixed(2)}, ${maxAllowed.toFixed(2)}] para items total ${itemsTotal.toFixed(2)}`);
+        throw new HttpsError(
+          'invalid-argument',
+          'Valor do pagamento fora dos limites permitidos pelo preco dinamico.',
+        );
+      }
+    }
   }
 
   const gatewayConfig = normalizePaymentGatewayConfig(storeSnap.data());
   if (!gatewayConfig || gatewayConfig.provider === 'none') {
-    throw new functions.https.HttpsError('failed-precondition', 'Gateway de pagamento nao configurado.');
+    throw new HttpsError('failed-precondition', 'Gateway de pagamento nao configurado.');
   }
 
   ensureMethodAllowed(gatewayConfig.provider, method);
 
   if (!isMethodEnabled(gatewayConfig, method)) {
-    throw new functions.https.HttpsError('failed-precondition', 'Metodo de pagamento desativado.');
+    throw new HttpsError('failed-precondition', 'Metodo de pagamento desativado.');
   }
 
   const pagbankClientId = gatewayConfig.providers?.pagbank?.clientId;
   const pagbankPublicKey = gatewayConfig.providers?.pagbank?.publicKey;
   if (!pagbankClientId) {
-    throw new functions.https.HttpsError('failed-precondition', 'PagBank clientId nao configurado.');
+    throw new HttpsError('failed-precondition', 'PagBank clientId nao configurado.');
   }
   if ((method === 'credit' || method === 'debit') && !pagbankPublicKey) {
-    throw new functions.https.HttpsError('failed-precondition', 'PagBank publicKey nao configurado.');
+    throw new HttpsError('failed-precondition', 'PagBank publicKey nao configurado.');
   }
 
   // ====================================================================
@@ -184,7 +214,7 @@ export const createPaymentIntent = async (
     if (!existingSnap.empty) {
       const existingDoc = existingSnap.docs[0];
       const existingPayment = existingDoc.data() as PaymentRecord;
-      functions.logger.info('[payments] Idempotency hit — returning existing payment', {
+      logger.info('[payments] Idempotency hit — returning existing payment', {
         paymentId: existingDoc.id,
         orderId: data.orderId,
         status: existingPayment.status,
@@ -288,8 +318,8 @@ export const createPaymentIntent = async (
       },
       { merge: true }
     );
-    functions.logger.error('[payments] PagBank createPayment error', sanitizeForLog({ error: errorMessage }));
-    throw new functions.https.HttpsError('internal', errorMessage);
+    logger.error('[payments] PagBank createPayment error', sanitizeForLog({ error: errorMessage }));
+    throw new HttpsError('internal', errorMessage);
   }
 };
 
@@ -342,7 +372,7 @@ export const syncPendingPaymentsForPagBank = async (): Promise<void> => {
         if (isCancelRequested && statusResult.status === 'paid') {
           extraUpdate.requiresRefund = true;
           extraUpdate.cancelRequestedBeforePayment = true;
-          functions.logger.warn('[payments] Payment arrived AFTER cancel_requested — needs refund', {
+          logger.warn('[payments] Payment arrived AFTER cancel_requested — needs refund', {
             paymentId: doc.id,
             orderId: payment.orderId,
           });
@@ -351,7 +381,7 @@ export const syncPendingPaymentsForPagBank = async (): Promise<void> => {
         await updatePaymentStatus(doc.ref, newStatus, extraUpdate);
       }
     } catch (error) {
-      functions.logger.warn('[payments] sync pending failed', {
+      logger.warn('[payments] sync pending failed', {
         paymentId: doc.id,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -366,8 +396,8 @@ export const verifyPagBankSignature = (
 ): boolean => {
   if (!signatureHeader) return false;
   const expected = crypto
-    .createHash('sha256')
-    .update(`${token}-${rawBody}`)
+    .createHmac('sha256', token)
+    .update(rawBody)
     .digest('hex');
 
   const signatureBuffer = Buffer.from(signatureHeader);

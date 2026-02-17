@@ -115,7 +115,8 @@ describe('ESP32CommunicationService Real Tests', () => {
     it('deve desconectar do dispositivo BLE', async () => {
       await esp32Service.disconnect();
       
-      expect(true).toBe(true);
+      const status = esp32Service.getConnectionStatus();
+      expect(status.connected).toBe(false);
     });
   });
 
@@ -136,7 +137,8 @@ describe('ESP32CommunicationService Real Tests', () => {
   describe('Gerenciamento de Conexão', () => {
     it('deve desconectar corretamente', async () => {
       await esp32Service.disconnect();
-      expect(true).toBe(true);
+      const status = esp32Service.getConnectionStatus();
+      expect(status.connected).toBe(false);
     });
 
     it('deve lidar com reconexão', async () => {

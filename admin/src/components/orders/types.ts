@@ -34,9 +34,11 @@ export interface Order {
     | 'cancelled'
     | 'paid_pending_dispense'
     | 'dispensing'
-    | 'failed_dispense';
+    | 'failed_dispense'
+    | 'compensation_pending'
+    | 'compensated';
   paymentMethod: 'cash' | 'card' | 'pix' | 'pix_qr' | 'mercadopago' | string;
-  paymentStatus: 'pending' | 'paid' | 'refunded' | 'failed' | 'canceled' | 'expired';
+  paymentStatus: 'pending' | 'paid' | 'refunded' | 'failed' | 'canceled' | 'expired' | 'paid_pending_dispense' | 'dispensed' | 'failed_needs_compensation';
   timestamp?: Timestamp;
   createdAt?: Timestamp;
   paidAt?: Timestamp;

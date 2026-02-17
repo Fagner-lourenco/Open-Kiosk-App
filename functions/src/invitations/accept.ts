@@ -8,7 +8,8 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import { db, admin, requireAuth } from '../lib';
 
 interface AcceptInvitationData {
@@ -16,21 +17,22 @@ interface AcceptInvitationData {
   invitationId?: string;
 }
 
-export const acceptInvitation = functions.https.onCall(async (data: AcceptInvitationData, context) => {
+export const acceptInvitation = onCall(async (request) => {
+  const data = request.data as AcceptInvitationData;
   // 🔧 v4.0.7: Usando helper centralizado
-  requireAuth(context);
+  requireAuth(request);
 
   const { token, invitationId } = data;
 
   if (!token && !invitationId) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'Token ou ID do convite é obrigatório'
     );
   }
 
-  const uid = context.auth!.uid;
-  const userEmail = context.auth!.token.email;
+  const uid = request.auth!.uid;
+  const userEmail = request.auth!.token.email;
 
   try {
     let inviteDoc: FirebaseFirestore.QueryDocumentSnapshot | FirebaseFirestore.DocumentSnapshot;
@@ -46,7 +48,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
         .get();
 
       if (inviteQuery.empty) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'not-found',
           'Convite não encontrado ou já foi utilizado'
         );
@@ -58,7 +60,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
       // Fallback: convite por ID
       inviteDoc = await db.collection('invitations').doc(invitationId!).get();
       if (!inviteDoc.exists) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'not-found',
           'Convite não encontrado'
         );
@@ -66,7 +68,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
       invitation = inviteDoc.data() || {};
 
       if (invitation.status !== 'pending') {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'failed-precondition',
           'Convite não está pendente'
         );
@@ -75,7 +77,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
 
     // Verifica se o email corresponde
     if (invitation.email.toLowerCase() !== userEmail?.toLowerCase()) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Este convite foi enviado para outro email'
       );
@@ -86,7 +88,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
     if (expiresAt < new Date()) {
       // Marca como expirado
       await inviteDoc.ref.update({ status: 'expired' });
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'deadline-exceeded',
         'Este convite expirou'
       );
@@ -179,15 +181,26 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
     // Executa o batch
     await batch.commit();
 
-    // Atualiza custom claims
-    await admin.auth().setCustomUserClaims(uid, {
+    // Atualiza custom claims (merge com existentes para preservar superadmin etc.)
+    const currentUser = await admin.auth().getUser(uid);
+    const currentClaims = currentUser.customClaims || {};
+
+    const newClaims: Record<string, unknown> = {
+      ...currentClaims,
       role: invitation.role,
       franchiseId: invitation.franchiseId,
       storeId: resolvedStoreId,
       storeAccess: resolvedStoreAccess,
-    });
+    };
 
-    functions.logger.info(`Convite aceito por ${userEmail} para franquia ${invitation.franchiseId}`);
+    // Proteger superadmin: nunca fazer downgrade via aceite de convite
+    if (currentClaims.role === 'superadmin' && invitation.role !== 'superadmin') {
+      newClaims.role = 'superadmin';
+    }
+
+    await admin.auth().setCustomUserClaims(uid, newClaims);
+
+    logger.info(`Convite aceito por ${userEmail} para franquia ${invitation.franchiseId}`);
 
     return {
       success: true,
@@ -197,11 +210,11 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
     };
 
   } catch (error) {
-    if (error instanceof functions.https.HttpsError) {
+    if (error instanceof HttpsError) {
       throw error;
     }
-    functions.logger.error('Erro ao aceitar convite:', error);
-    throw new functions.https.HttpsError(
+    logger.error('Erro ao aceitar convite:', error);
+    throw new HttpsError(
       'internal',
       'Erro interno ao processar o convite'
     );
@@ -211,7 +224,7 @@ export const acceptInvitation = functions.https.onCall(async (data: AcceptInvita
 /**
  * HTTP endpoint para validar token (público)
  */
-export const validateInvitationToken = functions.https.onRequest(async (req, res) => {
+export const validateInvitationToken = onRequest(async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -275,7 +288,7 @@ export const validateInvitationToken = functions.https.onRequest(async (req, res
     });
 
   } catch (error) {
-    functions.logger.error('Erro ao validar token:', error);
+    logger.error('Erro ao validar token:', error);
     res.status(500).json({ error: 'Erro interno' });
   }
 });

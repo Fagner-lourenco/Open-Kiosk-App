@@ -1881,6 +1881,33 @@ void processDispensingTap(int tapId) {
   }
   
   // ============================================
+  // VERIFICAR TIMEOUT DE FLUXO PARADO (v4.1.1)
+  // Se o fluxo já iniciou mas parou por NO_FLOW_TIMEOUT_MS, fechar válvula
+  // ============================================
+  if (tapState[tapId].flowStarted && currentPulseCount > 0) {
+    unsigned long timeSinceLastPulseForTimeout = now - currentLastPulseTime;
+    if (timeSinceLastPulseForTimeout > NO_FLOW_TIMEOUT_MS) {
+      closeValveTap(tapId);
+      tapState[tapId].isDispensing = false;
+      tapState[tapId].phase = TAP_PHASE_IDLE;
+      
+      Serial.println("[ERROR] Tap " + String(tapId) + " ⚠️ Fluxo parado por " + String(NO_FLOW_TIMEOUT_MS / 1000) + "s - fechando válvula");
+      sendStatusTap(tapId, tapState[tapId].orderId.c_str(), "error", "Fluxo parado - torneira fechada por segurança");
+      tapState[tapId].orderId = "";
+      
+      // Atualizar flag global
+      isDispensing = false;
+      for (int i = 0; i < NUM_TAPS; i++) {
+        if (tapState[i].isDispensing) {
+          isDispensing = true;
+          break;
+        }
+      }
+      return;
+    }
+  }
+  
+  // ============================================
   // VERIFICAR CONCLUSÃO DO COPO (v4.0.6: Não-bloqueante)
   // ============================================
   if (tapState[tapId].flowStarted && tapState[tapId].mlDispensed >= tapState[tapId].targetMl) {
@@ -2016,7 +2043,7 @@ void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount
 void loadSettings() {
   // 🔧 CORREÇÃO: Inicializar tapConfig com valores padrão PRIMEIRO
   for (int i = 0; i < NUM_TAPS; i++) {
-    tapConfig[i].pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;  // 5880 para YF-S402
+    tapConfig[i].pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;  // Padrão ajustável via NVS/app
     tapConfig[i].mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
   }
   

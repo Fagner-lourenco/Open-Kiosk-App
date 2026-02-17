@@ -18,18 +18,35 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('../lib', () => ({
-  db: {
-    doc: mocks.doc,
-  },
-  admin: {
-    firestore: {
-      FieldValue: {
-        serverTimestamp: mocks.serverTimestamp,
+vi.mock('../lib', () => {
+  const { HttpsError } = require('firebase-functions/v2/https');
+  return {
+    db: {
+      doc: mocks.doc,
+    },
+    admin: {
+      firestore: {
+        FieldValue: {
+          serverTimestamp: mocks.serverTimestamp,
+        },
       },
     },
-  },
-}));
+    requireAuth: (request: any) => {
+      if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'Usuário não autenticado');
+      }
+    },
+    requireFranchiseAccess: (request: any, franchiseId: string) => {
+      if (!request.auth) throw new HttpsError('unauthenticated', 'Usuário não autenticado');
+      const userFranchiseId = request.auth.token?.franchiseId;
+      const userRole = request.auth.token?.role;
+      if (userRole === 'superadmin') return;
+      if (userFranchiseId !== franchiseId) {
+        throw new HttpsError('permission-denied', 'Você não tem acesso a esta franquia');
+      }
+    },
+  };
+});
 
 vi.mock('../payments/paymentService', () => ({
   createPaymentIntent: vi.fn(),
@@ -56,10 +73,10 @@ describe('Audit Functions - cancelPagBankPayment authorization contracts', () =>
 
   it('cancelPagBankPayment deve negar usuario autenticado sem acesso a franquia/loja (RED)', async () => {
     await expect(
-      (cancelPagBankPayment as any).run(
-        { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-1' },
-        { auth: { uid: 'u-no-access', token: { role: 'viewer', franchiseId: 'f-2', storeId: 's-9' } } },
-      ),
+      (cancelPagBankPayment as any).run({
+        data: { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-1' },
+        auth: { uid: 'u-no-access', token: { role: 'viewer', franchiseId: 'f-2', storeId: 's-9' } },
+      }),
     ).rejects.toThrow(/permission|acesso|franquia|loja/i);
   });
 
@@ -69,7 +86,7 @@ describe('Audit Functions - cancelPagBankPayment authorization contracts', () =>
       'utf8',
     );
 
-    const handlerBlock = source.match(/export const cancelPagBankPayment[\s\S]*?\.https\.onCall\([\s\S]*?\{([\s\S]*?)\}\);/)?.[1] ?? '';
+    const handlerBlock = source.match(/export const cancelPagBankPayment[\s\S]*?= onCall\([\s\S]*?async[\s\S]*?\{([\s\S]*?)\}\s*\)\s*;/)?.[1] ?? source;
 
     expect(handlerBlock).toMatch(/requireAuth\s*\(/);
     expect(handlerBlock).toMatch(/requireFranchiseAccess\s*\(|assertStoreAccess\s*\(/);

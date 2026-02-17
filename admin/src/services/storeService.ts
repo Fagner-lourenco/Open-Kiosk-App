@@ -15,6 +15,7 @@ import {
   query,
   orderBy,
   serverTimestamp,
+  runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { storesPath, storePath } from '@/lib/pathResolver';
@@ -157,22 +158,27 @@ export async function addStoreMember(
   storeId: string,
   member: Omit<StoreMember, 'addedAt'>
 ): Promise<void> {
-  const store = await getStore(franchiseId, storeId);
-  if (!store) throw new Error('Store not found');
+  const docRef = doc(db, storePath(franchiseId, storeId));
 
-  const operators = store.operators || [];
-  const existingMember = operators.find((m) => m.id === member.id);
+  await runTransaction(db, async (txn) => {
+    const snap = await txn.get(docRef);
+    if (!snap.exists()) throw new Error('Store not found');
 
-  if (existingMember) {
-    throw new Error('Member already exists in store');
-  }
+    const store = { id: snap.id, ...snap.data() } as Store;
+    const operators = store.operators || [];
+    const existingMember = operators.find((m) => m.id === member.id);
 
-  operators.push({
-    ...member,
-    addedAt: new Date().toISOString(),
+    if (existingMember) {
+      throw new Error('Member already exists in store');
+    }
+
+    operators.push({
+      ...member,
+      addedAt: new Date().toISOString(),
+    });
+
+    txn.update(docRef, { operators, updatedAt: serverTimestamp() });
   });
-
-  await updateStore(franchiseId, storeId, { operators } as any);
 }
 
 /**
@@ -183,11 +189,16 @@ export async function removeStoreMember(
   storeId: string,
   memberId: string
 ): Promise<void> {
-  const store = await getStore(franchiseId, storeId);
-  if (!store) throw new Error('Store not found');
+  const docRef = doc(db, storePath(franchiseId, storeId));
 
-  const operators = (store.operators || []).filter((m) => m.id !== memberId);
-  await updateStore(franchiseId, storeId, { operators } as any);
+  await runTransaction(db, async (txn) => {
+    const snap = await txn.get(docRef);
+    if (!snap.exists()) throw new Error('Store not found');
+
+    const store = { id: snap.id, ...snap.data() } as Store;
+    const operators = (store.operators || []).filter((m) => m.id !== memberId);
+    txn.update(docRef, { operators, updatedAt: serverTimestamp() });
+  });
 }
 
 /**

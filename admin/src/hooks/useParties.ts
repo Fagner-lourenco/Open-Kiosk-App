@@ -70,16 +70,21 @@ function partyDocRef(franchiseId: string, storeId: string, partyId: string) {
   return doc(db, financeDocPath(franchiseId, storeId, 'parties', partyId));
 }
 
+const VALID_PARTY_TYPES: PartyType[] = ['customer', 'supplier', 'employee', 'other'];
+const VALID_PARTY_STATUSES: ('active' | 'inactive')[] = ['active', 'inactive'];
+
 function normalizeParty(id: string, data: Record<string, unknown>): Party {
+  const tp = data.type as string;
+  const st = data.status as string;
   return {
     id,
-    type: (data.type as PartyType) || 'other',
+    type: VALID_PARTY_TYPES.includes(tp as PartyType) ? (tp as PartyType) : 'other',
     name: (data.name as string) || '',
     doc: data.doc as string | undefined,
     contacts: (data.contacts as PartyContact[]) || [],
     bankInfo: data.bankInfo as PartyBankInfo | undefined,
     customerId: data.customerId as string | undefined,
-    status: (data.status as 'active' | 'inactive') || 'active',
+    status: VALID_PARTY_STATUSES.includes(st as 'active' | 'inactive') ? (st as 'active' | 'inactive') : 'active',
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
   };

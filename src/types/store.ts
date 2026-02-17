@@ -178,6 +178,17 @@ export interface StoreSettings {
   /** Configuração do gateway de pagamento (opcional - fallback para env vars) */
   paymentGatewayConfig?: PaymentGatewayConfig;
 
+  /** Configuração de preço dinâmico (feature flag + regras) */
+  dynamicPricingConfig?: import('../../shared/types/dynamicPricing').DynamicPricingConfig;
+
+  /** Estado do modo evento (lido de eventStats/current via onSnapshot) */
+  eventMode?: {
+    enabled: boolean;
+    label?: string;
+    endsAt?: Date | null;
+    activateDynamicPricing?: boolean;
+  };
+
   /** Timestamp de atualizacao (Firestore) */
   updatedAt?: Date | string;
 }

@@ -19,13 +19,14 @@
  *   -d '{"email":"SEU_EMAIL","secret":"SUA_SENHA"}'
  */
 
-import * as functions from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import { db, auth, serverTimestamp } from '../lib';
 
 // 🔧 v4.0.7: Secret agora vem do Firebase Functions Config
 const getSecret = (): string | null => {
   try {
-    return functions.config().superadmin?.secret || null;
+    return process.env.SUPERADMIN_SECRET || null;
   } catch {
     return null;
   }
@@ -33,13 +34,13 @@ const getSecret = (): string | null => {
 
 const isEnabled = (): boolean => {
   try {
-    return functions.config().superadmin?.enabled === 'true';
+    return process.env.SUPERADMIN_ENABLED === 'true';
   } catch {
     return false;
   }
 };
 
-export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) => {
+export const promoteSuperAdminHTTP = onRequest(async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -87,7 +88,7 @@ export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) 
     const userRecord = await auth.getUserByEmail(email);
     const uid = userRecord.uid;
     
-    functions.logger.info(`Promovendo ${email} (${uid}) a super admin via HTTP`);
+    logger.info(`Promovendo ${email} (${uid}) a super admin via HTTP`);
     
     // Atualizar custom claims
     await auth.setCustomUserClaims(uid, {
@@ -147,7 +148,7 @@ export const promoteSuperAdminHTTP = functions.https.onRequest(async (req, res) 
     `);
     
   } catch (error: unknown) {
-    functions.logger.error('Erro ao promover super admin:', error);
+    logger.error('Erro ao promover super admin:', error);
     
     if (error instanceof Error && 'code' in error) {
       const authError = error as { code: string };

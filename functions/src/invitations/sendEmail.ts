@@ -8,7 +8,8 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import * as nodemailer from 'nodemailer';
 import { db, admin, requireAuth, requireManager, serverTimestamp } from '../lib';
 
@@ -19,16 +20,17 @@ interface SendInvitationData {
   invitationId?: string;
 }
 
-export const sendInvitationEmail = functions.https.onCall(async (data: SendInvitationData, context) => {
+export const sendInvitationEmail = onCall(async (request) => {
+  const data = request.data as SendInvitationData;
   // 🔧 v4.0.7: Usando helpers centralizados
-  requireAuth(context);
-  requireManager(context);
+  requireAuth(request);
+  requireManager(request);
 
-  const callerClaims = context.auth!.token;
+  const callerClaims = request.auth!.token;
 
   // Verifica permissão (owner, admin ou manager podem convidar)
   if (!['owner', 'admin', 'manager'].includes(callerClaims.role as string)) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'permission-denied',
       'Você não tem permissão para enviar convites'
     );
@@ -37,7 +39,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
   const { email, role, storeId, invitationId } = data;
 
   if (!email || !role) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'email e role são obrigatórios'
     );
@@ -46,7 +48,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
   // 🔧 v4.0.7: Validação de formato de email
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(email)) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'Formato de email inválido'
     );
@@ -55,9 +57,22 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
   // 🔧 v4.0.7: Validação de role permitida
   const validRoles = ['admin', 'manager', 'operator', 'employee', 'technician', 'viewer'];
   if (!validRoles.includes(role)) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       `Role inválida. Permitidas: ${validRoles.join(', ')}`
+    );
+  }
+
+  // Verificação hierárquica: caller não pode convidar role >= própria (exceto owner)
+  const ROLE_HIERARCHY: Record<string, number> = {
+    owner: 100, admin: 80, manager: 60, operator: 40, employee: 40, technician: 30, viewer: 10,
+  };
+  const callerLevel = ROLE_HIERARCHY[callerClaims.role as string] || 0;
+  const invitedLevel = ROLE_HIERARCHY[role] || 0;
+  if (callerClaims.role !== 'owner' && invitedLevel >= callerLevel) {
+    throw new HttpsError(
+      'permission-denied',
+      'Você não pode convidar usuários com role igual ou superior à sua'
     );
   }
 
@@ -67,7 +82,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
     // Busca dados da franquia
     const franchiseDoc = await db.collection('franchises').doc(franchiseId).get();
     if (!franchiseDoc.exists) {
-      throw new functions.https.HttpsError('not-found', 'Franquia não encontrada');
+      throw new HttpsError('not-found', 'Franquia não encontrada');
     }
     const franchise = franchiseDoc.data()!;
 
@@ -90,7 +105,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
       inviteRef = db.collection('invitations').doc(invitationId);
       const inviteDoc = await inviteRef.get();
       if (!inviteDoc.exists) {
-        throw new functions.https.HttpsError('not-found', 'Convite não encontrado');
+        throw new HttpsError('not-found', 'Convite não encontrado');
       }
       invitation = inviteDoc.data() as typeof invitation;
     } else {
@@ -104,7 +119,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
         .get();
 
       if (!existingInvite.empty) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'already-exists',
           'Já existe um convite pendente para este email'
         );
@@ -120,7 +135,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
         franchiseId,
         storeId: storeId || null,
         storeAccess,
-        invitedBy: context.auth!.uid,
+        invitedBy: request.auth!.uid,
         status: 'pending',
         token,
         createdAt: serverTimestamp(),
@@ -133,15 +148,15 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
 
     // Configura transporter do nodemailer
     // Em produção, usar as credenciais reais do SMTP
-    const smtpConfig = functions.config().smtp || {
-      host: 'smtp.gmail.com',
-      port: 587,
-      user: '',
-      pass: '',
+    const smtpConfig = {
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: process.env.SMTP_PORT || '587',
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
     };
 
     if (!smtpConfig.user || !smtpConfig.pass) {
-      functions.logger.warn('SMTP não configurado, pulando envio de email');
+      logger.warn('SMTP não configurado, pulando envio de email');
       return {
         success: true,
         invitationId: inviteRef.id,
@@ -160,7 +175,7 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
     });
 
     // URL do convite
-    const inviteUrl = `${functions.config().app?.url || 'https://admin.openkiosk.app'}/invite/${invitation.token}`;
+    const inviteUrl = `${process.env.APP_URL || 'https://admin.openkiosk.app'}/invite/${invitation.token}`;
 
     // Envia o email
     await transporter.sendMail({
@@ -190,16 +205,16 @@ export const sendInvitationEmail = functions.https.onCall(async (data: SendInvit
       emailSentAt: serverTimestamp(),
     });
 
-    functions.logger.info(`Convite enviado para ${email}`);
+    logger.info(`Convite enviado para ${email}`);
 
     return { success: true, invitationId: inviteRef.id };
 
   } catch (error) {
-    if (error instanceof functions.https.HttpsError) {
+    if (error instanceof HttpsError) {
       throw error;
     }
-    functions.logger.error('Erro ao enviar convite:', error);
-    throw new functions.https.HttpsError(
+    logger.error('Erro ao enviar convite:', error);
+    throw new HttpsError(
       'internal',
       'Erro interno ao processar o convite'
     );

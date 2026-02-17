@@ -6,7 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle, RefreshCw, PhoneCall } from "lucide-react";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle, RefreshCw, PhoneCall, TrendingDown } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { useESP32 } from "@/context/ESP32Context";
@@ -23,9 +23,12 @@ import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
+import { storeSubPath } from "@/lib/pathResolver";
 import { persistFailedDispense } from "@/services/dispenseRecoveryService";
 import type { CreatePaymentInput, PaymentMethod as GatewayPaymentMethod, PaymentRecord, PaymentStatus as GatewayPaymentStatus } from "@/types/payments";
 import { encryptCard } from "@/utils/pagbankEncrypt";
+import { evaluateDynamicPrice, toPricingSnapshot } from "../../shared/utils/dynamicPricingEngine";
+import type { DynamicPricingResult, PricingSnapshot } from "../../shared/types/dynamicPricing";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -236,7 +239,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     return [{
       name: `${product.title} - ${selectedSize.label}`,
       quantity,
-      unitAmount: selectedSize.price,
+      unitAmount: resolvedUnitPrice,
     }];
   };
 
@@ -263,6 +266,92 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const selectedSize = useMemo(() => {
     return product?.sizes?.find((s) => s.key === selectedSizeKey);
   }, [product, selectedSizeKey]);
+
+  // ── Keg Level (para Barril Progressivo) ──────────────────────────────
+  const [kegLevelPercent, setKegLevelPercent] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (!isOpen || !selectedTapId) {
+      setKegLevelPercent(undefined);
+      return;
+    }
+
+    const franchiseId = getCurrentFranchiseId();
+    const storeId = getCurrentStoreId();
+    if (!franchiseId || !storeId) return;
+
+    let unsubKeg: (() => void) | null = null;
+
+    (async () => {
+      try {
+        const db = (await import('@/services/firebase')).getFirebaseDb();
+        const { doc, getDoc, onSnapshot } = await import('firebase/firestore');
+
+        // 1. Ler tap operacional → currentKegId (one-shot — tap raramente muda)
+        const tapDocPath = `${storeSubPath(franchiseId, storeId, 'taps')}/${selectedTapId}`;
+        const tapSnap = await getDoc(doc(db, tapDocPath));
+        if (!tapSnap.exists()) return;
+
+        const currentKegId = tapSnap.data()?.currentKegId;
+        if (!currentKegId) return;
+
+        // 2. Real-time listener no keg → recalcula nível quando remainingMl muda
+        const kegDocPath = `${storeSubPath(franchiseId, storeId, 'kegs')}/${currentKegId}`;
+        unsubKeg = onSnapshot(doc(db, kegDocPath), (kegSnap) => {
+          if (!kegSnap.exists()) return;
+          const kegData = kegSnap.data();
+          const volumeMl = kegData?.volumeMl ?? 0;
+          const remainingMl = kegData?.remainingMl ?? 0;
+
+          if (volumeMl > 0) {
+            // % consumido (0 = cheio, 100 = vazio)
+            const consumed = ((volumeMl - remainingMl) / volumeMl) * 100;
+            setKegLevelPercent(Math.max(0, Math.min(100, consumed)));
+          }
+        }, (err) => {
+          console.warn('[DrinkCheckout] Keg level listener error (non-critical):', err);
+        });
+      } catch (err) {
+        console.warn('[DrinkCheckout] Keg level lookup failed (non-critical):', err);
+      }
+    })();
+
+    return () => {
+      if (unsubKeg) unsubKeg();
+    };
+  }, [isOpen, selectedTapId]);
+
+  // ── Dynamic Pricing ─────────────────────────────────────────────────
+  // DP ativo se: config.enabled OU event mode com activateDynamicPricing
+  const dpConfig = storeSettings?.dynamicPricingConfig;
+  const eventDpOverride = storeSettings?.eventMode?.enabled && storeSettings?.eventMode?.activateDynamicPricing;
+  const isDpActive = !!(dpConfig?.rules?.length && (dpConfig.enabled || eventDpOverride));
+
+  const dynamicPriceResult = useMemo(() => {
+    if (!selectedSize || !isDpActive || !dpConfig) return null;
+    const basePricePerMl = selectedSize.price / selectedSize.ml;
+    // Quando DP ativado via event mode, tratar config como enabled
+    const effectiveConfig = dpConfig.enabled ? dpConfig : { ...dpConfig, enabled: true };
+    return evaluateDynamicPrice(basePricePerMl, effectiveConfig, {
+      timestamp: new Date(),
+      kegLevelPercent,
+    });
+  }, [selectedSize, isDpActive, dpConfig, kegLevelPercent]);
+
+  /** Preço unitário resolvido (com ou sem DP) */
+  const resolvedUnitPrice = useMemo(() => {
+    if (!selectedSize) return 0;
+    if (!dynamicPriceResult || dynamicPriceResult.deltaPercent === 0) return selectedSize.price;
+    return Number((dynamicPriceResult.effectivePricePerMl * selectedSize.ml).toFixed(
+      dpConfig?.roundingPrecision ?? 2
+    ));
+  }, [selectedSize, dynamicPriceResult, dpConfig?.roundingPrecision]);
+
+  /** Snapshot de pricing para auditoria no pedido */
+  const currentPricingSnapshot: PricingSnapshot | undefined = useMemo(() => {
+    if (!dynamicPriceResult || !selectedSize || dynamicPriceResult.deltaPercent === 0) return undefined;
+    return toPricingSnapshot(dynamicPriceResult, selectedSize.price, resolvedUnitPrice);
+  }, [dynamicPriceResult, selectedSize, resolvedUnitPrice]);
 
   const processingSteps = useMemo(() => {
     const order = ["awaiting_payment", "payment_approved", "recording_sale", "dispensing", "ready_pickup", "complete"] as const;
@@ -354,6 +443,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // Reset sale guard
       saleRecordedRef.current = false;
       recordedOrderRef.current = null;
+      // Reset dispense retry count para próximo cliente
+      dispenseRetryCountRef.current = 0;
+      orderNumberRef.current = '';
       // Reset verificação de idade
       setAgeVerified(false);
       // Cleanup: cancelar pagamentos pendentes
@@ -537,10 +629,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           .catch(e => console.warn('[DrinkMP] Falha ao atualizar status dispensed:', e));
         updateProcessingStage("ready_pickup");
 
-        const subtotal = selectedSize.price * quantity;
+        const subtotal = Math.round(resolvedUnitPrice * quantity * 100) / 100;
         const taxRate = (storeSettings?.taxPercentage || 0) / 100;
-        const taxAmount = subtotal * taxRate;
-        const totalAmount = subtotal + taxAmount;
+        const taxAmount = Math.round(subtotal * taxRate * 100) / 100;
+        const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
 
         onComplete({
           orderNumber: orderNumberRef.current,
@@ -549,7 +641,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             sizeKey: selectedSize.key,
             sizeLabel: selectedSize.label,
             mlPerUnit: selectedSize.ml,
-            price: selectedSize.price,
+            price: resolvedUnitPrice,
             quantity,
             totalAmount,
           },
@@ -578,10 +670,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const finishPaymentFlow = async (orderNumber: string) => {
     if (!product || !selectedSize) return;
 
-    const subtotal = selectedSize.price * quantity;
+    const subtotal = Math.round(resolvedUnitPrice * quantity * 100) / 100;
     const taxRate = (storeSettings?.taxPercentage || 0) / 100;
-    const taxAmount = subtotal * taxRate;
-    const totalAmount = subtotal + taxAmount;
+    const taxAmount = Math.round(subtotal * taxRate * 100) / 100;
+    const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
 
     try {
       // STEP 2: Gravar venda no sistema (skip if already recorded for this order)
@@ -593,10 +685,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         const drinkCartItem: CartItem = {
           product,
           quantity,
-          unitPrice: selectedSize.price,
+          unitPrice: resolvedUnitPrice,
           sizeKey: selectedSize.key,
           sizeLabel: selectedSize.label,
           mlPerUnit: selectedSize.ml,
+          ...(currentPricingSnapshot ? { pricingSnapshot: currentPricingSnapshot } : {}),
         };
 
         await salesService.recordSaleAndUpdateStock(
@@ -679,7 +772,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             sizeKey: selectedSize.key,
             sizeLabel: selectedSize.label,
             mlPerUnit: selectedSize.ml,
-            price: selectedSize.price,
+            price: resolvedUnitPrice,
             quantity,
             totalAmount,
           },
@@ -882,6 +975,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           }
 
           if (payment.status === 'paid') {
+            // Guard contra duplicação (idêntico ao MP)
+            if (saleRecordedRef.current) {
+              console.log('[DrinkPagBank] Já processado, ignorando duplicação');
+              return;
+            }
+            saleRecordedRef.current = true;
+
             // KIO-03: Block delivery if cancel was requested before payment arrived
             if ((payment as any).cancelRequested) {
               console.warn('[DrinkPagBank] Payment arrived after cancel_requested — blocking delivery. Needs refund.');
@@ -996,10 +1096,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
 
       const newOrderNumber = await salesService.generateOrderNumber();
-      const subtotal = selectedSize.price * quantity;
+      const subtotal = Math.round(resolvedUnitPrice * quantity * 100) / 100;
       const taxRate = (storeSettings?.taxPercentage || 0) / 100;
-      const taxAmount = subtotal * taxRate;
-      const totalAmount = subtotal + taxAmount;
+      const taxAmount = Math.round(subtotal * taxRate * 100) / 100;
+      const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
 
       // STEP 1: Processar pagamento
       if (isPagBank) {
@@ -1014,10 +1114,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
           const mpItems = [{
             title: `${product.title} - ${selectedSize.label}`,
-            unit_price: selectedSize.price.toFixed(2),
+            unit_price: resolvedUnitPrice.toFixed(2),
             quantity: quantity,
             unit_measure: 'unit',
-            total_amount: (selectedSize.price * quantity).toFixed(2),
+            total_amount: (resolvedUnitPrice * quantity).toFixed(2),
           }];
 
           const externalRef = `KIOSK-${newOrderNumber}-${Date.now()}`;
@@ -1073,10 +1173,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
           const mpItems = [{
             title: `${product.title} - ${selectedSize.label}`,
-            unit_price: selectedSize.price.toFixed(2),
+            unit_price: resolvedUnitPrice.toFixed(2),
             quantity: quantity,
             unit_measure: 'unit',
-            total_amount: (selectedSize.price * quantity).toFixed(2),
+            total_amount: (resolvedUnitPrice * quantity).toFixed(2),
           }];
 
           const externalRef = `KIOSK-${newOrderNumber}-${Date.now()}`;
@@ -1154,7 +1254,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   // Calcular total para exibição
   const calculateTotal = () => {
     if (!selectedSize) return 0;
-    const subtotal = selectedSize.price * quantity;
+    const subtotal = resolvedUnitPrice * quantity;
     const tax = subtotal * (storeSettings?.taxPercentage || 0) / 100;
     return subtotal + tax;
   };
@@ -1339,10 +1439,23 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 <Card className="bg-green-50 border-green-200 p-4">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-700">{t('checkout.subtotal')}:</span>
-                    <span className="text-2xl font-bold text-green-600">
-                      {currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {currentPricingSnapshot && (
+                        <span className="text-sm line-through text-gray-400">
+                          {currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}
+                        </span>
+                      )}
+                      <span className="text-2xl font-bold text-green-600">
+                        {currentCurrency.symbol}{(resolvedUnitPrice * quantity).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
+                  {currentPricingSnapshot && (
+                    <div className="flex items-center gap-1.5 mt-2 text-sm text-green-700">
+                      <TrendingDown className="h-4 w-4" />
+                      <span>{currentPricingSnapshot.reason} ({currentPricingSnapshot.deltaPercent}%)</span>
+                    </div>
+                  )}
                 </Card>
               )}
 
@@ -1381,11 +1494,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                   <Separator />
                   <div className="flex justify-between text-gray-600">
                     <span>{t('checkout.subtotal')}:</span>
-                    <span>{currentCurrency.symbol}{(selectedSize.price * quantity).toFixed(2)}</span>
+                    <span>{currentCurrency.symbol}{(resolvedUnitPrice * quantity).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-gray-600">
                     <span>{t('checkout.taxAmount')} ({storeSettings?.taxPercentage || 0}%):</span>
-                    <span>{currentCurrency.symbol}{((selectedSize.price * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}</span>
+                    <span>{currentCurrency.symbol}{((resolvedUnitPrice * quantity * (storeSettings?.taxPercentage || 0)) / 100).toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between font-bold text-lg pt-1">
                     <span>{t('checkout.totalAmount')}:</span>

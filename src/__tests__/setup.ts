@@ -226,6 +226,7 @@ vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isPluginAvailable: vi.fn().mockReturnValue(true),
     getPlatform: vi.fn().mockReturnValue('web'),
+    isNativePlatform: vi.fn().mockReturnValue(false),
   },
   registerPlugin: vi.fn(),
 }));

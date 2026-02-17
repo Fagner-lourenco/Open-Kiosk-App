@@ -121,10 +121,11 @@ export function OrderFilters({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Todos</SelectItem>
-          <SelectItem value="pending">Pendentes</SelectItem>
-          <SelectItem value="processing">Processando</SelectItem>
+          <SelectItem value="paid_pending_dispense">Aguardando Dispensa</SelectItem>
+          <SelectItem value="dispensing">Dispensando</SelectItem>
           <SelectItem value="completed">Concluídos</SelectItem>
           <SelectItem value="cancelled">Cancelados</SelectItem>
+          <SelectItem value="failed_dispense">Falha na Dispensa</SelectItem>
         </SelectContent>
       </Select>
 

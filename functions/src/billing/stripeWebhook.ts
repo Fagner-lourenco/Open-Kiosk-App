@@ -8,12 +8,13 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { onRequest } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import Stripe from 'stripe';
 import { db, admin, serverTimestamp } from '../lib';
 import { verifyWebhookSignature, getPlanFromPriceId } from '../lib/stripe';
 
-export const stripeWebhook = functions.https.onRequest(async (req, res) => {
+export const stripeWebhook = onRequest(async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Método não permitido');
     return;
@@ -32,12 +33,12 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
     // 🔧 v4.0.7: Usando helper centralizado
     event = verifyWebhookSignature(req.rawBody, sig as string);
   } catch (err) {
-    functions.logger.error('Webhook signature verification failed:', err);
+    logger.error('Webhook signature verification failed:', err);
     res.status(400).send(`Webhook Error: ${err instanceof Error ? err.message : 'Unknown error'}`);
     return;
   }
   
-  functions.logger.info(`Stripe webhook received: ${event.type}`);
+  logger.info(`Stripe webhook received: ${event.type}`);
   
   try {
     switch (event.type) {
@@ -63,13 +64,13 @@ export const stripeWebhook = functions.https.onRequest(async (req, res) => {
         break;
         
       default:
-        functions.logger.info(`Evento não tratado: ${event.type}`);
+        logger.info(`Evento não tratado: ${event.type}`);
     }
     
     res.json({ received: true });
     
   } catch (error) {
-    functions.logger.error('Erro ao processar webhook:', error);
+    logger.error('Erro ao processar webhook:', error);
     res.status(500).send('Erro interno');
   }
 });
@@ -79,7 +80,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const plan = session.metadata?.plan;
   
   if (!franchiseId || !plan) {
-    functions.logger.warn('Checkout sem metadata válida');
+    logger.warn('Checkout sem metadata válida');
     return;
   }
   
@@ -102,7 +103,7 @@ const now = serverTimestamp();
     timestamp: now,
   });
   
-  functions.logger.info(`Checkout completado para franquia ${franchiseId}, plano: ${plan}`);
+  logger.info(`Checkout completado para franquia ${franchiseId}, plano: ${plan}`);
 }
 
 async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
@@ -114,7 +115,7 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
     .get();
   
   if (franchiseQuery.empty) {
-    functions.logger.warn(`Franquia não encontrada para customer ${subscription.customer}`);
+    logger.warn(`Franquia não encontrada para customer ${subscription.customer}`);
     return;
   }
   
@@ -145,13 +146,13 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
     planExpiresAt: subscription.current_period_end 
       ? admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000)
       : null,
-    trialEndsAt: subscription.current_period_end 
-      ? admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000)
+    trialEndsAt: subscription.trial_end 
+      ? admin.firestore.Timestamp.fromMillis(subscription.trial_end * 1000)
       : null,
     updatedAt: now,
   });
   
-  functions.logger.info(`Subscription atualizada para franquia ${franchiseDoc.id}`);
+  logger.info(`Subscription atualizada para franquia ${franchiseDoc.id}`);
 }
 
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
@@ -183,7 +184,7 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     timestamp: now,
   });
   
-  functions.logger.info(`Subscription cancelada para franquia ${franchiseDoc.id}`);
+  logger.info(`Subscription cancelada para franquia ${franchiseDoc.id}`);
 }
 
 async function handleInvoicePaid(invoice: Stripe.Invoice) {
@@ -248,5 +249,5 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
     updatedAt: now,
   });
   
-  functions.logger.warn(`Pagamento falhou para franquia ${franchiseDoc.id}`);
+  logger.warn(`Pagamento falhou para franquia ${franchiseDoc.id}`);
 }

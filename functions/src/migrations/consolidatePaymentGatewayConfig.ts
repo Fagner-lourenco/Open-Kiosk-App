@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db, admin, requireAuth } from '../lib';
 import { normalizePaymentGatewayConfig } from '../payments/storeConfig';
 
@@ -33,17 +33,18 @@ const stripUndefined = (value: any): any => {
   return value;
 };
 
-export const consolidatePaymentGatewayConfig = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: ConsolidatePaymentGatewayConfigInput, context) => {
-    requireAuth(context);
+export const consolidatePaymentGatewayConfig = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as ConsolidatePaymentGatewayConfigInput;
+    requireAuth(request);
 
-    const role = context.auth?.token?.role as string | undefined;
+    const role = request.auth?.token?.role as string | undefined;
     const isSuperAdmin = role === 'superadmin';
     const isOwnerAdmin = role === 'owner' || role === 'admin';
 
     if (!isSuperAdmin && !isOwnerAdmin) {
-      throw new functions.https.HttpsError('permission-denied', 'Sem permissao para executar migracao.');
+      throw new HttpsError('permission-denied', 'Sem permissao para executar migracao.');
     }
 
     const dryRun = data.dryRun ?? !data.commit;
@@ -57,7 +58,7 @@ export const consolidatePaymentGatewayConfig = functions
       removeLegacy,
       franchiseId: data.franchiseId || null,
       storeId: data.storeId || null,
-      executedBy: context.auth?.uid || null,
+      executedBy: request.auth?.uid || null,
     };
 
     const targets: Array<{ franchiseId: string; storeId: string }> = [];
@@ -69,7 +70,7 @@ export const consolidatePaymentGatewayConfig = functions
       storesSnap.forEach((doc) => targets.push({ franchiseId: data.franchiseId!, storeId: doc.id }));
     } else {
       if (!isSuperAdmin) {
-        throw new functions.https.HttpsError('permission-denied', 'Somente superadmin pode migrar todas as franquias.');
+        throw new HttpsError('permission-denied', 'Somente superadmin pode migrar todas as franquias.');
       }
       const franchisesSnap = await db.collection('franchises').get();
       for (const franchise of franchisesSnap.docs) {
@@ -156,24 +157,25 @@ export const consolidatePaymentGatewayConfig = functions
     };
   });
 
-export const rollbackPaymentGatewayConfig = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: RollbackPaymentGatewayConfigInput, context) => {
-    requireAuth(context);
+export const rollbackPaymentGatewayConfig = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as RollbackPaymentGatewayConfigInput;
+    requireAuth(request);
 
-    const role = context.auth?.token?.role as string | undefined;
+    const role = request.auth?.token?.role as string | undefined;
     if (role !== 'superadmin') {
-      throw new functions.https.HttpsError('permission-denied', 'Somente superadmin pode fazer rollback.');
+      throw new HttpsError('permission-denied', 'Somente superadmin pode fazer rollback.');
     }
 
     if (!data.runId) {
-      throw new functions.https.HttpsError('invalid-argument', 'runId obrigatorio.');
+      throw new HttpsError('invalid-argument', 'runId obrigatorio.');
     }
 
     const runRef = db.doc(`migrations/paymentGatewayConfig/${data.runId}`);
     const storesSnap = await runRef.collection('stores').get();
     if (storesSnap.empty) {
-      throw new functions.https.HttpsError('not-found', 'Nenhum registro de migracao encontrado.');
+      throw new HttpsError('not-found', 'Nenhum registro de migracao encontrado.');
     }
 
     let rolledBack = 0;

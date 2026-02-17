@@ -137,6 +137,14 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
       if (!member) throw new Error('Membro não encontrado');
 
       const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
+
+      // Read current operators to prevent duplicates (arrayUnion with Date would allow dupes)
+      const storeSnap = await getDoc(storeRef);
+      const currentOperators: Array<{ id: string }> = storeSnap.data()?.operators || [];
+      if (currentOperators.some(op => op.id === userId)) {
+        throw new Error('Membro já adicionado a esta loja');
+      }
+
       await updateDoc(storeRef, {
         operators: arrayUnion({
           id: userId,
@@ -167,9 +175,10 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
     mutationFn: async (member: StoreMember) => {
       const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
       
-      // Need to find and remove the exact operator object
-      const operators = storeData?.operators || [];
-      const updatedOperators = operators.filter((op: { id: string }) => op.id !== member.id);
+      // Read fresh data to avoid race conditions with stale cache
+      const storeSnap = await getDoc(storeRef);
+      const currentOperators: Array<{ id: string }> = storeSnap.data()?.operators || [];
+      const updatedOperators = currentOperators.filter(op => op.id !== member.id);
       
       await updateDoc(storeRef, {
         operators: updatedOperators,

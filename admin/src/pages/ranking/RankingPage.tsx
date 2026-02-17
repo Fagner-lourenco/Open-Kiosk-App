@@ -48,6 +48,7 @@ import { RANKING_METRICS } from '@/types/ranking';
 import { formatVolume } from '@/utils/formatVolume';
 
 import { TvConfigTab, ChallengesTab, PrizesTab } from '@/pages/ranking/EventConfigPage';
+import { DynamicPricingTab } from '@/pages/ranking/DynamicPricingTab';
 
 // ============================================================================
 // CONSTANTES
@@ -210,6 +211,10 @@ export function RankingPage() {
           <TabsTrigger value="prizes" className="gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
             <Gift className="h-4 w-4" />
             Prêmios
+          </TabsTrigger>
+          <TabsTrigger value="dynamic-pricing" className="gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+            <TrendingUp className="h-4 w-4" />
+            Preço Dinâmico
           </TabsTrigger>
         </TabsList>
 
@@ -425,6 +430,20 @@ export function RankingPage() {
               <CardContent className="py-16 text-center text-muted-foreground">
                 <Gift className="h-10 w-10 mx-auto mb-3 opacity-40" />
                 <p>Selecione uma loja para gerenciar prêmios.</p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ─── Tab: Preço Dinâmico ─── */}
+        <TabsContent value="dynamic-pricing">
+          {storeId && currentFranchise ? (
+            <DynamicPricingTab franchiseId={currentFranchise.id} storeId={storeId} />
+          ) : (
+            <Card className="border-dashed">
+              <CardContent className="py-16 text-center text-muted-foreground">
+                <TrendingUp className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                <p>Selecione uma loja para configurar preço dinâmico.</p>
               </CardContent>
             </Card>
           )}

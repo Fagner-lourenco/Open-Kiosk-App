@@ -306,6 +306,13 @@ export interface Store {
   paymentGatewayConfig?: PaymentGatewayConfig;
 
   // =========================================
+  // Preço Dinâmico
+  // =========================================
+
+  /** Configuração de preço dinâmico (feature flag + regras) */
+  dynamicPricingConfig?: import('./dynamicPricing').DynamicPricingConfig;
+
+  // =========================================
   // Metadados
   // =========================================
 
@@ -399,6 +406,7 @@ export interface UpdateStoreData extends Partial<CreateStoreData> {
   attractVideoConfig?: Partial<AttractVideoConfig>;
   esp32Config?: Partial<ESP32Config>;
   paymentGatewayConfig?: Partial<PaymentGatewayConfig>;
+  dynamicPricingConfig?: Partial<import('./dynamicPricing').DynamicPricingConfig>;
 }
 
 /**

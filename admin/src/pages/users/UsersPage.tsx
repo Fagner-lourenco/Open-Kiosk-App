@@ -7,8 +7,9 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { collection, doc, updateDoc, deleteDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, doc, updateDoc, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { removeMember as removeMemberService } from '@/services/userService';
 import { useFranchise } from '@/context/FranchiseContext';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -131,7 +132,7 @@ export function UsersPage() {
   const removeMemberMutation = useMutation({
     mutationFn: async (memberId: string) => {
       if (!currentFranchise) throw new Error('No franchise selected');
-      await deleteDoc(doc(db, 'franchises', currentFranchise.id, 'members', memberId));
+      await removeMemberService(currentFranchise.id, memberId);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['franchise-members', currentFranchise?.id] });

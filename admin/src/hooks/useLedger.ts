@@ -90,20 +90,29 @@ function ledgerDocRef(franchiseId: string, storeId: string, entryId: string) {
   return doc(db, financeDocPath(franchiseId, storeId, 'ledger', entryId));
 }
 
+const VALID_DIRECTIONS: LedgerDirection[] = ['in', 'out'];
+const VALID_STATUSES: LedgerStatus[] = ['pending', 'paid', 'reconciled', 'canceled'];
+const VALID_METHODS: PaymentMethod[] = ['pix', 'card', 'cash', 'transfer'];
+const VALID_SOURCE_TYPES: LedgerSourceType[] = ['kiosk_order', 'commercial_event', 'invoice', 'bill', 'manual'];
+
 function normalizeEntry(id: string, data: Record<string, unknown>): LedgerEntry {
+  const dir = data.direction as string;
+  const st = data.status as string;
+  const mth = data.method as string;
+  const src = data.sourceType as string;
   return {
     id,
-    direction: (data.direction as LedgerDirection) || 'out',
-    status: (data.status as LedgerStatus) || 'pending',
+    direction: VALID_DIRECTIONS.includes(dir as LedgerDirection) ? (dir as LedgerDirection) : 'out',
+    status: VALID_STATUSES.includes(st as LedgerStatus) ? (st as LedgerStatus) : 'pending',
     competenceDate: data.competenceDate as Timestamp,
     cashDate: data.cashDate as Timestamp | undefined,
-    amount: (data.amount as number) || 0,
+    amount: Number(data.amount) || 0,
     accountId: (data.accountId as string) || '',
     categoryId: (data.categoryId as string) || '',
     costCenterId: data.costCenterId as string | undefined,
     partyId: data.partyId as string | undefined,
-    method: (data.method as PaymentMethod) || 'pix',
-    sourceType: (data.sourceType as LedgerSourceType) || 'manual',
+    method: VALID_METHODS.includes(mth as PaymentMethod) ? (mth as PaymentMethod) : 'pix',
+    sourceType: VALID_SOURCE_TYPES.includes(src as LedgerSourceType) ? (src as LedgerSourceType) : 'manual',
     sourceId: (data.sourceId as string) || '',
     description: (data.description as string) || '',
     attachments: (data.attachments as string[]) || [],

@@ -86,7 +86,7 @@ export function FranchiseOverview({ compact = false }: FranchiseOverviewProps) {
       const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
       const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+      const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
       
       // Busca lojas
       const storesSnapshot = await getDocs(
@@ -145,10 +145,13 @@ export function FranchiseOverview({ compact = false }: FranchiseOverviewProps) {
           
           todayOrdersQuery.docs.forEach(doc => {
             const order = doc.data();
-            todayOrders++;
-            todayRevenue += order.total || 0;
+            // Apenas pedidos pagos contam como receita
+            if (order.paymentStatus === 'paid') {
+              todayOrders++;
+              todayRevenue += order.total || 0;
+            }
             
-            // Adiciona às atividades recentes
+            // Adiciona às atividades recentes (todos os pedidos)
             if (recentActivity.length < 10) {
               recentActivity.push({
                 id: doc.id,
@@ -174,8 +177,10 @@ export function FranchiseOverview({ compact = false }: FranchiseOverviewProps) {
           
           monthOrdersQuery.docs.forEach(doc => {
             const order = doc.data();
-            monthOrders++;
-            monthRevenue += order.total || 0;
+            if (order.paymentStatus === 'paid') {
+              monthOrders++;
+              monthRevenue += order.total || 0;
+            }
           });
         } catch {
           // Ignora
@@ -193,7 +198,9 @@ export function FranchiseOverview({ compact = false }: FranchiseOverviewProps) {
           
           lastMonthQuery.docs.forEach(doc => {
             const order = doc.data();
-            lastMonthRevenue += order.total || 0;
+            if (order.paymentStatus === 'paid') {
+              lastMonthRevenue += order.total || 0;
+            }
           });
         } catch {
           // Ignora

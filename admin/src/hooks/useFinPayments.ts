@@ -66,14 +66,18 @@ function paymentDocRef(franchiseId: string, storeId: string, paymentId: string) 
 }
 
 function normalizePayment(id: string, data: Record<string, unknown>): FinPayment {
+  const VALID_DIRECTIONS: FinPaymentDirection[] = ['in', 'out'];
+  const VALID_METHODS: PaymentMethod[] = ['pix', 'card', 'cash', 'transfer'];
+  const VALID_TARGET_TYPES: FinPaymentTargetType[] = ['invoice', 'bill', 'ledger'];
+
   return {
     id,
-    direction: (data.direction as FinPaymentDirection) || 'out',
+    direction: VALID_DIRECTIONS.includes(data.direction as FinPaymentDirection) ? (data.direction as FinPaymentDirection) : 'out',
     date: data.date as Timestamp,
-    amount: (data.amount as number) || 0,
-    method: (data.method as PaymentMethod) || 'pix',
+    amount: Number(data.amount) || 0,
+    method: VALID_METHODS.includes(data.method as PaymentMethod) ? (data.method as PaymentMethod) : 'pix',
     accountId: (data.accountId as string) || '',
-    targetType: (data.targetType as FinPaymentTargetType) || 'ledger',
+    targetType: VALID_TARGET_TYPES.includes(data.targetType as FinPaymentTargetType) ? (data.targetType as FinPaymentTargetType) : 'ledger',
     targetId: (data.targetId as string) || '',
     notes: data.notes as string | undefined,
     createdBy: (data.createdBy as string) || '',
@@ -106,6 +110,7 @@ export function useFinPayments(franchiseId: string, storeId: string) {
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateFinPaymentInput) => {
+      if (!input.amount || input.amount <= 0) throw new Error('amount deve ser maior que zero');
       const ref = doc(paymentsRef(franchiseId, storeId));
       await setDoc(ref, {
         direction: input.direction,

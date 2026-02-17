@@ -6,7 +6,8 @@
  * Agrega metricas diarias de vendas por loja.
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db, admin } from '../lib';
 
 interface DailyStats {
@@ -40,12 +41,9 @@ function isPaid(status: string, paymentStatus: string): boolean {
   );
 }
 
-export const aggregateDailySales = functions
-  .region('southamerica-east1')
-  .pubsub
-  .schedule('0 2 * * *')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => {
+export const aggregateDailySales = onSchedule(
+  { schedule: '0 2 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  async () => {
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const dateStr = yesterday.toISOString().split('T')[0];
@@ -53,22 +51,22 @@ export const aggregateDailySales = functions
     console.log(`[AggregateDailySales] Processing ${dateStr}`);
     await processAllStores(dateStr);
     console.log('[AggregateDailySales] Completed');
+  }
+);
 
-    return null;
-  });
-
-export const aggregateDailySalesHTTP = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
+export const aggregateDailySalesHTTP = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data;
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'User must be authenticated');
     }
 
     const isSuperAdmin =
-      context.auth.token?.role === 'superadmin' ||
-      (await db.collection('superadmins').doc(context.auth.uid).get()).exists;
+      request.auth.token?.role === 'superadmin' ||
+      (await db.collection('superadmins').doc(request.auth.uid).get()).exists;
     if (!isSuperAdmin) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Only superAdmins can trigger manual aggregation'
       );
@@ -76,7 +74,7 @@ export const aggregateDailySalesHTTP = functions
 
     const { date, franchiseId, storeId } = data;
     if (!date) {
-      throw new functions.https.HttpsError('invalid-argument', 'Date is required (YYYY-MM-DD)');
+      throw new HttpsError('invalid-argument', 'Date is required (YYYY-MM-DD)');
     }
 
     console.log(`[AggregateDailySalesHTTP] Manual trigger for ${date}`);
@@ -90,7 +88,8 @@ export const aggregateDailySalesHTTP = functions
     }
 
     return { success: true, date };
-  });
+  }
+);
 
 async function processAllStores(date: string): Promise<void> {
   const franchises = await db.collection('franchises').get();

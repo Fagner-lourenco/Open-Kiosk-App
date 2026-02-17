@@ -13,7 +13,8 @@
  * @author Open Kiosk Project
  */
 
-import * as functions from 'firebase-functions';
+import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db, admin, increment, serverTimestamp } from '../lib';
 import {
   maskName,
@@ -35,11 +36,12 @@ const REGION = 'southamerica-east1';
  * Quando um order é atualizado com customerName (via enrichOrderWithCustomerData),
  * incrementa os docs de ranking agregado e eventStats.
  */
-export const onOrderUpdatedRanking = functions
-  .region(REGION)
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/orders/{orderId}')
-  .onUpdate(async (change, context) => {
+export const onOrderUpdatedRanking = onDocumentUpdated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/orders/{orderId}', region: REGION },
+  async (event) => {
+    if (!event.data) return;
+    const change = { before: event.data.before, after: event.data.after };
+    const context = { params: event.params };
     const before = change.before.data() as OrderData;
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId } = context.params;
@@ -56,6 +58,16 @@ export const onOrderUpdatedRanking = functions
     // Evitar dupla contagem: só processa se nameAppeared OU se foi apenas mudança de status
     if (!nameAppeared && statusChanged && before.customerName) {
       // Status changed mas nome já existia — não recontar
+      return;
+    }
+
+    // Guard: só agrega pedidos em status elegível
+    if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(after.status)) return;
+
+    // P1-24: Rejeitar pedidos com paymentStatus fora do esperado
+    const invalidPaymentStatuses = ['failed', 'canceled', 'cancelled', 'refunded', 'expired'];
+    if (after.paymentStatus && invalidPaymentStatuses.includes(after.paymentStatus)) {
+      console.log(`[ranking] Skipping order with invalid paymentStatus: ${after.paymentStatus}`);
       return;
     }
 
@@ -164,11 +176,9 @@ export const onOrderUpdatedRanking = functions
  * A cada 3 minutos, recalcula totalMl30min para todos os clientes.
  * Query: orders dos últimos 30 min com customerName.
  */
-export const recalculateRanking30min = functions
-  .region(REGION)
-  .pubsub
-  .schedule('every 3 minutes')
-  .onRun(async () => {
+export const recalculateRanking30min = onSchedule(
+  { schedule: 'every 3 minutes', region: REGION },
+  async () => {
     const now = new Date();
     const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
     const thirtyMinTimestamp = admin.firestore.Timestamp.fromDate(thirtyMinAgo);
@@ -221,9 +231,13 @@ async function recalculate30minForStore(
 
   // Agrupar por cliente
   const ml30m = new Map<string, number>();
+  const invalidPaymentStatuses = ['failed', 'canceled', 'cancelled', 'refunded', 'expired'];
   for (const doc of ordersSnap.docs) {
     const order = doc.data() as OrderData;
     if (!order.customerName) continue;
+    // Filtrar por status válido (mesma lógica de onOrderUpdatedRanking)
+    if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(order.status)) continue;
+    if (order.paymentStatus && invalidPaymentStatuses.includes(order.paymentStatus)) continue;
     const id = getCustomerId(order);
     const ml = calcTotalMl(order.items);
     ml30m.set(id, (ml30m.get(id) || 0) + ml);
@@ -263,11 +277,12 @@ async function recalculate30minForStore(
  * Verifica se o pedido do cliente completa algum desafio ativo.
  * Chamado internamente após ranking update.
  */
-export const onOrderUpdatedChallenge = functions
-  .region(REGION)
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/orders/{orderId}')
-  .onUpdate(async (change, context) => {
+export const onOrderUpdatedChallenge = onDocumentUpdated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/orders/{orderId}', region: REGION },
+  async (event) => {
+    if (!event.data) return;
+    const change = { before: event.data.before, after: event.data.after };
+    const context = { params: event.params };
     const before = change.before.data() as OrderData;
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId } = context.params;
@@ -388,11 +403,12 @@ export const onOrderUpdatedChallenge = functions
  * Verifica se o serve é um "serve dourado" (1 em N determinístico).
  * Usa hash do orderId para determinismo e auditabilidade.
  */
-export const onOrderUpdatedGoldenServe = functions
-  .region(REGION)
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/orders/{orderId}')
-  .onUpdate(async (change, context) => {
+export const onOrderUpdatedGoldenServe = onDocumentUpdated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/orders/{orderId}', region: REGION },
+  async (event) => {
+    if (!event.data) return;
+    const change = { before: event.data.before, after: event.data.after };
+    const context = { params: event.params };
     const before = change.before.data() as OrderData;
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
@@ -516,11 +532,9 @@ async function generatePrize(
  * A cada 5 minutos, expira prêmios não resgatados (30 min após wonAt).
  * Usa collectionGroup para evitar N+1 queries (franchise → store iteration).
  */
-export const expirePrizes = functions
-  .region(REGION)
-  .pubsub
-  .schedule('every 5 minutes')
-  .onRun(async () => {
+export const expirePrizes = onSchedule(
+  { schedule: 'every 5 minutes', region: REGION },
+  async () => {
     const now = admin.firestore.Timestamp.now();
     console.log('[prizes] Checking for expired prizes...');
 
@@ -562,11 +576,9 @@ export const expirePrizes = functions
  * A cada 1 minuto, desativa Modo Evento se expirado.
  * Usa collectionGroup para evitar N+1 queries.
  */
-export const expireEventMode = functions
-  .region(REGION)
-  .pubsub
-  .schedule('every 1 minutes')
-  .onRun(async () => {
+export const expireEventMode = onSchedule(
+  { schedule: 'every 1 minutes', region: REGION },
+  async () => {
     const now = admin.firestore.Timestamp.now();
 
     try {
@@ -586,6 +598,7 @@ export const expireEventMode = functions
             'eventMode.enabled': false,
             'eventMode.label': '',
             'eventMode.endsAt': null,
+            'eventMode.activateDynamicPricing': false,
             updatedAt: serverTimestamp(),
           });
           expired++;
@@ -662,6 +675,7 @@ async function checkMilestones(
       updatePayload['eventMode.enabled'] = true;
       updatePayload['eventMode.label'] = eventLabel;
       updatePayload['eventMode.endsAt'] = endsAt;
+      updatePayload['eventMode.activateDynamicPricing'] = false;
       console.log(`[milestone] 🔥 Event mode activated: ${eventLabel}`);
     }
 

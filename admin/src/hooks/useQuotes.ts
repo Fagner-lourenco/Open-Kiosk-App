@@ -90,18 +90,21 @@ function quoteLineDocRef(
   );
 }
 
+const VALID_QUOTE_STATUSES: QuoteStatus[] = ['draft', 'sent', 'accepted', 'rejected', 'expired'];
+
 function normalizeQuote(id: string, data: Record<string, unknown>): Quote {
+  const st = data.status as string;
   return {
     id,
     customerId: (data.customerId as string) || '',
     dealId: data.dealId as string | undefined,
     eventId: data.eventId as string | undefined,
-    status: (data.status as QuoteStatus) || 'draft',
+    status: VALID_QUOTE_STATUSES.includes(st as QuoteStatus) ? (st as QuoteStatus) : 'draft',
     validUntil: data.validUntil as Timestamp | undefined,
-    subtotal: (data.subtotal as number) || 0,
-    discounts: (data.discounts as number) || 0,
-    fees: (data.fees as number) || 0,
-    total: (data.total as number) || 0,
+    subtotal: Number(data.subtotal) || 0,
+    discounts: Number(data.discounts) || 0,
+    fees: Number(data.fees) || 0,
+    total: Number(data.total) || 0,
     paymentTerms: data.paymentTerms as string | undefined,
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
@@ -260,6 +263,11 @@ export function useQuotes(franchiseId: string, storeId: string) {
   // ── Delete quote ────────────────────────────────────────────────────────
   const deleteMutation = useMutation({
     mutationFn: async (quoteId: string) => {
+      // Cascade: delete lines subcollection first
+      const linesSnap = await getDocs(quoteLinesRef(franchiseId, storeId, quoteId));
+      for (const lineDoc of linesSnap.docs) {
+        await deleteDoc(lineDoc.ref);
+      }
       const ref = quoteDocRef(franchiseId, storeId, quoteId);
       await deleteDoc(ref);
     },

@@ -24,7 +24,7 @@ class SalesService {
 
     return {
       timestamp: now,
-      date: now.toISOString().split('T')[0],
+      date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
       hourOfDay: hour,
       dayOfWeek,
       timeSlot,
@@ -220,7 +220,10 @@ class SalesService {
 
     console.log('[SalesService] Recording sale for store:', effectiveStoreId);
 
-    return await runTransaction(db, async (transaction) => {
+    // Obter deviceId ANTES da transação para evitar side-effects em caso de retry
+    const cachedDeviceId = await deviceHeartbeatService.getDeviceId();
+
+    const result = await runTransaction(db, async (transaction) => {
       // 1. Calcular requisitos por produto
       const requiredByProductId: Record<string, { ml: number; qty: number }> = {};
 
@@ -304,8 +307,8 @@ class SalesService {
       const now = new Date();
       const timingData = this.calculateSaleTimingData(now);
 
-      // Obter deviceId para rastreabilidade
-      const deviceId = await deviceHeartbeatService.getDeviceId();
+      // deviceId obtido fora da transação para evitar side-effects em retries
+      const deviceId = cachedDeviceId;
 
       // Obter franchiseId para agregação multi-tenant
       const franchiseId = getCurrentFranchiseId();
@@ -333,13 +336,19 @@ class SalesService {
         // ==============================================================
 
         items: cartItems.map((item) => {
-          const baseItem = {
+          const baseItem: Record<string, any> = {
             productId: item.product.id,
             title: item.product.title,
             price: item.unitPrice,
             quantity: item.quantity,
             total: item.unitPrice * item.quantity,
           };
+
+          // Dynamic pricing audit trail
+          if (item.pricingSnapshot) {
+            baseItem.originalPrice = item.pricingSnapshot.basePrice;
+            baseItem.pricingSnapshot = item.pricingSnapshot;
+          }
 
           // Only include drink-specific fields if product is a drink
           if (item.product.isDrink && item.sizeKey) {
@@ -356,6 +365,7 @@ class SalesService {
 
           return baseItem;
         }),
+        hasDynamicPricing: cartItems.some(item => !!item.pricingSnapshot),
         subtotal: cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
         tax: totalAmount - cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0),
         total: totalAmount,
@@ -370,11 +380,13 @@ class SalesService {
 
       console.log('[SalesService] Sale recorded:', newDocRef.id);
 
-      // Enviar heartbeat após venda bem sucedida
-      deviceHeartbeatService.sendHeartbeat();
-
       return newDocRef.id;
     });
+
+    // Enviar heartbeat APÓS a transação (fire-and-forget, fora do retry scope)
+    deviceHeartbeatService.sendHeartbeat();
+
+    return result;
   }
 
   /**
@@ -414,6 +426,8 @@ class SalesService {
     const VALID_TRANSITIONS: Record<string, string[]> = {
       pending: ['dispensing'],
       dispensing: ['dispensed', 'failed_dispense'],
+      dispensed: [],         // terminal — nenhuma transição permitida
+      failed_dispense: [],   // terminal — nenhuma transição permitida
     };
 
     try {

@@ -135,6 +135,7 @@ export function TvConfigTab({
   // Event mode
   const [eventModeLabel, setEventModeLabel] = useState('');
   const [eventModeDuration, setEventModeDuration] = useState(10);
+  const [eventActivateDP, setEventActivateDP] = useState(false);
 
   // Dirty state detection
   const isConfigDirty = useMemo(() => {
@@ -235,8 +236,8 @@ export function TvConfigTab({
 
   const handleToggleEventMode = async (enabled: boolean) => {
     try {
-      await toggleEventMode(franchiseId, storeId, enabled, eventModeLabel, eventModeDuration);
-      audit(AuditActions.EVENT_MODE_TOGGLE, { type: 'store', id: storeId, name: storeId }, { enabled, label: eventModeLabel, durationMinutes: eventModeDuration });
+      await toggleEventMode(franchiseId, storeId, enabled, eventModeLabel, eventModeDuration, eventActivateDP);
+      audit(AuditActions.EVENT_MODE_TOGGLE, { type: 'store', id: storeId, name: storeId }, { enabled, label: eventModeLabel, durationMinutes: eventModeDuration, activateDynamicPricing: eventActivateDP });
       setMessage({ type: 'success', text: enabled ? 'Modo evento ativado!' : 'Modo evento desativado' });
       setTimeout(() => setMessage(null), 4000);
       loadData();
@@ -597,7 +598,22 @@ export function TvConfigTab({
               </p>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2 mt-2">
+            <input
+              type="checkbox"
+              id="event-activate-dp"
+              checked={eventActivateDP}
+              onChange={(e) => setEventActivateDP(e.target.checked)}
+              className="rounded border-gray-300"
+            />
+            <Label htmlFor="event-activate-dp" className="text-sm cursor-pointer">
+              Ativar preço dinâmico durante o evento
+            </Label>
+            <p className="text-xs text-muted-foreground ml-1">
+              (aplica as regras de happy hour / barril no kiosk enquanto o evento estiver ativo)
+            </p>
+          </div>
+          <div className="flex gap-2 mt-3">
             {!stats.eventMode?.enabled ? (
               <Button onClick={() => handleToggleEventMode(true)} className="bg-yellow-600 hover:bg-yellow-700 text-white">
                 <Play className="h-4 w-4 mr-1" /> Ativar Modo Evento

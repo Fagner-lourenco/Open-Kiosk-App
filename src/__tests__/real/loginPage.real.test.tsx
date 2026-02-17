@@ -78,7 +78,7 @@ describe('LoginPage - smoke', () => {
     
     await waitFor(() => {
       // Componente renderiza sem erro crítico
-      expect(true).toBe(true);
+      expect(consoleSpy).not.toHaveBeenCalled();
     });
     
     consoleSpy.mockRestore();

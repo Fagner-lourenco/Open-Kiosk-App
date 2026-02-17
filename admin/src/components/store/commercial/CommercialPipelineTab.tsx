@@ -10,7 +10,7 @@
  * @version 1.0.0
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Card,
   CardContent,
@@ -135,6 +135,17 @@ function DealDialog({
   const [probability, setProbability] = useState(
     initialData?.probability?.toString() || ''
   );
+
+  // Sincronizar estado quando initialData muda (edição de deals consecutivos)
+  useEffect(() => {
+    if (initialData) {
+      setTitle(initialData.title || '');
+      setCustomerId(initialData.customerId || '');
+      setStage(initialData.stage || 'lead');
+      setValueEstimate(initialData.valueEstimate?.toString() || '');
+      setProbability(initialData.probability?.toString() || '');
+    }
+  }, [initialData]);
 
   const isEditing = !!initialData;
 
@@ -452,7 +463,7 @@ export function CommercialPipelineTab({ franchiseId, storeId }: Props) {
               <Target className="h-5 w-5 text-emerald-500" />
               <div>
                 <p className="text-2xl font-bold">
-                  {wonDeals.length} / {deals.length || 1}
+                  {deals.length > 0 ? `${wonDeals.length} / ${deals.length}` : '—'}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   Conversão ({deals.length > 0 ? Math.round((wonDeals.length / deals.length) * 100) : 0}%)

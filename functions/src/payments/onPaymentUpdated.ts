@@ -14,7 +14,8 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import * as logger from 'firebase-functions/logger';
 import { db, admin } from '../lib';
 import type { PaymentStatus } from './types';
 
@@ -29,11 +30,12 @@ const STATUS_LABELS: Record<string, string> = {
   expired: 'Expirado',
 };
 
-export const onPaymentUpdated = functions
-  .region('southamerica-east1')
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/payments/{paymentId}')
-  .onUpdate(async (change, context) => {
+export const onPaymentUpdated = onDocumentUpdated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/payments/{paymentId}', region: 'southamerica-east1' },
+  async (event) => {
+    if (!event.data) return;
+    const change = { before: event.data.before, after: event.data.after };
+    const context = { params: event.params };
     const { franchiseId, storeId, paymentId } = context.params;
     const before = change.before.data();
     const after = change.after.data();
@@ -56,7 +58,7 @@ export const onPaymentUpdated = functions
       .where('dedupeKey', '==', dedupeKey).limit(1).get();
 
     if (!existingSnap.empty) {
-      functions.logger.info(`[onPaymentUpdated] Skipped duplicate (${dedupeKey})`);
+      logger.info(`[onPaymentUpdated] Skipped duplicate (${dedupeKey})`);
       return;
     }
 
@@ -97,7 +99,8 @@ export const onPaymentUpdated = functions
       actionLabel: 'Ver Pedidos',
     });
 
-    functions.logger.info(`[onPaymentUpdated] Created notification: ${title}`, {
+    logger.info(`[onPaymentUpdated] Created notification: ${title}`, {
       paymentId, newStatus, requiresRefund,
     });
-  });
+  }
+);

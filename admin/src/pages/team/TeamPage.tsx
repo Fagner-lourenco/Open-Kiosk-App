@@ -14,7 +14,6 @@ import {
   collection, 
   doc, 
   updateDoc, 
-  deleteDoc, 
   getDocs, 
   addDoc,
   query, 
@@ -24,6 +23,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
+import { removeMember as removeMemberService } from '@/services/userService';
 import { generateInvitationToken } from '@/lib/invitationToken';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
@@ -241,7 +241,7 @@ export function TeamPage() {
   const removeMemberMutation = useMutation({
     mutationFn: async (memberId: string) => {
       if (!currentFranchise) throw new Error('No franchise selected');
-      await deleteDoc(doc(db, 'franchises', currentFranchise.id, 'members', memberId));
+      await removeMemberService(currentFranchise.id, memberId);
     },
     onSuccess: (_data, memberId) => {
       queryClient.invalidateQueries({ queryKey: ['franchise-members', currentFranchise?.id] });

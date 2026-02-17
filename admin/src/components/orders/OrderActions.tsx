@@ -38,8 +38,8 @@ export function OrderActions({
   onCancel, 
   onRefund,
 }: OrderActionsProps) {
-  const canCancel = order.status === 'pending' || order.status === 'processing';
-  const canRefund = order.status === 'completed' && order.paymentStatus === 'paid';
+  const canCancel = order.status === 'pending' || order.status === 'processing' || order.status === 'paid_pending_dispense' || order.status === 'dispensing';
+  const canRefund = order.paymentStatus === 'paid';
 
   const handleCopyId = () => {
     const id = order.orderId || order.id;

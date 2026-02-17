@@ -8,7 +8,8 @@
  * ou pelo primeiro setup via console/script.
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import { db, auth, serverTimestamp } from '../lib';
 
 interface SetSuperAdminData {
@@ -19,18 +20,19 @@ interface SetSuperAdminData {
  * Promove um usuário a super admin
  * Só pode ser chamada por outro super admin
  */
-export const setSuperAdmin = functions.https.onCall(
-  async (data: SetSuperAdminData, context) => {
+export const setSuperAdmin = onCall(
+  async (request) => {
+    const data = request.data as SetSuperAdminData;
     // Verificar autenticação
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
+    if (!request.auth) {
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
     }
 
     // Verificar se quem está chamando é super admin
-    const callerToken = context.auth.token;
+    const callerToken = request.auth.token;
     const isSuperAdmin = callerToken.role === 'superadmin';
     
     // Verificar se existe algum super admin no sistema
@@ -39,7 +41,7 @@ export const setSuperAdmin = functions.https.onCall(
     
     // Se já existe super admin, apenas super admin pode promover
     if (hasAnySuperAdmin && !isSuperAdmin) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Apenas super admins podem promover outros usuários'
       );
@@ -48,7 +50,7 @@ export const setSuperAdmin = functions.https.onCall(
     const { email } = data;
 
     if (!email) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'invalid-argument',
         'Email é obrigatório'
       );
@@ -59,7 +61,7 @@ export const setSuperAdmin = functions.https.onCall(
       const userRecord = await auth.getUserByEmail(email);
       const uid = userRecord.uid;
 
-      functions.logger.info(`Promovendo ${email} (${uid}) a super admin`);
+      logger.info(`Promovendo ${email} (${uid}) a super admin`);
 
       // 🔧 v4.0.7: Usar transaction para garantir atomicidade
       await db.runTransaction(async (transaction) => {
@@ -70,7 +72,7 @@ export const setSuperAdmin = functions.https.onCall(
         // Verificar se já é superadmin para evitar duplicação
         const superadminSnapshot = await transaction.get(superadminDoc);
         if (superadminSnapshot.exists && superadminSnapshot.data()?.status === 'active') {
-          throw new functions.https.HttpsError(
+          throw new HttpsError(
             'already-exists',
             `${email} já é super admin`
           );
@@ -82,7 +84,7 @@ export const setSuperAdmin = functions.https.onCall(
           displayName: userRecord.displayName || null,
           photoURL: userRecord.photoURL || null,
           createdAt: serverTimestamp(),
-          createdBy: context.auth!.uid,
+          createdBy: request.auth!.uid,
           status: 'active',
         });
 
@@ -116,7 +118,7 @@ export const setSuperAdmin = functions.https.onCall(
         storeId: null,
       });
 
-      functions.logger.info(`${email} promovido a super admin com sucesso`);
+      logger.info(`${email} promovido a super admin com sucesso`);
 
       return {
         success: true,
@@ -124,19 +126,19 @@ export const setSuperAdmin = functions.https.onCall(
         uid,
       };
     } catch (error: unknown) {
-      functions.logger.error('Erro ao promover super admin:', error);
+      logger.error('Erro ao promover super admin:', error);
       
       if (error instanceof Error && 'code' in error) {
         const authError = error as { code: string };
         if (authError.code === 'auth/user-not-found') {
-          throw new functions.https.HttpsError(
+          throw new HttpsError(
             'not-found',
             `Usuário com email ${email} não encontrado`
           );
         }
       }
       
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'internal',
         'Erro ao promover super admin'
       );
@@ -147,20 +149,21 @@ export const setSuperAdmin = functions.https.onCall(
 /**
  * Remove role de super admin de um usuário
  */
-export const removeSuperAdmin = functions.https.onCall(
-  async (data: { uid: string }, context) => {
+export const removeSuperAdmin = onCall(
+  async (request) => {
+    const data = request.data as { uid: string };
     // Verificar autenticação
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
+    if (!request.auth) {
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
     }
 
     // Verificar se quem está chamando é super admin
-    const callerToken = context.auth.token;
+    const callerToken = request.auth.token;
     if (callerToken.role !== 'superadmin') {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Apenas super admins podem remover outros super admins'
       );
@@ -169,15 +172,15 @@ export const removeSuperAdmin = functions.https.onCall(
     const { uid } = data;
 
     if (!uid) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'invalid-argument',
         'UID é obrigatório'
       );
     }
 
     // Não pode remover a si mesmo
-    if (uid === context.auth.uid) {
-      throw new functions.https.HttpsError(
+    if (uid === request.auth.uid) {
+      throw new HttpsError(
         'failed-precondition',
         'Você não pode remover seu próprio acesso de super admin'
       );
@@ -200,15 +203,15 @@ export const removeSuperAdmin = functions.https.onCall(
         updatedAt: serverTimestamp(),
       });
 
-      functions.logger.info(`Super admin ${uid} removido com sucesso`);
+      logger.info(`Super admin ${uid} removido com sucesso`);
 
       return {
         success: true,
         message: 'Super admin removido com sucesso',
       };
     } catch (error) {
-      functions.logger.error('Erro ao remover super admin:', error);
-      throw new functions.https.HttpsError(
+      logger.error('Erro ao remover super admin:', error);
+      throw new HttpsError(
         'internal',
         'Erro ao remover super admin'
       );
@@ -219,20 +222,20 @@ export const removeSuperAdmin = functions.https.onCall(
 /**
  * Lista todos os super admins
  */
-export const listSuperAdmins = functions.https.onCall(
-  async (_data, context) => {
+export const listSuperAdmins = onCall(
+  async (request) => {
     // Verificar autenticação
-    if (!context.auth) {
-      throw new functions.https.HttpsError(
+    if (!request.auth) {
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
     }
 
     // Verificar se quem está chamando é super admin
-    const callerToken = context.auth.token;
+    const callerToken = request.auth.token;
     if (callerToken.role !== 'superadmin') {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Apenas super admins podem listar outros super admins'
       );
@@ -253,8 +256,8 @@ export const listSuperAdmins = functions.https.onCall(
         superAdmins,
       };
     } catch (error) {
-      functions.logger.error('Erro ao listar super admins:', error);
-      throw new functions.https.HttpsError(
+      logger.error('Erro ao listar super admins:', error);
+      throw new HttpsError(
         'internal',
         'Erro ao listar super admins'
       );

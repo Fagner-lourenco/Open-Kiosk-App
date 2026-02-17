@@ -579,10 +579,11 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       console.log('Sale recorded and stock updated atomically:', orderNumber);
     } catch (error) {
       console.error('Error processing order:', error);
-      // Reverter guards em caso de erro
+      // Reverter guards de gravação — mas NÃO resetar paymentProcessed
+      // pois o pagamento já foi coletado pelo gateway
       saleRecordedRef.current = false;
       setSaleRecorded(false);
-      setPaymentProcessed(false);
+      // paymentProcessed permanece true para evitar cobrança dupla
       paymentInProgressRef.current = null;
       toast({
         title: t('common.error'),

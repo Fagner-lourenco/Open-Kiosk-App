@@ -16,7 +16,7 @@
  * @see Plan: hashed-leaping-liskov.md (Phase 4)
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db, admin, requireAuth } from '../lib';
 
 interface UnifyStoreSettingsInput {
@@ -28,17 +28,18 @@ interface UnifyStoreSettingsInput {
 
 const TARGET_MIGRATION_VERSION = 2;
 
-export const unifyStoreSettings = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: UnifyStoreSettingsInput, context) => {
-    requireAuth(context);
+export const unifyStoreSettings = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as UnifyStoreSettingsInput;
+    requireAuth(request);
 
-    const role = context.auth?.token?.role as string | undefined;
+    const role = request.auth?.token?.role as string | undefined;
     const isSuperAdmin = role === 'superadmin';
     const isOwnerAdmin = role === 'owner' || role === 'admin';
 
     if (!isSuperAdmin && !isOwnerAdmin) {
-      throw new functions.https.HttpsError('permission-denied', 'Sem permissao para executar migracao.');
+      throw new HttpsError('permission-denied', 'Sem permissao para executar migracao.');
     }
 
     const dryRun = data.dryRun ?? !data.commit;
@@ -50,7 +51,7 @@ export const unifyStoreSettings = functions
       dryRun,
       franchiseId: data.franchiseId || null,
       storeId: data.storeId || null,
-      executedBy: context.auth?.uid || null,
+      executedBy: request.auth?.uid || null,
       targetVersion: TARGET_MIGRATION_VERSION,
     };
 
@@ -64,7 +65,7 @@ export const unifyStoreSettings = functions
       storesSnap.forEach((doc) => targets.push({ franchiseId: data.franchiseId!, storeId: doc.id }));
     } else {
       if (!isSuperAdmin) {
-        throw new functions.https.HttpsError('permission-denied', 'Somente superadmin pode migrar todas as franquias.');
+        throw new HttpsError('permission-denied', 'Somente superadmin pode migrar todas as franquias.');
       }
       const franchisesSnap = await db.collection('franchises').get();
       for (const franchise of franchisesSnap.docs) {

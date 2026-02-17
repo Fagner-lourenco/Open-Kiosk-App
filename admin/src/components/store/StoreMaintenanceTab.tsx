@@ -13,9 +13,7 @@
  * @version 1.0.0
  */
 
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { doc, getDoc } from 'firebase/firestore';
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -61,8 +59,8 @@ import {
   type MaintenanceStatus,
   type CreateMaintenanceInput,
 } from '@/hooks/useMaintenance';
+import { useMaxTaps } from '@/hooks/useMaxTaps';
 import { cn } from '@/lib/utils';
-import { db } from '@/lib/firebase';
 
 // ============================================================================
 // TYPES
@@ -312,32 +310,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
   const [completeLogId, setCompleteLogId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | MaintenanceStatus>('all');
 
-  const { data: maxTaps = 4 } = useQuery({
-    queryKey: ['store-max-taps', franchiseId, storeId],
-    queryFn: async () => {
-      const storeRef = doc(db, 'franchises', franchiseId, 'stores', storeId);
-      const storeSnapshot = await getDoc(storeRef);
-
-      if (!storeSnapshot.exists()) return 4;
-
-      const data = storeSnapshot.data() as Record<string, unknown>;
-      const settings = (data.settings as Record<string, unknown> | undefined) || {};
-      const explicitMaxTaps = Number(data.maxTaps);
-      const settingsMaxTaps = Number(settings.maxTaps);
-      const configuredTapCount = Array.isArray(data.taps) ? data.taps.length : 0;
-
-      const candidates = [explicitMaxTaps, settingsMaxTaps, configuredTapCount, 4];
-      const resolvedTapCount = candidates.find((value) => Number.isFinite(value) && value > 0) ?? 4;
-
-      return Math.min(32, Math.max(1, Math.trunc(resolvedTapCount)));
-    },
-    enabled: !!franchiseId && !!storeId,
-  });
-
-  const tapIds = useMemo(
-    () => Array.from({ length: maxTaps }, (_, index) => String(index)),
-    [maxTaps],
-  );
+  const { maxTaps, tapIds } = useMaxTaps(franchiseId, storeId);
 
   const filteredLogs = statusFilter === 'all'
     ? logs

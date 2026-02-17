@@ -168,10 +168,10 @@ export function createOrderTimeline(order: {
   if (order.processingAt) {
     events.push({
       id: 'processing',
-      title: 'Em preparação',
+      title: 'Dispensando',
       timestamp: order.processingAt,
       color: 'yellow',
-      status: order.status === 'processing' ? 'current' : 'completed',
+      status: (order.status === 'processing' || order.status === 'dispensing') ? 'current' : 'completed',
     });
   }
 

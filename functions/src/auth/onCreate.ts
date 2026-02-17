@@ -9,7 +9,8 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { user as authUser } from 'firebase-functions/v1/auth';
+import * as logger from 'firebase-functions/logger';
 import { db, admin, serverTimestamp, setUserClaims } from '../lib';
 import type { UserClaims } from '../lib';
 
@@ -22,16 +23,16 @@ function generateSlug(input: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-export const onUserCreated = functions.auth.user().onCreate(async (user) => {
+export const onUserCreated = authUser().onCreate(async (user) => {
   const { uid, email, displayName, photoURL } = user;
   
-  functions.logger.info(`Novo usuário criado: ${email} (${uid})`);
+  logger.info(`Novo usuário criado: ${email} (${uid})`);
   
   try {
     // Verificar se o usuário está na lista de superadmins
     const superAdminDoc = await db.collection('superadmins').doc(uid).get();
     if (superAdminDoc.exists) {
-      functions.logger.info(`Usuário ${email} é super admin pré-cadastrado`);
+      logger.info(`Usuário ${email} é super admin pré-cadastrado`);
       
       // 🔧 v4.0.7: Usando helper centralizado
       const claims: UserClaims = {
@@ -69,7 +70,7 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
     if (!invitationQuery.empty) {
       // Usuário foi convidado - não cria documento ainda
       // O documento será criado quando aceitar o convite
-      functions.logger.info(`Usuário ${email} tem convite pendente, aguardando aceitação`);
+      logger.info(`Usuário ${email} tem convite pendente, aguardando aceitação`);
       return;
     }
     
@@ -121,10 +122,10 @@ export const onUserCreated = functions.auth.user().onCreate(async (user) => {
       storeId: null,
     });
     
-    functions.logger.info(`Franquia ${franchiseRef.id} criada para usuário ${uid}`);
+    logger.info(`Franquia ${franchiseRef.id} criada para usuário ${uid}`);
     
   } catch (error) {
-    functions.logger.error('Erro ao processar novo usuário:', error);
+    logger.error('Erro ao processar novo usuário:', error);
     throw error;
   }
 });

@@ -75,6 +75,7 @@ export default defineConfig({
       '@/context': path.resolve(__dirname, './src/context'),
       'usb': path.resolve(__dirname, './src/__tests__/mocks/usb.ts'),
       'capacitor-usb-serial-plugin': path.resolve(__dirname, './src/__tests__/mocks/usb-serial.ts'),
+      'virtual:pwa-register/react': path.resolve(__dirname, './src/__tests__/mocks/pwa-register.ts'),
     },
 
     // ============================================================

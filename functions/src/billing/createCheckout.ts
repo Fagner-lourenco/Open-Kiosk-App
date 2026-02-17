@@ -8,7 +8,8 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import Stripe from 'stripe';
 import { db, serverTimestamp } from '../lib';
 import { getStripeClient, PLAN_PRICES } from '../lib/stripe';
@@ -20,20 +21,21 @@ interface CreateCheckoutData {
   cancelUrl?: string;
 }
 
-export const createCheckoutSession = functions.https.onCall(async (data: CreateCheckoutData, context) => {
+export const createCheckoutSession = onCall(async (request) => {
+  const data = request.data as CreateCheckoutData;
   // Verifica autenticação
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
+  if (!request.auth) {
+    throw new HttpsError(
       'unauthenticated',
       'Usuário não autenticado'
     );
   }
   
-  const callerClaims = context.auth.token;
+  const callerClaims = request.auth.token;
   
   // Apenas owners podem gerenciar billing
   if (callerClaims.role !== 'owner') {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'permission-denied',
       'Apenas proprietários podem gerenciar o plano'
     );
@@ -42,7 +44,7 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
   const { plan, interval, successUrl, cancelUrl } = data;
   
   if (!plan || !interval) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'plan e interval são obrigatórios'
     );
@@ -50,27 +52,27 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
   
   // 🔧 v4.0.7: Validação explícita de interval (proteção runtime além do TypeScript)
   if (!['monthly', 'yearly'].includes(interval)) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'interval deve ser "monthly" ou "yearly"'
     );
   }
   
   if (!PLAN_PRICES[plan]) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'Plano inválido'
     );
   }
   
   const franchiseId = callerClaims.franchiseId as string;
-  const userEmail = context.auth.token.email;
+  const userEmail = request.auth.token.email;
   
   try {
     // Busca dados da franquia
     const franchiseDoc = await db.collection('franchises').doc(franchiseId).get();
     if (!franchiseDoc.exists) {
-      throw new functions.https.HttpsError('not-found', 'Franquia não encontrada');
+      throw new HttpsError('not-found', 'Franquia não encontrada');
     }
     
     const franchise = franchiseDoc.data()!;
@@ -96,7 +98,7 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
     }
     
     // Define URLs
-    const baseUrl = functions.config().app?.url || 'https://admin.openkiosk.app';
+    const baseUrl = process.env.APP_URL || 'https://admin.openkiosk.app';
     const defaultSuccessUrl = `${baseUrl}/billing?success=true&session_id={CHECKOUT_SESSION_ID}`;
     const defaultCancelUrl = `${baseUrl}/billing?canceled=true`;
     
@@ -132,7 +134,7 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
       },
     });
     
-    functions.logger.info(`Checkout session criada para franquia ${franchiseId}: ${session.id}`);
+    logger.info(`Checkout session criada para franquia ${franchiseId}: ${session.id}`);
     
     return {
       sessionId: session.id,
@@ -140,18 +142,18 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
     };
     
   } catch (error) {
-    if (error instanceof functions.https.HttpsError) {
+    if (error instanceof HttpsError) {
       throw error;
     }
     if (error instanceof Stripe.errors.StripeError) {
-      functions.logger.error('Stripe error:', error);
-      throw new functions.https.HttpsError(
+      logger.error('Stripe error:', error);
+      throw new HttpsError(
         'internal',
         `Erro do Stripe: ${error.message}`
       );
     }
-    functions.logger.error('Erro ao criar checkout:', error);
-    throw new functions.https.HttpsError(
+    logger.error('Erro ao criar checkout:', error);
+    throw new HttpsError(
       'internal',
       'Erro interno ao criar sessão de checkout'
     );
@@ -161,33 +163,33 @@ export const createCheckoutSession = functions.https.onCall(async (data: CreateC
 /**
  * Callable function para criar portal de gerenciamento do Stripe
  */
-export const createBillingPortalSession = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+export const createBillingPortalSession = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Usuário não autenticado');
   }
   
-  if (context.auth.token.role !== 'owner') {
-    throw new functions.https.HttpsError('permission-denied', 'Apenas proprietários podem acessar');
+  if (request.auth.token.role !== 'owner') {
+    throw new HttpsError('permission-denied', 'Apenas proprietários podem acessar');
   }
   
-  const franchiseId = context.auth.token.franchiseId as string;
+  const franchiseId = request.auth.token.franchiseId as string;
   
   try {
     const franchiseDoc = await db.collection('franchises').doc(franchiseId).get();
     if (!franchiseDoc.exists) {
-      throw new functions.https.HttpsError('not-found', 'Franquia não encontrada');
+      throw new HttpsError('not-found', 'Franquia não encontrada');
     }
     
     const franchise = franchiseDoc.data()!;
     
     if (!franchise.stripeCustomerId) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'failed-precondition',
         'Nenhum histórico de pagamento encontrado'
       );
     }
     
-    const baseUrl = functions.config().app?.url || 'https://admin.openkiosk.app';
+    const baseUrl = process.env.APP_URL || 'https://admin.openkiosk.app';
     
     const session = await getStripeClient().billingPortal.sessions.create({
       customer: franchise.stripeCustomerId,
@@ -197,10 +199,10 @@ export const createBillingPortalSession = functions.https.onCall(async (data, co
     return { url: session.url };
     
   } catch (error) {
-    if (error instanceof functions.https.HttpsError) {
+    if (error instanceof HttpsError) {
       throw error;
     }
-    functions.logger.error('Erro ao criar portal session:', error);
-    throw new functions.https.HttpsError('internal', 'Erro interno');
+    logger.error('Erro ao criar portal session:', error);
+    throw new HttpsError('internal', 'Erro interno');
   }
 });

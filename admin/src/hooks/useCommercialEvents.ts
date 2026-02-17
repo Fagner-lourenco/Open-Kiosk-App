@@ -283,6 +283,11 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
   // ── Delete event ────────────────────────────────────────────────────────
   const deleteMutation = useMutation({
     mutationFn: async (eventId: string) => {
+      // Cascade: delete budgetLines subcollection first
+      const linesSnap = await getDocs(budgetLinesRef(franchiseId, storeId, eventId));
+      for (const lineDoc of linesSnap.docs) {
+        await deleteDoc(lineDoc.ref);
+      }
       const ref = eventDocRef(franchiseId, storeId, eventId);
       await deleteDoc(ref);
     },

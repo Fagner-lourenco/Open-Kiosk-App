@@ -17,11 +17,12 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { db, admin } from '../lib';
 
 const increment = admin.firestore.FieldValue.increment;
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
+const arrayUnion = admin.firestore.FieldValue.arrayUnion;
 
 // ============================================================================
 // TYPES
@@ -45,13 +46,13 @@ interface ServingSessionData {
 // TRIGGER
 // ============================================================================
 
-export const onServingSessionCreated = functions
-  .region('southamerica-east1')
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/servingSessions/{eventId}')
-  .onCreate(async (snap, context) => {
+export const onServingSessionCreated = onDocumentCreated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/servingSessions/{eventId}', region: 'southamerica-east1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
     const session = snap.data() as ServingSessionData;
-    const { franchiseId, storeId, eventId } = context.params;
+    const { franchiseId, storeId, eventId } = event.params;
 
     console.log(`[ERP:ServingSession] onCreate: ${eventId} in ${franchiseId}/${storeId}`);
 
@@ -59,28 +60,57 @@ export const onServingSessionCreated = functions
     const batch = db.batch();
     let needsBatch = false;
 
-    // ── 1. Debit Keg.remainingMl ──────────────────────────────────────────
+    // ── 1. Debit Keg.remainingMl (via transaction para prevent race condition) ──
     if (session.kegId) {
       const kegRef = db.doc(`${storePath}/kegs/${session.kegId}`);
-      const kegSnap = await kegRef.get();
 
-      if (kegSnap.exists) {
-        const kegData = kegSnap.data()!;
-        const currentRemaining = (kegData.remainingMl as number) || 0;
-        const newRemaining = currentRemaining - session.actualMl;
+      try {
+        const kegDepleted = await db.runTransaction(async (txn) => {
+          const kegSnap = await txn.get(kegRef);
+          if (!kegSnap.exists) {
+            console.warn(`[ERP:ServingSession] Keg ${session.kegId} not found — skip debit`);
+            return false;
+          }
 
-        if (newRemaining <= 0) {
-          // Keg depleted
-          batch.update(kegRef, {
-            remainingMl: 0,
-            status: 'depleted',
-            depletedAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            updatedBy: 'system',
-          });
+          const kegData = kegSnap.data()!;
 
-          // Create real-time notification for keg depletion
-          const batchCode = (kegData.batchCode as string) || session.kegId!.slice(0, 8);
+          // 🔧 FIX R9-05: Idempotência — verificar se este evento já foi processado
+          const processedEvents: string[] = kegData.processedEvents || [];
+          if (processedEvents.includes(eventId)) {
+            console.warn(`[ERP:ServingSession] Event ${eventId} already processed for keg ${session.kegId} — skip (idempotent)`);
+            return false;
+          }
+
+          const currentRemaining = (kegData.remainingMl as number) || 0;
+          const newRemaining = currentRemaining - session.actualMl;
+
+          if (newRemaining <= 0) {
+            txn.update(kegRef, {
+              remainingMl: 0,
+              status: 'depleted',
+              depletedAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+              processedEvents: arrayUnion(eventId),
+            });
+            console.log(`[ERP:ServingSession] Keg ${session.kegId} marked depleted`);
+            return true;
+          } else {
+            txn.update(kegRef, {
+              remainingMl: newRemaining,
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+              processedEvents: arrayUnion(eventId),
+            });
+            return false;
+          }
+        });
+
+        // Create depletion notification outside transaction
+        if (kegDepleted) {
+          const kegSnap = await kegRef.get();
+          const kegData = kegSnap.data();
+          const batchCode = (kegData?.batchCode as string) || session.kegId!.slice(0, 8);
           const dedupeKey = `keg_depleted_${session.kegId}`;
           const existingSnap = await db.collection(`franchises/${franchiseId}/notifications`)
             .where('dedupeKey', '==', dedupeKey).limit(1).get();
@@ -103,19 +133,11 @@ export const onServingSessionCreated = functions
               actionUrl: `/stores/${storeId}?tab=operations`,
               actionLabel: 'Ver Operações',
             });
+            needsBatch = true;
           }
-
-          console.log(`[ERP:ServingSession] Keg ${session.kegId} marked depleted`);
-        } else {
-          batch.update(kegRef, {
-            remainingMl: increment(-session.actualMl),
-            updatedAt: serverTimestamp(),
-            updatedBy: 'system',
-          });
         }
-        needsBatch = true;
-      } else {
-        console.warn(`[ERP:ServingSession] Keg ${session.kegId} not found — skip debit`);
+      } catch (err) {
+        console.error(`[ERP:ServingSession] Error debiting keg ${session.kegId}:`, err);
       }
     }
 

@@ -14,7 +14,7 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db, admin } from '../lib';
 
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
@@ -41,12 +41,9 @@ function getYesterdayRange(): { start: Date; end: Date } {
 // FUNCTION
 // ============================================================================
 
-export const aggregateOperationalDaily = functions
-  .region('southamerica-east1')
-  .pubsub
-  .schedule('0 2 * * *')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => {
+export const aggregateOperationalDaily = onSchedule(
+  { schedule: '0 2 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  async () => {
     const dateKey = getYesterdayKey();
     const { start, end } = getYesterdayRange();
 

@@ -192,25 +192,28 @@ class NotificationService {
       throw new Error('Notification service not initialized');
     }
 
-    const batch = writeBatch(db);
+    const BATCH_LIMIT = 500;
     const notificationsRef = collection(
       db,
       franchiseNotificationsPath(this.franchiseId)
     );
 
-    for (const userId of userIds) {
-      const docRef = doc(notificationsRef);
-      batch.set(docRef, {
-        ...input,
-        priority: input.priority || 'normal',
-        userId,
-        isRead: false,
-        isDismissed: false,
-        createdAt: serverTimestamp(),
-      });
+    for (let i = 0; i < userIds.length; i += BATCH_LIMIT) {
+      const chunk = userIds.slice(i, i + BATCH_LIMIT);
+      const batch = writeBatch(db);
+      for (const userId of chunk) {
+        const docRef = doc(notificationsRef);
+        batch.set(docRef, {
+          ...input,
+          priority: input.priority || 'normal',
+          userId,
+          isRead: false,
+          isDismissed: false,
+          createdAt: serverTimestamp(),
+        });
+      }
+      await batch.commit();
     }
-
-    await batch.commit();
   }
 
   /**

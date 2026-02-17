@@ -507,10 +507,13 @@ describe('ESP32SerialService Real Tests', () => {
   });
 
   describe('Callbacks', () => {
-    // Testes de tipos apenas
     it('tipos de callback estão definidos', () => {
-      // ESP32MessageCallback, ESP32RawCallback, ESP32ConnectionCallback são tipos
-      expect(true).toBe(true); // Placeholder test
+      const msgCb: ESP32MessageCallback = (_response) => {};
+      const rawCb: ESP32RawCallback = (_line) => {};
+      const connCb: ESP32ConnectionCallback = (_connected) => {};
+      expect(typeof msgCb).toBe('function');
+      expect(typeof rawCb).toBe('function');
+      expect(typeof connCb).toBe('function');
     });
   });
 

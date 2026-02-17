@@ -14,6 +14,7 @@
  * @version 1.0.0
  */
 
+import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   collection,
@@ -133,21 +134,25 @@ export function useWastage(franchiseId: string, storeId: string) {
   });
 
   // ── KPIs (calculated from fetched events, last 30 days) ─────────────────
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const { recentEvents, kpis } = useMemo(() => {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-  const recentEvents = events.filter((e) => e.createdAt >= thirtyDaysAgo);
+    const recent = events.filter((e) => e.createdAt >= thirtyDaysAgo);
 
-  const kpis: WastageKPIs = {
-    totalMl: recentEvents.reduce((sum, e) => sum + e.mlLost, 0),
-    totalEvents: recentEvents.length,
-    byType: recentEvents.reduce((acc, e) => {
-      if (!acc[e.type]) acc[e.type] = { ml: 0, count: 0 };
-      acc[e.type].ml += e.mlLost;
-      acc[e.type].count += 1;
-      return acc;
-    }, {} as Record<string, { ml: number; count: number }>),
-  };
+    const computed: WastageKPIs = {
+      totalMl: recent.reduce((sum, e) => sum + e.mlLost, 0),
+      totalEvents: recent.length,
+      byType: recent.reduce((acc, e) => {
+        if (!acc[e.type]) acc[e.type] = { ml: 0, count: 0 };
+        acc[e.type].ml += e.mlLost;
+        acc[e.type].count += 1;
+        return acc;
+      }, {} as Record<string, { ml: number; count: number }>),
+    };
+
+    return { recentEvents: recent, kpis: computed };
+  }, [events]);
 
   // ── Create wastage event ────────────────────────────────────────────────
   const createMutation = useMutation({

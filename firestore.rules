@@ -1194,9 +1194,12 @@ service cloud.firestore {
                     (isFranchiseOwner(resource.data.franchiseId) ||
                      isFranchiseMember(resource.data.franchiseId));
       
-      // Kiosk pode escrever status (com auth de loja via claims)
-      allow write: if isAuthenticated() &&
-                     request.auth.token.storeId != null;
+      // 🔧 v4.0.8: Escrita via collectionGroup DESABILITADA — a regra
+      // específica em /franchises/{fId}/stores/{sId}/hardware/{docId} já
+      // permite escrita de Kiosk com storeId claim validado contra o path.
+      // A regra anterior (storeId != null) não validava o storeId do path,
+      // permitindo escrita cross-tenant via collectionGroup bypass.
+      allow write: if false;
     }
   }
 }

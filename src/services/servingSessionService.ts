@@ -74,7 +74,7 @@ export async function persistSession(params: PersistSessionParams): Promise<void
   }
 
   const tapId = String(progress.tapId ?? 0);
-  const cupIndex = (progress.cup ?? 1) - 1; // cup is 1-based, cupIndex is 0-based
+  const cupIndex = Math.max(0, (progress.cup || 1) - 1); // cup is 1-based, cupIndex is 0-based; || trata 0 como falsy
   const eventId = generateEventId(progress.orderId, tapId, cupIndex);
 
   // Determine status

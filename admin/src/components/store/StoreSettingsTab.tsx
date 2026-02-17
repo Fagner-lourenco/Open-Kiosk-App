@@ -806,6 +806,10 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         delete legacy.acceptPix;
         delete legacy.pixKey;
         delete legacy.paymentGateway;
+        // Remove UI-only fields that should not be persisted
+        delete legacy.__gpioAdvancedMode;
+        // Remove read-only fields that should not be overwritten
+        delete legacy.esp32;
 
         const paymentGatewayConfig = sanitizePaymentGatewayConfigForSave(
           (sanitizedSettings.paymentGatewayConfig || normalizePaymentGatewayConfig(sanitizedSettings)) as PaymentGatewayConfig

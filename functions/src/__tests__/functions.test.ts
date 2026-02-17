@@ -10,6 +10,14 @@ import * as functions from 'firebase-functions';
 // Initialize test environment
 const testEnv = fft();
 
+/**
+ * Wrapper v2-compatible: constrói CallableRequest a partir de (data, context)
+ * como testEnv.wrap() faria para v1, mas passando um único request object.
+ */
+function wrapV2(fn: any) {
+  return (data: any, context?: any) => fn.run({ data, ...context });
+}
+
 // Hoisted mocks to be accessible inside vi.mock factory
 const mocks = vi.hoisted(() => {
   const collectionFn = vi.fn();
@@ -18,7 +26,7 @@ const mocks = vi.hoisted(() => {
   const updateFn = vi.fn();
   const setFn = vi.fn();
   const setCustomUserClaims = vi.fn();
-  const getUser = vi.fn();
+  const getUser = vi.fn().mockResolvedValue({ customClaims: {} });
 
   // Chain setup
   docFn.mockReturnValue({
@@ -95,7 +103,7 @@ describe('Cloud Functions', () => {
 
   describe('setCustomClaims', () => {
     it('deve validar que userId é obrigatório', async () => {
-      const wrapped = testEnv.wrap(setCustomClaims);
+      const wrapped = wrapV2(setCustomClaims);
       const data = { role: 'manager' }; // userId missing
       const context = { auth: { uid: 'admin', token: { role: 'owner', franchiseId: 'f1' } } };
 
@@ -103,7 +111,7 @@ describe('Cloud Functions', () => {
     });
 
     it('deve atualizar claims quando caller é owner', async () => {
-      const wrapped = testEnv.wrap(setCustomClaims);
+      const wrapped = wrapV2(setCustomClaims);
       const data = { userId: 'target-user', role: 'admin' };
       const context = { auth: { uid: 'owner-id', token: { role: 'owner', franchiseId: 'f1' } } };
 
@@ -124,7 +132,7 @@ describe('Cloud Functions', () => {
 
   describe('sendInvitationEmail', () => {
     it('deve rejeitar email inválido', async () => {
-      const wrapped = testEnv.wrap(sendInvitationEmail);
+      const wrapped = wrapV2(sendInvitationEmail);
       const data = { email: 'bad-email', role: 'manager' };
       const context = { auth: { uid: 'admin-id', token: { role: 'admin', franchiseId: 'f1' } } };
 

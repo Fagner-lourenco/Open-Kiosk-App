@@ -3,6 +3,14 @@ import fft from 'firebase-functions-test';
 
 const testEnv = fft();
 
+/**
+ * Wrapper v2-compatible: constrói CallableRequest a partir de (data, context)
+ * como wrapV2() faria para v1, mas passando um único request object.
+ */
+function wrapV2(fn: any) {
+  return (data: any, context?: any) => fn.run({ data, ...context });
+}
+
 const mocks = vi.hoisted(() => {
   const userDocGet = vi.fn();
   const userDocUpdate = vi.fn();
@@ -81,6 +89,7 @@ vi.mock('../lib', () => ({
   admin: {
     auth: () => ({
       setCustomUserClaims: mocks.setCustomUserClaims,
+      getUser: vi.fn().mockResolvedValue({ customClaims: {} }),
     }),
     firestore: {
       FieldValue: {
@@ -151,7 +160,7 @@ describe('functions coverage', () => {
   });
 
   it('setCustomClaims bloqueia caller sem role owner/admin', async () => {
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     await expect(
       wrapped(
@@ -162,7 +171,7 @@ describe('functions coverage', () => {
   });
 
   it('setCustomClaims valida userId obrigatório', async () => {
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     await expect(
       wrapped(
@@ -174,7 +183,7 @@ describe('functions coverage', () => {
 
   it('setCustomClaims rejeita usuário inexistente', async () => {
     mocks.userDocGet.mockResolvedValueOnce({ exists: false, data: () => null });
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     await expect(
       wrapped(
@@ -190,7 +199,7 @@ describe('functions coverage', () => {
       data: () => ({ franchiseId: 'other', role: 'operator', storeId: 's1' }),
     });
 
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     await expect(
       wrapped(
@@ -201,7 +210,7 @@ describe('functions coverage', () => {
   });
 
   it('setCustomClaims impede admin alterar/prometer nível igual ou superior', async () => {
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     mocks.userDocGet.mockResolvedValueOnce({
       exists: true,
@@ -229,7 +238,7 @@ describe('functions coverage', () => {
   });
 
   it('setCustomClaims executa sucesso para owner', async () => {
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     const result = await wrapped(
       { userId: 'target-user', role: 'manager', storeId: null },
@@ -248,7 +257,7 @@ describe('functions coverage', () => {
 
   it('setCustomClaims trata erro interno não-https', async () => {
     mocks.userDocGet.mockRejectedValueOnce(new Error('db offline'));
-    const wrapped = testEnv.wrap(setCustomClaims);
+    const wrapped = wrapV2(setCustomClaims);
 
     await expect(
       wrapped(
@@ -259,7 +268,7 @@ describe('functions coverage', () => {
   });
 
   it('sendInvitationEmail valida email/role e role permitida', async () => {
-    const wrapped = testEnv.wrap(sendInvitationEmail);
+    const wrapped = wrapV2(sendInvitationEmail);
     const ctx = { auth: { uid: 'owner-1', token: { role: 'owner', franchiseId: 'f1' } } };
 
     await expect(wrapped({ email: '', role: '' }, ctx)).rejects.toThrow('email e role são obrigatórios');
@@ -270,7 +279,7 @@ describe('functions coverage', () => {
   it('sendInvitationEmail rejeita quando franquia não existe', async () => {
     mocks.franchiseDocGet.mockResolvedValueOnce({ exists: false, data: () => null });
 
-    const wrapped = testEnv.wrap(sendInvitationEmail);
+    const wrapped = wrapV2(sendInvitationEmail);
 
     await expect(
       wrapped(
@@ -286,7 +295,7 @@ describe('functions coverage', () => {
       docs: [{ id: 'existing-invite' }],
     });
 
-    const wrapped = testEnv.wrap(sendInvitationEmail);
+    const wrapped = wrapV2(sendInvitationEmail);
 
     await expect(
       wrapped(
@@ -299,7 +308,7 @@ describe('functions coverage', () => {
   it('sendInvitationEmail retorna not-found quando invitationId não existe', async () => {
     mocks.invitationDocGet.mockResolvedValueOnce({ exists: false, data: () => null });
 
-    const wrapped = testEnv.wrap(sendInvitationEmail);
+    const wrapped = wrapV2(sendInvitationEmail);
 
     await expect(
       wrapped(
@@ -314,7 +323,7 @@ describe('functions coverage', () => {
   });
 
   it('sendInvitationEmail cria convite e finaliza sem envio quando SMTP ausente', async () => {
-    const wrapped = testEnv.wrap(sendInvitationEmail);
+    const wrapped = wrapV2(sendInvitationEmail);
 
     const result = await wrapped(
       { email: 'new@openkiosk.app', role: 'manager', storeId: 's1' },

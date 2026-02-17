@@ -9,7 +9,8 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import { db, admin, requireAuth, requireOwnerOrAdmin } from '../lib';
 
 interface SetClaimsData {
@@ -19,17 +20,18 @@ interface SetClaimsData {
   storeId?: string | null;
 }
 
-export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData, context) => {
+export const setCustomClaims = onCall(async (request) => {
+  const data = request.data as SetClaimsData;
   // 🔧 v4.0.7: Usando helpers centralizados
-  requireAuth(context);
-  requireOwnerOrAdmin(context);
+  requireAuth(request);
+  requireOwnerOrAdmin(request);
   
-  const callerUid = context.auth!.uid;
-  const callerClaims = context.auth!.token;
+  const callerUid = request.auth!.uid;
+  const callerClaims = request.auth!.token;
   
   // Hierarquia já verificada acima, mas mantemos check adicional
   if (!['owner', 'admin'].includes(callerClaims.role as string)) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'permission-denied',
       'Apenas owners e admins podem modificar claims'
     );
@@ -38,7 +40,7 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
   const { userId, role, franchiseId, storeId } = data;
   
   if (!userId) {
-    throw new functions.https.HttpsError(
+    throw new HttpsError(
       'invalid-argument',
       'userId é obrigatório'
     );
@@ -49,7 +51,7 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
     const targetUserDoc = await db.collection('users').doc(userId).get();
     
     if (!targetUserDoc.exists) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'not-found',
         'Usuário não encontrado'
       );
@@ -59,7 +61,7 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
     
     // Verifica se o caller tem permissão sobre este usuário
     if (callerClaims.franchiseId !== targetUser.franchiseId) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Você não tem permissão para modificar usuários de outra franquia'
       );
@@ -82,7 +84,7 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
     
     // Não pode modificar quem está acima ou no mesmo nível (exceto owner)
     if (callerClaims.role !== 'owner' && targetLevel >= callerLevel) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Você não pode modificar usuários do mesmo nível ou superior'
       );
@@ -90,14 +92,19 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
     
     // Não pode promover alguém ao seu nível ou acima (exceto owner)
     if (callerClaims.role !== 'owner' && newLevel >= callerLevel) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Você não pode promover usuários ao seu nível ou superior'
       );
     }
     
-    // Monta as novas claims
+    // Buscar claims atuais para merge (preservar storeAccess e outras)
+    const currentUser = await admin.auth().getUser(userId);
+    const currentClaims = currentUser.customClaims || {};
+
+    // Monta as novas claims com merge
     const newClaims: Record<string, unknown> = {
+      ...currentClaims,
       role: role || targetUser.role,
       franchiseId: franchiseId || targetUser.franchiseId,
       storeId: storeId !== undefined ? storeId : targetUser.storeId,
@@ -114,16 +121,16 @@ export const setCustomClaims = functions.https.onCall(async (data: SetClaimsData
       updatedBy: callerUid,
     });
     
-    functions.logger.info(`Claims atualizadas para usuário ${userId} por ${callerUid}`);
+    logger.info(`Claims atualizadas para usuário ${userId} por ${callerUid}`);
     
     return { success: true, claims: newClaims };
     
   } catch (error) {
-    if (error instanceof functions.https.HttpsError) {
+    if (error instanceof HttpsError) {
       throw error;
     }
-    functions.logger.error('Erro ao definir claims:', error);
-    throw new functions.https.HttpsError(
+    logger.error('Erro ao definir claims:', error);
+    throw new HttpsError(
       'internal',
       'Erro interno ao processar a requisição'
     );

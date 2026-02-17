@@ -1,5 +1,7 @@
-import * as functions from 'firebase-functions';
-import { db, admin } from '../lib';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import * as logger from 'firebase-functions/logger';
+import { db, admin, requireAuth, requireFranchiseAccess } from '../lib';
 import type { CreatePaymentInput, PaymentStatus } from './types';
 import {
   createPaymentIntent,
@@ -18,25 +20,26 @@ const mapWebhookStatus = (status?: string): PaymentStatus => {
   return 'pending';
 };
 
-export const createPayment = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: CreatePaymentInput, context) => {
-    return createPaymentIntent(data, context);
-  });
+export const createPayment = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as CreatePaymentInput;
+    return createPaymentIntent(data, request);
+  }
+);
 
-export const pagbankWebhook = functions
-  .region('southamerica-east1')
-  .https.onRequest(async (req, res) => {
+export const pagbankWebhook = onRequest(
+  { region: 'southamerica-east1' },
+  async (req, res) => {
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
     }
 
-    const pagbankConfig = functions.config().pagbank || {};
-    const webhookToken = pagbankConfig.webhook_token as string | undefined;
+    const webhookToken = process.env.PAGBANK_WEBHOOK_TOKEN;
 
     if (!webhookToken) {
-      functions.logger.error('[pagbankWebhook] webhook_token nao configurado.');
+      logger.error('[pagbankWebhook] webhook_token nao configurado.');
       res.status(500).send('Missing webhook token');
       return;
     }
@@ -45,7 +48,7 @@ export const pagbankWebhook = functions
     const rawBody = req.rawBody ? req.rawBody.toString('utf8') : '';
 
     if (!verifyPagBankSignature(signatureHeader, rawBody, webhookToken)) {
-      functions.logger.warn('[pagbankWebhook] assinatura invalida');
+      logger.warn('[pagbankWebhook] assinatura invalida');
       res.status(401).send('Invalid signature');
       return;
     }
@@ -58,7 +61,7 @@ export const pagbankWebhook = functions
     const parsed = parseReferenceId(referenceId);
 
     if (!parsed) {
-      functions.logger.warn('[pagbankWebhook] reference_id invalido', { referenceId });
+      logger.warn('[pagbankWebhook] reference_id invalido', { referenceId });
       res.status(200).send({ received: true });
       return;
     }
@@ -67,10 +70,15 @@ export const pagbankWebhook = functions
     const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
     const paymentSnap = await paymentRef.get();
     if (!paymentSnap.exists) {
-      functions.logger.warn('[pagbankWebhook] pagamento nao encontrado', { paymentId });
+      logger.warn('[pagbankWebhook] pagamento nao encontrado', { paymentId });
       res.status(200).send({ received: true });
       return;
     }
+
+    // Guard: não regredir estados terminais
+    const TERMINAL_STATUSES: PaymentStatus[] = ['paid', 'refunded'];
+    const currentPaymentData = paymentSnap.data() as { status: PaymentStatus };
+    const currentStatus = currentPaymentData.status;
 
     const orderId =
       payload?.id ||
@@ -82,31 +90,52 @@ export const pagbankWebhook = functions
     const orderStatus = payload?.status || payload?.order?.status;
     const status = mapWebhookStatus(chargeStatus || orderStatus);
 
+    if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
+      logger.info(`[pagbankWebhook] Ignorando webhook — pagamento ja em estado terminal: ${currentStatus}`);
+      res.status(200).send({ received: true });
+      return;
+    }
+
+    // Prevenir fallback para 'pending' se status nao reconhecido
+    if (status === 'pending' && currentStatus !== 'pending') {
+      logger.warn(`[pagbankWebhook] Status nao reconhecido, mantendo atual: ${currentStatus}`);
+      res.status(200).send({ received: true });
+      return;
+    }
+
     await updatePaymentStatus(paymentRef, status, {
       providerOrderId: orderId,
       providerPaymentId: charge?.id,
     });
 
     res.status(200).send({ received: true });
-  });
+  }
+);
 
 /**
  * KIO-03/KIO-04: Cancel PagBank payment via Cloud Function.
  * Attempts real cancellation if order is in cancellable state.
  * Otherwise marks as cancel_requested for webhook/polling reconciliation.
  */
-export const cancelPagBankPayment = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: { franchiseId: string; storeId: string; paymentId: string }, context) => {
+export const cancelPagBankPayment = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    // P0-06: Require authentication
+    requireAuth(request);
+
+    const data = request.data as { franchiseId: string; storeId: string; paymentId: string };
     const { franchiseId, storeId, paymentId } = data;
     if (!franchiseId || !storeId || !paymentId) {
-      throw new functions.https.HttpsError('invalid-argument', 'franchiseId, storeId e paymentId obrigatorios.');
+      throw new HttpsError('invalid-argument', 'franchiseId, storeId e paymentId obrigatorios.');
     }
+
+    // P0-07: Require tenant access (franchise membership)
+    requireFranchiseAccess(request, franchiseId);
 
     const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
     const paymentSnap = await paymentRef.get();
     if (!paymentSnap.exists) {
-      throw new functions.https.HttpsError('not-found', 'Pagamento nao encontrado.');
+      throw new HttpsError('not-found', 'Pagamento nao encontrado.');
     }
 
     const payment = paymentSnap.data() as import('./types').PaymentRecord;
@@ -123,11 +152,11 @@ export const cancelPagBankPayment = functions
         // PagBank does not have a standard cancel endpoint for PIX orders.
         // For card charges, we could attempt a void, but for PIX QR we can only wait for expiration.
         // Mark as cancel_requested and let syncPendingPayments handle reconciliation.
-        functions.logger.info('[cancelPagBankPayment] Provider cancel delegated to sync/webhook', {
+        logger.info('[cancelPagBankPayment] Provider cancel delegated to sync/webhook', {
           providerOrderId: payment.providerOrderId,
         });
       } catch (err) {
-        functions.logger.warn('[cancelPagBankPayment] Provider cancel attempt error:', err);
+        logger.warn('[cancelPagBankPayment] Provider cancel attempt error:', err);
       }
     }
 
@@ -141,16 +170,14 @@ export const cancelPagBankPayment = functions
       { merge: true }
     );
 
-    functions.logger.info('[cancelPagBankPayment] Marked cancel_requested', { paymentId, orderId: payment.orderId });
+    logger.info('[cancelPagBankPayment] Marked cancel_requested', { paymentId, orderId: payment.orderId });
     return { canceled: false, reason: 'cancel_requested' };
-  });
+  }
+);
 
-export const syncPendingPayments = functions
-  .region('southamerica-east1')
-  .pubsub
-  .schedule('every 5 minutes')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => {
+export const syncPendingPayments = onSchedule(
+  { schedule: 'every 5 minutes', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  async () => {
     await syncPendingPaymentsForPagBank();
-    return null;
-  });
+  }
+);

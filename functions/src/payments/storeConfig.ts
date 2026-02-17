@@ -29,7 +29,7 @@ export const normalizePaymentGatewayConfig = (
   if (!storeData) return null;
 
   const legacy = storeData as Record<string, any>;
-  const legacyGateway = legacy.paymentGateway || {};
+  const legacyGateway = legacy.paymentGateway as Record<string, any> | undefined;
   const current = legacy.paymentGatewayConfig as Record<string, any> | undefined;
 
   const hasLegacyFields =
@@ -43,8 +43,8 @@ export const normalizePaymentGatewayConfig = (
     return null;
   }
 
-  const provider = normalizeProvider(current?.provider || legacyGateway.provider);
-  const environment = current?.environment || legacyGateway.environment || legacyGateway.mode || 'sandbox';
+  const provider = normalizeProvider(current?.provider || legacyGateway?.provider);
+  const environment = current?.environment || legacyGateway?.environment || legacyGateway?.mode || 'sandbox';
 
   return {
     provider,

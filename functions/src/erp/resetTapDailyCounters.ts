@@ -12,17 +12,14 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { db, admin } from '../lib';
 
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
 
-export const resetTapDailyCounters = functions
-  .region('southamerica-east1')
-  .pubsub
-  .schedule('1 0 * * *')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => {
+export const resetTapDailyCounters = onSchedule(
+  { schedule: '1 0 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  async () => {
     console.log('[ERP:ResetCounters] Resetting tap daily counters');
 
     const franchisesSnap = await db.collection('franchises').get();

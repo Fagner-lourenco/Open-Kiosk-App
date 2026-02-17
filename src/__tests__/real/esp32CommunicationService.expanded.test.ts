@@ -196,8 +196,9 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
   describe('Funções de Utilitário (Mockadas)', () => {
     it('deve tentar desconectar quando não conectado', async () => {
       await esp32Service.disconnect();
-      // disconnect() retorna void; verificamos que não lançou erro
-      expect(true).toBe(true);
+      // Após disconnect, status deve ser desconectado
+      const status = esp32Service.getConnectionStatus();
+      expect(status.connected).toBe(false);
     });
 
     it('deve retornar dispositivos vazios para scan (sem hardware)', async () => {

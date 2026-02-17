@@ -297,48 +297,12 @@ export function AuditPage() {
     }
     
     let rawUnsubscribe: (() => void) | null = null;
-    let legacyUnsubscribe: (() => void) | null = null;
 
     const cleanupRaw = () => {
       if (rawUnsubscribe) {
         rawUnsubscribe();
         rawUnsubscribe = null;
       }
-    };
-
-    const cleanupLegacy = () => {
-      if (legacyUnsubscribe) {
-        legacyUnsubscribe();
-        legacyUnsubscribe = null;
-      }
-    };
-
-    const subscribeLegacyLogs = () => {
-      if (legacyUnsubscribe) return;
-
-      const legacyQuery = query(
-        collection(db, 'audit_logs'),
-        where('franchiseId', '==', currentFranchise.id),
-        limit(pageSize * page)
-      );
-
-      legacyUnsubscribe = onSnapshot(
-        legacyQuery,
-        (legacySnapshot) => {
-          const legacyLogs = legacySnapshot.docs
-            .map((doc) => normalizeAuditLog(doc.data(), doc.id))
-            .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-          setLogs(legacyLogs);
-          setIsLoading(false);
-        },
-        (legacyError) => {
-          console.error('Error fetching legacy audit logs:', legacyError);
-          setLogs([]);
-          setQueryError(getAuditErrorMessage(legacyError));
-          setIsLoading(false);
-        }
-      );
     };
 
     const subscribeRawFranchiseLogs = () => {
@@ -356,18 +320,14 @@ export function AuditPage() {
             .map((doc) => normalizeAuditLog(doc.data(), doc.id))
             .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
-          if (rawLogs.length > 0) {
-            cleanupLegacy();
-            setLogs(rawLogs);
-            setIsLoading(false);
-            return;
-          }
-
-          subscribeLegacyLogs();
+          setLogs(rawLogs);
+          setIsLoading(false);
         },
         (rawError) => {
           console.error('Error fetching fallback franchise audit logs:', rawError);
-          subscribeLegacyLogs();
+          setLogs([]);
+          setQueryError(getAuditErrorMessage(rawError));
+          setIsLoading(false);
         }
       );
     };
@@ -377,7 +337,6 @@ export function AuditPage() {
 
       if (auditLogs.length > 0) {
         cleanupRaw();
-        cleanupLegacy();
         setLogs(auditLogs);
         setIsLoading(false);
         return;
@@ -387,7 +346,6 @@ export function AuditPage() {
     }, (error) => {
       console.error('Error fetching audit logs:', error);
       cleanupRaw();
-      cleanupLegacy();
       setLogs([]);
       setQueryError(getAuditErrorMessage(error));
       setIsLoading(false);
@@ -397,7 +355,6 @@ export function AuditPage() {
     return () => {
       unsubscribe();
       cleanupRaw();
-      cleanupLegacy();
     };
   }, [currentFranchise?.id, actionFilter, page]);
 

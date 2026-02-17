@@ -16,6 +16,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -106,19 +107,22 @@ function invoiceLineDocRef(
   );
 }
 
+const VALID_INVOICE_STATUSES: InvoiceStatus[] = ['draft', 'issued', 'partially_paid', 'paid', 'overdue', 'canceled'];
+
 function normalizeInvoice(id: string, data: Record<string, unknown>): Invoice {
+  const st = data.status as string;
   return {
     id,
     partyId: (data.partyId as string) || '',
-    status: (data.status as InvoiceStatus) || 'draft',
+    status: VALID_INVOICE_STATUSES.includes(st as InvoiceStatus) ? (st as InvoiceStatus) : 'draft',
     issueDate: data.issueDate as Timestamp,
     dueDate: data.dueDate as Timestamp,
-    subtotal: (data.subtotal as number) || 0,
-    discounts: (data.discounts as number) || 0,
-    fees: (data.fees as number) || 0,
-    total: (data.total as number) || 0,
-    paidTotal: (data.paidTotal as number) || 0,
-    remaining: (data.remaining as number) || 0,
+    subtotal: Number(data.subtotal) || 0,
+    discounts: Number(data.discounts) || 0,
+    fees: Number(data.fees) || 0,
+    total: Number(data.total) || 0,
+    paidTotal: Number(data.paidTotal) || 0,
+    remaining: Number(data.remaining) || 0,
     sourceType: (data.sourceType as InvoiceSourceType) || 'manual',
     sourceId: data.sourceId as string | undefined,
     createdAt: data.createdAt as Timestamp,
@@ -211,6 +215,16 @@ export function useInvoices(franchiseId: string, storeId: string) {
       if (rest.total !== undefined) data.total = rest.total;
       if (rest.paidTotal !== undefined) data.paidTotal = rest.paidTotal;
       if (rest.remaining !== undefined) data.remaining = rest.remaining;
+
+      // Recalcular remaining automaticamente quando total ou paidTotal mudam
+      if ((rest.total !== undefined || rest.paidTotal !== undefined) && rest.remaining === undefined) {
+        const currentDoc = await getDoc(ref);
+        const currentData = currentDoc.data();
+        const effectiveTotal = rest.total ?? currentData?.total ?? 0;
+        const effectivePaid = rest.paidTotal ?? currentData?.paidTotal ?? 0;
+        data.remaining = effectiveTotal - effectivePaid;
+      }
+
       await updateDoc(ref, data);
     },
     onSuccess: (_data, variables) => {

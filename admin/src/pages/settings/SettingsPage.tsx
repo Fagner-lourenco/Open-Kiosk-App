@@ -188,7 +188,7 @@ export function SettingsPage() {
       }
 
       // Delete all subcollections first
-      const subcollections = ['stores', 'members', 'invitations', 'auditLogs'];
+      const subcollections = ['stores', 'members', 'auditLogs'];
       
       for (const subcol of subcollections) {
         const snapshot = await getDocs(collection(db, `franchises/${currentFranchise.id}/${subcol}`));

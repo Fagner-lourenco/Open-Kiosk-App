@@ -106,7 +106,10 @@ export function getDateRange(period: string): ReportPeriod {
  * Helper: formata data como YYYY-MM-DD
  */
 function formatDateKey(date: Date): string {
-  return date.toISOString().split('T')[0];
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 /**
@@ -123,6 +126,8 @@ export async function getSalesReport(
   const uniqueCustomers = new Set<string>();
   const ordersByDayMap = new Map<string, { orders: number; revenue: number }>();
   let usedMaterialized = false;
+  // 🔧 FIX R9-02: Rastrear quais lojas NÃO tinham dados materializados
+  const storesWithoutMaterialized: string[] = [];
 
   // Tentar usar dailyStats materializados primeiro
   for (const storeId of storeIds) {
@@ -161,20 +166,26 @@ export async function getSalesReport(
             revenue: existing.revenue + (stats.totalRevenue || 0),
           });
         });
+      } else {
+        // 🔧 FIX R9-02: Loja sem dailyStats → precisa de fallback individual
+        storesWithoutMaterialized.push(storeId);
       }
     } catch (err: any) {
       // Se falhar por permissão ou índice, log e continua para fallback
       if (err?.code === 'permission-denied' || err?.message?.includes('index')) {
         console.warn(`[ReportService] dailyStats query failed for ${storeId}, falling back to orders query`);
+        storesWithoutMaterialized.push(storeId);
       } else {
         console.error(`[ReportService] Error fetching dailyStats for store ${storeId}:`, err);
+        storesWithoutMaterialized.push(storeId);
       }
     }
   }
 
-  // Fallback: query direta em orders se não encontrou dados materializados
-  if (!usedMaterialized) {
-    for (const storeId of storeIds) {
+  // Fallback: query direta em orders para lojas sem dados materializados
+  const fallbackStores = usedMaterialized ? storesWithoutMaterialized : storeIds;
+  if (fallbackStores.length > 0) {
+    for (const storeId of fallbackStores) {
       try {
         const ordersRef = collection(
           db,
@@ -183,9 +194,9 @@ export async function getSalesReport(
 
         const ordersQuery = query(
           ordersRef,
-          where('createdAt', '>=', Timestamp.fromDate(period.startDate)),
-          where('createdAt', '<=', Timestamp.fromDate(period.endDate)),
-          orderBy('createdAt', 'desc'),
+          where('timestamp', '>=', Timestamp.fromDate(period.startDate)),
+          where('timestamp', '<=', Timestamp.fromDate(period.endDate)),
+          orderBy('timestamp', 'desc'),
           limit(10000)
         );
 
@@ -194,17 +205,23 @@ export async function getSalesReport(
         snapshot.docs.forEach((docSnap) => {
           const order = docSnap.data();
           const orderTotal = order.total || 0;
-          const orderDate = order.createdAt?.toDate();
+          const orderDate = (order.timestamp || order.createdAt)?.toDate();
+
+          // Apenas pedidos pagos contam (exclui cancelados/reembolsados)
+          const isPaid = order.paymentStatus === 'paid' || 
+            (!order.paymentStatus && order.status !== 'cancelled' && order.status !== 'refunded');
+          
+          if (!isPaid) return;
 
           totalOrders++;
           totalRevenue += orderTotal;
 
-          if (order.customerId) {
-            uniqueCustomers.add(order.customerId);
+          if (order.customerIdentification || order.customerName) {
+            uniqueCustomers.add(order.customerIdentification || order.customerName);
           }
 
           if (orderDate) {
-            const dateKey = orderDate.toISOString().split('T')[0];
+            const dateKey = formatDateKey(orderDate);
             const existing = ordersByDayMap.get(dateKey) || { orders: 0, revenue: 0 };
             ordersByDayMap.set(dateKey, {
               orders: existing.orders + 1,
@@ -253,9 +270,9 @@ export async function getProductReport(
 
       const ordersQuery = query(
         ordersRef,
-        where('createdAt', '>=', Timestamp.fromDate(period.startDate)),
-        where('createdAt', '<=', Timestamp.fromDate(period.endDate)),
-        orderBy('createdAt', 'desc'),
+        where('timestamp', '>=', Timestamp.fromDate(period.startDate)),
+        where('timestamp', '<=', Timestamp.fromDate(period.endDate)),
+        orderBy('timestamp', 'desc'),
         limit(10000)
       );
 
@@ -263,6 +280,12 @@ export async function getProductReport(
 
       snapshot.docs.forEach((doc) => {
         const order = doc.data();
+
+        // Filtrar pedidos cancelados/reembolsados
+        const isPaid = order.paymentStatus === 'paid' ||
+          (!order.paymentStatus && order.status !== 'cancelled' && order.status !== 'refunded');
+        if (!isPaid) return;
+
         const items = order.items || [];
 
         items.forEach((item: any) => {
@@ -391,9 +414,9 @@ export async function getStoreReport(
 
         const ordersQuery = query(
           ordersRef,
-          where('createdAt', '>=', Timestamp.fromDate(period.startDate)),
-          where('createdAt', '<=', Timestamp.fromDate(period.endDate)),
-          orderBy('createdAt', 'desc'),
+          where('timestamp', '>=', Timestamp.fromDate(period.startDate)),
+          where('timestamp', '<=', Timestamp.fromDate(period.endDate)),
+          orderBy('timestamp', 'desc'),
           limit(10000)
         );
 
@@ -401,6 +424,12 @@ export async function getStoreReport(
 
         snapshot.docs.forEach((docSnap) => {
           const order = docSnap.data();
+
+          // Filtrar pedidos cancelados/reembolsados
+          const isPaid = order.paymentStatus === 'paid' ||
+            (!order.paymentStatus && order.status !== 'cancelled' && order.status !== 'refunded');
+          if (!isPaid) return;
+
           orders++;
           revenue += order.total || 0;
         });

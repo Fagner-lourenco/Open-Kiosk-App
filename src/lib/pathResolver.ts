@@ -123,8 +123,7 @@ export function storeDocPath(
 export type GlobalCollection =
   | 'users'
   | 'franchises'
-  | 'invitations'
-  | 'audit_logs';
+  | 'invitations';
 
 /**
  * Retorna o path de uma collection global

@@ -77,7 +77,7 @@ export async function refundOrder({
   try {
     await logUserAction(
       franchiseId,
-      AuditActions.ORDER_UPDATE,
+      AuditActions.ORDER_REFUND,
       actor,
       { type: 'order', id: orderId, name: `Pedido ${orderId.slice(-8).toUpperCase()}` },
       { storeId, operation: 'refund' }

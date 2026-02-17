@@ -69,12 +69,15 @@ function categoryDocRef(franchiseId: string, storeId: string, catId: string) {
 }
 
 function normalizeCategory(id: string, data: Record<string, unknown>): FinCategory {
+  const VALID_DIRECTIONS: FinCategoryDirection[] = ['in', 'out'];
+  const VALID_STATUSES: FinCategoryStatus[] = ['active', 'inactive'];
+
   return {
     id,
-    direction: (data.direction as FinCategoryDirection) || 'out',
+    direction: VALID_DIRECTIONS.includes(data.direction as FinCategoryDirection) ? (data.direction as FinCategoryDirection) : 'out',
     name: (data.name as string) || '',
     parentId: data.parentId as string | undefined,
-    status: (data.status as FinCategoryStatus) || 'active',
+    status: VALID_STATUSES.includes(data.status as FinCategoryStatus) ? (data.status as FinCategoryStatus) : 'active',
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
   };

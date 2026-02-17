@@ -44,6 +44,7 @@ vi.mock('firebase/firestore', () => {
         doc: vi.fn((...args: string[]) => ({ path: args.join('/'), type: 'doc' })),
         getDocs: vi.fn(() => Promise.resolve({ docs: [] })),
         getDoc: vi.fn(() => Promise.resolve({ exists: () => false, data: () => null })),
+        addDoc: vi.fn(() => Promise.resolve({ id: 'mock-id' })),
         setDoc: vi.fn(() => Promise.resolve()),
         updateDoc: vi.fn(() => Promise.resolve()),
         deleteDoc: vi.fn(() => Promise.resolve()),

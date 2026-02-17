@@ -1,4 +1,4 @@
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db, admin, serverTimestamp } from '../lib';
 
 interface ToggleEventModeInput {
@@ -7,32 +7,34 @@ interface ToggleEventModeInput {
   enabled: boolean;
   label?: string;
   durationMinutes?: number;
+  activateDynamicPricing?: boolean;
 }
 
-export const toggleEventMode = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: ToggleEventModeInput, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+export const toggleEventMode = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as ToggleEventModeInput;
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Usuário não autenticado');
     }
 
-    const uid = context.auth.uid;
-    const { franchiseId, storeId, enabled, label = '', durationMinutes = 10 } = data || ({} as ToggleEventModeInput);
+    const uid = request.auth.uid;
+    const { franchiseId, storeId, enabled, label = '', durationMinutes = 10, activateDynamicPricing = false } = data || ({} as ToggleEventModeInput);
 
     if (!franchiseId || !storeId || typeof enabled !== 'boolean') {
-      throw new functions.https.HttpsError('invalid-argument', 'Parâmetros inválidos');
+      throw new HttpsError('invalid-argument', 'Parâmetros inválidos');
     }
 
     try {
       // Verifica se é superadmin
-      const callerClaims = context.auth.token || {};
+      const callerClaims = request.auth.token || {};
       if (callerClaims.role === 'superadmin') {
         // superadmin segue
       } else {
         // Verifica owner da franquia
         const franchiseDoc = await db.collection('franchises').doc(franchiseId).get();
         if (!franchiseDoc.exists) {
-          throw new functions.https.HttpsError('not-found', 'Franquia não encontrada');
+          throw new HttpsError('not-found', 'Franquia não encontrada');
         }
 
         const fdata = franchiseDoc.data() || {};
@@ -43,12 +45,12 @@ export const toggleEventMode = functions
           const memberRef = db.collection(`franchises/${franchiseId}/members`).doc(uid);
           const memberSnap = await memberRef.get();
           if (!memberSnap.exists) {
-            throw new functions.https.HttpsError('permission-denied', 'Usuário não tem permissão para alterar modo evento');
+            throw new HttpsError('permission-denied', 'Usuário não tem permissão para alterar modo evento');
           }
 
           const role = (memberSnap.data() || {}).role;
           if (!['owner', 'admin', 'manager'].includes(role)) {
-            throw new functions.https.HttpsError('permission-denied', 'Role insuficiente para alterar modo evento');
+            throw new HttpsError('permission-denied', 'Role insuficiente para alterar modo evento');
           }
         }
       }
@@ -57,14 +59,14 @@ export const toggleEventMode = functions
       const esRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/eventStats/current`);
 
       await esRef.set({
-        eventMode: { enabled, label: label || '', endsAt },
+        eventMode: { enabled, label: label || '', endsAt, activateDynamicPricing: enabled ? activateDynamicPricing : false },
         updatedAt: serverTimestamp(),
       }, { merge: true });
 
       return { success: true };
     } catch (err: any) {
       console.error('[toggleEventMode] error:', err);
-      if (err instanceof functions.https.HttpsError) throw err;
-      throw new functions.https.HttpsError('internal', err?.message || 'Erro interno');
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError('internal', err?.message || 'Erro interno');
     }
   });

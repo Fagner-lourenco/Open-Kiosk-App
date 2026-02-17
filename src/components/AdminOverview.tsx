@@ -12,7 +12,7 @@ export default function AdminOverview() {
   const { products } = useFirebaseProducts();
   const { getTodayStats } = useReports();
   const { currentCurrency } = useSettings();
-  const [todayStats, setTodayStats] = useState({ totalSales: 0, totalOrders: 0, currency: 'INR' });
+  const [todayStats, setTodayStats] = useState({ totalSales: 0, totalOrders: 0, currency: 'BRL' });
 
   useEffect(() => {
     const fetchTodayStats = async () => {

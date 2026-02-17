@@ -142,7 +142,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
     onSuccess: (_data, { id, ...productData }) => {
       queryClient.invalidateQueries({ queryKey: ['store-products', franchiseId, storeId] });
       toast.success('Produto atualizado com sucesso!');
-      audit(AuditActions.PRODUCT_UPDATE, { type: 'product', id, name: (productData as any).name || id }, { storeId });
+      audit(AuditActions.PRODUCT_UPDATE, { type: 'product', id, name: (productData as any).title || id }, { storeId });
       setEditingProduct(null);
     },
     onError: () => {

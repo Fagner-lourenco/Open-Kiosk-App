@@ -15,6 +15,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDoc,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -74,16 +75,19 @@ function billDocRef(franchiseId: string, storeId: string, billId: string) {
   return doc(db, financeDocPath(franchiseId, storeId, 'bills', billId));
 }
 
+const VALID_BILL_STATUSES: BillStatus[] = ['draft', 'scheduled', 'partially_paid', 'paid', 'overdue', 'canceled'];
+
 function normalizeBill(id: string, data: Record<string, unknown>): Bill {
+  const st = data.status as string;
   return {
     id,
     partyId: (data.partyId as string) || '',
-    status: (data.status as BillStatus) || 'draft',
+    status: VALID_BILL_STATUSES.includes(st as BillStatus) ? (st as BillStatus) : 'draft',
     issueDate: data.issueDate as Timestamp,
     dueDate: data.dueDate as Timestamp,
-    total: (data.total as number) || 0,
-    paidTotal: (data.paidTotal as number) || 0,
-    remaining: (data.remaining as number) || 0,
+    total: Number(data.total) || 0,
+    paidTotal: Number(data.paidTotal) || 0,
+    remaining: Number(data.remaining) || 0,
     categoryId: (data.categoryId as string) || '',
     costCenterId: data.costCenterId as string | undefined,
     attachments: (data.attachments as string[]) || [],
@@ -157,6 +161,16 @@ export function useBills(franchiseId: string, storeId: string) {
       if (rest.categoryId !== undefined) data.categoryId = rest.categoryId;
       if (rest.costCenterId !== undefined) data.costCenterId = rest.costCenterId || null;
       if (rest.attachments !== undefined) data.attachments = rest.attachments;
+
+      // Recalcular remaining automaticamente quando total ou paidTotal mudam
+      if ((rest.total !== undefined || rest.paidTotal !== undefined) && rest.remaining === undefined) {
+        const currentDoc = await getDoc(ref);
+        const currentData = currentDoc.data();
+        const effectiveTotal = rest.total ?? currentData?.total ?? 0;
+        const effectivePaid = rest.paidTotal ?? currentData?.paidTotal ?? 0;
+        data.remaining = effectiveTotal - effectivePaid;
+      }
+
       await updateDoc(ref, data);
     },
     onSuccess: (_data, variables) => {

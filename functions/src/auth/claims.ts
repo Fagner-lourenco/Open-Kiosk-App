@@ -17,7 +17,8 @@
  * 🔧 v4.0.7: Refatorado para usar módulos lib/
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import * as logger from 'firebase-functions/logger';
 import { db, admin } from '../lib';
 
 // ============================================================================
@@ -49,12 +50,14 @@ interface SyncClaimsData {
  * Permite que superadmins definam claims arbitrárias para qualquer usuário.
  * Uso: administração do sistema, correção de permissões.
  */
-export const setAdminClaims = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: SetAdminClaimsData, context) => {
+export const setAdminClaims = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as SetAdminClaimsData;
+    const context = request;
     // Verificar autenticação
     if (!context.auth) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
@@ -68,7 +71,7 @@ export const setAdminClaims = functions
     if (!isSuperAdmin) {
       const superadminDoc = await db.collection('superadmins').doc(context.auth.uid).get();
       if (!superadminDoc.exists) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'permission-denied',
           'Apenas superadmins podem usar esta função'
         );
@@ -78,7 +81,7 @@ export const setAdminClaims = functions
     const { userId, claims } = data;
     
     if (!userId) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'invalid-argument',
         'userId é obrigatório'
       );
@@ -113,26 +116,16 @@ export const setAdminClaims = functions
       // Aplicar claims
       await admin.auth().setCustomUserClaims(userId, newClaims);
       
-      // Log de auditoria (inclui franchiseId/storeId para compatibilidade com rules)
-      const auditLog: Record<string, unknown> = {
-        action: 'set_admin_claims',
-        targetUserId: userId,
-        performedBy: context.auth.uid,
-        claims: newClaims,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      };
-
+      // Log de auditoria canônico: franchises/{fId}/auditLogs
       if (typeof newClaims.franchiseId === 'string' && newClaims.franchiseId) {
-        auditLog.franchiseId = newClaims.franchiseId;
-
-        // Compatibilidade com o Admin: espelha evento na subcollection da franquia
+        // Compatibilidade com o Admin: grava na subcollection da franquia
         try {
           await db
             .collection('franchises')
             .doc(newClaims.franchiseId)
             .collection('auditLogs')
             .add({
-              action: 'set_admin_claims',
+              action: 'auth.setClaims',
               actor: {
                 id: context.auth.uid,
                 email: context.auth.token.email || '',
@@ -149,30 +142,29 @@ export const setAdminClaims = functions
               timestamp: admin.firestore.FieldValue.serverTimestamp(),
             });
         } catch (franchiseAuditError) {
-          functions.logger.warn('[claims] Failed to mirror audit log to franchise path', {
+          logger.warn('[claims] Failed to mirror audit log to franchise path', {
             userId,
             franchiseId: newClaims.franchiseId,
             error: franchiseAuditError instanceof Error ? franchiseAuditError.message : franchiseAuditError,
           });
         }
       }
-      if (typeof newClaims.storeId === 'string' && newClaims.storeId) {
-        auditLog.storeId = newClaims.storeId;
-      }
 
-      await db.collection('audit_logs').add(auditLog);
+      // Canonical path: franchises/{fId}/auditLogs (no global dual-write)
+      // Legacy global audit_logs removed per P2-03/audit contract
       
-      functions.logger.info(`[claims] Admin claims set for ${userId}`, { claims: newClaims });
+      logger.info(`[claims] Admin claims set for ${userId}`, { claims: newClaims });
       
       return { success: true, claims: newClaims };
     } catch (error) {
-      functions.logger.error('[claims] Error setting admin claims:', error);
-      throw new functions.https.HttpsError(
+      logger.error('[claims] Error setting admin claims:', error);
+      throw new HttpsError(
         'internal',
         'Erro ao definir claims'
       );
     }
-  });
+  }
+);
 
 /**
  * Callable: syncMembershipClaims
@@ -180,11 +172,13 @@ export const setAdminClaims = functions
  * Sincroniza claims de um usuário baseado no seu membership em uma franquia.
  * Uso: após aceitar convite, após mudança de role.
  */
-export const syncMembershipClaims = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: SyncClaimsData, context) => {
+export const syncMembershipClaims = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as SyncClaimsData;
+    const context = request;
     if (!context.auth) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
@@ -201,10 +195,20 @@ export const syncMembershipClaims = functions
                     callerClaims.role === 'admin';
     
     if (!isSelf && !isAdmin) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Sem permissão para sincronizar claims deste usuário'
       );
+    }
+
+    // Guard cross-tenant: admin/owner só pode sincronizar na própria franquia
+    if (!isSelf && callerClaims.role !== 'superadmin') {
+      if (callerClaims.franchiseId !== franchiseId) {
+        throw new HttpsError(
+          'permission-denied',
+          'Sem permissão para sincronizar claims em outra franquia'
+        );
+      }
     }
     
     try {
@@ -214,7 +218,7 @@ export const syncMembershipClaims = functions
         .get();
       
       if (!memberDoc.exists) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'not-found',
           'Membership não encontrado'
         );
@@ -227,7 +231,12 @@ export const syncMembershipClaims = functions
         ? membership.storeAccess
         : ['*'];
 
+      // Buscar claims existentes para fazer merge (preservar superadmin, etc.)
+      const existingUser = await admin.auth().getUser(userId);
+      const currentClaims = existingUser.customClaims || {};
+
       const claims: Record<string, unknown> = {
+        ...currentClaims,
         role: membership.role,
         franchiseId: franchiseId,
         storeAccess: resolvedStoreAccess,
@@ -236,6 +245,11 @@ export const syncMembershipClaims = functions
       // Se tem acesso a apenas uma loja, adicionar storeId
       if (resolvedStoreAccess.length === 1 && resolvedStoreAccess[0] !== '*') {
         claims.storeId = resolvedStoreAccess[0];
+      }
+
+      // Proteger superadmin: nunca fazer downgrade via sync de membership
+      if (currentClaims.role === 'superadmin' && membership.role !== 'superadmin') {
+        claims.role = 'superadmin';
       }
       
       // Aplicar claims
@@ -249,20 +263,21 @@ export const syncMembershipClaims = functions
         claimsSyncedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
       
-      functions.logger.info(`[claims] Membership claims synced for ${userId}`, { claims });
+      logger.info(`[claims] Membership claims synced for ${userId}`, { claims });
       
       return { success: true, claims };
     } catch (error) {
-      if (error instanceof functions.https.HttpsError) {
+      if (error instanceof HttpsError) {
         throw error;
       }
-      functions.logger.error('[claims] Error syncing membership claims:', error);
-      throw new functions.https.HttpsError(
+      logger.error('[claims] Error syncing membership claims:', error);
+      throw new HttpsError(
         'internal',
         'Erro ao sincronizar claims'
       );
     }
-  });
+  }
+);
 
 /**
  * Callable: getClaimsForUser
@@ -270,11 +285,13 @@ export const syncMembershipClaims = functions
  * Retorna claims atuais de um usuário.
  * Uso: debug, verificação de permissões.
  */
-export const getClaimsForUser = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: { userId: string }, context) => {
+export const getClaimsForUser = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as { userId: string };
+    const context = request;
     if (!context.auth) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
@@ -289,15 +306,23 @@ export const getClaimsForUser = functions
     const isSuperAdmin = callerClaims.role === 'superadmin';
     
     if (!isSelf && !isSuperAdmin) {
-      // Verificar se é admin da mesma franquia
+      // Verificar se caller tem role admin/owner na mesma franquia
+      const callerRole = callerClaims.role;
+      if (callerRole !== 'owner' && callerRole !== 'admin') {
+        throw new HttpsError(
+          'permission-denied',
+          'Sem permissão para ver claims de outros usuários'
+        );
+      }
+
       const userDoc = await db.collection('users').doc(userId).get();
       if (!userDoc.exists) {
-        throw new functions.https.HttpsError('not-found', 'Usuário não encontrado');
+        throw new HttpsError('not-found', 'Usuário não encontrado');
       }
       
       const userData = userDoc.data()!;
       if (callerClaims.franchiseId !== userData.franchiseId) {
-        throw new functions.https.HttpsError(
+        throw new HttpsError(
           'permission-denied',
           'Sem permissão para ver claims deste usuário'
         );
@@ -313,13 +338,14 @@ export const getClaimsForUser = functions
         displayName: user.displayName,
       };
     } catch (error) {
-      functions.logger.error('[claims] Error getting claims:', error);
-      throw new functions.https.HttpsError(
+      logger.error('[claims] Error getting claims:', error);
+      throw new HttpsError(
         'internal',
         'Erro ao buscar claims'
       );
     }
-  });
+  }
+);
 
 /**
  * Callable: refreshUserToken
@@ -327,11 +353,13 @@ export const getClaimsForUser = functions
  * Força refresh do token do usuário (útil após mudança de claims).
  * Uso: após aceitar convite, após mudança de role.
  */
-export const refreshUserToken = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: { userId?: string }, context) => {
+export const refreshUserToken = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as { userId?: string };
+    const context = request;
     if (!context.auth) {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'unauthenticated',
         'Usuário não autenticado'
       );
@@ -341,7 +369,7 @@ export const refreshUserToken = functions
     
     // Apenas próprio usuário ou superadmin
     if (userId !== context.auth.uid && context.auth.token.role !== 'superadmin') {
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'permission-denied',
         'Sem permissão'
       );
@@ -351,14 +379,15 @@ export const refreshUserToken = functions
       // Revogar tokens existentes força refresh
       await admin.auth().revokeRefreshTokens(userId);
       
-      functions.logger.info(`[claims] Tokens revoked for ${userId}`);
+      logger.info(`[claims] Tokens revoked for ${userId}`);
       
       return { success: true, message: 'Token refresh forçado. Faça login novamente.' };
     } catch (error) {
-      functions.logger.error('[claims] Error revoking tokens:', error);
-      throw new functions.https.HttpsError(
+      logger.error('[claims] Error revoking tokens:', error);
+      throw new HttpsError(
         'internal',
         'Erro ao revogar tokens'
       );
     }
-  });
+  }
+);

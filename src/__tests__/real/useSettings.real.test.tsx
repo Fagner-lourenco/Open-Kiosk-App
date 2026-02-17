@@ -124,19 +124,20 @@ describe('useSettings', () => {
     });
 
     it('usa storeId fornecido', () => {
-      renderHook(() => useSettings('custom-store-id'));
+      const { result } = renderHook(() => useSettings('custom-store-id'));
       
-      // Hook deve funcionar com storeId customizado
-      expect(true).toBe(true);
+      // Hook deve retornar dados válidos com storeId customizado
+      expect(result.current.currentCurrency).toBeDefined();
     });
 
     it('usa getCurrentStoreId quando storeId não fornecido', () => {
       mockGetCurrentStoreId.mockReturnValue('default-store');
       
-      renderHook(() => useSettings());
+      const { result } = renderHook(() => useSettings());
       
-      // Hook deve usar storeId padrão
-      expect(true).toBe(true);
+      // Hook deve usar storeId padrão via getCurrentStoreId
+      expect(mockGetCurrentStoreId).toHaveBeenCalled();
+      expect(result.current.currentCurrency).toBeDefined();
     });
   });
 
@@ -168,8 +169,8 @@ describe('useSettings', () => {
         await result.current.updateCurrency('EUR');
       });
       
-      // Não deve lançar erro
-      expect(true).toBe(true);
+      // Deve ter chamado setDoc para persistir a moeda
+      expect(mockSetDoc).toHaveBeenCalled();
     });
   });
 });

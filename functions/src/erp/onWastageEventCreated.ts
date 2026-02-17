@@ -16,11 +16,12 @@
  * @version 1.0.0
  */
 
-import * as functions from 'firebase-functions';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { db, admin } from '../lib';
 
 const increment = admin.firestore.FieldValue.increment;
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
+const arrayUnion = admin.firestore.FieldValue.arrayUnion;
 
 // ============================================================================
 // TYPES
@@ -41,13 +42,13 @@ interface WastageEventData {
 // TRIGGER
 // ============================================================================
 
-export const onWastageEventCreated = functions
-  .region('southamerica-east1')
-  .firestore
-  .document('franchises/{franchiseId}/stores/{storeId}/wastageEvents/{eventId}')
-  .onCreate(async (snap, context) => {
+export const onWastageEventCreated = onDocumentCreated(
+  { document: 'franchises/{franchiseId}/stores/{storeId}/wastageEvents/{eventId}', region: 'southamerica-east1' },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) return;
     const wastage = snap.data() as WastageEventData;
-    const { franchiseId, storeId, eventId } = context.params;
+    const { franchiseId, storeId, eventId } = event.params;
 
     console.log(`[ERP:Wastage] onCreate: ${eventId} in ${franchiseId}/${storeId} — ${wastage.mlLost}ml ${wastage.type}`);
 
@@ -60,35 +61,51 @@ export const onWastageEventCreated = functions
     const batch = db.batch();
     let needsBatch = false;
 
-    // ── 1. Debit Keg.remainingMl ──────────────────────────────────────────
+    // ── 1. Debit Keg.remainingMl (via transaction para prevent race condition) ──
     if (wastage.kegId) {
       const kegRef = db.doc(`${storePath}/kegs/${wastage.kegId}`);
-      const kegSnap = await kegRef.get();
 
-      if (kegSnap.exists) {
-        const kegData = kegSnap.data()!;
-        const currentRemaining = (kegData.remainingMl as number) || 0;
-        const newRemaining = currentRemaining - wastage.mlLost;
+      try {
+        await db.runTransaction(async (txn) => {
+          const kegSnap = await txn.get(kegRef);
+          if (!kegSnap.exists) {
+            console.warn(`[ERP:Wastage] Keg ${wastage.kegId} not found — skip debit`);
+            return;
+          }
 
-        if (newRemaining <= 0) {
-          batch.update(kegRef, {
-            remainingMl: 0,
-            status: 'depleted',
-            depletedAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-            updatedBy: 'system',
-          });
-          console.log(`[ERP:Wastage] Keg ${wastage.kegId} marked depleted`);
-        } else {
-          batch.update(kegRef, {
-            remainingMl: increment(-wastage.mlLost),
-            updatedAt: serverTimestamp(),
-            updatedBy: 'system',
-          });
-        }
-        needsBatch = true;
-      } else {
-        console.warn(`[ERP:Wastage] Keg ${wastage.kegId} not found — skip debit`);
+          const kegData = kegSnap.data()!;
+
+          // 🔧 FIX R9-05: Idempotência — verificar se este evento já foi processado
+          const processedEvents: string[] = kegData.processedEvents || [];
+          if (processedEvents.includes(eventId)) {
+            console.warn(`[ERP:Wastage] Event ${eventId} already processed for keg ${wastage.kegId} — skip (idempotent)`);
+            return;
+          }
+
+          const currentRemaining = (kegData.remainingMl as number) || 0;
+          const newRemaining = currentRemaining - wastage.mlLost;
+
+          if (newRemaining <= 0) {
+            txn.update(kegRef, {
+              remainingMl: 0,
+              status: 'depleted',
+              depletedAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+              processedEvents: arrayUnion(eventId),
+            });
+            console.log(`[ERP:Wastage] Keg ${wastage.kegId} marked depleted`);
+          } else {
+            txn.update(kegRef, {
+              remainingMl: newRemaining,
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+              processedEvents: arrayUnion(eventId),
+            });
+          }
+        });
+      } catch (err) {
+        console.error(`[ERP:Wastage] Error debiting keg ${wastage.kegId}:`, err);
       }
     }
 

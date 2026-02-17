@@ -102,8 +102,10 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
   const [comment, setComment] = useState('');
   const [productSelectOpen, setProductSelectOpen] = useState(false);
   
-  // Filter state
+  // Filter state (grid)
   const [searchTerm, setSearchTerm] = useState('');
+  // Separate search for product selector dropdown
+  const [selectorSearch, setSelectorSearch] = useState('');
   const [stockFilter, setStockFilter] = useState<'all' | 'in-stock' | 'out-of-stock' | 'low-stock'>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
@@ -183,7 +185,9 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
 
   const handleUpdateInventory = () => {
     const product = products.find(p => p.id === selectedProductId);
-    if (!product || quantity <= 0) {
+    // ADJUST permite 0 (zerar estoque); ADD/REMOVE precisam de quantidade > 0
+    const isInvalidQuantity = adjustmentType === 'ADJUST' ? quantity < 0 : quantity <= 0;
+    if (!product || isInvalidQuantity) {
       toast.warning('Selecione um produto e informe a quantidade');
       return;
     }
@@ -249,8 +253,20 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
     return matchesSearch && matchesStockFilter && matchesCategory;
   });
 
+  // Separate filtered list for the product selector dropdown (only uses selectorSearch)
+  const selectorFilteredProducts = products.filter(product => {
+    if (!selectorSearch) return true;
+    const term = selectorSearch.toLowerCase();
+    return (
+      product.title.toLowerCase().includes(term) ||
+      product.description?.toLowerCase().includes(term) ||
+      product.category?.toLowerCase().includes(term)
+    );
+  });
+
   const clearFilters = () => {
     setSearchTerm('');
+    setSelectorSearch('');
     setStockFilter('all');
     setCategoryFilter('all');
   };
@@ -372,8 +388,8 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="Buscar produto..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
+                        value={selectorSearch}
+                        onChange={(e) => setSelectorSearch(e.target.value)}
                         className="pl-8 h-8"
                         onClick={(e) => e.stopPropagation()}
                         onKeyDown={(e) => e.stopPropagation()}
@@ -383,12 +399,12 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                   <DropdownMenuSeparator />
                   <div className="max-h-64 overflow-y-auto">
                     <DropdownMenuGroup>
-                      {filteredProducts.length === 0 ? (
+                      {selectorFilteredProducts.length === 0 ? (
                         <div className="text-center py-4 text-muted-foreground text-sm">
                           Nenhum produto encontrado
                         </div>
                       ) : (
-                        filteredProducts.map((product) => {
+                        selectorFilteredProducts.map((product) => {
                           const stock = product.isDrink ? (product.totalMlAvailable || 0) : (product.stock || 0);
                           const minStock = product.minStock || 5;
                           const isOutOfStock = stock === 0;
@@ -517,7 +533,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
           <Button
             className="mt-4"
             onClick={handleUpdateInventory}
-            disabled={!selectedProductId || quantity <= 0 || updateInventoryMutation.isPending}
+            disabled={!selectedProductId || (adjustmentType === 'ADJUST' ? quantity < 0 : quantity <= 0) || updateInventoryMutation.isPending}
           >
             {updateInventoryMutation.isPending ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />

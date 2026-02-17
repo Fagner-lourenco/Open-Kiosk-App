@@ -18,3 +18,4 @@ export { useTapAssignments } from './useTapAssignments';
 export { useTapsRealtime } from './useTapsRealtime';
 export { useWastage } from './useWastage';
 export { useMaintenance } from './useMaintenance';
+export { useMaxTaps } from './useMaxTaps';

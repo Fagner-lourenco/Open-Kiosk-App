@@ -66,28 +66,28 @@ export function OrderTimeline({ order }: OrderTimelineProps) {
     }
   }
 
-  // Processing event
+  // Dispensing event (kiosk: 'dispensing', legacy: 'processing')
   if (order.processingAt) {
     events.push({
       id: 'processing',
-      title: 'Em preparação',
+      title: 'Dispensando',
       timestamp: order.processingAt.toDate(),
       icon: Package,
       color: 'yellow',
-      status: order.status === 'processing' ? 'current' : 'completed',
+      status: (order.status === 'dispensing' || order.status === 'processing') ? 'current' : 'completed',
     });
-  } else if (order.status === 'processing' || order.status === 'completed') {
-    // If processing/completed but no processingAt
+  } else if (order.status === 'dispensing' || order.status === 'processing' || order.status === 'completed') {
+    // If dispensing/completed but no processingAt
     const processingTime = order.paidAt?.toDate() || createdTime?.toDate();
     if (processingTime) {
       const adjustedTime = new Date(processingTime.getTime() + 5000);
       events.push({
         id: 'processing',
-        title: 'Em preparação',
+        title: 'Dispensando',
         timestamp: adjustedTime,
         icon: Package,
         color: 'yellow',
-        status: order.status === 'processing' ? 'current' : 'completed',
+        status: (order.status === 'dispensing' || order.status === 'processing') ? 'current' : 'completed',
       });
     }
   }
@@ -142,14 +142,28 @@ export function OrderTimeline({ order }: OrderTimelineProps) {
     });
   }
 
-  // Pending steps (future)
-  if (order.status === 'pending') {
+  // Pending steps (future) — kiosk uses 'paid_pending_dispense' or legacy 'pending'
+  if (order.status === 'pending' || order.status === 'paid_pending_dispense') {
     events.push({
-      id: 'awaiting-payment',
-      title: 'Aguardando pagamento',
+      id: 'awaiting-dispense',
+      title: order.status === 'paid_pending_dispense' ? 'Aguardando dispensa' : 'Aguardando pagamento',
       timestamp: new Date(),
       icon: Clock,
       color: 'yellow',
+      status: 'current',
+    });
+  }
+
+  // Failed dispense event
+  if (order.status === 'failed_dispense') {
+    const failTime = createdTime?.toDate() || new Date();
+    events.push({
+      id: 'failed-dispense',
+      title: 'Falha na dispensa',
+      description: 'O produto não foi dispensado corretamente',
+      timestamp: failTime,
+      icon: XCircle,
+      color: 'red',
       status: 'current',
     });
   }

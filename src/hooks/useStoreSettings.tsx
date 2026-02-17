@@ -1492,7 +1492,8 @@ export const useStoreSettings = () => {
 
                 paymentGatewayConfig: normalizedPaymentGatewayConfig ?? undefined,
 
-
+                // ✅ Preço Dinâmico (config global da loja)
+                dynamicPricingConfig: storeData.dynamicPricingConfig ?? prev.dynamicPricingConfig,
 
               };
 
@@ -1704,11 +1705,30 @@ export const useStoreSettings = () => {
 
         unsubscribers.push(unsubKiosk);
 
-
-
-
-
-
+        // Listener 3: EventStats (modo evento → ativação de DP)
+        const eventStatsDocPath = `franchises/${franchiseId}/stores/${storeId}/eventStats/current`;
+        const eventStatsDocRef = doc(db, eventStatsDocPath);
+        const unsubEventStats = onSnapshot(eventStatsDocRef, (docSnap) => {
+          if (docSnap.exists()) {
+            const esData = docSnap.data();
+            const eventMode = esData?.eventMode;
+            if (eventMode) {
+              setSettings((prev) => ({
+                ...prev,
+                eventMode: {
+                  enabled: !!eventMode.enabled,
+                  label: eventMode.label || '',
+                  endsAt: eventMode.endsAt?.toDate?.() || null,
+                  activateDynamicPricing: !!eventMode.activateDynamicPricing,
+                },
+              }));
+            }
+          }
+        }, (error) => {
+          // EventStats listener is non-critical — log and continue
+          console.warn('[useStoreSettings] eventStats listener error (non-critical):', error);
+        });
+        unsubscribers.push(unsubEventStats);
 
       } catch (error) {
 
@@ -1929,6 +1949,10 @@ export const useStoreSettings = () => {
 
 
     setIsInitialized(false);
+
+
+
+    servicesInitialized = false;
 
 
 

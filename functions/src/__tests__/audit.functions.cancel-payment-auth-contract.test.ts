@@ -16,18 +16,35 @@ const mocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('../lib', () => ({
-  db: {
-    doc: mocks.doc,
-  },
-  admin: {
-    firestore: {
-      FieldValue: {
-        serverTimestamp: mocks.serverTimestamp,
+vi.mock('../lib', () => {
+  const { HttpsError } = require('firebase-functions/v2/https');
+  return {
+    db: {
+      doc: mocks.doc,
+    },
+    admin: {
+      firestore: {
+        FieldValue: {
+          serverTimestamp: mocks.serverTimestamp,
+        },
       },
     },
-  },
-}));
+    requireAuth: (request: any) => {
+      if (!request.auth) {
+        throw new HttpsError('unauthenticated', 'Usuário não autenticado');
+      }
+    },
+    requireFranchiseAccess: (request: any, franchiseId: string) => {
+      if (!request.auth) throw new HttpsError('unauthenticated', 'Usuário não autenticado');
+      const userFranchiseId = request.auth.token?.franchiseId;
+      const userRole = request.auth.token?.role;
+      if (userRole === 'superadmin') return;
+      if (userFranchiseId !== franchiseId) {
+        throw new HttpsError('permission-denied', 'Você não tem acesso a esta franquia');
+      }
+    },
+  };
+});
 
 vi.mock('../payments/paymentService', () => ({
   createPaymentIntent: vi.fn(),
@@ -54,18 +71,17 @@ describe('Audit Functions - cancelPagBankPayment auth contracts', () => {
 
   it('cancelPagBankPayment deve exigir usuario autenticado (RED)', async () => {
     await expect(
-      (cancelPagBankPayment as any).run(
-        { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-1' },
-        {},
-      ),
+      (cancelPagBankPayment as any).run({
+        data: { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-1' },
+      }),
     ).rejects.toThrow(/unauthenticated|autenticado|permission/i);
   });
 
   it('cancelPagBankPayment marca cancel_requested para pagamentos pendentes', async () => {
-    const result = await (cancelPagBankPayment as any).run(
-      { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-1' },
-      { auth: { uid: 'user-1', token: { role: 'operator' } } },
-    );
+    const result = await (cancelPagBankPayment as any).run({
+      data: { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-1' },
+      auth: { uid: 'user-1', token: { role: 'operator', franchiseId: 'f-1' } },
+    });
 
     expect(result).toEqual({ canceled: false, reason: 'cancel_requested' });
     expect(mocks.paymentSet).toHaveBeenCalledWith(
@@ -88,10 +104,10 @@ describe('Audit Functions - cancelPagBankPayment auth contracts', () => {
       }),
     });
 
-    const result = await (cancelPagBankPayment as any).run(
-      { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-2' },
-      { auth: { uid: 'user-1', token: { role: 'operator' } } },
-    );
+    const result = await (cancelPagBankPayment as any).run({
+      data: { franchiseId: 'f-1', storeId: 's-1', paymentId: 'p-2' },
+      auth: { uid: 'user-1', token: { role: 'operator', franchiseId: 'f-1' } },
+    });
 
     expect(result).toEqual({ canceled: false, reason: 'already_paid' });
     expect(mocks.paymentSet).not.toHaveBeenCalled();

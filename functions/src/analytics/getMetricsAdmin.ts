@@ -7,7 +7,7 @@
  * Usa dailyStats/metrics materializados para evitar queries pesadas.
  */
 
-import * as functions from 'firebase-functions';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { db } from '../lib';
 
 interface GetMetricsAdminInput {
@@ -44,12 +44,12 @@ async function assertCanRead(franchiseId: string, uid: string, role?: string) {
 
   const memberDoc = await db.doc(`franchises/${franchiseId}/members/${uid}`).get();
   if (!memberDoc.exists) {
-    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para acessar métricas desta franquia');
+    throw new HttpsError('permission-denied', 'Sem permissão para acessar métricas desta franquia');
   }
 
   const member = memberDoc.data() || {};
   if (member.isActive === false) {
-    throw new functions.https.HttpsError('permission-denied', 'Membro inativo');
+    throw new HttpsError('permission-denied', 'Membro inativo');
   }
 }
 
@@ -100,24 +100,25 @@ async function aggregateDailyStats(
     });
   });
 
-  aggregated.averageTicket = aggregated.orders > 0 ? aggregated.revenue / aggregated.orders : 0;
+  aggregated.averageTicket = aggregated.paidOrders > 0 ? aggregated.revenue / aggregated.paidOrders : 0;
   return aggregated;
 }
 
-export const getMetricsAdmin = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data: GetMetricsAdminInput, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+export const getMetricsAdmin = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    const data = request.data as GetMetricsAdminInput;
+    if (!request.auth) {
+      throw new HttpsError('unauthenticated', 'Usuário não autenticado');
     }
 
     const { franchiseId, storeId, startDate, endDate } = data;
 
     if (!franchiseId) {
-      throw new functions.https.HttpsError('invalid-argument', 'franchiseId é obrigatório');
+      throw new HttpsError('invalid-argument', 'franchiseId é obrigatório');
     }
 
-    await assertCanRead(franchiseId, context.auth.uid, context.auth.token.role as string | undefined);
+    await assertCanRead(franchiseId, request.auth.uid, request.auth.token.role as string | undefined);
 
     const hasRange = Boolean(startDate && endDate);
 
@@ -166,7 +167,7 @@ export const getMetricsAdmin = functions
         });
       }
 
-      aggregate.averageTicket = aggregate.orders > 0 ? aggregate.revenue / aggregate.orders : 0;
+      aggregate.averageTicket = aggregate.paidOrders > 0 ? aggregate.revenue / aggregate.paidOrders : 0;
       return { metrics: aggregate };
     }
 
@@ -211,4 +212,5 @@ export const getMetricsAdmin = functions
     };
 
     return { metrics };
-  });
+  }
+);
