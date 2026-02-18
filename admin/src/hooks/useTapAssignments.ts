@@ -228,15 +228,29 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
       const uid = user?.uid || '';
 
       await runTransaction(db, async (txn) => {
-        // 1. If tap has an existing active assignment, remove it (read inside transaction)
-        const freshSnap = await getDocs(query(
-          assignmentsRef(franchiseId, storeId),
-          where('tapId', '==', tapId),
-          where('status', '==', 'active')
-        ));
-        const existingAssignment = freshSnap.docs.length > 0
-          ? normalizeAssignment(freshSnap.docs[0].id, freshSnap.docs[0].data())
-          : null;
+        // 1. Read tap doc inside transaction for OCC protection against concurrent connects
+        const tapRef = tapDocRef(franchiseId, storeId, tapId);
+        const tapSnap = await txn.get(tapRef);
+        const currentKegId = tapSnap.exists() ? (tapSnap.data()?.currentKegId as string | null) : null;
+
+        // 2. If tap has an existing keg, find and remove the active assignment
+        let existingAssignment: ReturnType<typeof normalizeAssignment> | null = null;
+        if (currentKegId) {
+          // Query outside txn to find the assignment doc, then re-read inside txn
+          const assSnap = await getDocs(query(
+            assignmentsRef(franchiseId, storeId),
+            where('tapId', '==', tapId),
+            where('status', '==', 'active')
+          ));
+          if (assSnap.docs.length > 0) {
+            // Re-read inside transaction for OCC
+            const assDocRef = doc(assignmentsRef(franchiseId, storeId), assSnap.docs[0].id);
+            const assTxnSnap = await txn.get(assDocRef);
+            if (assTxnSnap.exists() && assTxnSnap.data()?.status === 'active') {
+              existingAssignment = normalizeAssignment(assTxnSnap.id, assTxnSnap.data() as Record<string, unknown>);
+            }
+          }
+        }
         if (existingAssignment) {
           const oldAssRef = doc(
             assignmentsRef(franchiseId, storeId),
@@ -293,8 +307,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
           updatedBy: uid,
         });
 
-        // 4. Update Tap operational state
-        const tapRef = tapDocRef(franchiseId, storeId, tapId);
+        // 4. Update Tap operational state (tapRef already read above via txn.get)
         txn.update(tapRef, {
           currentKegId: kegId,
           status: 'active',
@@ -324,53 +337,60 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
       tapId: string;
       reason?: string;
     }) => {
-      // Fresh query to avoid stale cache race condition
-      const freshSnap = await getDocs(query(
-        assignmentsRef(franchiseId, storeId),
-        where('tapId', '==', tapId),
-        where('status', '==', 'active')
-      ));
-      if (freshSnap.empty) throw new Error('Nenhum barril conectado a esta torneira');
-      const activeAssignment = normalizeAssignment(freshSnap.docs[0].id, freshSnap.docs[0].data());
+      // 🔒 FIX Bug-15: Use runTransaction instead of writeBatch.
+      // The previous pattern read the active assignment OUTSIDE the batch,
+      // allowing two concurrent disconnects to both see the same active
+      // assignment and double-update. runTransaction provides OCC protection.
+      await runTransaction(db, async (txn) => {
+        const freshSnap = await getDocs(query(
+          assignmentsRef(franchiseId, storeId),
+          where('tapId', '==', tapId),
+          where('status', '==', 'active')
+        ));
+        if (freshSnap.empty) throw new Error('Nenhum barril conectado a esta torneira');
+        const activeAssignment = normalizeAssignment(freshSnap.docs[0].id, freshSnap.docs[0].data());
 
-      const batch = writeBatch(db);
-      const now = serverTimestamp();
-      const uid = user?.uid || '';
+        // Read all docs inside transaction for OCC
+        const assRef = doc(
+          assignmentsRef(franchiseId, storeId),
+          activeAssignment.assignmentId
+        );
+        const kegRef = kegDocRef(franchiseId, storeId, activeAssignment.kegId);
+        const tapRef = tapDocRef(franchiseId, storeId, tapId);
+        await txn.get(assRef);
+        await txn.get(kegRef);
+        await txn.get(tapRef);
 
-      // 1. Update assignment
-      const assRef = doc(
-        assignmentsRef(franchiseId, storeId),
-        activeAssignment.assignmentId
-      );
-      batch.update(assRef, {
-        status: 'removed',
-        removedAt: now,
-        removedBy: uid,
-        removalReason: reason || 'manual',
-        updatedAt: now,
-        updatedBy: uid,
+        const now = serverTimestamp();
+        const uid = user?.uid || '';
+
+        // 1. Update assignment
+        txn.update(assRef, {
+          status: 'removed',
+          removedAt: now,
+          removedBy: uid,
+          removalReason: reason || 'manual',
+          updatedAt: now,
+          updatedBy: uid,
+        });
+
+        // 2. Update keg
+        txn.update(kegRef, {
+          status: reason === 'depleted' ? 'depleted' : 'returned',
+          tapId: null,
+          ...(reason === 'depleted' ? { depletedAt: now } : {}),
+          updatedAt: now,
+          updatedBy: uid,
+        });
+
+        // 3. Update tap
+        txn.update(tapRef, {
+          currentKegId: null,
+          status: 'idle',
+          updatedAt: now,
+          updatedBy: uid,
+        });
       });
-
-      // 2. Update keg
-      const kegRef = kegDocRef(franchiseId, storeId, activeAssignment.kegId);
-      batch.update(kegRef, {
-        status: reason === 'depleted' ? 'depleted' : 'returned',
-        tapId: null,
-        ...(reason === 'depleted' ? { depletedAt: now } : {}),
-        updatedAt: now,
-        updatedBy: uid,
-      });
-
-      // 3. Update tap
-      const tapRef = tapDocRef(franchiseId, storeId, tapId);
-      batch.update(tapRef, {
-        currentKegId: null,
-        status: 'idle',
-        updatedAt: now,
-        updatedBy: uid,
-      });
-
-      await batch.commit();
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: tapKeys.all(franchiseId, storeId) });

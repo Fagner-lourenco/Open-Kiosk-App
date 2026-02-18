@@ -69,7 +69,8 @@ export type StoreSubcollection =
   | 'servingSessions'
   | 'wastageEvents'
   | 'maintenanceLogs'
-  | 'notifications';
+  | 'notifications'
+  | 'systemLogs';
 
 /**
  * Retorna o path de uma subcollection da loja

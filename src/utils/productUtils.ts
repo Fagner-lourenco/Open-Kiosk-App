@@ -21,7 +21,7 @@ export const getMaxQuantity = (
       : product.sizes.find((s) => s.key === product.defaultSizeKey);
 
     if (!size || !size.ml || size.ml <= 0) return 0;
-    return Math.floor(mlAvailable / size.ml);
+    return Math.max(0, Math.floor(mlAvailable / size.ml));
   }
 
   const qtyInCart = cartItems

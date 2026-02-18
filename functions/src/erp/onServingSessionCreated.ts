@@ -141,39 +141,53 @@ export const onServingSessionCreated = onDocumentCreated(
       }
     }
 
-    // ── 2. Increment Tap counters ─────────────────────────────────────────
+    // ── 2. Increment Tap counters ──────────────────────────────────────────
+    // 🔒 FIX Bug-17: Wrap tap counter update in its own transaction.
+    // The previous pattern read tapSnap outside the batch and checked processedEvents,
+    // but two concurrent invocations could both pass the check before either committed.
+    // Using runTransaction ensures OCC: the second invocation retries and sees the
+    // first's processedEvents write, then skips (idempotent).
     const tapRef = db.doc(`${storePath}/taps/${session.tapId}`);
-    batch.set(tapRef, {
-      todayMlDispensed: increment(session.actualMl),
-      todaySessions: increment(1),
-      updatedAt: serverTimestamp(),
-      updatedBy: 'system',
-    }, { merge: true });
-    needsBatch = true;
-
-    // ── 3. Increment active TapAssignment ─────────────────────────────────
     try {
-      const assignmentsSnap = await db
-        .collection(`${storePath}/tapAssignments`)
-        .where('tapId', '==', session.tapId)
-        .where('status', '==', 'active')
-        .limit(1)
-        .get();
+      await db.runTransaction(async (txn) => {
+        const tapSnap = await txn.get(tapRef);
+        const tapProcessed: string[] = tapSnap.exists ? (tapSnap.data()?.processedEvents || []) : [];
+        if (tapProcessed.includes(eventId)) {
+          console.log(`[ERP:ServingSession] Event ${eventId} already processed for tap ${session.tapId} — skip`);
+          return;
+        }
 
-      if (!assignmentsSnap.empty) {
-        const assignmentRef = assignmentsSnap.docs[0].ref;
-        batch.update(assignmentRef, {
-          totalMlDispensed: increment(session.actualMl),
-          totalSessions: increment(1),
+        txn.set(tapRef, {
+          todayMlDispensed: increment(session.actualMl),
+          todaySessions: increment(1),
           updatedAt: serverTimestamp(),
           updatedBy: 'system',
-        });
-      }
+          processedEvents: arrayUnion(eventId),
+        }, { merge: true });
+
+        // Also increment active TapAssignment inside same transaction
+        const assignmentsSnap = await db
+          .collection(`${storePath}/tapAssignments`)
+          .where('tapId', '==', session.tapId)
+          .where('status', '==', 'active')
+          .limit(1)
+          .get();
+
+        if (!assignmentsSnap.empty) {
+          const assignmentRef = assignmentsSnap.docs[0].ref;
+          txn.update(assignmentRef, {
+            totalMlDispensed: increment(session.actualMl),
+            totalSessions: increment(1),
+            updatedAt: serverTimestamp(),
+            updatedBy: 'system',
+          });
+        }
+      });
     } catch (err) {
-      console.warn('[ERP:ServingSession] Could not update TapAssignment:', err);
+      console.error(`[ERP:ServingSession] Error updating tap counters for ${session.tapId}:`, err);
     }
 
-    // ── 4. Commit batch ───────────────────────────────────────────────────
+    // ── 3. Commit batch (notifications only) ────────────────────────────
     if (needsBatch) {
       await batch.commit();
       console.log(`[ERP:ServingSession] Batch committed for ${eventId}`);
@@ -186,12 +200,12 @@ export const onServingSessionCreated = onDocumentCreated(
       session.status === 'completed'
     ) {
       const overPourMl = Math.round(session.actualMl - session.targetMl);
-      const wastageRef = db.collection(`${storePath}/wastageEvents`).doc();
+      const wastageRef = db.doc(`${storePath}/wastageEvents/overpour_${eventId}`);
       await wastageRef.set({
         id: wastageRef.id,
         type: 'auto',
         tapId: session.tapId,
-        kegId: session.kegId || null,
+        kegId: null, // 🔧 FIX R12-01: Não passar kegId — barril já foi debitado pelo actualMl completo no step 1
         mlLost: overPourMl,
         reason: `Over-pour: ${session.actualMl}ml dispensed vs ${session.targetMl}ml target (session ${eventId})`,
         source: 'auto',

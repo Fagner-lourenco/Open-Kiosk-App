@@ -3,6 +3,7 @@ import { BleClient } from '@capacitor-community/bluetooth-le';
 import esp32Serial from './esp32SerialService';  // ðŸ”§ FIX: Fallback para USB Web Serial
 import type { ESP32Response } from './esp32SerialService';
 import { TapConfig } from '@/types/store';
+import { systemLogService } from './systemLogService';
 
 // Plugin USB Serial para Android (capacitor-usb-serial-plugin)
 // ImportaÃ§Ã£o dinÃ¢mica para nÃ£o quebrar na web
@@ -59,11 +60,16 @@ class USBNativeConnectionError extends Error {
 const ESP32_SERVICE_UUID = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
 const ESP32_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 
-// ðŸ†• ConfiguraÃ§Ãµes do dispositivo ESP32 (DEVE COINCIDIR COM firmware.ino)
+// Configurações do dispositivo ESP32 (DEVE COINCIDIR COM firmware.ino)
 // Exportadas para uso em outros componentes
 export const ESP32_DEVICE_NAME = 'Kiosk_Bier';      // Nome BLE do ESP32
 export const ESP32_WIFI_SSID = 'Kiosk_Bier';        // SSID do Access Point WiFi
-export const ESP32_WIFI_PASSWORD = 'bier2026';      // Senha do WiFi (para referÃªncia)
+// 🔒 TODO Bug-22 (CWE-798): WiFi password and BLE PIN are hardcoded here AND in firmware.ino.
+// These should be moved to per-store Firestore config (e.g., stores/{storeId}/deviceConfig)
+// and provisioned to firmware via NVS at setup time. Low urgency since both are local-only
+// (BLE range ~10m, WiFi AP is direct-connect), but should be addressed before multi-tenant
+// deployments where different stores need unique credentials.
+export const ESP32_WIFI_PASSWORD = 'bier2026';      // Senha do WiFi (para referência)
 export const ESP32_BLE_PIN = '123456';              // PIN para pareamento BLE
 
 // ðŸ†• ConfiguraÃ§Ã£o dinÃ¢mica de IP WiFi (permite override)
@@ -114,6 +120,8 @@ const SUPERVISOR_BASE_DELAY_MS = 2000;
 const SUPERVISOR_MAX_DELAY_MS = 60000;
 const SUPERVISOR_BACKOFF_JITTER_RATIO = 0.35;
 const SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS = 10;
+const SUPERVISOR_PERSISTENT_FAILURE_DELAY_MS = 300000; // 5 min entre tentativas após persistent_failure
+const RECONNECT_NOW_COOLDOWN_MS = 5000; // Cooldown entre chamadas de reconnectNow
 const USB_NATIVE_CONNECT_TIMEOUT_MS = 8000;
 const USB_ENUMERATION_TIMEOUT_MS = 3000;
 const USB_ERROR_COOLDOWN_MS = 3000; // Cooldown após erro USB antes de tentar reconectar
@@ -233,6 +241,10 @@ class ESP32CommunicationService {
   private serialMessageUnsubscribe: (() => void) | null = null;
   private pendingPingWaiters: Set<(ok: boolean) => void> = new Set();
   private lastInboundAt: number | null = null;
+  // 🔧 FIX: Flag para pausar healthcheck durante dispensação ativa
+  // Durante dispense, o ESP32 pode não responder a pings a tempo,
+  // causando false-positive healthcheck failures e reconexão BLE indesejada.
+  private dispensingInProgress: boolean = false;
   private nativeUsbListenersReady: boolean = false;
   private nativeUsbListenerHandles: USBPluginListenerHandle[] = [];
   private nativeUsbReadCallbackRegistered: boolean = false;
@@ -299,7 +311,12 @@ class ESP32CommunicationService {
         depth++;
       } else if (char === '}') {
         depth--;
-        if (depth === 0 && start !== -1) {
+        // 🔧 FIX R10-67: Resetar depth se cair abaixo de 0 (byte espúrio)
+        if (depth < 0) {
+          depth = 0;
+          lastEnd = i + 1; // Avançar remainder para descartar lixo
+          start = -1;
+        } else if (depth === 0 && start !== -1) {
           const jsonStr = buffer.substring(start, i + 1);
           // Verificar se Ã© JSON vÃ¡lido antes de adicionar
           try {
@@ -790,11 +807,17 @@ class ESP32CommunicationService {
         this.logSupervisor('transport_switch', { from: currentType, to: 'usb', reason: 'usb_promotion' });
         return true;
       }
-      console.warn('[USB] connect_fail — falha ao conectar USB, mantendo transporte anterior');
+      // 🔒 FIX Bug-21: If USB connect fails after disconnecting the previous transport,
+      // the device is left with no transport and no recovery. Schedule a reconnect
+      // so the supervisor can re-establish connectivity via any available transport.
+      console.warn('[USB] connect_fail — falha ao conectar USB, scheduling reconnect');
+      this.scheduleReconnect('usb_promotion_failed', true);
       return false;
 
     } catch (error) {
       console.warn('[USB] connect_fail — erro ao conectar USB:', error);
+      // 🔒 FIX Bug-21: Also schedule reconnect on exception path
+      this.scheduleReconnect('usb_promotion_error', true);
       return false;
     } finally {
       this.usbPromotionInFlight = false;
@@ -1091,7 +1114,21 @@ class ESP32CommunicationService {
     });
   }
 
+  private lastReconnectNowAt = 0;
+
   async reconnectNow(reason: string = 'manual_reconnect_now'): Promise<boolean> {
+    // Guard: se já está em voo ou dentro do cooldown, não duplicar
+    if (this.supervisorReconnectInFlight) {
+      console.log('[ESP32Supervisor] reconnectNow ignorado: tentativa em andamento');
+      return false;
+    }
+    const now = Date.now();
+    if (now - this.lastReconnectNowAt < RECONNECT_NOW_COOLDOWN_MS) {
+      console.log('[ESP32Supervisor] reconnectNow ignorado: cooldown ativo');
+      return false;
+    }
+    this.lastReconnectNowAt = now;
+
     this.manualDisconnectRequested = false;
     this.updateSupervisorStatus({
       active: true,
@@ -1186,6 +1223,22 @@ class ESP32CommunicationService {
         return;
       }
 
+      // 🔧 FIX: Skip healthcheck ping during active dispensation
+      // The ESP32 is busy with solenoid/flow control and may not reply to pings in time.
+      // During multi-cup dispense, the 3s gap between cups (LED success 1s + wait 2s)
+      // could cause 2 consecutive healthcheck failures → false disconnect → BLE reconnect.
+      // Instead, trust inbound data: if we received anything in the last 10s, consider healthy.
+      if (this.dispensingInProgress) {
+        const recentInboundMs = this.lastInboundAt ? (Date.now() - this.lastInboundAt) : Number.POSITIVE_INFINITY;
+        if (recentInboundMs <= 10000) {
+          // Got data from ESP32 recently — connection is fine, skip ping
+          this.markConnectionHealthy('healthcheck_skip_dispensing');
+          return;
+        }
+        // No data for 10s during dispense — something is truly wrong, proceed with normal check
+        console.warn('[ESP32Supervisor] Dispensing but no ESP32 data for', Math.round(recentInboundMs / 1000), 's — checking connection...');
+      }
+
       const healthy = await this.verifyConnection(2500);
       if (healthy) {
         this.markConnectionHealthy('healthcheck_ok');
@@ -1247,8 +1300,12 @@ class ESP32CommunicationService {
     }
 
     const nextAttempt = Math.max(1, this.supervisorStatus.attempt + 1);
-    const nextDelayMs = immediate ? 0 : this.computeReconnectDelay(nextAttempt);
-    const nextState = nextAttempt >= SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS
+    const isPersistentFailure = nextAttempt >= SUPERVISOR_PERSISTENT_FAILURE_ATTEMPTS;
+    // Após persistent_failure: delay longo de 5 min em vez de backoff normal
+    const nextDelayMs = immediate ? 0 
+      : isPersistentFailure ? SUPERVISOR_PERSISTENT_FAILURE_DELAY_MS 
+      : this.computeReconnectDelay(nextAttempt);
+    const nextState = isPersistentFailure
       ? 'persistent_failure'
       : 'reconnecting';
 
@@ -1295,7 +1352,12 @@ class ESP32CommunicationService {
       }
 
       // 2) Fallback: tentar na ordem de prioridade configurada
-      const result = await this.autoConnectPreferredOrder(this.connectionOrder);
+      //    Na web, se última conexão foi USB, pular WiFi/BLE (inúteis e lentos)
+      let effectiveOrder = this.connectionOrder;
+      if (this.isWeb() && lastConnection?.type === 'usb') {
+        effectiveOrder = effectiveOrder.filter(t => t === 'usb');
+      }
+      const result = await this.autoConnectPreferredOrder(effectiveOrder);
       if (result !== 'none') {
         this.logSupervisor('reconnect_preferred_order_success', { transport: result });
         return true;
@@ -1356,6 +1418,7 @@ class ESP32CommunicationService {
     this.stopHeartbeat();
     this.stopSupervisorHealthCheck();
     this.resolvePendingPingWaiters(false);
+    systemLogService.warn('esp32', `Conexão perdida: ${reason}`);
 
     if (this.connectionStatus.type !== 'none' || this.connectionStatus.connected) {
       this.connectionStatus = { connected: false, type: 'none' };
@@ -1431,6 +1494,7 @@ class ESP32CommunicationService {
       // Verificar limite de falhas
       if (this.heartbeatFailCount >= HEARTBEAT_FAIL_THRESHOLD) {
         console.error('[Heartbeat] Limite de falhas atingido, conexÃ£o considerada perdida');
+        systemLogService.error('esp32', `Heartbeat limite atingido: ${this.heartbeatFailCount} falhas consecutivas`);
 
         // Notificar callback
         if (this.onHeartbeatFail) {
@@ -2072,6 +2136,7 @@ class ESP32CommunicationService {
       return true;
     } catch (error) {
       console.error('[BLE] Erro ao conectar:', error);
+      systemLogService.error('esp32', `Erro conexão BLE: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -2103,6 +2168,7 @@ class ESP32CommunicationService {
       return true;
     } catch (error) {
       console.error('[BLE] Erro ao enviar comando:', error);
+      systemLogService.error('esp32', `Erro envio BLE: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -2230,6 +2296,7 @@ class ESP32CommunicationService {
       return true;
     } catch (error) {
       console.error('[USB] Erro ao enviar:', error);
+      systemLogService.error('serial', `Erro envio USB: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     } finally {
       // Garantir que o lock seja sempre liberado
@@ -2735,6 +2802,7 @@ class ESP32CommunicationService {
         message,
         stack: error instanceof Error ? error.stack : undefined,
       });
+      systemLogService.error('serial', `Erro USB OTG: ${code} - ${message}`);
       return false;
     }
   }
@@ -2843,6 +2911,7 @@ class ESP32CommunicationService {
       } else {
         console.error('[WiFi] Erro ao conectar:', error.message || error);
       }
+      systemLogService.error('esp32', `Erro conexão WiFi: ${error.name === 'AbortError' ? 'timeout' : (error.message || String(error))}`, { ipAddress });
       return false;
     }
   }
@@ -3011,7 +3080,7 @@ class ESP32CommunicationService {
    * ðŸ†• GUARD: Falha rÃ¡pido se nÃ£o conectado
    */
   private canSendCommand(): boolean {
-    return this.connectionStatus.type !== 'none' || esp32Serial.isConnected();
+    return (this.connectionStatus.type !== 'none' && this.connectionStatus.connected) || esp32Serial.isConnected();
   }
 
   /**
@@ -3218,8 +3287,18 @@ class ESP32CommunicationService {
   }
 
   /**
-   * Ping/Pong para testar conexÃ£o
-   * Formato compatÃ­vel com firmware: {"action":"ping"}
+   * Sinaliza ao supervisor que uma dispensação está em andamento.
+   * Impede healthcheck pings durante dispense — o ESP32 está ocupado
+   * controlando solenóides/fluxo e pode não responder a pings a tempo.
+   */
+  setDispensingInProgress(active: boolean): void {
+    this.dispensingInProgress = active;
+    console.log(`[ESP32] dispensingInProgress = ${active}`);
+  }
+
+  /**
+   * Ping/Pong para testar conexão
+   * Formato compatível com firmware: {"action":"ping"}
    */
   async ping(): Promise<boolean> {
     // ðŸ”§ CORREÃ‡ÃƒO: Usar sendCommand unificado (ele detecta tipo de conexÃ£o automaticamente)

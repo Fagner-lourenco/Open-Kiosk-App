@@ -160,9 +160,16 @@ class HardwareStatusService {
       }, { merge: true });
 
       // Tentar buscar MAC via HTTP /status quando estiver online e sem MAC
-      if (status.esp32Connected && status.esp32Ip && !status.macAddress) {
+      // Skip quando conectado via USB — esp32Ip aponta para o AP WiFi do ESP32 (192.168.4.1)
+      // que não é acessível pela rede do host, causando ERR_CONNECTION_TIMED_OUT
+      // FIX: Usar this.currentStatus.esp32Type como fallback — chamadas parciais (ex: pong)
+      //      não incluem esp32Type, mas ele já foi setado em chamada anterior.
+      const effectiveType = status.esp32Type || this.currentStatus.esp32Type;
+      const hasMac = status.macAddress || this.currentStatus.macAddress;
+      if (status.esp32Connected && status.esp32Ip && !hasMac && effectiveType !== 'usb') {
         fetchDeviceMAC(status.esp32Ip).then((mac) => {
           if (mac) {
+            this.currentStatus.macAddress = mac;
             setDoc(statusRef, { macAddress: mac }, { merge: true }).catch((err) => {
               console.warn('[HardwareStatus] Erro ao atualizar MAC:', err);
             });

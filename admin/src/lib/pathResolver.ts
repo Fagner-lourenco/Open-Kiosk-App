@@ -48,7 +48,8 @@ export type StoreSubcollection =
   | 'deals'
   | 'calendarItems'
   | 'commercialEvents'
-  | 'quotes';
+  | 'quotes'
+  | 'systemLogs';
 
 /**
  * Subcoleções do módulo financeiro (dentro de .../finance/)
@@ -173,6 +174,13 @@ export function challengesPath(franchiseId: string, storeId: string): string {
  */
 export function prizesPath(franchiseId: string, storeId: string): string {
   return storeSubPath(franchiseId, storeId, 'prizes');
+}
+
+/**
+ * Retorna o path da coleção de system logs de uma loja
+ */
+export function systemLogsPath(franchiseId: string, storeId: string): string {
+  return storeSubPath(franchiseId, storeId, 'systemLogs');
 }
 
 /**

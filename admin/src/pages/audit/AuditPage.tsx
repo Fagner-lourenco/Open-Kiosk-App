@@ -22,8 +22,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { FilterBar } from '@/components/layout/FilterBar';
+import { SystemLogsCard } from '@/components/SystemLogsCard';
 import {
   Select,
   SelectContent,
@@ -423,6 +425,13 @@ export function AuditPage() {
         }
       />
 
+      <Tabs defaultValue="audit" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="audit">Auditoria</TabsTrigger>
+          <TabsTrigger value="system">Logs do Sistema</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="audit" className="space-y-4">
       <FilterBar className="md:justify-between">
         <div className="relative max-w-md flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -579,6 +588,12 @@ export function AuditPage() {
           )}
         </CardContent>
       </Card>
+        </TabsContent>
+
+        <TabsContent value="system">
+          <SystemLogsCard />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

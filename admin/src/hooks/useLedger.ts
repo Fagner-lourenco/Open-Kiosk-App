@@ -226,12 +226,12 @@ export function useLedger(franchiseId: string, storeId: string) {
   // ── Computed ────────────────────────────────────────────────────────────
 
   const incomeEntries = useMemo(
-    () => entries.filter((e) => e.direction === 'in'),
+    () => entries.filter((e) => e.direction === 'in' && e.status !== 'canceled'),
     [entries],
   );
 
   const expenseEntries = useMemo(
-    () => entries.filter((e) => e.direction === 'out'),
+    () => entries.filter((e) => e.direction === 'out' && e.status !== 'canceled'),
     [entries],
   );
 

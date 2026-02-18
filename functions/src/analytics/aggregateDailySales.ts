@@ -26,7 +26,7 @@ interface DailyStats {
   processedAt: admin.firestore.FieldValue;
 }
 
-const PAID_ORDER_STATUSES = ['completed', 'paid', 'paid_pending_dispense', 'dispensing'] as const;
+const PAID_ORDER_STATUSES = ['completed', 'paid', 'paid_pending_dispense', 'dispensing', 'failed_dispense'] as const;
 const PAID_PAYMENT_STATUSES = ['paid', 'completed', 'dispensed'] as const;
 const CANCELED_STATUSES = ['canceled', 'cancelled'] as const;
 
@@ -44,9 +44,10 @@ function isPaid(status: string, paymentStatus: string): boolean {
 export const aggregateDailySales = onSchedule(
   { schedule: '0 2 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
   async () => {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split('T')[0];
+    // Use BRT (UTC-3) to compute "yesterday" correctly for the business timezone
+    const nowBRT = new Date(Date.now() - 3 * 60 * 60 * 1000);
+    nowBRT.setDate(nowBRT.getDate() - 1);
+    const dateStr = nowBRT.toISOString().split('T')[0];
 
     console.log(`[AggregateDailySales] Processing ${dateStr}`);
     await processAllStores(dateStr);
@@ -108,8 +109,11 @@ async function processFranchiseStores(franchiseId: string, date: string): Promis
 async function aggregateStoreDaily(franchiseId: string, storeId: string, date: string): Promise<void> {
   const ordersRef = db.collection(`franchises/${franchiseId}/stores/${storeId}/orders`);
 
-  const startOfDay = new Date(`${date}T00:00:00.000Z`);
-  const endOfDay = new Date(`${date}T23:59:59.999Z`);
+  // Use BRT boundaries (UTC-3): 00:00 BRT = 03:00 UTC, 23:59:59 BRT = 02:59:59 UTC+1
+  const startOfDay = new Date(`${date}T03:00:00.000Z`);
+  const endOfDay = new Date(`${date}T03:00:00.000Z`);
+  endOfDay.setDate(endOfDay.getDate() + 1);
+  endOfDay.setMilliseconds(endOfDay.getMilliseconds() - 1);
 
   let orders;
   try {
@@ -157,7 +161,9 @@ async function aggregateStoreDaily(franchiseId: string, storeId: string, date: s
 
       let hour = 0;
       if (order.timestamp?.toDate) {
-        hour = order.timestamp.toDate().getUTCHours();
+        // Convert to BRT (UTC-3) for correct hourly distribution
+        const utcHour = order.timestamp.toDate().getUTCHours();
+        hour = (utcHour - 3 + 24) % 24;
       } else if (typeof order.hourOfDay === 'number') {
         hour = order.hourOfDay;
       }

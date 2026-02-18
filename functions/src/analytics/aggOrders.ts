@@ -38,7 +38,7 @@ interface MetricsUpdate {
 }
 
 const CANCELED_STATUSES = ['canceled', 'cancelled'] as const;
-const PAID_ORDER_STATUSES = ['completed', 'paid', 'paid_pending_dispense', 'dispensing'] as const;
+const PAID_ORDER_STATUSES = ['completed', 'paid', 'paid_pending_dispense', 'dispensing', 'failed_dispense'] as const;
 const PAID_PAYMENT_STATUSES = ['paid', 'completed', 'dispensed'] as const;
 const PENDING_ORDER_STATUSES = ['pending', 'paid_pending_dispense', 'dispensing', 'failed_dispense'] as const;
 
@@ -46,15 +46,26 @@ function normalizeStatus(value: unknown): string {
   return typeof value === 'string' ? value.toLowerCase() : '';
 }
 
+/** Convert a Date to BRT (UTC-3) and return YYYY-MM-DD */
+function toBRTDateStr(date: Date): string {
+  const brt = new Date(date.getTime() - 3 * 60 * 60 * 1000);
+  return brt.toISOString().split('T')[0];
+}
+
+/** Return BRT hour (0-23) from a Date */
+function toBRTHour(date: Date): number {
+  return (date.getUTCHours() - 3 + 24) % 24;
+}
+
 function getDateKey(timestamp: admin.firestore.Timestamp | undefined): string {
   const date = timestamp?.toDate() || new Date();
-  return date.toISOString().split('T')[0];
+  return toBRTDateStr(date);
 }
 
 function getHourKey(timestamp: admin.firestore.Timestamp | undefined): string {
   const date = timestamp?.toDate() || new Date();
-  const dateStr = date.toISOString().split('T')[0];
-  const hour = date.getUTCHours().toString().padStart(2, '0');
+  const dateStr = toBRTDateStr(date);
+  const hour = toBRTHour(date).toString().padStart(2, '0');
   return `${dateStr}-${hour}`;
 }
 
@@ -161,6 +172,11 @@ export const onOrderCreated = onDocumentCreated(
     const order = snap.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
 
+    // 🔒 FIX Bug-16: Idempotency guard for at-least-once delivery.
+    // Use event.id to track processed events on the daily metrics doc.
+    // If this event was already processed (replay), skip to avoid double-counting.
+    const eventId = event.id || orderId;
+
     order.franchiseId = franchiseId;
     order.storeId = storeId;
 
@@ -170,7 +186,18 @@ export const onOrderCreated = onDocumentCreated(
 
     try {
       const dailyRef = db.doc(`analytics/daily/${dateKey}`);
+
+      // Check idempotency on daily doc (most important aggregate)
+      const dailySnap = await dailyRef.get();
+      const processedEvents: string[] = dailySnap.exists ? (dailySnap.data()?.processedEvents || []) : [];
+      if (processedEvents.includes(eventId)) {
+        console.log(`[aggOrders] Event ${eventId} already processed — skip (replay)`);
+        return;
+      }
+
       await updateMetrics(dailyRef, order, true);
+      // Mark event as processed (best-effort — arrayUnion is idempotent)
+      await dailyRef.set({ processedEvents: admin.firestore.FieldValue.arrayUnion(eventId) }, { merge: true });
 
       const hourlyRef = db.doc(`analytics/hourly/${hourKey}`);
       await updateMetrics(hourlyRef, order, true);

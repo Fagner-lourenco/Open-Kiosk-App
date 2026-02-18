@@ -62,7 +62,7 @@ export const onUserCreated = authUser().onCreate(async (user) => {
     // Verifica se existe um convite pendente para este email
     const invitationQuery = await db
       .collection('invitations')
-      .where('email', '==', email)
+      .where('email', '==', email?.toLowerCase())
       .where('status', '==', 'pending')
       .limit(1)
       .get();

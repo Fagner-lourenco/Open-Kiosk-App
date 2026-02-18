@@ -58,6 +58,7 @@ export interface OrderItem {
 export interface FirestoreOrder {
   orderNumber: string;
   customerName?: string;
+  cardholderName?: string;
   customerEmail?: string;
   customerIdentification?: string;
   paymentMethod: string;
@@ -66,5 +67,6 @@ export interface FirestoreOrder {
   total: number;
   items: OrderItem[];
   status: string;
+  paymentStatus?: string;
   dispenseStatus?: string;
 }

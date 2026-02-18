@@ -735,9 +735,14 @@ export function ESP32DispenserPanel() {
 
   const handleTestValve = async () => {
     if (!isConnected) return;
+    // Programmatic clamp — HTML max= is only advisory, user can type any value
+    const clampedDuration = Math.min(10000, Math.max(500, valveDuration));
+    if (clampedDuration !== valveDuration) {
+      setValveDuration(clampedDuration);
+    }
     setIsBusy(true);
     setCurrentAction('test_valve');
-    await sendCommand('test_valve', { duration: valveDuration, tapId: selectedTapId });
+    await sendCommand('test_valve', { duration: clampedDuration, tapId: selectedTapId });
     
     // Timeout de segurança - resetar após duração + 3s se resposta não chegar
     setTimeout(() => {
@@ -749,7 +754,7 @@ export function ESP32DispenserPanel() {
         }
         return prev;
       });
-    }, valveDuration + 3000);
+    }, clampedDuration + 3000);
   };
 
   const handleTestFlow = async () => {
@@ -1440,7 +1445,11 @@ export function ESP32DispenserPanel() {
                   max={10000}
                   step={500}
                   value={valveDuration}
-                  onChange={(e) => setValveDuration(Number(e.target.value))}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    // Programmatic clamp — HTML min/max are only advisory
+                    setValveDuration(Math.min(10000, Math.max(500, isNaN(v) ? 500 : v)));
+                  }}
                   className="w-24"
                 />
                 <span className="text-sm text-gray-500 self-center">ms</span>

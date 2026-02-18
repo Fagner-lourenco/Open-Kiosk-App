@@ -275,15 +275,9 @@ export const validateInvitationToken = onRequest(async (req, res) => {
       return;
     }
 
-    // Busca dados da franquia para exibir
-    const franchiseDoc = await db.collection('franchises').doc(invitation.franchiseId).get();
-    const franchiseName = franchiseDoc.exists ? franchiseDoc.data()?.name : 'Franquia';
-
+    // 🔒 FIX Bug-4: Não expor email, role, franchiseName publicamente
     res.json({
       valid: true,
-      email: invitation.email,
-      role: invitation.role,
-      franchiseName,
       expiresAt: expiresAt.toISOString(),
     });
 

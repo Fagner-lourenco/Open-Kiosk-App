@@ -96,11 +96,12 @@ export function DashboardPage() {
         
         ordersSnapshot.docs.forEach(doc => {
           const order = doc.data();
+          // Apenas pedidos pagos contam (exclui cancelados/reembolsados)
+          const isPaid = order.paymentStatus === 'paid' ||
+            (!order.paymentStatus && order.status !== 'cancelled' && order.status !== 'refunded');
+          if (!isPaid) return;
           totalOrders++;
-          // Apenas pedidos pagos contam como receita (exclui cancelados/reembolsados)
-          if (order.paymentStatus === 'paid') {
-            totalRevenue += order.total || 0;
-          }
+          totalRevenue += order.total || 0;
         });
       }
 

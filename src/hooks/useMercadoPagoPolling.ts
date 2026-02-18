@@ -12,6 +12,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { paymentService } from '@/services/paymentService';
 import { MERCADO_PAGO_CONFIG } from '@/config/mercadopago';
+import { systemLogService } from '@/services/systemLogService';
 import type { Order, OrderStatus, PaymentStatus } from '@/types/mercadopago';
 
 // Constantes de configuração - usar valores do config centralizado
@@ -132,6 +133,16 @@ const loadPollingState = (): PollingState | null => {
 export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): UseMercadoPagoPollingReturn {
   const { onSuccess, onError, onStatusChange, onAttempt } = options;
 
+  // Refs estáveis para callbacks (evita stale closures no restore do localStorage)
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  const onStatusChangeRef = useRef(onStatusChange);
+  const onAttemptRef = useRef(onAttempt);
+  useEffect(() => { onSuccessRef.current = onSuccess; }, [onSuccess]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { onStatusChangeRef.current = onStatusChange; }, [onStatusChange]);
+  useEffect(() => { onAttemptRef.current = onAttempt; }, [onAttempt]);
+
   // Estados
   const [isPolling, setIsPolling] = useState(false);
   const [attempts, setAttempts] = useState(0);
@@ -190,16 +201,17 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
     // Verificar limite de tentativas
     if (attempt > MAX_ATTEMPTS) {
       logPolling('warn', 'Timeout - pagamento não confirmado', { orderId, attempts: attempt });
+      systemLogService.warn('payment', `Polling timeout: ${orderId}`, { orderId, attempts: attempt });
       setError('Tempo limite excedido. Verifique o status do pagamento.');
       setIsPolling(false);
       savePollingState(null);
-      onError('Tempo limite excedido. Verifique o status do pagamento.');
+      onErrorRef.current('Tempo limite excedido. Verifique o status do pagamento.');
       return;
     }
 
     // Atualizar estado
     setAttempts(attempt);
-    onAttempt?.(attempt, MAX_ATTEMPTS);
+    onAttemptRef.current?.(attempt, MAX_ATTEMPTS);
 
     // Persistir estado
     savePollingState({
@@ -237,7 +249,7 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
       networkRetriesRef.current = 0;
 
       // Notificar mudança de status
-      onStatusChange?.(order.status, paymentStatus);
+      onStatusChangeRef.current?.(order.status, paymentStatus);
 
       // Verificar status de falha
       if (order.status === 'failed' || order.status === 'expired' || order.status === 'canceled') {
@@ -249,10 +261,11 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
         const errorMsg = errorMessages[order.status] || 'Pagamento não aprovado';
         
         logPolling('error', `Pagamento ${order.status}`, { orderId });
+        systemLogService.warn('payment', `Pagamento ${order.status}: ${orderId}`, { orderId, status: order.status });
         setError(errorMsg);
         setIsPolling(false);
         savePollingState(null);
-        onError(errorMsg);
+        onErrorRef.current(errorMsg);
         return;
       }
 
@@ -281,7 +294,7 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
         logPolling('success', 'Pagamento aprovado!', { orderId, paymentStatus });
         setIsPolling(false);
         savePollingState(null);
-        onSuccess(order);
+        onSuccessRef.current(order);
         return;
       }
 
@@ -316,12 +329,13 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
 
       // Erro definitivo
       const errorMsg = err.message || 'Erro ao verificar pagamento';
+      systemLogService.error('payment', `Polling erro definitivo: ${errorMsg}`, { orderId, attempt });
       setError(errorMsg);
       setIsPolling(false);
       savePollingState(null);
-      onError(errorMsg);
+      onErrorRef.current(errorMsg);
     }
-  }, [onSuccess, onError, onStatusChange, onAttempt]);
+  }, []); // Callbacks via refs estáveis - sem deps
 
   // Iniciar polling
   const startPolling = useCallback((orderId: string, isPointPayment: boolean = false) => {
@@ -364,6 +378,7 @@ export function useMercadoPagoPolling(options: UseMercadoPagoPollingOptions): Us
         attempts: persistedState.attempts,
         elapsedMinutes: ((Date.now() - persistedState.startedAt) / 60000).toFixed(1),
       });
+      systemLogService.info('payment', `Polling restaurado do localStorage: ${persistedState.orderId}`, { orderId: persistedState.orderId, attempts: persistedState.attempts });
 
       // Verificar se ainda está montado antes de atualizar estados
       if (!isMountedRef.current) {

@@ -30,8 +30,16 @@ function getYesterdayKey(): string {
 }
 
 function getYesterdayRange(): { start: Date; end: Date } {
-  const end = new Date();
-  end.setHours(0, 0, 0, 0);
+  // 🔧 FIX R11-01: Usar limites BRT (UTC-3) para alinhar com dados de vendas
+  const now = new Date();
+  // Converter para BRT: subtrair 3 horas do UTC
+  const brtNow = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const y = brtNow.getUTCFullYear();
+  const m = String(brtNow.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(brtNow.getUTCDate()).padStart(2, '0');
+  const todayBRT = `${y}-${m}-${d}`;
+  // Meia-noite de hoje em BRT = 03:00 UTC
+  const end = new Date(`${todayBRT}T03:00:00.000Z`);
   const start = new Date(end);
   start.setDate(start.getDate() - 1);
   return { start, end };

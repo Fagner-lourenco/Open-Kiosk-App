@@ -79,21 +79,24 @@ function aggregateRanking(
   }>();
 
   for (const order of orders) {
-    // Apenas pedidos com nome do cliente
-    if (!order.customerName) continue;
+    // Só incluir no ranking pedidos com nome REAL do pagador.
+    // Pedidos sem customerName/cardholderName são vendas anônimas — não entram no ranking.
+    const effectiveCustomerName = order.customerName 
+      || order.cardholderName as string | undefined;
+    if (!effectiveCustomerName) continue;
     // Apenas pedidos completados (paid ou completed) — excluir cancelados/reembolsados
     if (order.status !== 'paid_pending_dispense' && order.status !== 'completed' && order.status !== 'dispensing') continue;
     // Excluir pedidos cancelados/reembolsados via paymentStatus
     if (order.paymentStatus === 'cancelled' || order.paymentStatus === 'refunded') continue;
 
     const key = order.customerIdentification
-      ? String(order.customerIdentification).replace(/\D/g, '') || order.customerName.toUpperCase().trim().replace(/\s+/g, '_')
-      : order.customerName.toUpperCase().trim().replace(/\s+/g, '_');
+      ? String(order.customerIdentification).replace(/\D/g, '') || effectiveCustomerName.toUpperCase().trim().replace(/\s+/g, '_')
+      : effectiveCustomerName.toUpperCase().trim().replace(/\s+/g, '_');
     let entry = byCustomer.get(key);
 
     if (!entry) {
       entry = {
-        customerName: order.customerName,
+        customerName: effectiveCustomerName,
         customerIdentification: order.customerIdentification,
         totalMl: 0,
         totalSpent: 0,
@@ -112,7 +115,7 @@ function aggregateRanking(
     if (orderDate > entry.lastOrderAt) {
       entry.lastOrderAt = orderDate;
       // Usar o nome mais recente (pode ter variações de acentuação)
-      entry.customerName = order.customerName;
+      entry.customerName = effectiveCustomerName;
     }
 
     // Somar mL e breakdown por bebida
@@ -235,7 +238,7 @@ export function useCustomerRanking(
   );
 
   const totalOrders = useMemo(
-    () => orders.filter((o) => o.customerName).length,
+    () => orders.filter((o) => o.customerName && ['completed', 'paid_pending_dispense', 'dispensing'].includes(o.status)).length,
     [orders]
   );
 

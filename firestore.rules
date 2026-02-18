@@ -177,7 +177,9 @@ service cloud.firestore {
                     isFranchiseMember(franchiseId);
       
       // Qualquer usuário autenticado pode criar uma franquia (se torna owner)
-      allow create: if isAuthenticated();
+      // 🔒 FIX Bug-6: Garantir que ownerId é o próprio usuário
+      allow create: if isAuthenticated() &&
+                      request.resource.data.ownerId == request.auth.uid;
       
       // Super admin ou owner (pelo campo ownerId) ou admin/owner (pelo membership) podem atualizar
       allow update: if isSuperAdmin() || 
@@ -319,14 +321,14 @@ service cloud.firestore {
           
           // Permitir update APENAS para mudanças de status (cancelamento, estorno)
           // Restringe a apenas owner/admin da franquia
-          allow update: if (isSuperAdmin() || 
+          // 🔒 FIX Bug-14: paymentStatus removido — apenas Cloud Functions alteram payment status
+          allow update: if (isSuperAdmin() ||
                            isFranchiseOwner(franchiseId) ||
                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'operator'])) &&
                         // Apenas permite atualizar campos específicos de status
                         request.resource.data.diff(resource.data).affectedKeys()
                           .hasOnly([
                             'status',
-                            'paymentStatus',
                             'dispenseStatus',
                             'dispensedAt',
                             'completedAt',
@@ -566,6 +568,26 @@ service cloud.firestore {
                           hasStoreAccess(franchiseId, storeId);
 
           // IMUTAVEL: sem update, sem delete
+          allow update, delete: if false;
+        }
+
+        // ────────────────────────────────────────────────────────────────────
+        // SYSTEM LOGS (Logs de sistema - ESP32, pagamentos, etc.)
+        // ────────────────────────────────────────────────────────────────────
+
+        match /systemLogs/{logId} {
+          // Owner, admin ou membros com acesso à loja podem ler
+          allow read: if isSuperAdmin() ||
+                        isFranchiseOwner(franchiseId) ||
+                        hasStoreAccess(franchiseId, storeId);
+
+          // Qualquer membro autenticado com acesso à loja pode criar logs
+          // (kiosk app escreve logs de sistema)
+          allow create: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId);
+
+          // Logs são imutáveis
           allow update, delete: if false;
         }
 
@@ -1045,9 +1067,16 @@ service cloud.firestore {
                      isOwnerOrAdmin(request.resource.data.franchiseId);
       
       // Pode atualizar status (aceitar convite)
-      allow update: if isAuthenticated() && 
-                     (resource.data.email == request.auth.token.email ||
-                      isOwnerOrAdmin(resource.data.franchiseId));
+      // 🔒 FIX Bug-1: Destinatário só pode alterar status (não role/franchiseId)
+      allow update: if isAuthenticated() &&
+                     (
+                       // Destinatário pode APENAS mudar status para aceitar/rejeitar
+                       (resource.data.email == request.auth.token.email &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['status', 'acceptedAt', 'acceptedBy'])) ||
+                       // Owner/Admin podem atualizar outros campos (revogar, etc.)
+                       isOwnerOrAdmin(resource.data.franchiseId)
+                     );
       
       // Owner e admin podem revogar convites
       allow delete: if isAuthenticated() && 

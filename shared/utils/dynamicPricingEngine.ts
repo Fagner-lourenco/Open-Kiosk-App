@@ -203,7 +203,7 @@ export function evaluateDynamicPrice(
     if (!match) continue;
 
     // Clamp delta ao maxVariationPercent
-    const maxVar = cfg.maxVariationPercent || 20;
+    const maxVar = cfg.maxVariationPercent ?? 20;
     const clampedDelta = Math.max(-maxVar, Math.min(maxVar, match.deltaPercent));
 
     // Calcula preço efetivo

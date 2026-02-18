@@ -324,10 +324,17 @@ export function useQuotes(franchiseId: string, storeId: string) {
         if (value === undefined) continue;
         cleanFields[key] = value === null ? null : value;
       }
-      // Recalculate total only when both operands are explicitly provided.
+      // Recalculate total when any operand is explicitly provided.
       const hasQty = typeof cleanFields.qty === 'number';
       const hasUnitPrice = typeof cleanFields.unitPrice === 'number';
-      if (hasQty && hasUnitPrice) {
+      if (hasQty || hasUnitPrice) {
+        if (!hasQty || !hasUnitPrice) {
+          const { getDoc } = await import('firebase/firestore');
+          const snap = await getDoc(ref);
+          const cur = snap.data() || {};
+          if (!hasQty) cleanFields.qty = cur.qty ?? 0;
+          if (!hasUnitPrice) cleanFields.unitPrice = cur.unitPrice ?? 0;
+        }
         const qty = cleanFields.qty as number;
         const unitPrice = cleanFields.unitPrice as number;
         cleanFields.total = qty * unitPrice;

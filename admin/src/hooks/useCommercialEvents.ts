@@ -345,10 +345,17 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
         if (value === undefined) continue;
         cleanFields[key] = value === null ? null : value;
       }
-      // Recalculate totalCost only when both operands are explicitly provided.
+      // Recalculate totalCost when any operand is explicitly provided.
       const hasQty = typeof cleanFields.qty === 'number';
       const hasUnitCost = typeof cleanFields.unitCost === 'number';
-      if (hasQty && hasUnitCost) {
+      if (hasQty || hasUnitCost) {
+        if (!hasQty || !hasUnitCost) {
+          const { getDoc } = await import('firebase/firestore');
+          const snap = await getDoc(ref);
+          const cur = snap.data() || {};
+          if (!hasQty) cleanFields.qty = cur.qty ?? 0;
+          if (!hasUnitCost) cleanFields.unitCost = cur.unitCost ?? 0;
+        }
         const qty = cleanFields.qty as number;
         const unitCost = cleanFields.unitCost as number;
         cleanFields.totalCost = qty * unitCost;

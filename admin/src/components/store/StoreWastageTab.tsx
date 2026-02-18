@@ -233,7 +233,7 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [typeFilter, setTypeFilter] = useState<'all' | WastageType>('all');
 
-  const { maxTaps, tapIds } = useMaxTaps(franchiseId, storeId);
+  const { tapIds } = useMaxTaps(franchiseId, storeId);
 
   const filteredEvents = typeFilter === 'all'
     ? events

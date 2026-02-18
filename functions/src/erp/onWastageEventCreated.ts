@@ -109,15 +109,20 @@ export const onWastageEventCreated = onDocumentCreated(
       }
     }
 
-    // ── 2. Increment Tap.todayWastageMl ───────────────────────────────────
+    // ── 2. Increment Tap.todayWastageMl (🔧 FIX R11-02: idempotency guard) ──
     if (wastage.tapId) {
       const tapRef = db.doc(`${storePath}/taps/${wastage.tapId}`);
-      batch.set(tapRef, {
-        todayWastageMl: increment(wastage.mlLost),
-        updatedAt: serverTimestamp(),
-        updatedBy: 'system',
-      }, { merge: true });
-      needsBatch = true;
+      const tapSnap = await tapRef.get();
+      const tapProcessed: string[] = tapSnap.exists ? (tapSnap.data()?.processedEvents || []) : [];
+      if (!tapProcessed.includes(eventId)) {
+        batch.set(tapRef, {
+          todayWastageMl: increment(wastage.mlLost),
+          updatedAt: serverTimestamp(),
+          updatedBy: 'system',
+          processedEvents: arrayUnion(eventId),
+        }, { merge: true });
+        needsBatch = true;
+      }
     }
 
     // ── 3. Increment active TapAssignment.totalWastageMl ──────────────────

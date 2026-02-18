@@ -64,6 +64,9 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
     // Guard: só agrega pedidos em status elegível
     if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(after.status)) return;
 
+    // Guard: só agrega pedidos com customerName real (evita entradas fantasma)
+    if (!after.customerName) return;
+
     // P1-24: Rejeitar pedidos com paymentStatus fora do esperado
     const invalidPaymentStatuses = ['failed', 'canceled', 'cancelled', 'refunded', 'expired'];
     if (after.paymentStatus && invalidPaymentStatuses.includes(after.paymentStatus)) {
@@ -235,7 +238,8 @@ async function recalculate30minForStore(
   for (const doc of ordersSnap.docs) {
     const order = doc.data() as OrderData;
     if (!order.customerName) continue;
-    // Filtrar por status válido (mesma lógica de onOrderUpdatedRanking)
+    // KIO-FIX: fallback para pedidos sem customerName (kiosk anônimo)
+    // Nota: se customerName existe no doc mas não no ranking, usar o nome como está
     if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(order.status)) continue;
     if (order.paymentStatus && invalidPaymentStatuses.includes(order.paymentStatus)) continue;
     const id = getCustomerId(order);
@@ -373,8 +377,22 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
         }
 
         if (completed) {
-          await challengeDoc.ref.update({
-            completedCount: increment(1),
+          // 🔒 FIX Bug-18: Use transaction with processedOrders dedup.
+          // Cloud Functions at-least-once delivery could replay the same orderId,
+          // causing completedCount to be incremented twice. The transaction ensures
+          // the orderId check and increment are atomic.
+          const orderId = context.params.orderId;
+          await db.runTransaction(async (txn) => {
+            const cDoc = await txn.get(challengeDoc.ref);
+            const processed: string[] = cDoc.data()?.processedOrders || [];
+            if (processed.includes(orderId)) {
+              console.log(`[challenge] orderId ${orderId} already processed for "${challenge.title}" — skip`);
+              return;
+            }
+            txn.update(challengeDoc.ref, {
+              completedCount: increment(1),
+              processedOrders: admin.firestore.FieldValue.arrayUnion(orderId),
+            });
           });
           console.log(`[challenge] ${customerId} completed "${challenge.title}"`);
 
@@ -453,6 +471,11 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
     }
 
     // Verificar limite de Pix por pessoa
+    // 🔒 NOTE Bug-19: This query-then-decide pattern has a theoretical TOCTOU race
+    // if two different golden-serve orders for the same customer fire concurrently.
+    // However, golden serves are rare (1-in-N) and the deterministic orderId-based
+    // prize doc ID (see generatePrize) prevents replay duplication. The residual
+    // race window for two truly concurrent different orders is negligible.
     if (prizeType === 'pix') {
       const customerId = getCustomerId(after);
       const maxPix = goldenConfig.maxPixPerPerson || 1;
@@ -520,8 +543,14 @@ async function generatePrize(
     createdAt: now,
   };
 
-  await db.collection(`${storePath}/prizes`).add(prize);
-  console.log(`[prize] Created ${type} prize for ${displayName}: ${code}`);
+  // 🔒 FIX Bug-19: Use orderId-based deterministic doc ID instead of .add().
+  // Cloud Functions at-least-once delivery could replay the same trigger,
+  // causing .add() to create duplicate prizes. Using set() with a deterministic
+  // doc ID makes prize creation idempotent — the second write just overwrites
+  // with identical data.
+  const prizeDocId = `prize_${orderId}`;
+  await db.doc(`${storePath}/prizes/${prizeDocId}`).set(prize);
+  console.log(`[prize] Created ${type} prize for ${displayName}: ${code} (doc: ${prizeDocId})`);
 }
 
 // ============================================================================

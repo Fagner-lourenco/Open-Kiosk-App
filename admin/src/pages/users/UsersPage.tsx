@@ -7,7 +7,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { collection, doc, updateDoc, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { removeMember as removeMemberService } from '@/services/userService';
 import { useFranchise } from '@/context/FranchiseContext';
@@ -115,8 +115,8 @@ export function UsersPage() {
   const changeRoleMutation = useMutation({
     mutationFn: async ({ memberId, newRole }: { memberId: string; newRole: string }) => {
       if (!currentFranchise) throw new Error('No franchise selected');
-      const memberRef = doc(db, 'franchises', currentFranchise.id, 'members', memberId);
-      await updateDoc(memberRef, { role: newRole, updatedAt: new Date() });
+      const { updateMemberRole } = await import('../../services/userService');
+      await updateMemberRole(currentFranchise.id, memberId, newRole);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['franchise-members', currentFranchise?.id] });

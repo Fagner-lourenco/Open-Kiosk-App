@@ -568,29 +568,46 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     });
     
     try {
-      await salesService.recordSaleAndUpdateStock(
-        cartItems,
-        getFinalTotal(),
-        currentCurrency.code,
-        orderNumber,
-        paymentMethod,
-        getCurrentStoreId()
-      );
-      console.log('Sale recorded and stock updated atomically:', orderNumber);
-    } catch (error) {
-      console.error('Error processing order:', error);
-      // Reverter guards de gravação — mas NÃO resetar paymentProcessed
-      // pois o pagamento já foi coletado pelo gateway
-      saleRecordedRef.current = false;
-      setSaleRecorded(false);
-      // paymentProcessed permanece true para evitar cobrança dupla
-      paymentInProgressRef.current = null;
-      toast({
-        title: t('common.error'),
-        description: (error as Error)?.message || t('checkout.processOrderError'),
-        variant: "destructive"
-      });
-      return;
+      // 🔒 FIX Bug-8: Retry recordSaleAndUpdateStock with exponential backoff.
+      // Payment was already collected by gateway — we MUST persist the sale.
+      let saleSuccess = false;
+      let lastSaleError: unknown = null;
+      const maxSaleRetries = 3;
+
+      for (let attempt = 1; attempt <= maxSaleRetries; attempt++) {
+        try {
+          await salesService.recordSaleAndUpdateStock(
+            cartItems,
+            getFinalTotal(),
+            currentCurrency.code,
+            orderNumber,
+            paymentMethod,
+            getCurrentStoreId()
+          );
+          console.log('Sale recorded and stock updated atomically:', orderNumber);
+          saleSuccess = true;
+          break;
+        } catch (error) {
+          lastSaleError = error;
+          console.error(`Error recording sale (attempt ${attempt}/${maxSaleRetries}):`, error);
+          if (attempt < maxSaleRetries) {
+            await new Promise(r => setTimeout(r, Math.pow(2, attempt) * 1000));
+          }
+        }
+      }
+
+      if (!saleSuccess) {
+        // All retries exhausted — revert guards but keep paymentProcessed true
+        // to prevent double charge (payment already collected by gateway)
+        saleRecordedRef.current = false;
+        setSaleRecorded(false);
+        toast({
+          title: t('common.error'),
+          description: (lastSaleError as Error)?.message || t('checkout.processOrderError'),
+          variant: "destructive"
+        });
+        return;
+      }
     } finally {
       // Liberar mutex
       resolvePayment!();
@@ -600,7 +617,7 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     // Print receipt before clearing the cart so data remains available
     if (settings?.useThermalPrinter && settings?.comPort) {
       await handleESP32Print();
-    } else if (!settings?.useThermalPrinter) {
+    } else if (!settings?.useThermalPrinter && settings) {
       await handlePDFPrint();
     }
 
@@ -728,13 +745,14 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       setPagbankError(null);
       setPaymentProcessed(false);
 
-      // Fire-and-forget remote cancel — best effort
+      // 🔒 FIX Bug-12: Await remote cancel to confirm gateway state (was fire-and-forget)
       if (cancelPaymentId) {
-        paymentService.cancelPagBankPayment(cancelPaymentId).then(result => {
+        try {
+          const result = await paymentService.cancelPagBankPayment(cancelPaymentId);
           console.log('[Checkout] PagBank cancel result:', result);
-        }).catch(err => {
+        } catch (err) {
           console.warn('[Checkout] PagBank remote cancel failed (cancel_requested fallback):', err);
-        });
+        }
       }
 
       toast({

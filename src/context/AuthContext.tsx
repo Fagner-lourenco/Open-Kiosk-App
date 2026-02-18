@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode, useRef } from 'react';
 import { authService } from '../services/authService';
 import { AuthenticatedUser } from '../types/franchise';
+import { systemLogService } from '../services/systemLogService';
 
 /**
  * ============================================================================
@@ -145,6 +146,7 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
 
       // Log auditoria
       console.warn('[Auth] Admin session expired - INACTIVITY');
+      systemLogService.warn('kiosk', 'Sessão admin expirada por inatividade', { sessionTimeoutMinutes: sessionTimeout });
 
       // Navegar para landing page
       window.location.hash = '/';
@@ -235,6 +237,7 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
       return { success: false, error };
     } catch (err) {
       const error = err instanceof Error ? err.message : 'Erro desconhecido';
+      systemLogService.warn('kiosk', `Login email falhou: ${error}`);
       setAuthError(error);
       return { success: false, error };
     } finally {
@@ -264,6 +267,7 @@ export const AuthContextProvider: React.FC<AuthContextProviderProps> = ({ childr
       return { success: false, error };
     } catch (err) {
       const error = err instanceof Error ? err.message : 'Erro ao validar PIN';
+      systemLogService.warn('kiosk', `Login PIN falhou: ${error}`);
       setAuthError(error);
       return { success: false, error };
     }

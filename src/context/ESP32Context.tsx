@@ -16,6 +16,7 @@ import { hardwareStatusService } from '@/services/hardwareStatusService';
 import { persistSession } from '@/services/servingSessionService';
 import { salesService } from '@/services/salesService';
 import { persistFailedDispense, reconcileOnStartup } from '@/services/dispenseRecoveryService';
+import { systemLogService } from '@/services/systemLogService';
 import { useToast } from '@/hooks/use-toast';
 import {
   TapStatus,
@@ -91,6 +92,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   const [logs, setLogs] = useState<ESP32LogEntry[]>([]);
   const logIdRef = useRef(0);
 
+  // Dedup guard: evitar logs repetidos de "Conexão estabelecida" quando já conectado
+  const lastConnectionKeyRef = useRef<string>('none');
+
   // ServingSession: capture progress ref for persistence before state clear
   const currentProgressRef = useRef<ESP32DispensingProgress | null>(null);
   const dispensingStartedAtRef = useRef<Date | null>(null);
@@ -98,6 +102,18 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // Dispense timeout: marca como failed_dispense se ESP32 não responder
   const dispenseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const DISPENSE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
+
+  // Grace period: tolerar BLE drop transitório durante dispense ativo sem declarar falha imediatamente
+  const disconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const DISCONNECT_GRACE_MS = 15_000; // 15s para reconectar antes de declarar falha
+
+  // Inicializar systemLogService
+  useEffect(() => {
+    const deviceId = localStorage.getItem('deviceId') || undefined;
+    systemLogService.start(deviceId);
+    systemLogService.info('kiosk', 'Kiosk inicializado');
+    return () => systemLogService.stop();
+  }, []);
 
   // Concurrency guard: prevent double dispense
   const isReleasingRef = useRef<boolean>(false);
@@ -183,45 +199,10 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     };
   }, [status.connected, tapsVersion, storeTaps, reportTapApplied]);
 
-  // 🆕 SINCRONIZAR HEARTBEAT COM SETTINGS
-  // Quando esp32HeartbeatIntervalMs mudar em StoreSettings, atualizar o intervalo dinâmicamente
-  useEffect(() => {
-    if (!status.connected || !storeSettings?.esp32HeartbeatIntervalMs) {
-      return;
-    }
-
-    const newInterval = storeSettings.esp32HeartbeatIntervalMs;
-    const MIN = 5000;
-    const MAX = 60000;
-
-    // Validar bounds
-    if (newInterval < MIN || newInterval > MAX) {
-      console.warn(`[ESP32Context] esp32HeartbeatIntervalMs inválido: ${newInterval}ms. Min: ${MIN}, Max: ${MAX}`);
-      return;
-    }
-
-    console.log(`[ESP32Context] 🔄 Atualizando heartbeat de 60000ms para ${newInterval}ms`);
-
-    // Limpar interval antigo
-    if (heartbeatRef.current) {
-      clearInterval(heartbeatRef.current);
-    }
-
-    // Criar novo interval com valor dinâmico
-    heartbeatRef.current = setInterval(() => {
-      esp32Service.ping().catch(() => {
-        console.warn('[ESP32Context] Heartbeat falhou');
-      });
-    }, newInterval);
-
-    // Cleanup: limpar interval ao desconectar ou when component unmounts
-    return () => {
-      if (heartbeatRef.current) {
-        clearInterval(heartbeatRef.current);
-        heartbeatRef.current = null;
-      }
-    };
-  }, [status.connected, storeSettings?.esp32HeartbeatIntervalMs]);
+  // 🆕 HEARTBEAT: Removido heartbeat duplicado do Context.
+  // O supervisor healthcheck (7s) no esp32CommunicationService já monitora a conexão.
+  // Ter 3 heartbeats concorrentes (Context + Legacy + Supervisor) causava spam e triggers duplos.
+  // Se esp32HeartbeatIntervalMs estiver configurado, ele é ignorado aqui — configurar via supervisor.
 
   // Refs para listeners
   const responseListeners = useRef<Set<(response: ESP32Response) => void>>(new Set());
@@ -386,6 +367,64 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           }
         }
 
+        // ⚡ Detectar ESP32 reboot durante dispense ativo (brownout, watchdog, etc.)
+        // Quando stage === 'ready' mas ainda temos um dispense em andamento,
+        // significa que o ESP32 reiniciou e perdeu o estado da dispensação.
+        if (response.stage === 'ready' && currentProgressRef.current) {
+          console.error('[ESP32Context] ⚡ ESP32 reiniciou durante dispense ativo! orderId:', currentProgressRef.current.orderId);
+          
+          // Limpar timeout de segurança
+          if (dispenseTimeoutRef.current) {
+            clearTimeout(dispenseTimeoutRef.current);
+            dispenseTimeoutRef.current = null;
+          }
+
+          // Persist session como falha
+          const rebootProgress = currentProgressRef.current;
+          persistSession({
+            progress: rebootProgress,
+            stage: 'error',
+            errorMessage: 'ESP32 reiniciou durante dispensação (possível brownout)',
+            startedAt: dispensingStartedAtRef.current || undefined,
+          }).catch((err) => {
+            console.error('[ESP32Context] Failed to persist reboot serving session:', err);
+          });
+
+          updateDispenseStatusWithRetry(rebootProgress.orderId, 'failed_dispense');
+          persistFailedDispense(rebootProgress.orderId, 'esp32_reboot_during_dispense', {
+            mlDispensed: rebootProgress.ml,
+            targetMl: rebootProgress.targetMl,
+            cup: rebootProgress.cup,
+            totalCups: rebootProgress.totalCups,
+            tapId: rebootProgress.tapId,
+          });
+
+          systemLogService.error('dispense', `Dispense interrompido por reboot: ${rebootProgress.orderId}`, {
+            ml: rebootProgress.ml, targetMl: rebootProgress.targetMl,
+            cup: rebootProgress.cup, totalCups: rebootProgress.totalCups,
+          });
+
+          if (disconnectGraceTimerRef.current) { clearTimeout(disconnectGraceTimerRef.current); disconnectGraceTimerRef.current = null; }
+          setIsDispensing(false);
+          setCurrentProgress(null);
+          currentProgressRef.current = null;
+          dispensingStartedAtRef.current = null;
+          esp32Service.setDispensingInProgress(false); // 🔧 FIX: Liberar healthcheck (reboot path)
+
+          // Notificar listeners como erro para DrinkPickupScreen mostrar estado de erro
+          responseListeners.current.forEach(listener => {
+            try {
+              listener({
+                type: 'status',
+                stage: 'error',
+                orderId: rebootProgress.orderId,
+                tapId: rebootProgress.tapId,
+                message: 'ESP32 reiniciou durante dispensação (possível brownout)',
+              } as ESP32Response);
+            } catch (e) { /* ignore */ }
+          });
+        }
+
         if (response.stage === 'completed' || response.stage === 'error') {
           // Limpar timeout de segurança
           if (dispenseTimeoutRef.current) {
@@ -409,16 +448,35 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             const dispenseResult = response.stage === 'completed' ? 'dispensed' : 'failed_dispense';
             updateDispenseStatusWithRetry(progressSnapshot.orderId, dispenseResult);
 
+            // Log de dispense completo ou falho
+            if (response.stage === 'completed') {
+              systemLogService.info('dispense', `Dispense concluído: ${progressSnapshot.orderId}`, {
+                ml: progressSnapshot.ml, targetMl: progressSnapshot.targetMl, cup: progressSnapshot.cup, totalCups: progressSnapshot.totalCups,
+              });
+            } else {
+              systemLogService.error('dispense', `Dispense falhou: ${progressSnapshot.orderId}`, {
+                ml: progressSnapshot.ml, targetMl: progressSnapshot.targetMl, error: response.error || response.message,
+              });
+            }
+
             // Se falhou, persistir localmente para reconciliação
             if (response.stage === 'error') {
-              persistFailedDispense(progressSnapshot.orderId, response.error || 'esp32_error');
+              persistFailedDispense(progressSnapshot.orderId, response.error || 'esp32_error', {
+                mlDispensed: progressSnapshot.ml,
+                targetMl: progressSnapshot.targetMl,
+                cup: progressSnapshot.cup,
+                totalCups: progressSnapshot.totalCups,
+                tapId: progressSnapshot.tapId,
+              });
             }
           }
 
+          if (disconnectGraceTimerRef.current) { clearTimeout(disconnectGraceTimerRef.current); disconnectGraceTimerRef.current = null; }
           setIsDispensing(false);
           setCurrentProgress(null);
           currentProgressRef.current = null;
           dispensingStartedAtRef.current = null;
+          esp32Service.setDispensingInProgress(false); // 🔧 FIX: Liberar healthcheck
 
           // Multi-Tap: Atualizar tap como não dispensando
           if (response.tapId !== undefined) {
@@ -523,10 +581,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           macAddress: response.mac,
           lastSyncAt: new Date()
         });
+        systemLogService.info('firmware', `Firmware ${response.firmware_version || 'unknown'} detectado`, {
+          ip: response.wifi_ip, mac: response.mac, pulsosPorLitro: response.pulsos_por_litro,
+        });
         break;
 
       case 'error':
         setLastError(response.message || 'Erro desconhecido');
+        systemLogService.error('esp32', `Erro ESP32: ${response.message || 'desconhecido'}`, {
+          stage: response.stage, orderId: currentProgressRef.current?.orderId,
+        });
         if (response.stage === 'error') {
           // Persist ServingSession for error case
           const errorProgressSnapshot = currentProgressRef.current;
@@ -540,6 +604,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
               console.error('[ESP32Context] Failed to persist error serving session:', err);
             });
           }
+          if (disconnectGraceTimerRef.current) { clearTimeout(disconnectGraceTimerRef.current); disconnectGraceTimerRef.current = null; }
           setIsDispensing(false);
           setCurrentProgress(null);
           currentProgressRef.current = null;
@@ -567,17 +632,109 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     if (newStatus.connected) {
       setLastError(null);
 
+      // ✅ Reconexão durante grace period → dispense continua normalmente
+      if (disconnectGraceTimerRef.current) {
+        clearTimeout(disconnectGraceTimerRef.current);
+        disconnectGraceTimerRef.current = null;
+        console.log('[ESP32Context] ✅ Reconectado durante grace period — dispense ativo continua');
+        systemLogService.info('dispense', 'Reconexão BLE durante dispense ativo, continuando');
+      }
+
+      // Dedup: só logar se tipo/device mudou (evita 6x "Conexão estabelecida" no startup)
+      const connectionKey = `${newStatus.type}:${newStatus.deviceName || ''}`;
+      if (lastConnectionKeyRef.current !== connectionKey) {
+        lastConnectionKeyRef.current = connectionKey;
+        systemLogService.info('esp32', `Conexão ${newStatus.type} estabelecida`, { device: newStatus.deviceName });
+      }
+
       // Iniciar heartbeat remoto com o mesmo intervalo (heartbeat local é gerenciado pelo useEffect dinâmico)
       const interval = storeSettings?.esp32HeartbeatIntervalMs || 60000;
       hardwareStatusService.startHeartbeat(interval);
     } else {
       // Parar heartbeat local e remoto
+      lastConnectionKeyRef.current = 'none'; // Reset para logar na próxima conexão
       hardwareStatusService.stopHeartbeat();
+      systemLogService.warn('esp32', 'Conexão perdida', { lastType: newStatus.type });
 
       // Parar heartbeat
       if (heartbeatRef.current) {
         clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
+      }
+
+      // 🔧 FIX: Desconexão durante dispense ativo — grace period para reconexão
+      // ESP32 continua dispensando localmente mesmo se BLE cai. Se reconectar a tempo,
+      // o app retoma recebimento de progress normalmente. Só declara falha se grace expirar.
+      const activeProgress = currentProgressRef.current;
+      if (activeProgress && activeProgress.orderId) {
+        console.warn('[ESP32Context] ⚡ Conexão perdida durante dispense ativo, aguardando reconexão...', activeProgress.orderId);
+        systemLogService.warn('dispense', `Conexão perdida durante dispense, grace period ${DISCONNECT_GRACE_MS}ms`, {
+          orderId: activeProgress.orderId,
+          ml: activeProgress.ml, targetMl: activeProgress.targetMl,
+          cup: activeProgress.cup, totalCups: activeProgress.totalCups,
+        });
+
+        // Apenas iniciar grace timer se ainda não tiver um ativo
+        if (!disconnectGraceTimerRef.current) {
+          disconnectGraceTimerRef.current = setTimeout(() => {
+            disconnectGraceTimerRef.current = null;
+
+            // Verificar se ainda está desconectado E dispense ainda ativo
+            const stillActive = currentProgressRef.current;
+            const stillDisconnected = !esp32Service.getConnectionStatus().connected;
+
+            if (stillActive && stillActive.orderId && stillDisconnected) {
+              console.error('[ESP32Context] ❌ Grace period expirado — declarando falha de dispense:', stillActive.orderId);
+              systemLogService.error('dispense', `Grace period expirado, dispense falhou: ${stillActive.orderId}`);
+
+              // Limpar timeout de segurança
+              if (dispenseTimeoutRef.current) {
+                clearTimeout(dispenseTimeoutRef.current);
+                dispenseTimeoutRef.current = null;
+              }
+
+              // Persist serving session como erro
+              persistSession({
+                progress: stillActive,
+                stage: 'error',
+                errorMessage: 'Conexão perdida durante dispensação (grace expirado)',
+                startedAt: dispensingStartedAtRef.current || undefined,
+              }).catch((err) => {
+                console.error('[ESP32Context] Failed to persist disconnect session:', err);
+              });
+
+              updateDispenseStatusWithRetry(stillActive.orderId, 'failed_dispense');
+              persistFailedDispense(stillActive.orderId, 'ble_disconnect', {
+                mlDispensed: stillActive.ml,
+                targetMl: stillActive.targetMl,
+                cup: stillActive.cup,
+                totalCups: stillActive.totalCups,
+                tapId: stillActive.tapId,
+              });
+
+              // Notificar listeners como erro
+              responseListeners.current.forEach(listener => {
+                try {
+                  listener({
+                    type: 'status',
+                    stage: 'error',
+                    orderId: stillActive.orderId,
+                    tapId: stillActive.tapId,
+                    message: 'Conexão perdida durante dispensação',
+                  } as ESP32Response);
+                } catch (e) { /* ignore */ }
+              });
+
+              esp32Service.setDispensingInProgress(false);
+              setIsDispensing(false);
+              setCurrentProgress(null);
+              currentProgressRef.current = null;
+              dispensingStartedAtRef.current = null;
+            } else {
+              console.log('[ESP32Context] Grace period expirado mas dispense já resolvido ou reconectado');
+            }
+          }, DISCONNECT_GRACE_MS);
+        }
       }
     }
   }, [storeSettings]); // KIO-10 fix: storeSettings dependency to avoid stale closure on heartbeat interval
@@ -664,9 +821,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         addLog('info', '✅ Connected USB Serial');
         // Usar updateConnectionStatus para também persistir no Firestore
         updateConnectionStatus({ connected: true, type: 'usb', deviceName: 'USB Serial' });
+        systemLogService.info('serial', 'Conexão USB Serial estabelecida');
       } else {
         addLog('info', '🔌 Disconnected');
         updateConnectionStatus({ connected: false, type: 'none' });
+        systemLogService.warn('serial', 'Conexão USB Serial perdida');
       }
     });
 
@@ -763,12 +922,21 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   }, [autoReconnect]);
 
-  // Cleanup dispenseTimeoutRef on unmount
+  // Cleanup all timer refs on unmount
   useEffect(() => {
     return () => {
       if (dispenseTimeoutRef.current) {
         clearTimeout(dispenseTimeoutRef.current);
         dispenseTimeoutRef.current = null;
+      }
+      // 🔒 FIX Bug-25: Also clean up disconnectGraceTimerRef and applyTimeoutRef
+      if (disconnectGraceTimerRef.current) {
+        clearTimeout(disconnectGraceTimerRef.current);
+        disconnectGraceTimerRef.current = null;
+      }
+      if (applyTimeoutRef.current) {
+        clearTimeout(applyTimeoutRef.current);
+        applyTimeoutRef.current = null;
       }
     };
   }, []);
@@ -870,7 +1038,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       const activeProgress = currentProgressRef.current;
       if (activeProgress && activeProgress.orderId) {
         console.error('[ESP32Context] Disconnect during active dispense:', activeProgress.orderId);
-        await persistFailedDispense(activeProgress.orderId, 'disconnect_during_dispense');
+        await persistFailedDispense(activeProgress.orderId, 'disconnect_during_dispense', {
+          mlDispensed: activeProgress.ml,
+          targetMl: activeProgress.targetMl,
+          cup: activeProgress.cup,
+          totalCups: activeProgress.totalCups,
+          tapId: activeProgress.tapId,
+        });
         if (dispenseTimeoutRef.current) {
           clearTimeout(dispenseTimeoutRef.current);
           dispenseTimeoutRef.current = null;
@@ -1010,6 +1184,10 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     // Preparar UI para dispensação
     setIsDispensing(true);
     dispensingStartedAtRef.current = new Date(); // capture start time for ServingSession
+    // 🔧 FIX: Sinalizar ao supervisor que dispense está ativo
+    // Previne healthcheck pings durante dispensação — o ESP32 está ocupado com
+    // solenóide/fluxo e pode não responder a pings, causando false disconnect
+    esp32Service.setDispensingInProgress(true);
     const initialProgress: ESP32DispensingProgress = {
       orderId,
       cup: 1,
@@ -1028,6 +1206,10 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     addLog('sent', `release_drink: ${orderId} (${mlPerUnit}ml x${quantity}) [Tap ${tapId}]`);
 
     try {
+      // 🔒 FIX Bug-11: Mark as dispensing in Firestore BEFORE sending ESP32 command.
+      // Prevents re-dispense of same orderId if browser crashes mid-dispense.
+      await updateDispenseStatusWithRetry(orderId, 'dispensing');
+
       // 🆕 CORREÇÃO: Usar esp32Service.sendCommand que detecta automaticamente o tipo de conexão
       // Isso funciona para USB (Web Serial ou OTG nativo), WiFi e Bluetooth
       const success = await esp32Service.sendCommand('release_drink', {
@@ -1041,6 +1223,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       if (success) {
         console.log(`[ESP32Context] ✅ Comando de dispensação enviado via ${status.type} (Tap ${tapId})`);
         addLog('info', `✅ Comando enviado via ${status.type} (Tap ${tapId})`);
+        systemLogService.info('dispense', `Dispense iniciado: ${orderId}`, {
+          mlPerUnit, quantity, sizeLabel, tapId, connectionType: status.type,
+        });
 
         // Iniciar timeout de segurança: se ESP32 não responder em 5min, marcar como falha
         if (dispenseTimeoutRef.current) {
@@ -1051,6 +1236,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           if (progressSnap && progressSnap.orderId === orderId) {
             console.error(`[ESP32Context] Dispense timeout para ${orderId} - sem resposta do ESP32`);
             addLog('error', `Timeout: ESP32 não respondeu para ${orderId}`);
+            systemLogService.error('dispense', `Timeout dispense: ${orderId}`, {
+              elapsedMs: DISPENSE_TIMEOUT_MS, ml: progressSnap?.ml, targetMl: progressSnap?.targetMl,
+            });
 
             // 🔧 FIX: Enviar comando stop ao ESP32 para fechar a solenoide
             try {
@@ -1061,7 +1249,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             }
 
             await updateDispenseStatusWithRetry(orderId, 'failed_dispense');
-            await persistFailedDispense(orderId, 'timeout');
+            await persistFailedDispense(orderId, 'timeout', {
+              mlDispensed: progressSnap?.ml,
+              targetMl: progressSnap?.targetMl,
+              cup: progressSnap?.cup,
+              totalCups: progressSnap?.totalCups,
+              tapId: progressSnap?.tapId,
+            });
+            esp32Service.setDispensingInProgress(false);
             setIsDispensing(false);
             setCurrentProgress(null);
             currentProgressRef.current = null;
@@ -1070,7 +1265,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       } else {
         console.error('[ESP32Context] ❌ Falha ao enviar comando de dispensação');
         addLog('error', '❌ Falha ao enviar comando');
-        await persistFailedDispense(orderId, 'command_failed');
+        await persistFailedDispense(orderId, 'command_failed', {
+          mlDispensed: 0,
+          targetMl: mlPerUnit,
+          cup: 1,
+          totalCups: quantity,
+          tapId,
+        });
+        esp32Service.setDispensingInProgress(false);
         setIsDispensing(false);
         setCurrentProgress(null);
       }
@@ -1079,7 +1281,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     } catch (error) {
       console.error('[ESP32Context] Erro ao dispensar:', error);
       addLog('error', `Erro: ${error instanceof Error ? error.message : 'Desconhecido'}`);
-      await persistFailedDispense(orderId, 'exception');
+      await persistFailedDispense(orderId, 'exception', {
+        mlDispensed: currentProgressRef.current?.ml ?? 0,
+        targetMl: mlPerUnit,
+        cup: currentProgressRef.current?.cup ?? 1,
+        totalCups: quantity,
+        tapId,
+      });
+      esp32Service.setDispensingInProgress(false);
       setIsDispensing(false);
       setCurrentProgress(null);
       return false;
@@ -1094,11 +1303,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   }, []);
 
   const testValve = useCallback(async (durationMs: number = 1000, tapId: number = selectedTapId): Promise<boolean> => {
+    // Defense-in-depth: clamp duration to [500, 10000]ms regardless of caller
+    const clampedMs = Math.min(10000, Math.max(500, durationMs));
+    if (clampedMs !== durationMs) {
+      console.warn(`[ESP32Context] testValve duration clamped: ${durationMs}ms → ${clampedMs}ms`);
+    }
     // 🆕 Multi-Tap: Enviar test_valve com tapId
-    addLog('sent', `test_valve: ${durationMs}ms [Tap ${tapId}]`);
+    addLog('sent', `test_valve: ${clampedMs}ms [Tap ${tapId}]`);
 
     // 🆕 CORREÇÃO: Usar sendCommand unificado que detecta automaticamente o tipo de conexão
-    return esp32Service.sendCommand('test_valve', { duration: durationMs, tapId });
+    return esp32Service.sendCommand('test_valve', { duration: clampedMs, tapId });
   }, [selectedTapId, addLog]);
 
   const stopDispensing = useCallback(async (tapId?: number): Promise<boolean> => {

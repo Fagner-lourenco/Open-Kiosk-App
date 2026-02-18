@@ -48,6 +48,7 @@ const STORE_SUBCOLLECTIONS = [
   'prizes',
   'inventoryLogs',
   'notifications',
+  'systemLogs',
 ] as const;
 
 const BATCH_LIMIT = 400; // Firestore batch max is 500, keep margin

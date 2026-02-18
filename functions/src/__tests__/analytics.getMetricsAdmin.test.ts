@@ -98,7 +98,7 @@ describe('getMetricsAdmin', () => {
 
     expect(res.metrics).toBeDefined();
     expect(res.metrics.revenue).toBe(100);
-    expect(res.metrics.averageTicket).toBe(20);
+    expect(res.metrics.averageTicket).toBe(25); // revenue / paidOrders = 100/4
   });
 
   it('retorna null quando metrics/current não existe', async () => {

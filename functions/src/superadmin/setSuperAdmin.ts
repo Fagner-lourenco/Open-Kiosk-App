@@ -34,17 +34,30 @@ export const setSuperAdmin = onCall(
     // Verificar se quem está chamando é super admin
     const callerToken = request.auth.token;
     const isSuperAdmin = callerToken.role === 'superadmin';
-    
+
     // Verificar se existe algum super admin no sistema
     const superAdminsSnapshot = await db.collection('superadmins').limit(1).get();
     const hasAnySuperAdmin = !superAdminsSnapshot.empty;
-    
-    // Se já existe super admin, apenas super admin pode promover
-    if (hasAnySuperAdmin && !isSuperAdmin) {
-      throw new HttpsError(
-        'permission-denied',
-        'Apenas super admins podem promover outros usuários'
-      );
+
+    // 🔒 FIX Bug-2: Bootstrap seguro — se não existe nenhum superadmin,
+    // apenas o próprio usuário pode se auto-promover (primeiro setup).
+    // Após o primeiro superadmin existir, apenas superadmins podem promover.
+    if (hasAnySuperAdmin) {
+      if (!isSuperAdmin) {
+        throw new HttpsError(
+          'permission-denied',
+          'Apenas super admins podem promover outros usuários'
+        );
+      }
+    } else {
+      // Bootstrap: permitir auto-promoção apenas (caller == target)
+      if (data.email !== request.auth.token.email) {
+        throw new HttpsError(
+          'permission-denied',
+          'No bootstrap mode, você só pode promover seu próprio email'
+        );
+      }
+      logger.warn(`[BOOTSTRAP] Primeiro superadmin sendo criado por ${request.auth.token.email}`);
     }
 
     const { email } = data;
@@ -187,20 +200,28 @@ export const removeSuperAdmin = onCall(
     }
 
     try {
-      // Remover custom claims
-      await auth.setCustomUserClaims(uid, {
-        role: null,
-        franchiseId: null,
-        storeId: null,
-      });
+      // 🔒 FIX Bug-3: Usar batch para atomicidade (evita backdoor por falha parcial)
+      // 🔒 FIX Bug-7: Limpar franchiseId e storeId no users doc
+      const batch = db.batch();
 
       // Remover da coleção superadmins
-      await db.collection('superadmins').doc(uid).delete();
+      batch.delete(db.collection('superadmins').doc(uid));
 
-      // Atualizar documento do usuário
-      await db.collection('users').doc(uid).update({
-        role: null,
+      // Atualizar documento do usuário — limpar role, franchiseId e storeId
+      batch.update(db.collection('users').doc(uid), {
+        role: 'viewer',
+        franchiseId: null,
+        storeId: null,
         updatedAt: serverTimestamp(),
+      });
+
+      await batch.commit();
+
+      // Remover custom claims (Auth não suporta batch — executa após Firestore confirmar)
+      await auth.setCustomUserClaims(uid, {
+        role: 'viewer',
+        franchiseId: null,
+        storeId: null,
       });
 
       logger.info(`Super admin ${uid} removido com sucesso`);

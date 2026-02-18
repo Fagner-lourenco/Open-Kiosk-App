@@ -8,7 +8,7 @@
 
 import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { collection, query, getDocs, orderBy, limit, Timestamp } from 'firebase/firestore';
+import { collection, query, getDocs, orderBy, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ordersPath } from '@/lib/pathResolver';
 import { useFranchise } from '@/context/FranchiseContext';
@@ -60,7 +60,10 @@ interface OrderData {
   total: number;
   timestamp: Timestamp;
   customerId?: string;
-  items?: Array<{ productId: string; productName: string; quantity: number; price: number }>;
+  customerName?: string;
+  customerIdentification?: string;
+  paymentStatus?: string;
+  items?: Array<{ productId: string; title?: string; productName?: string; name?: string; quantity: number; price: number }>;
   storeId?: string;
 }
 
@@ -177,51 +180,52 @@ export function ReportsPage() {
           const ordersSnapshot = await getDocs(
             query(
               collection(db, ...pathSegments),
-              orderBy('timestamp', 'desc'),
-              limit(1000)
+              where('timestamp', '>=', Timestamp.fromDate(startDate)),
+              orderBy('timestamp', 'desc')
             )
           );
           
           ordersSnapshot.docs.forEach(doc => {
             const order = doc.data() as OrderData;
-            const orderDate = order.timestamp?.toDate?.() || new Date(order.timestamp as unknown as string);
+            const isPaid = !order.paymentStatus || order.paymentStatus === 'paid';
             
-            if (orderDate && orderDate >= startDate) {
+            if (isPaid) {
               totalOrders++;
               totalRevenue += order.total || 0;
-              if (order.customerId) {
-                uniqueCustomers.add(order.customerId);
-              }
-              
-              // Add to allOrders for chart aggregation
-              allOrders.push({
-                ...order,
-                id: doc.id,
-                storeId: store.id,
+            }
+            const customerKey = order.customerIdentification || order.customerName;
+            if (customerKey) {
+              uniqueCustomers.add(customerKey);
+            }
+            
+            // Add to allOrders for chart aggregation
+            allOrders.push({
+              ...order,
+              id: doc.id,
+              storeId: store.id,
+            });
+            
+            // Update store stats (only paid orders count for revenue AND order count)
+            const storeStats = storeStatsMap.get(store.id);
+            if (storeStats && isPaid) {
+              storeStats.orders += 1;
+              storeStats.revenue += order.total || 0;
+            }
+            
+            // Aggregate product sales
+            if (order.items && Array.isArray(order.items)) {
+              order.items.forEach(item => {
+                const productName = item.title || item.productName || item.name || 'Produto';
+                const existing = productSalesMap.get(productName);
+                if (existing) {
+                  existing.quantity += item.quantity || 1;
+                } else {
+                  productSalesMap.set(productName, {
+                    name: productName,
+                    quantity: item.quantity || 1,
+                  });
+                }
               });
-              
-              // Update store stats
-              const storeStats = storeStatsMap.get(store.id);
-              if (storeStats) {
-                storeStats.revenue += order.total || 0;
-                storeStats.orders += 1;
-              }
-              
-              // Aggregate product sales
-              if (order.items && Array.isArray(order.items)) {
-                order.items.forEach(item => {
-                  const productName = item.productName || item.productId || 'Produto';
-                  const existing = productSalesMap.get(productName);
-                  if (existing) {
-                    existing.quantity += item.quantity || 1;
-                  } else {
-                    productSalesMap.set(productName, {
-                      name: productName,
-                      quantity: item.quantity || 1,
-                    });
-                  }
-                });
-              }
             }
           });
         } catch (err) {
@@ -264,6 +268,8 @@ export function ReportsPage() {
     }
     
     reportData.allOrders.forEach(order => {
+      const isPaid = !order.paymentStatus || order.paymentStatus === 'paid';
+      if (!isPaid) return;
       const orderDate = order.timestamp?.toDate?.() || new Date(order.timestamp as unknown as string);
       if (orderDate) {
         const dayOfWeek = orderDate.getDay();

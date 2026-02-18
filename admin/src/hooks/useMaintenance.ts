@@ -203,15 +203,16 @@ export function useMaintenance(franchiseId: string, storeId: string) {
       const logRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'maintenanceLogs', input.logId);
       const uid = user?.uid || '';
 
-      await updateDoc(logRef, {
+      const data: Record<string, unknown> = {
         status: 'completed',
         performedAt: serverTimestamp(),
         performedBy: uid,
-        durationMinutes: input.durationMinutes || null,
-        notes: input.notes || null,
         updatedAt: serverTimestamp(),
         updatedBy: uid,
-      });
+      };
+      if (input.durationMinutes !== undefined) data.durationMinutes = input.durationMinutes;
+      if (input.notes !== undefined) data.notes = input.notes;
+      await updateDoc(logRef, data);
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: maintenanceKeys.all(franchiseId, storeId) });

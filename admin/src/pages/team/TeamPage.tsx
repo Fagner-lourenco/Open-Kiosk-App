@@ -222,8 +222,8 @@ export function TeamPage() {
   const changeRoleMutation = useMutation({
     mutationFn: async ({ memberId, newRole }: { memberId: string; newRole: string }) => {
       if (!currentFranchise) throw new Error('No franchise selected');
-      const memberRef = doc(db, 'franchises', currentFranchise.id, 'members', memberId);
-      await updateDoc(memberRef, { role: newRole, updatedAt: new Date() });
+      const { updateMemberRole } = await import('../../services/userService');
+      await updateMemberRole(currentFranchise.id, memberId, newRole);
     },
     onSuccess: (_data, { memberId, newRole }) => {
       queryClient.invalidateQueries({ queryKey: ['franchise-members', currentFranchise?.id] });

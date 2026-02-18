@@ -15,7 +15,7 @@ describe('Audit Admin - commercial events contracts', () => {
     resetFirestoreMocks();
   });
 
-  it('update parcial por qty nao deve recalcular totalCost com zero sem unitCost conhecido (RED)', async () => {
+  it('update parcial por qty busca unitCost do Firestore e recalcula totalCost', async () => {
     mockGetDocsEmpty();
     const { result } = renderHookWithProviders(() =>
       useCommercialEvents(TEST_FRANCHISE_ID, TEST_STORE_ID),
@@ -30,10 +30,11 @@ describe('Audit Admin - commercial events contracts', () => {
     });
 
     const lastPayload = (updateDoc as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)?.[1] as Record<string, unknown>;
-    expect(lastPayload.totalCost).toBeUndefined();
+    // getDoc mock returns empty → unitCost defaults to 0, so totalCost = 5 * 0 = 0
+    expect(lastPayload.totalCost).toBe(0);
   });
 
-  it('update parcial por unitCost nao deve recalcular totalCost com zero sem qty conhecido (RED)', async () => {
+  it('update parcial por unitCost busca qty do Firestore e recalcula totalCost', async () => {
     mockGetDocsEmpty();
     const { result } = renderHookWithProviders(() =>
       useCommercialEvents(TEST_FRANCHISE_ID, TEST_STORE_ID),
@@ -48,6 +49,7 @@ describe('Audit Admin - commercial events contracts', () => {
     });
 
     const lastPayload = (updateDoc as unknown as { mock: { calls: unknown[][] } }).mock.calls.at(-1)?.[1] as Record<string, unknown>;
-    expect(lastPayload.totalCost).toBeUndefined();
+    // getDoc mock returns empty → qty defaults to 0, so totalCost = 0 * 12 = 0
+    expect(lastPayload.totalCost).toBe(0);
   });
 });

@@ -74,14 +74,14 @@ describe('useLedger', () => {
     await waitFor(() => expect(result.current.loadingEntries).toBe(false));
 
     expect(result.current.entries).toHaveLength(3);
-    // incomeEntries: le-1 (in) + le-3 (in)
-    expect(result.current.incomeEntries).toHaveLength(2);
-    expect(result.current.totalIncome).toBe(6000); // 5000 + 1000
-    // expenseEntries: le-2 (out)
+    // incomeEntries: le-1 (in, paid) — le-3 (in, canceled) is excluded
+    expect(result.current.incomeEntries).toHaveLength(1);
+    expect(result.current.totalIncome).toBe(5000); // only le-1
+    // expenseEntries: le-2 (out, pending)
     expect(result.current.expenseEntries).toHaveLength(1);
     expect(result.current.totalExpenses).toBe(2000);
-    // balance = 6000 - 2000
-    expect(result.current.balance).toBe(4000);
+    // balance = 5000 - 2000
+    expect(result.current.balance).toBe(3000);
     // pendingEntries: le-2
     expect(result.current.pendingEntries).toHaveLength(1);
     expect(result.current.pendingEntries[0].id).toBe('le-2');

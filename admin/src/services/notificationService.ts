@@ -318,13 +318,14 @@ class NotificationService {
     );
 
     const snapshot = await getDocs(q);
-    const batch = writeBatch(db);
-
-    snapshot.docs.forEach(doc => {
-      batch.delete(doc.ref);
-    });
-
-    await batch.commit();
+    const BATCH_LIMIT = 500;
+    for (let i = 0; i < snapshot.docs.length; i += BATCH_LIMIT) {
+      const batch = writeBatch(db);
+      snapshot.docs.slice(i, i + BATCH_LIMIT).forEach(d => {
+        batch.delete(d.ref);
+      });
+      await batch.commit();
+    }
     return snapshot.size;
   }
 

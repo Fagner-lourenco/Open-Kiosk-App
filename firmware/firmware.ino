@@ -130,7 +130,7 @@ const int LED_PIN = 21;           // GPIO21 = USER_LED interno do XIAO
 // ----- CALIBRAÇÃO DO SENSOR DE FLUXO (valores padrão) -----
 // Estes valores podem ser alterados e salvos via NVS por torneira
 // ⚠️ YF-S201: ~450 pulsos/litro | YF-S402: ~5880 pulsos/litro | Ajustado: 1200
-const float DEFAULT_PULSOS_POR_LITRO = 1200.0;  // Pulsos para 1 litro (ajustado pelo usuário)
+const float DEFAULT_PULSOS_POR_LITRO = 660.0;  // Pulsos para 1 litro (ajustado pelo usuário)
 const float DEFAULT_ML_POR_SEGUNDO = 50.0;      // Vazão média da válvula em ml/s
 
 // ----- BLUETOOTH -----
@@ -243,7 +243,9 @@ unsigned long lastHeartbeat = 0;
 // Evita bloqueio prolongado da torneira em caso de abandono
 const unsigned long SESSION_TIMEOUT_MS = 120000;  // 2 minutos (120 segundos)
 // Timeout após o fluxo parar (sensor parou de detectar pulsos)
-const unsigned long NO_FLOW_TIMEOUT_MS = 10000;   // 10 segundos sem pulsos após iniciar
+// 🔧 KIO-FIX: Aumentado de 10s para 30s — chopp draft pode ter pausas no fluxo
+// (espuma, bolha de ar, queda momentânea de pressão na linha)
+const unsigned long NO_FLOW_TIMEOUT_MS = 30000;   // 30 segundos sem pulsos após iniciar
 
 // ============================================================================
 // 🆕 DECLARAÇÕES ANTECIPADAS DE FUNÇÕES (Forward Declarations)
@@ -1111,12 +1113,14 @@ String processCommandAndGetResult(String jsonString) {
   // ----- AÇÃO: BEEP (feedback visual com LED) -----
   else if (strcmp(action, "beep") == 0) {
     int times = doc["times"] | 1;
+    if (times > 20) times = 20;  // Limite seguro para evitar watchdog reset
     Serial.println("[BEEP] Piscando LED " + String(times) + " vez(es)");
     for (int i = 0; i < times; i++) {
       digitalWrite(LED_PIN, HIGH);
       delay(150);
       digitalWrite(LED_PIN, LOW);
       delay(150);
+      esp_task_wdt_reset();
     }
     return "{\"type\":\"success\",\"message\":\"Beep executado\",\"times\":" + String(times) + "}";
   }
@@ -1311,6 +1315,9 @@ String handleTestValveTap(int tapId, int durationMs) {
   if (tapId < 0 || tapId >= NUM_TAPS) {
     return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId inválido\"}";
   }
+  
+  // Limitar duração máxima a 60 segundos para segurança
+  if (durationMs > 10000) durationMs = 10000;
   
   Serial.println("[TEST] 🔴 Testando válvula do Tap " + String(tapId) + " por " + String(durationMs) + "ms");
   
@@ -1818,8 +1825,10 @@ void processDispensingTap(int tapId) {
   if (progress > 100) progress = 100;
   
   int elapsedSeconds = sessionElapsedMs / 1000;
-  int remainingSeconds = (tapState[tapId].sessionTimeoutMs - sessionElapsedMs) / 1000;
-  if (remainingSeconds < 0) remainingSeconds = 0;
+  int remainingSeconds = 0;
+  if (sessionElapsedMs < tapState[tapId].sessionTimeoutMs) {
+    remainingSeconds = (tapState[tapId].sessionTimeoutMs - sessionElapsedMs) / 1000;
+  }
   
   // ============================================
   // LED: Feedback visual diferenciado por tap
@@ -2405,6 +2414,13 @@ String handleSetConfig(JsonDocument& doc) {
   }
 
   // Validate first, apply second
+  int allValvePins[NUM_TAPS];
+  int allSensorPins[NUM_TAPS];
+  // Initialize with current config
+  for (int i = 0; i < NUM_TAPS; i++) {
+    allValvePins[i] = tapConfig[i].valvePin;
+    allSensorPins[i] = tapConfig[i].sensorPin;
+  }
   for (JsonVariant t : tapsArr) {
     int id = t["id"] | -1;
     if (id < 0 || id >= NUM_TAPS) {
@@ -2412,6 +2428,8 @@ String handleSetConfig(JsonDocument& doc) {
     }
     int vp = t["valve_pin"] | -1;
     int sp = t["sensor_pin"] | -1;
+    float ppl = t["pulsos_por_litro"] | -1.0f;
+    float mps = t["ml_por_segundo"] | -1.0f;
     if (vp != -1 && !isAllowedGpio(vp)) {
       return "{\"type\":\"error\",\"code\":\"INVALID_PIN\",\"message\":\"valve_pin " + String(vp) + " nao permitido no XIAO ESP32-S3\"}";
     }
@@ -2420,6 +2438,30 @@ String handleSetConfig(JsonDocument& doc) {
     }
     if (vp != -1 && sp != -1 && vp == sp) {
       return "{\"type\":\"error\",\"code\":\"PIN_CONFLICT\",\"message\":\"Tap " + String(id) + ": valve_pin == sensor_pin (" + String(vp) + ")\"}";
+    }
+    // Validate calibration bounds
+    if (ppl > 0 && ppl > 10000) {
+      return "{\"type\":\"error\",\"code\":\"INVALID_CALIBRATION\",\"message\":\"pulsos_por_litro " + String(ppl) + " fora do range (max 10000)\"}";
+    }
+    if (mps > 0 && mps > 500) {
+      return "{\"type\":\"error\",\"code\":\"INVALID_CALIBRATION\",\"message\":\"ml_por_segundo " + String(mps) + " fora do range (max 500)\"}";
+    }
+    // Collect pins for cross-tap conflict check
+    if (vp != -1) allValvePins[id] = vp;
+    if (sp != -1) allSensorPins[id] = sp;
+  }
+  // Cross-tap pin conflict check
+  for (int i = 0; i < NUM_TAPS; i++) {
+    for (int j = i + 1; j < NUM_TAPS; j++) {
+      if (allValvePins[i] == allValvePins[j]) {
+        return "{\"type\":\"error\",\"code\":\"PIN_CONFLICT\",\"message\":\"Taps " + String(i) + " e " + String(j) + " compartilham valve_pin " + String(allValvePins[i]) + "\"}";
+      }
+      if (allSensorPins[i] == allSensorPins[j]) {
+        return "{\"type\":\"error\",\"code\":\"PIN_CONFLICT\",\"message\":\"Taps " + String(i) + " e " + String(j) + " compartilham sensor_pin " + String(allSensorPins[i]) + "\"}";
+      }
+      if (allValvePins[i] == allSensorPins[j] || allSensorPins[i] == allValvePins[j]) {
+        return "{\"type\":\"error\",\"code\":\"PIN_CONFLICT\",\"message\":\"Conflito de pinos entre Taps " + String(i) + " e " + String(j) + "\"}";
+      }
     }
   }
 

@@ -36,9 +36,7 @@ export const useKioskIdle = (options: UseKioskIdleOptions = {}) => {
 
   useEffect(() => {
     const onAnyInteraction = () => {
-      if (isIdle) {
-        setIsIdle(false);
-      }
+      setIsIdle(false);
       if (!suppressed) {
         startTimer();
       }

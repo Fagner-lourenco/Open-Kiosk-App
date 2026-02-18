@@ -43,6 +43,7 @@ export const resetTapDailyCounters = onSchedule(
               todayMlDispensed: 0,
               todaySessions: 0,
               todayWastageMl: 0,
+              processedEvents: [], // 🔧 FIX R12-02: Limpar array de idempotência diariamente
               updatedAt: serverTimestamp(),
               updatedBy: 'system',
             });

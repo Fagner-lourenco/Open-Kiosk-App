@@ -20,6 +20,7 @@ import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useTranslation } from "@/i18n";
 import { useDebounce } from "@/hooks/useDebounce";
 import { enterKioskMode } from "@/services/kioskModeService";
+import { systemLogService } from "@/services/systemLogService";
 
 type DrinkCheckoutResult = {
   orderNumber: string;
@@ -82,9 +83,11 @@ const Shop = () => {
           console.log('[Shop] ✅ Kiosk mode ativado com sucesso');
         } else {
           console.warn('[Shop] ⚠️ Falha ao ativar kiosk mode (pode estar em dev/web)');
+          systemLogService.warn('kiosk', 'Falha ao ativar kiosk mode');
         }
       } catch (error) {
         console.error('[Shop] Erro ao ativar kiosk mode:', error);
+        systemLogService.error('kiosk', `Erro ao ativar kiosk mode: ${error instanceof Error ? error.message : String(error)}`);
       }
     };
 
@@ -135,6 +138,7 @@ const Shop = () => {
     // Bebida: verificar conexão ESP32 antes de abrir checkout
     if (product.isDrink) {
       if (!isEsp32Healthy) {
+        systemLogService.warn('kiosk', 'Checkout bebida bloqueado: ESP32 não saudável', { productId: product.id, esp32Connected: esp32Status.connected });
         toast({
           title: 'Sistema temporariamente indisponível',
           description: 'Tente novamente em instantes.',

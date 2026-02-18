@@ -6,6 +6,7 @@ import { CartItem, Product } from '@/types/product';
 import { PaymentMethod, SaleTimingData } from '@/types/sales';
 import { deviceHeartbeatService } from './deviceHeartbeatService';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
+import { systemLogService } from './systemLogService';
 import type { DispenseStatus } from '@/types/payments';
 import type { OrderCustomerData } from '@/types/sales';
 
@@ -181,6 +182,7 @@ class SalesService {
     }
 
     console.log('[SalesService] Offline sale queued:', orderNumber);
+    systemLogService.warn('kiosk', `Venda offline enfileirada: ${orderNumber}`, { orderNumber });
     return orderNumber;
   }
 
@@ -423,8 +425,10 @@ class SalesService {
     }
 
     // KIO-17 fix: validate state transition via transaction to prevent race conditions
+    // KIO-FIX: allow pending → dispensed/failed_dispense for when 'dispensing' update was lost
+    // (e.g., Firestore transaction failed silently, connection dropped before ack)
     const VALID_TRANSITIONS: Record<string, string[]> = {
-      pending: ['dispensing'],
+      pending: ['dispensing', 'dispensed', 'failed_dispense'],
       dispensing: ['dispensed', 'failed_dispense'],
       dispensed: [],         // terminal — nenhuma transição permitida
       failed_dispense: [],   // terminal — nenhuma transição permitida
@@ -448,6 +452,7 @@ class SalesService {
       console.log(`[SalesService] Dispense status updated: ${orderNumber} -> ${dispenseStatus}`);
     } catch (error) {
       console.error(`[SalesService] Failed to update dispense status for ${orderNumber}:`, error);
+      systemLogService.error('dispense', `Falha ao atualizar dispense status: ${orderNumber} -> ${dispenseStatus}`, { orderNumber, dispenseStatus, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -485,7 +490,12 @@ class SalesService {
       };
 
       // Dados do cliente (para ranking)
-      if (customerData.customerName) updateData.customerName = customerData.customerName;
+      // Só gravar customerName quando temos um nome REAL do pagador.
+      // Sem nome real, o pedido não entra no ranking — evita entradas fantasma "Kiosk #XXXXXX".
+      const effectiveCustomerName = customerData.customerName || customerData.cardholderName;
+      if (effectiveCustomerName) {
+        updateData.customerName = effectiveCustomerName;
+      }
       if (customerData.customerEmail) updateData.customerEmail = customerData.customerEmail;
       if (customerData.customerIdentification) updateData.customerIdentification = customerData.customerIdentification;
 

@@ -183,7 +183,7 @@ export const getMetricsAdmin = onCall(
         paidOrders: metricsData.paidOrders || 0,
         cancelledOrders: metricsData.cancelledOrders || 0,
         pendingOrders: metricsData.pendingOrders || 0,
-        averageTicket: metricsData.orders > 0 ? metricsData.revenue / metricsData.orders : 0,
+        averageTicket: (metricsData.paidOrders || 0) > 0 ? metricsData.revenue / metricsData.paidOrders : 0,
         paymentMethods: metricsData.paymentMethods || {},
         lastUpdate: (metricsData.lastUpdate && typeof metricsData.lastUpdate.toDate === 'function')
           ? metricsData.lastUpdate.toDate()
@@ -204,7 +204,7 @@ export const getMetricsAdmin = onCall(
       paidOrders: franchiseData.paidOrders || 0,
       cancelledOrders: franchiseData.cancelledOrders || 0,
       pendingOrders: franchiseData.pendingOrders || 0,
-      averageTicket: franchiseData.orders > 0 ? franchiseData.revenue / franchiseData.orders : 0,
+      averageTicket: (franchiseData.paidOrders || 0) > 0 ? franchiseData.revenue / franchiseData.paidOrders : 0,
       paymentMethods: franchiseData.paymentMethods || {},
       lastUpdate: (franchiseData.lastUpdate && typeof franchiseData.lastUpdate.toDate === 'function')
         ? franchiseData.lastUpdate.toDate()

@@ -17,6 +17,7 @@ const mapWebhookStatus = (status?: string): PaymentStatus => {
   if (normalized === 'CANCELED' || normalized === 'CANCELLED') return 'canceled';
   if (normalized === 'DECLINED' || normalized === 'FAILED') return 'failed';
   if (normalized === 'EXPIRED') return 'expired';
+  if (normalized === 'REFUNDED') return 'refunded';
   return 'pending';
 };
 
@@ -68,17 +69,6 @@ export const pagbankWebhook = onRequest(
 
     const { franchiseId, storeId, paymentId } = parsed;
     const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
-    const paymentSnap = await paymentRef.get();
-    if (!paymentSnap.exists) {
-      logger.warn('[pagbankWebhook] pagamento nao encontrado', { paymentId });
-      res.status(200).send({ received: true });
-      return;
-    }
-
-    // Guard: não regredir estados terminais
-    const TERMINAL_STATUSES: PaymentStatus[] = ['paid', 'refunded'];
-    const currentPaymentData = paymentSnap.data() as { status: PaymentStatus };
-    const currentStatus = currentPaymentData.status;
 
     const orderId =
       payload?.id ||
@@ -90,23 +80,44 @@ export const pagbankWebhook = onRequest(
     const orderStatus = payload?.status || payload?.order?.status;
     const status = mapWebhookStatus(chargeStatus || orderStatus);
 
-    if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
-      logger.info(`[pagbankWebhook] Ignorando webhook — pagamento ja em estado terminal: ${currentStatus}`);
-      res.status(200).send({ received: true });
-      return;
-    }
+    // 🔒 FIX Bug-13: Wrap read-check-write in a transaction to prevent TOCTOU.
+    // Without a transaction, two concurrent webhooks (e.g. 'paid' and 'canceled')
+    // could both read 'pending', both pass the terminal guard, and the last writer wins.
+    // The transaction ensures the terminal-state check and status update are atomic.
+    try {
+      await db.runTransaction(async (txn) => {
+        const paymentSnap = await txn.get(paymentRef);
+        if (!paymentSnap.exists) {
+          logger.warn('[pagbankWebhook] pagamento nao encontrado', { paymentId });
+          return;
+        }
 
-    // Prevenir fallback para 'pending' se status nao reconhecido
-    if (status === 'pending' && currentStatus !== 'pending') {
-      logger.warn(`[pagbankWebhook] Status nao reconhecido, mantendo atual: ${currentStatus}`);
-      res.status(200).send({ received: true });
-      return;
-    }
+        // Guard: não regredir estados terminais
+        const TERMINAL_STATUSES: PaymentStatus[] = ['paid', 'refunded'];
+        const currentPaymentData = paymentSnap.data() as { status: PaymentStatus };
+        const currentStatus = currentPaymentData.status;
 
-    await updatePaymentStatus(paymentRef, status, {
-      providerOrderId: orderId,
-      providerPaymentId: charge?.id,
-    });
+        if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
+          logger.info(`[pagbankWebhook] Ignorando webhook — pagamento ja em estado terminal: ${currentStatus}`);
+          return;
+        }
+
+        // Prevenir fallback para 'pending' se status nao reconhecido
+        if (status === 'pending' && currentStatus !== 'pending') {
+          logger.warn(`[pagbankWebhook] Status nao reconhecido, mantendo atual: ${currentStatus}`);
+          return;
+        }
+
+        txn.set(paymentRef, {
+          status,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          providerOrderId: orderId,
+          providerPaymentId: charge?.id,
+        }, { merge: true });
+      });
+    } catch (err) {
+      logger.error('[pagbankWebhook] Transaction error:', err);
+    }
 
     res.status(200).send({ received: true });
   }

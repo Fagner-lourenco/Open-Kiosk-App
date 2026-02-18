@@ -145,7 +145,7 @@ export class ESP32PrinterService {
         quantity: `${item.quantity}`,
         price: item.unitPrice * item.quantity
       })),
-      total: Math.round(total * (1 + settings.taxPercentage / 100)),
+      total: parseFloat((total * (1 + settings.taxPercentage / 100)).toFixed(2)),
       footer: "Thank you! Visit Again!"
     };
   }

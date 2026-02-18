@@ -19,7 +19,7 @@
  */
 
 const DB_NAME = 'kiosk_cache';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // Flag para indicar se IndexedDB está realmente funcional
 let indexedDBAvailable: boolean | null = null;
@@ -145,6 +145,12 @@ const initDB = (): Promise<IDBDatabase> => {
       if (!db.objectStoreNames.contains(STORES.TAPS)) {
         const tapsStore = db.createObjectStore(STORES.TAPS, { keyPath: 'id' });
         tapsStore.createIndex('storeId', 'storeId', { unique: false });
+      }
+
+      // Dead Letter Queue for permanently failed sync items
+      if (!db.objectStoreNames.contains(STORES.SYNC_DLQ)) {
+        const dlqStore = db.createObjectStore(STORES.SYNC_DLQ, { keyPath: 'id' });
+        dlqStore.createIndex('failedAt', 'failedAt', { unique: false });
       }
     };
   });

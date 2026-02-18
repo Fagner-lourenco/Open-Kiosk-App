@@ -24,7 +24,8 @@ import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
 import { storeSubPath } from "@/lib/pathResolver";
-import { persistFailedDispense } from "@/services/dispenseRecoveryService";
+import { persistFailedDispense, getPendingFailedDispenses, clearFailedDispense } from "@/services/dispenseRecoveryService";
+import { systemLogService } from "@/services/systemLogService";
 import type { CreatePaymentInput, PaymentMethod as GatewayPaymentMethod, PaymentRecord, PaymentStatus as GatewayPaymentStatus } from "@/types/payments";
 import { encryptCard } from "@/utils/pagbankEncrypt";
 import { evaluateDynamicPrice, toPricingSnapshot } from "../../shared/utils/dynamicPricingEngine";
@@ -70,6 +71,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const [mpOrderId, setMpOrderId] = useState<string | null>(null);
   const [mpQrData, setMpQrData] = useState<string | null>(null);
   const [mpError, setMpError] = useState<string | null>(null);
+  
+  // 🔧 FIX R10-66: Refs para IDs de pagamento — evita stale closure no emergency timeout
+  const mpOrderIdRef = useRef<string | null>(null);
+  const currentTransactionIdRef = useRef<string | null>(null);
   
   // Guardar orderNumber para uso no callback do polling
   const orderNumberRef = useRef<string>("");
@@ -145,6 +150,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   } = useMercadoPagoPolling({
     onSuccess: async (order) => {
       console.log('[DrinkMP] Pagamento aprovado via polling hook', { orderId: order.id });
+      systemLogService.info('payment', `Pagamento aprovado: ${order.id}`, { orderId: order.id, orderNumber: orderNumberRef.current });
       
       // Guard contra duplicação
       if (saleRecordedRef.current) {
@@ -169,10 +175,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         .then(async (customerData) => {
           if (customerData && orderNumber) {
             await salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId());
+            systemLogService.info('payment', `Dados do pagador gravados: ${orderNumber}`, {
+              hasName: !!customerData.customerName,
+              hasCpf: !!customerData.customerIdentification,
+              provider: customerData.gatewayProvider,
+              cardBrand: customerData.cardBrand,
+            });
           }
         })
         .catch((err) => {
           console.warn('[DrinkMP] Falha ao enriquecer com dados do pagador (não-bloqueante):', err);
+          systemLogService.warn('payment', `Falha ao buscar dados do pagador: ${err instanceof Error ? err.message : String(err)}`, { orderNumber });
         });
 
       // Continuar com o fluxo pós-pagamento usando o orderNumber salvo
@@ -180,6 +193,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     },
     onError: (errorMsg) => {
       console.error('[DrinkMP] Erro no polling:', errorMsg);
+      systemLogService.error('payment', `Pagamento falhou: ${errorMsg}`, { orderNumber: orderNumberRef.current });
       
       // Mapear mensagens de erro para português amigável
       const errorMessages: Record<string, { title: string; description: string }> = {
@@ -281,15 +295,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     if (!franchiseId || !storeId) return;
 
     let unsubKeg: (() => void) | null = null;
+    let isMounted = true;
 
     (async () => {
       try {
         const db = (await import('@/services/firebase')).getFirebaseDb();
         const { doc, getDoc, onSnapshot } = await import('firebase/firestore');
 
+        // 🔒 FIX Bug-24: Guard against orphaned listener if component unmounted during async setup
+        if (!isMounted) return;
+
         // 1. Ler tap operacional → currentKegId (one-shot — tap raramente muda)
         const tapDocPath = `${storeSubPath(franchiseId, storeId, 'taps')}/${selectedTapId}`;
         const tapSnap = await getDoc(doc(db, tapDocPath));
+        if (!isMounted) return;
         if (!tapSnap.exists()) return;
 
         const currentKegId = tapSnap.data()?.currentKegId;
@@ -298,6 +317,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         // 2. Real-time listener no keg → recalcula nível quando remainingMl muda
         const kegDocPath = `${storeSubPath(franchiseId, storeId, 'kegs')}/${currentKegId}`;
         unsubKeg = onSnapshot(doc(db, kegDocPath), (kegSnap) => {
+          if (!isMounted) return;
           if (!kegSnap.exists()) return;
           const kegData = kegSnap.data();
           const volumeMl = kegData?.volumeMl ?? 0;
@@ -317,6 +337,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     })();
 
     return () => {
+      isMounted = false;
       if (unsubKeg) unsubKeg();
     };
   }, [isOpen, selectedTapId]);
@@ -417,6 +438,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setMaxQty(0);
       setSelectedPayment("pix_qr");
       setCurrentTransactionId(null);
+      currentTransactionIdRef.current = null;
       flowCancel();
       setTimerActive(false);
       updateProcessingStage("idle");
@@ -426,6 +448,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       stopPolling();
       clearPersistedState();
       setMpOrderId(null);
+      mpOrderIdRef.current = null;
       setMpQrData(null);
       setMpError(null);
       cleanupPagBankListener();
@@ -532,10 +555,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
       // Fire-and-forget remote cancel — best effort
       if (cancelPaymentId) {
+        systemLogService.info('payment', 'Pagamento PagBank cancelado pelo usuário', { paymentId: cancelPaymentId });
         paymentService.cancelPagBankPayment(cancelPaymentId).then(result => {
           console.log('[DrinkQR] PagBank cancel result:', result);
         }).catch(err => {
           console.warn('[DrinkQR] PagBank remote cancel failed (cancel_requested fallback):', err);
+          systemLogService.error('payment', 'Falha ao cancelar PagBank remotamente', { paymentId: cancelPaymentId, error: err instanceof Error ? err.message : String(err) });
         });
       }
 
@@ -548,8 +573,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
     
     // Capturar orderId ANTES de limpar estado (evita race condition)
-    const orderIdToCancel = mpOrderId;
-    const transactionIdToCancel = currentTransactionId;
+    // 🔧 FIX R10-66: Usar refs ao invés de state para evitar stale closure no emergency timeout
+    const orderIdToCancel = mpOrderIdRef.current ?? mpOrderId;
+    const transactionIdToCancel = currentTransactionIdRef.current ?? currentTransactionId;
     
     // Cancelar polling do Mercado Pago via hook
     stopPolling();
@@ -557,6 +583,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     
     // Reset estados locais
     setMpOrderId(null);
+    mpOrderIdRef.current = null;
     setMpQrData(null);
     setMpError(null);
     setPointStatus('idle');
@@ -585,6 +612,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         }
       } catch (error) {
         console.warn("[DrinkQR] Falha ao cancelar ordem remotamente:", error);
+        systemLogService.error('payment', 'Falha ao cancelar ordem MP remotamente', { orderId: orderIdToCancel, error: error instanceof Error ? error.message : String(error) });
         toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
       }
     }
@@ -592,6 +620,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     setIsProcessing(false);
     updateProcessingStage("idle");
     setCurrentTransactionId(null);
+    currentTransactionIdRef.current = null;
     setMaxInactivityTime(60);
     resetInactivityTimer();
     moveToStep(2);
@@ -615,10 +644,36 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     updateProcessingStage("dispensing");
 
     try {
+      // 🔧 Resume parcial: buscar progresso do dispense falhado para dispensar apenas o restante
+      let remainingMl = selectedSize.ml;
+      let remainingCups = quantity;
+      const pendingDispenses = await getPendingFailedDispenses();
+      const failedEntry = pendingDispenses.find(d => d.orderNumber === orderNumberRef.current);
+      
+      if (failedEntry?.mlDispensed && failedEntry.mlDispensed > 0 && failedEntry?.targetMl) {
+        const alreadyDispensed = Math.floor(failedEntry.mlDispensed);
+        remainingMl = Math.max(1, failedEntry.targetMl - alreadyDispensed);
+        // Se era multi-cup e o copo atual já estava em progresso, continuar do copo atual
+        if (failedEntry.cup && failedEntry.totalCups && failedEntry.cup > 1) {
+          // Cups já completos não precisam ser re-dispensados
+          remainingCups = failedEntry.totalCups - (failedEntry.cup - 1);
+          if (remainingCups <= 0) remainingCups = 1;
+        }
+        console.log(`[DrinkMP] Resume parcial: já dispensou ${alreadyDispensed}ml de ${failedEntry.targetMl}ml, restam ${remainingMl}ml (copo ${failedEntry.cup}/${failedEntry.totalCups})`);
+        systemLogService.info('dispense', `Resume parcial: ${alreadyDispensed}ml já dispensados, restam ${remainingMl}ml`, {
+          orderNumber: orderNumberRef.current, alreadyDispensed, remainingMl, cup: failedEntry.cup, totalCups: failedEntry.totalCups,
+        });
+      }
+
+      // Limpar entrada de falha anterior antes do retry
+      if (failedEntry) {
+        await clearFailedDispense(failedEntry.orderNumber);
+      }
+
       const releaseSuccess = await esp32ReleaseDrink(
         orderNumberRef.current,
-        selectedSize.ml,
-        quantity,
+        remainingMl,
+        remainingCups,
         selectedSize.label,
         selectedTapId
       );
@@ -662,6 +717,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
     } catch (err) {
       console.error('[DrinkMP] Retry dispense error:', err);
+      systemLogService.error('dispense', `Retry dispense error: ${err instanceof Error ? err.message : String(err)}`, { attempt: dispenseRetryCountRef.current });
       updateProcessingStage("dispense_failed");
     }
   }, [product, selectedSize, quantity, selectedTapId, esp32ReleaseDrink, onComplete, onCancel, storeSettings, t, toast, updateProcessingStage, setIsProcessing]);
@@ -708,9 +764,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // STEP 3: Dispensar bebida (ESP32)
       updateProcessingStage("dispensing");
 
-      // Marcar como "dispensing" no Firestore
-      await salesService.updateOrderDispenseStatus(orderNumber, 'dispensing', getCurrentStoreId())
-        .catch(e => console.warn('[DrinkMP] Falha ao atualizar status dispensing:', e));
+      // Marcar como "dispensing" no Firestore — retry 1x se falhar
+      try {
+        await salesService.updateOrderDispenseStatus(orderNumber, 'dispensing', getCurrentStoreId());
+      } catch (e) {
+        console.warn('[DrinkMP] Falha ao atualizar status dispensing, tentando novamente...', e);
+        try {
+          await salesService.updateOrderDispenseStatus(orderNumber, 'dispensing', getCurrentStoreId());
+        } catch (retryErr) {
+          console.error('[DrinkMP] Retry falhou. Prosseguindo com dispense mesmo assim.', retryErr);
+        }
+      }
 
       let dispenseSucceeded = false;
 
@@ -732,8 +796,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           // Marcar como falha de dispense no Firestore
           await salesService.updateOrderDispenseStatus(orderNumber, 'failed_dispense', getCurrentStoreId())
             .catch(e => console.warn('[DrinkMP] Falha ao atualizar status failed:', e));
-          // Persistir localmente para reconciliação
-          await persistFailedDispense(orderNumber, 'command_failed');
+          // Persistir localmente para reconciliação (com progresso zero para resume correto)
+          await persistFailedDispense(orderNumber, 'command_failed', {
+            mlDispensed: 0,
+            targetMl: selectedSize.ml,
+            cup: 1,
+            totalCups: quantity,
+            tapId: selectedTapId,
+            sizeLabel: selectedSize.label,
+          });
+          systemLogService.error('dispense', `Dispense command_failed: ${orderNumber}`, { orderNumber, esp32Connected: esp32Status.connected, tapId: selectedTapId, ml: selectedSize.ml, quantity });
 
           toast({
             title: t('checkout.dispenserWarning'),
@@ -750,10 +822,18 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         }
       } catch (esp32Error) {
         console.warn("[DrinkMP] ESP32 release failed (non-blocking):", esp32Error);
+        systemLogService.error('dispense', `Dispense exception: ${orderNumber}`, { orderNumber, error: esp32Error instanceof Error ? esp32Error.message : String(esp32Error), tapId: selectedTapId });
         // Marcar como falha de dispense no Firestore
         await salesService.updateOrderDispenseStatus(orderNumber, 'failed_dispense', getCurrentStoreId())
           .catch(e => console.warn('[DrinkMP] Falha ao atualizar status failed:', e));
-        await persistFailedDispense(orderNumber, 'exception');
+        await persistFailedDispense(orderNumber, 'exception', {
+          mlDispensed: 0,
+          targetMl: selectedSize.ml,
+          cup: 1,
+          totalCups: quantity,
+          tapId: selectedTapId,
+          sizeLabel: selectedSize.label,
+        });
 
         toast({
           title: t('checkout.dispenserWarning'),
@@ -801,6 +881,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
     } catch (error) {
       console.error("Error in finishPaymentFlow:", error);
+      systemLogService.error('payment', `Erro pós-pagamento: ${(error as Error)?.message}`, { orderNumber, saleRecorded: saleRecordedRef.current });
       // If sale was already recorded, persist failure for recovery/compensation
       if (saleRecordedRef.current && orderNumber) {
         await persistFailedDispense(orderNumber, 'flow_exception').catch(() => {});
@@ -955,6 +1036,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           await finishPaymentFlow(orderNumber);
         } catch (error) {
           console.error('[DrinkPagBank] finishPaymentFlow failed after payment:', error);
+          systemLogService.error('payment', `PagBank pós-pagamento falhou: ${(error as Error)?.message}`, { orderNumber });
           await persistFailedDispense(orderNumber, 'post_payment_flow_error').catch(() => {});
           toast({
             title: t('common.error'),
@@ -1013,9 +1095,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               cardLastDigits: (payment as any).cardLast4 || undefined,
             }, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
             try {
+              // Guard: se modal foi desmontado e dados limpos, persistir para reconciliação
+              if (!product || !selectedSizeKey) {
+                console.warn('[DrinkPagBank] Modal desmontado durante pagamento — persistindo para reconciliação');
+                systemLogService.warn('payment', 'PagBank pago mas modal desmontado', { orderNumber: orderNumberRef.current });
+                await persistFailedDispense(orderNumberRef.current, 'modal_unmounted_during_payment').catch(() => {});
+                return;
+              }
               await finishPaymentFlow(orderNumberRef.current);
             } catch (error) {
               console.error('[DrinkPagBank] finishPaymentFlow failed in listener:', error);
+              systemLogService.error('payment', `PagBank listener pós-pagamento falhou: ${(error as Error)?.message}`, { orderNumber: orderNumberRef.current });
               await persistFailedDispense(orderNumberRef.current, 'post_payment_listener_error').catch(() => {});
             }
           }
@@ -1039,6 +1129,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           franchiseId,
           onError: (error) => {
             console.error('[DrinkPagBank] Erro ao escutar PagBank:', error);
+            systemLogService.error('payment', `Erro listener PagBank: ${error?.message}`);
             setPagbankError('Erro ao acompanhar pagamento.');
             setIsProcessing(false);
             updateProcessingStage("idle");
@@ -1049,6 +1140,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     } catch (error: unknown) {
       console.error('[DrinkPagBank] Erro ao criar pagamento PagBank:', error);
       const errorMsg = error instanceof Error ? error.message : 'Erro ao criar pagamento.';
+      systemLogService.error('payment', `Erro ao criar pagamento PagBank: ${errorMsg}`);
       setPagbankError(errorMsg);
       setIsProcessing(false);
       updateProcessingStage("idle");
@@ -1075,6 +1167,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
     emergencyTimeoutRef.current = setTimeout(() => {
       if (processingStageRef.current === "awaiting_payment") {
+        systemLogService.warn('payment', 'Emergency timeout: pagamento cancelado por tempo', { orderNumber: orderNumberRef.current });
         handleCancelPayment();
         toast({
           title: t('checkout.timeout'),
@@ -1139,8 +1232,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           console.log('[DrinkQR] QR Order criada:', { orderId: result.orderId });
 
           setMpOrderId(result.orderId || null);
+          mpOrderIdRef.current = result.orderId || null;
           setMpQrData(result.qrData || null);
           setCurrentTransactionId(result.orderId || null);
+          currentTransactionIdRef.current = result.orderId || null;
           
           // Salvar orderNumber para uso no callback do polling
           orderNumberRef.current = newOrderNumber;
@@ -1154,6 +1249,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         } catch (error: unknown) {
           console.error('[DrinkQR] Erro ao criar QR:', error);
           const errorMsg = error instanceof Error ? error.message : t('checkout.errorGeneratingQr');
+          systemLogService.error('payment', `Erro ao criar QR Code: ${errorMsg}`, { orderNumber: orderNumberRef.current, amount: totalAmount });
           setMpError(errorMsg);
           setIsProcessing(false);
           updateProcessingStage("idle");
@@ -1205,7 +1301,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           console.log('[DrinkPoint] Point Order criada:', { orderId: result.orderId, paymentType });
 
           setMpOrderId(result.orderId || null);
+          mpOrderIdRef.current = result.orderId || null;
           setCurrentTransactionId(result.orderId || null);
+          currentTransactionIdRef.current = result.orderId || null;
           setPointStatus('at_terminal');
           
           // Salvar orderNumber para uso no callback do polling
@@ -1220,6 +1318,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         } catch (error: unknown) {
           console.error('[DrinkPoint] Erro ao criar order Point:', error);
           const errorMsg = error instanceof Error ? error.message : 'Erro ao enviar para terminal';
+          systemLogService.error('payment', `Erro Point terminal: ${errorMsg}`, { orderNumber: orderNumberRef.current, terminalId: resolvedConfig.terminalId });
           setMpError(errorMsg);
           setPointStatus('error');
           setIsProcessing(false);
@@ -1238,6 +1337,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         emergencyTimeoutRef.current = null;
       }
       console.error("Payment error:", error);
+      systemLogService.error('payment', `Erro genérico payment: ${(error as Error)?.message}`);
       toast({
         title: t('common.error'),
         description: (error as Error)?.message || t('checkout.paymentFailedGeneric'),
@@ -1323,8 +1423,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={onCancel}>
-      <DialogContent className="w-[95vw] sm:max-w-md md:max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden p-4 sm:p-6">
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open && flowState.currentStep < 2) onCancel(); }}>
+      <DialogContent
+        className="w-[95vw] sm:max-w-md md:max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden p-4 sm:p-6"
+        onInteractOutside={(e) => { if (flowState.currentStep >= 2) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => { if (flowState.currentStep >= 2) e.preventDefault(); }}
+      >
         <DialogHeader>
           <DialogTitle>
             {flowState.currentStep === 1 && t('checkout.chooseSize')}

@@ -310,7 +310,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
   const [completeLogId, setCompleteLogId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | MaintenanceStatus>('all');
 
-  const { maxTaps, tapIds } = useMaxTaps(franchiseId, storeId);
+  const { tapIds } = useMaxTaps(franchiseId, storeId);
 
   const filteredLogs = statusFilter === 'all'
     ? logs

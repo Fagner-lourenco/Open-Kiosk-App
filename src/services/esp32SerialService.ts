@@ -96,6 +96,8 @@ export type ESP32MessageCallback = (response: ESP32Response) => void;
 export type ESP32RawCallback = (line: string) => void;
 export type ESP32ConnectionCallback = (connected: boolean) => void;
 
+import { systemLogService } from './systemLogService';
+
 // ============================================
 // CLASSE PRINCIPAL
 // ============================================
@@ -163,6 +165,7 @@ class ESP32SerialService {
         return await this.openPort(port);
       } catch (error) {
         console.error('[ESP32] Erro de conexão:', error);
+        systemLogService.error('serial', `Erro de conexão serial: ${error instanceof Error ? error.message : String(error)}`);
         return false;
       } finally {
         this.connectingPromise = null;
@@ -208,6 +211,7 @@ class ESP32SerialService {
       return true;
     } catch (error) {
       console.error('[ESP32] Erro ao abrir porta:', error);
+      systemLogService.error('serial', `Erro ao abrir porta serial: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -287,6 +291,7 @@ class ESP32SerialService {
         return false;
       } catch (error) {
         console.error('[ESP32] Erro na reconexão automática:', error);
+        systemLogService.error('serial', `Erro na reconexão automática: ${error instanceof Error ? error.message : String(error)}`);
         return false;
       } finally {
         this.connectingPromise = null;
@@ -407,6 +412,12 @@ class ESP32SerialService {
    * Processa o buffer de leitura, extraindo linhas completas
    */
   private processBuffer(): void {
+    // 🔒 FIX Bug-23: Overflow protection — previne OOM por dados sem \n
+    if (this.readBuffer.length > 2048) {
+      console.warn('[ESP32] Serial buffer overflow (' + this.readBuffer.length + ' bytes), truncating');
+      this.readBuffer = this.readBuffer.slice(-256);
+    }
+
     const lines = this.readBuffer.split('\n');
 
     // Manter última linha incompleta no buffer
@@ -488,6 +499,7 @@ class ESP32SerialService {
       return true;
     } catch (error) {
       console.error('[ESP32] Erro ao enviar comando:', error);
+      systemLogService.error('serial', `Erro ao enviar comando: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -510,6 +522,7 @@ class ESP32SerialService {
       return true;
     } catch (error) {
       console.error('[ESP32] Erro ao enviar:', error);
+      systemLogService.error('serial', `Erro ao enviar raw: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }

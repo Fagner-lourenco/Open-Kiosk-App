@@ -8,6 +8,7 @@
 
 import { createMercadoPagoAPI } from './mercadopagoAPI';
 import { MERCADO_PAGO_CONFIG } from '@/config/mercadopago';
+import { systemLogService } from './systemLogService';
 import { getPaymentConfig, type ResolvedPaymentConfig } from '@/config/paymentGateway';
 import { getFirebaseApp, getFirebaseDb, getCurrentFranchiseId, getCurrentStoreId } from '@/services/firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -146,18 +147,18 @@ class PaymentService {
       try {
         await mpAPI.cancelOrder(lastOrder.orderId);
         console.log('[PaymentService] Ordem anterior cancelada com sucesso');
+        this.clearLastTerminalOrder();
       } catch (cancelError: unknown) {
-        // Se erro ao cancelar, pode ser que já está no terminal
-        // Nesse caso o cliente precisa cancelar manualmente no terminal
+        // Se erro ao cancelar, pode ser que está no terminal ou já processada.
+        // NÃO limpar cache local — manter orderId para que retry 409 possa re-tentar.
         const message = cancelError instanceof Error ? cancelError.message : String(cancelError);
-        console.warn('[PaymentService] Erro ao cancelar ordem anterior (pode estar no terminal):', message);
+        console.warn('[PaymentService] Erro ao cancelar ordem anterior (mantendo cache para retry):', message);
+        systemLogService.warn('payment', `Erro ao cancelar ordem anterior do terminal (cache mantido): ${message}`, { orderId: lastOrder.orderId });
       }
-      
-      this.clearLastTerminalOrder();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn('[PaymentService] Erro ao verificar ordem anterior:', message);
-      this.clearLastTerminalOrder();
+      // Manter cache para re-tentativa no próximo clearTerminalForNewOrder
     }
   }
 
@@ -211,6 +212,7 @@ class PaymentService {
         return result;
       } catch (err) {
         console.warn('[PaymentService] Falha ao cancelar ordem remotamente. Prosseguindo com cleanup local.', err);
+        systemLogService.error('payment', `Falha ao cancelar ordem MP: ${orderId}`, { orderId, error: err instanceof Error ? err.message : String(err) });
         return { canceled: false, reason: 'error' };
       }
     }
@@ -325,6 +327,7 @@ class PaymentService {
         throw error;
       }
       console.error('[PaymentService] Erro ao criar QR Code Mercado Pago:', error);
+      systemLogService.error('payment', `Erro ao criar QR Code MP: ${error instanceof Error ? error.message : String(error)}`);
       throw new PaymentError(
         'MP_QR_ERROR',
         error instanceof Error ? error.message : 'Erro ao gerar QR Code'
@@ -529,6 +532,8 @@ class PaymentService {
       };
     } catch (error) {
       console.error('[PaymentService Point] Erro ao processar pagamento:', error);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      systemLogService.error('payment', `Erro Point terminal: ${errMsg}`, { error: errMsg });
       
       // Tratar erro 409 (terminal ocupado com outra transação)
       if (error instanceof Error && error.message.includes('409')) {
@@ -640,11 +645,16 @@ class PaymentService {
         cardLastDigits: result.cardLastDigits,
         installments: result.installments,
       });
+      systemLogService.info('payment', `Payer data obtido: ${result.customerName ? 'com nome' : 'sem nome'}`, {
+        hasName: !!result.customerName, hasEmail: !!result.customerEmail,
+        hasCpf: !!result.customerIdentification, paymentMethod: result.paymentMethodId,
+      });
 
       return result;
     } catch (error) {
       // Não bloquear o fluxo principal — dados do pagador são opcionais
       console.warn('[PaymentService] Erro ao buscar dados do pagador (não-bloqueante):', error);
+      systemLogService.warn('payment', `Falha ao buscar payer data: ${error instanceof Error ? error.message : String(error)}`, { orderId: order.id });
       return {
         gatewayProvider: 'mercado_pago',
         gatewayOrderId: order.id,
@@ -687,9 +697,20 @@ class PaymentService {
       }
       
       if (order.status === 'at_terminal') {
-        // Ordem está no terminal físico - cliente pode cancelar no próprio terminal
-        console.log('[PaymentService] Ordem está no terminal, cancelamento via API não permitido:', orderId);
-        return { canceled: false, reason: 'at_terminal' };
+        // Ordem está no terminal físico — tentar cancelar via API mesmo assim.
+        // A API do MP pode aceitar o cancel em certos momentos (e.g. timeout no terminal).
+        // Se falhar, retornar reason 'at_terminal' para o UI orientar o usuário.
+        console.log('[PaymentService] Ordem está no terminal, tentando cancelar via API:', orderId);
+        try {
+          await mpAPI.cancelOrder(orderId);
+          console.log('[PaymentService] Ordem at_terminal cancelada com sucesso via API:', orderId);
+          return { canceled: true, reason: 'at_terminal_canceled' };
+        } catch (atTerminalError: unknown) {
+          const msg = atTerminalError instanceof Error ? atTerminalError.message : String(atTerminalError);
+          console.warn('[PaymentService] Não foi possível cancelar ordem at_terminal via API:', msg);
+          systemLogService.warn('payment', `Cancel at_terminal falhou via API: ${msg}`, { orderId });
+          return { canceled: false, reason: 'at_terminal' };
+        }
       }
       
       // Só tenta cancelar se status for 'created'
@@ -718,6 +739,7 @@ class PaymentService {
       
       // Erro inesperado - propagar
       console.error('[PaymentService] Erro ao cancelar ordem:', error);
+      systemLogService.error('payment', `Erro inesperado ao cancelar ordem MP: ${errorCode}`, { orderId });
       throw error;
     }
   }
@@ -767,6 +789,7 @@ class PaymentService {
       },
       (error) => {
         console.error('[PaymentService] Erro ao escutar pagamento:', error);
+        systemLogService.error('payment', `Erro listener pagamento: ${(error as Error)?.message}`, { paymentId });
         options?.onError?.(error as Error);
       }
     );
@@ -818,6 +841,7 @@ class PaymentService {
       // Fallback: marcar localmente como cancel_requested
       // O webhook/polling deverá detectar e reconciliar
       console.warn('[PaymentService] cancelPagBankPayment Cloud Function failed:', error);
+      systemLogService.error('payment', `cancelPagBankPayment CF falhou: ${error instanceof Error ? error.message : String(error)}`, { paymentId });
       return { canceled: false, reason: 'cancel_function_unavailable' };
     }
   }

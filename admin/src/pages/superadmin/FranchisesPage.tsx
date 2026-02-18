@@ -13,7 +13,7 @@
 import { useState, useEffect } from 'react';
 import { getPlanBadge, getStatusBadge } from '@/utils/franchise-badges';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs, query, orderBy, Timestamp, deleteDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, Timestamp, doc, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -154,7 +154,34 @@ export default function FranchisesPage() {
 
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, 'franchises', deleteTarget.id));
+      // 🔒 FIX Bug-20: Use writeBatch for atomic cascade deletion.
+      // Previous code deleted docs one-by-one in a loop — if one failed midway,
+      // some subcollection docs would be deleted and others wouldn't (inconsistent state).
+      // WriteBatch ensures all-or-nothing (up to 500 ops per batch).
+      const subcollections = ['stores', 'members', 'auditLogs', 'notifications'];
+      const batch = writeBatch(db);
+      let opsCount = 0;
+
+      for (const subcol of subcollections) {
+        try {
+          const subcolRef = collection(db, `franchises/${deleteTarget.id}/${subcol}`);
+          const snapshot = await getDocs(subcolRef);
+          for (const docSnap of snapshot.docs) {
+            batch.delete(doc(db, `franchises/${deleteTarget.id}/${subcol}`, docSnap.id));
+            opsCount++;
+          }
+        } catch (err) {
+          console.warn(`[FranchisesPage] Erro ao listar ${subcol}:`, err);
+        }
+      }
+
+      // Delete the franchise doc itself
+      batch.delete(doc(db, 'franchises', deleteTarget.id));
+      opsCount++;
+
+      if (opsCount > 0) {
+        await batch.commit();
+      }
       toast.success(`Franquia "${deleteTarget.name}" excluída com sucesso`);
       setDeleteTarget(null);
       loadFranchises();

@@ -17,6 +17,7 @@
 import { cacheSet, cacheGetAll, cacheDelete, STORES } from '@/services/cacheService';
 import { salesService } from '@/services/salesService';
 import { getCurrentStoreId } from '@/services/firebase';
+import { systemLogService } from '@/services/systemLogService';
 
 // ============================================================================
 // TYPES
@@ -25,10 +26,17 @@ import { getCurrentStoreId } from '@/services/firebase';
 export interface FailedDispense {
   id: string;         // orderNumber (usado como key no IndexedDB)
   orderNumber: string;
-  reason: string;     // 'command_failed' | 'exception' | 'timeout' | 'ble_disconnect'
+  reason: string;     // 'command_failed' | 'exception' | 'timeout' | 'ble_disconnect' | 'esp32_reboot_during_dispense'
   timestamp: number;
   retryCount: number;
   storeId: string;
+  // Partial dispense progress — used for resume from where it stopped
+  mlDispensed?: number;   // ml already dispensed before failure
+  targetMl?: number;      // original target ml per unit
+  cup?: number;           // which cup was being filled (1-based)
+  totalCups?: number;     // total cups in the order
+  tapId?: number;         // which tap was dispensing
+  sizeLabel?: string;     // size label for the drink
 }
 
 // ============================================================================
@@ -37,10 +45,19 @@ export interface FailedDispense {
 
 /**
  * Persiste um dispense falhado no IndexedDB para reconciliação posterior.
+ * Inclui progresso parcial para permitir resume de onde parou.
  */
 export async function persistFailedDispense(
   orderNumber: string,
-  reason: string
+  reason: string,
+  partialProgress?: {
+    mlDispensed?: number;
+    targetMl?: number;
+    cup?: number;
+    totalCups?: number;
+    tapId?: number;
+    sizeLabel?: string;
+  }
 ): Promise<void> {
   try {
     const entry: FailedDispense = {
@@ -50,11 +67,20 @@ export async function persistFailedDispense(
       timestamp: Date.now(),
       retryCount: 0,
       storeId: getCurrentStoreId() || '',
+      // Partial progress for resume
+      mlDispensed: partialProgress?.mlDispensed,
+      targetMl: partialProgress?.targetMl,
+      cup: partialProgress?.cup,
+      totalCups: partialProgress?.totalCups,
+      tapId: partialProgress?.tapId,
+      sizeLabel: partialProgress?.sizeLabel,
     };
     await cacheSet(STORES.FAILED_DISPENSES, entry);
-    console.log(`[DispenseRecovery] Persisted failed dispense: ${orderNumber} (reason: ${reason})`);
+    console.log(`[DispenseRecovery] Persisted failed dispense: ${orderNumber} (reason: ${reason}, ml: ${partialProgress?.mlDispensed ?? 0}/${partialProgress?.targetMl ?? '?'})`);
+    systemLogService.error('dispense', `Failed dispense persistido: ${orderNumber}`, { orderNumber, reason, ...partialProgress });
   } catch (err) {
     console.error(`[DispenseRecovery] Failed to persist failed dispense ${orderNumber}:`, err);
+    systemLogService.error('dispense', `Falha ao persistir failed dispense: ${orderNumber}`, { orderNumber, reason, error: err instanceof Error ? err.message : String(err) });
   }
 }
 
@@ -81,12 +107,14 @@ export async function reconcileOnStartup(): Promise<void> {
     if (pending.length === 0) return;
 
     console.log(`[DispenseRecovery] Reconciling ${pending.length} failed dispense(s) on startup`);
+    systemLogService.info('dispense', `Reconciliando ${pending.length} dispense(s) falhados no startup`);
 
     for (const entry of pending) {
       try {
         // Validate storeId before attempting update
         if (!entry.storeId) {
           console.error(`[DispenseRecovery] Missing storeId for ${entry.orderNumber}, keeping in queue for manual intervention`);
+          systemLogService.error('dispense', `Missing storeId para reconciliação: ${entry.orderNumber}`, { orderNumber: entry.orderNumber });
           continue;
         }
 
@@ -100,11 +128,13 @@ export async function reconcileOnStartup(): Promise<void> {
         console.log(`[DispenseRecovery] Reconciled: ${entry.orderNumber}`);
       } catch (err) {
         console.error(`[DispenseRecovery] Failed to reconcile ${entry.orderNumber}:`, err);
+        systemLogService.error('dispense', `Falha ao reconciliar dispense: ${entry.orderNumber}`, { orderNumber: entry.orderNumber, error: err instanceof Error ? err.message : String(err) });
         // Mantém na fila para próxima tentativa
       }
     }
   } catch (err) {
     console.error('[DispenseRecovery] reconcileOnStartup error:', err);
+    systemLogService.error('dispense', `Erro geral reconciliação startup: ${err instanceof Error ? err.message : String(err)}`);
   } finally {
     isReconciling = false;
   }

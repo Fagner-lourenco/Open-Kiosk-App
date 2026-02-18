@@ -23,6 +23,7 @@ import { useESP32 } from "@/context/ESP32Context";
 import { CupFillAnimation } from "@/components/CupFillAnimation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
+import { systemLogService } from "@/services/systemLogService";
 
 interface DrinkPickupScreenProps {
   isOpen: boolean;
@@ -148,7 +149,7 @@ const DrinkPickupScreen = ({
 
     // Listener para eventos de status do ESP32
     const unsubscribe = addResponseListener((response) => {
-      console.log('[DrinkPickupScreen] Evento recebido:', response.type, response.stage);
+      console.log('[DrinkPickupScreen] Evento recebido:', response.type, response.type === 'status' ? response.stage : `${response.percent ?? 0}%`);
       
       if (response.type === 'status') {
         // Copo individual concluído - mostrar toast
@@ -171,6 +172,8 @@ const DrinkPickupScreen = ({
         // Aguardando próximo copo - voltar para estado waiting
         if (response.stage === 'waiting_next') {
           setDispenseState('waiting');
+          // Resetar countdown para o próximo copo (evita timeout imediato)
+          setPickupCountdown(pickupTimeout);
           // NÃO incrementar manualmente aqui - o useEffect de currentProgress
           // vai atualizar currentCupDisplay quando receber o próximo progress do ESP32
         }
@@ -189,6 +192,7 @@ const DrinkPickupScreen = ({
           }, AUTO_CLOSE_DELAY_SECONDS * 1000);
         } else if (response.stage === 'error') {
           setDispenseState('error');
+          systemLogService.error('dispense', `ESP32 erro durante dispense: ${orderNumber}`, { orderNumber });
         }
       }
     });
@@ -233,6 +237,7 @@ const DrinkPickupScreen = ({
         if (prev <= 1) {
           clearInterval(interval);
           // Timeout: usuário não iniciou o fluxo a tempo
+          systemLogService.warn('dispense', `Pickup timeout: ${orderNumber}`, { orderNumber, timeoutSeconds: pickupTimeout });
           if (onTimeoutRef.current) {
             onTimeoutRef.current();
           } else {
@@ -289,8 +294,13 @@ const DrinkPickupScreen = ({
   // ============================================
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onComplete()}>
-      <DialogContent className="w-full sm:max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <Dialog open={isOpen} onOpenChange={(open) => !open && dispenseState === 'completed' && onComplete()}>
+      <DialogContent
+        className="w-full sm:max-w-lg max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        onInteractOutside={(e) => e.preventDefault()}
+        onEscapeKeyDown={(e) => e.preventDefault()}
+        aria-describedby="drink-pickup-description"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xl">
@@ -321,6 +331,9 @@ const DrinkPickupScreen = ({
               )}
             </div>
           </DialogTitle>
+          <DialogDescription id="drink-pickup-description" className="sr-only">
+            {t('drinkPickup.drinkReady')}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">

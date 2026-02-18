@@ -385,7 +385,6 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
     setCurrentFranchise(franchise);
     // Limpar dados da franquia anterior imediatamente para evitar vazamento cross-tenant
     setStores([]);
-    setCurrentStore(null);
     setCurrentMembership(null);
     localStorage.setItem(SELECTED_FRANCHISE_KEY, franchiseId);
     

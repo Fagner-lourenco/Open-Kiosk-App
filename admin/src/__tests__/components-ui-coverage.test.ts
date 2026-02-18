@@ -42,7 +42,7 @@ const uiModules = {
 };
 
 describe('components/ui', () => {
-  it.each(Object.entries(uiModules))('%s exporta módulo válido', (name, mod) => {
+  it.each(Object.entries(uiModules))('%s exporta módulo válido', (_name, mod) => {
     expect(mod).toBeDefined();
     expect(Object.keys(mod).length).toBeGreaterThan(0);
   });

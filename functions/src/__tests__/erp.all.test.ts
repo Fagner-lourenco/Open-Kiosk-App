@@ -56,6 +56,7 @@ vi.mock('../lib', () => ({
       FieldValue: {
         serverTimestamp: vi.fn(() => 'SERVER_TS'),
         increment: vi.fn((n: number) => n),
+        arrayUnion: vi.fn((...args: any[]) => args),
       },
       Timestamp: {
         now: vi.fn(() => ({ toDate: () => new Date() })),
