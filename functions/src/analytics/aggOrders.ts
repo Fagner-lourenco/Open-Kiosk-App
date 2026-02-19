@@ -246,7 +246,19 @@ export const onOrderUpdated = onDocumentUpdated(
 
     try {
       const dailyRef = db.doc(`analytics/daily/${dateKey}`);
+
+      // 🔒 FIX Audit-R2: Idempotency guard para at-least-once delivery (mesmo padrão de onOrderCreated).
+      // Sem isso, replays podem duplicar increments de receita.
+      const updateEventId = event.id || `update_${orderId}`;
+      const dailySnap = await dailyRef.get();
+      const processedEvents: string[] = dailySnap.exists ? (dailySnap.data()?.processedEvents || []) : [];
+      if (processedEvents.includes(updateEventId)) {
+        console.log(`[aggOrders] Update event ${updateEventId} already processed — skip (replay)`);
+        return;
+      }
+
       await updateMetrics(dailyRef, after, false, before);
+      await dailyRef.set({ processedEvents: admin.firestore.FieldValue.arrayUnion(updateEventId) }, { merge: true });
 
       const hourlyRef = db.doc(`analytics/hourly/${hourKey}`);
       await updateMetrics(hourlyRef, after, false, before);

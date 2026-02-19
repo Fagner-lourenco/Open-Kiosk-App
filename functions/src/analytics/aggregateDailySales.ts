@@ -186,7 +186,9 @@ async function aggregateStoreDaily(franchiseId: string, storeId: string, date: s
             };
           }
 
-          const qty = Number(item.quantity) || 1;
+          // 🔧 FIX Audit-R2: quantity 0 deve ser 0, não 1 (itens cancelados)
+          const rawQty = Number(item.quantity);
+          const qty = rawQty > 0 ? rawQty : 0;
           const unitPrice = Number(item.price) || 0;
           productSales[productId].quantity += qty;
           productSales[productId].revenue += unitPrice * qty;

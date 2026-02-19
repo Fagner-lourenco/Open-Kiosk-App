@@ -24,9 +24,13 @@ const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
 // ============================================================================
 
 function getYesterdayKey(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
+  // 🔧 FIX Audit-R2: Usar BRT (UTC-3) para alinhar com getYesterdayRange()
+  const brtNow = new Date(Date.now() - 3 * 60 * 60 * 1000);
+  brtNow.setDate(brtNow.getDate() - 1);
+  const y = brtNow.getUTCFullYear();
+  const m = String(brtNow.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(brtNow.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function getYesterdayRange(): { start: Date; end: Date } {
