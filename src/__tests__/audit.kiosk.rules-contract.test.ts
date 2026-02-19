@@ -7,8 +7,10 @@ describe('Audit Kiosk - contrato app vs firestore.rules', () => {
     const rulesSource = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
     const salesSource = fs.readFileSync(path.resolve(process.cwd(), 'src/services/salesService.ts'), 'utf8');
 
+    // Extrair bloco de orders especificamente (não products)
+    const ordersBlock = rulesSource.match(/match \/orders\/\{orderId\}\s*\{([\s\S]*?)allow delete:/)?.[1] ?? '';
     const affectedKeysBlock =
-      rulesSource.match(/affectedKeys\(\)\s*[\r\n\s]*\.hasOnly\(\[([\s\S]*?)\]\)/)?.[1] ?? '';
+      ordersBlock.match(/affectedKeys\(\)\s*[\r\n\s]*\.hasOnly\(\[([\s\S]*?)\]\)/)?.[1] ?? '';
     const allowedKeys = Array.from(affectedKeysBlock.matchAll(/'([^']+)'/g), (m) => m[1]);
 
     expect(salesSource).toMatch(/dispenseStatus/);
@@ -54,8 +56,10 @@ describe('Audit Kiosk - contrato app vs firestore.rules', () => {
     const rulesSource = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
     const salesSource = fs.readFileSync(path.resolve(process.cwd(), 'src/services/salesService.ts'), 'utf8');
 
+    // Extrair bloco de orders especificamente (não products)
+    const ordersBlock = rulesSource.match(/match \/orders\/\{orderId\}\s*\{([\s\S]*?)allow delete:/)?.[1] ?? '';
     const affectedKeysBlock =
-      rulesSource.match(/affectedKeys\(\)\s*[\r\n\s]*\.hasOnly\(\[([\s\S]*?)\]\)/)?.[1] ?? '';
+      ordersBlock.match(/affectedKeys\(\)\s*[\r\n\s]*\.hasOnly\(\[([\s\S]*?)\]\)/)?.[1] ?? '';
     const allowedKeys = Array.from(affectedKeysBlock.matchAll(/'([^']+)'/g), (m) => m[1]);
 
     expect(salesSource).toMatch(/enrichOrderWithCustomerData/);

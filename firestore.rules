@@ -264,6 +264,8 @@ service cloud.firestore {
         // AtualizaÃ§Ãµes:
         // - owner/admin/manager podem editar qualquer campo
         // - operadores com acesso podem atualizar apenas estoque (para vendas do Kiosk)
+        // 🔒 FIX Audit-20260218: Removidos campos de orders copiados por engano.
+        // Operadores/employees podem atualizar apenas estoque (vendas do Kiosk).
         allow update: if (isSuperAdmin() || 
                          isFranchiseOwner(franchiseId) ||
                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager'])) ||
@@ -273,25 +275,7 @@ service cloud.firestore {
                             'stock',
                             'inStock',
                             'totalMlAvailable',
-                            'updatedAt',
-                            'dispenseStatus',
-                            'dispensedAt',
-                            'completedAt',
-                            'customerName',
-                            'customerEmail',
-                            'customerIdentification',
-                            'gatewayProvider',
-                            'gatewayOrderId',
-                            'gatewayPaymentId',
-                            'mpOrderId',
-                            'mpPaymentId',
-                            'paymentMethodId',
-                            'paymentTypeId',
-                            'cardBrand',
-                            'cardLastDigits',
-                            'cardholderName',
-                            'installments',
-                            'dateApproved'
+                            'updatedAt'
                           ]));
           
           // Owner da franquia ou admin podem deletar produtos
@@ -322,9 +306,11 @@ service cloud.firestore {
           // Permitir update APENAS para mudanças de status (cancelamento, estorno)
           // Restringe a apenas owner/admin da franquia
           // 🔒 FIX Bug-14: paymentStatus removido — apenas Cloud Functions alteram payment status
+          // 🔒 FIX Audit-20260218: Adicionado 'employee' — kiosks com role employee
+          // precisam atualizar dispenseStatus/enrichment após pagamento.
           allow update: if (isSuperAdmin() ||
                            isFranchiseOwner(franchiseId) ||
-                           canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'operator'])) &&
+                           canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'operator', 'employee'])) &&
                         // Apenas permite atualizar campos específicos de status
                         request.resource.data.diff(resource.data).affectedKeys()
                           .hasOnly([
@@ -943,7 +929,11 @@ service cloud.firestore {
                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
         }
 
-        // Prizes (prêmios — leitura pública não expõe código)
+        // Prizes (prêmios)
+        // ⚠️ SECURITY NOTE (Audit-20260218): Campo 'code' é legível por anonymous auth.
+        // O strip é feito client-side em useTvWinners. Para produção, considerar
+        // mover 'code' para subcoleção prizes/{prizeId}/secret com regra restrita,
+        // ou servir prizes via Cloud Function que omita o campo.
         match /prizes/{prizeId} {
           allow read: if isAuthenticated();
           // Admin/owner podem criar e atualizar (resgate)
