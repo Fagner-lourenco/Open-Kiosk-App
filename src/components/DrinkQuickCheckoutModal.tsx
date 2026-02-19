@@ -348,6 +348,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const eventDpOverride = storeSettings?.eventMode?.enabled && storeSettings?.eventMode?.activateDynamicPricing;
   const isDpActive = !!(dpConfig?.rules?.length && (dpConfig.enabled || eventDpOverride));
 
+  // 🔧 Tick reativo para recalcular DP quando Happy Hour começa/termina
+  const [dpTick, setDpTick] = useState(0);
+  useEffect(() => {
+    if (!isDpActive) return;
+    const interval = setInterval(() => setDpTick(t => t + 1), 60_000);
+    return () => clearInterval(interval);
+  }, [isDpActive]);
+
   const dynamicPriceResult = useMemo(() => {
     if (!selectedSize || !isDpActive || !dpConfig) return null;
     const basePricePerMl = selectedSize.price / selectedSize.ml;
@@ -357,7 +365,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       timestamp: new Date(),
       kegLevelPercent,
     });
-  }, [selectedSize, isDpActive, dpConfig, kegLevelPercent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSize, isDpActive, dpConfig, kegLevelPercent, dpTick]);
 
   /** Preço unitário resolvido (com ou sem DP) */
   const resolvedUnitPrice = useMemo(() => {
@@ -885,6 +894,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // If sale was already recorded, persist failure for recovery/compensation
       if (saleRecordedRef.current && orderNumber) {
         await persistFailedDispense(orderNumber, 'flow_exception').catch(() => {});
+        // 🔧 FIX Audit-R2: NÃO resetar flags se a venda já foi persistida no Firestore.
+        // Resetar causaria dupla gravação de venda no retry (double-decrement de estoque).
+        // O guard recordedOrderRef garante que o retry pule direto para dispense.
+      } else {
+        // Só resetar se a venda NÃO foi gravada com sucesso
+        saleRecordedRef.current = false;
+        recordedOrderRef.current = null;
       }
       toast({
         title: t('common.error'),

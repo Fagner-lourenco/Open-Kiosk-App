@@ -237,7 +237,21 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // 🔧 CORREÇÃO: Ref para rastrear último pong e evitar logs duplicados
   const lastPongTimeRef = useRef<number>(0);
 
+  // 🔧 CORREÇÃO: Dedup de mensagens vindas de múltiplos transports (BLE + USB OTG simultaneamente)
+  const lastMsgHashRef = useRef<string>('');
+  const lastMsgTimeRef = useRef<number>(0);
+
   const handleESP32Response = useCallback((response: ESP32Response) => {
+    // 🔧 Dedup cross-transport: se a mesma mensagem chegar via BLE e USB OTG quase simultaneamente, ignorar a segunda
+    const msgHash = JSON.stringify(response);
+    const now = Date.now();
+    if (msgHash === lastMsgHashRef.current && now - lastMsgTimeRef.current < 500) {
+      console.debug('[ESP32Context] Mensagem duplicada ignorada (cross-transport)');
+      return;
+    }
+    lastMsgHashRef.current = msgHash;
+    lastMsgTimeRef.current = now;
+
     // 🔧 CORREÇÃO: Filtrar pongs repetidos (menos de 5s entre eles)
     let skipLog = false;
     if (response.type === 'pong') {
@@ -264,10 +278,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     if (response.type !== 'pong' || !skipLog) {
       console.debug('[ESP32Context] Resposta recebida:', response);
+      // Adicionar ao log persistente (apenas quando não é pong duplicado)
+      addLog('received', JSON.stringify(response), response);
     }
-
-    // Adicionar ao log persistente
-    addLog('received', JSON.stringify(response), response);
 
     // 🆕 Multi-Tap: Processar num_taps de QUALQUER resposta que inclua
     if (response.num_taps !== undefined && response.num_taps > 0) {
@@ -592,6 +605,12 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           stage: response.stage, orderId: currentProgressRef.current?.orderId,
         });
         if (response.stage === 'error') {
+          // 🔧 FIX: Limpar timeout de segurança (igual ao handler 'status')
+          if (dispenseTimeoutRef.current) {
+            clearTimeout(dispenseTimeoutRef.current);
+            dispenseTimeoutRef.current = null;
+          }
+
           // Persist ServingSession for error case
           const errorProgressSnapshot = currentProgressRef.current;
           if (errorProgressSnapshot && errorProgressSnapshot.orderId) {
@@ -603,12 +622,25 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             }).catch((err) => {
               console.error('[ESP32Context] Failed to persist error serving session:', err);
             });
+
+            // 🔧 FIX: Atualizar status do pedido no Firestore
+            updateDispenseStatusWithRetry(errorProgressSnapshot.orderId, 'failed_dispense');
+
+            // 🔧 FIX: Persistir localmente para reconciliação
+            persistFailedDispense(errorProgressSnapshot.orderId, response.message || 'esp32_error', {
+              mlDispensed: errorProgressSnapshot.ml,
+              targetMl: errorProgressSnapshot.targetMl,
+              cup: errorProgressSnapshot.cup,
+              totalCups: errorProgressSnapshot.totalCups,
+              tapId: errorProgressSnapshot.tapId,
+            });
           }
           if (disconnectGraceTimerRef.current) { clearTimeout(disconnectGraceTimerRef.current); disconnectGraceTimerRef.current = null; }
           setIsDispensing(false);
           setCurrentProgress(null);
           currentProgressRef.current = null;
           dispensingStartedAtRef.current = null;
+          esp32Service.setDispensingInProgress(false); // 🔧 FIX: Liberar healthcheck
         }
         break;
     }
@@ -776,7 +808,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       if (line.startsWith('{')) {
         try {
           const json = JSON.parse(line);
-          addLog('received', line, json);
+          // 🔧 Não chamar addLog aqui — handleESP32Response já faz o log
           handleESP32Response(json);
         } catch (e) {
           // Não é JSON válido, logar como texto
@@ -798,7 +830,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       if (line.startsWith('{')) {
         try {
           const json = JSON.parse(line);
-          addLog('received', line, json);
+          // 🔧 Não chamar addLog aqui — handleESP32Response já faz o log
           handleESP32Response(json);
         } catch (e) {
           // Não é JSON válido, logar como texto
@@ -869,6 +901,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     console.log('[ESP32Context] 📶 Iniciando polling WiFi durante dispensação...');
 
+    // 🔧 FIX Audit-R2: AbortController para cancelar fetch in-flight ao desmontar/parar polling
+    const abortController = new AbortController();
+
     const pollInterval = setInterval(async () => {
       try {
         // Buscar status via HTTP GET /status (usando IP configurável)
@@ -876,6 +911,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         const response = await fetch(`http://${wifiIP}/status`, {
           method: 'GET',
           headers: { 'Accept': 'application/json' },
+          signal: abortController.signal,
         });
 
         if (response.ok) {
@@ -888,12 +924,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           console.warn('[ESP32Context] 📶 Polling WiFi falhou:', response.status);
         }
       } catch (error) {
+        if ((error as Error)?.name === 'AbortError') return; // Cleanup normal
         console.warn('[ESP32Context] 📶 Erro no polling WiFi:', error);
       }
     }, 500); // Polling a cada 500ms para feedback em tempo real
 
     return () => {
       console.log('[ESP32Context] 📶 Parando polling WiFi');
+      abortController.abort();
       clearInterval(pollInterval);
     };
   }, [isDispensing, status.type, status.connected, handleESP32Response]);
