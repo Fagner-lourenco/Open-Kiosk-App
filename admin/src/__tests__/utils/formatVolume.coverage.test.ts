@@ -14,7 +14,7 @@ describe('formatVolume coverage', () => {
     expect(formatVolumeCompact(-1)).toBe('0mL');
     expect(formatVolumeCompact(950)).toBe('950mL');
     expect(formatVolumeCompact(2000)).toBe('2L');
-    expect(formatVolumeCompact(9100)).toBe('9.1L');
+    expect(formatVolumeCompact(9100)).toBe('9,1L');
     expect(formatVolumeCompact(1_200_000)).toBe('1.200L');
   });
 
