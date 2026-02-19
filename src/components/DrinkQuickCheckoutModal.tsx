@@ -15,11 +15,13 @@ import { CartItem, Product } from "@/types/product";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
-import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
+import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning, RankingOptIn } from "./checkout/index";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
 import { usePaymentGateway } from "@/context/PaymentGatewayContext";
 import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
+import { buildFingerprints, findCustomerByFingerprint, type KnownCustomer } from "@/utils/knownCustomers";
+import type { OrderCustomerData } from "@/types/sales";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
@@ -83,6 +85,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const saleRecordedRef = useRef(false);
   // Track which orderNumber has been recorded in Firestore (prevents duplicate sale on retry)
   const recordedOrderRef = useRef<string | null>(null);
+
+  // Ranking opt-in: dados para fingerprinting de clientes recorrentes
+  const lastEnrichDataRef = useRef<OrderCustomerData | null>(null);
+  const recognizedCustomerRef = useRef<KnownCustomer | null>(null);
+  const rankingFingerprintsRef = useRef<string[]>([]);
 
   // Estados específicos para Mercado Pago Point (Terminal)
   const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'processing' | 'error'>('idle');
@@ -174,6 +181,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       paymentService.fetchPayerDataFromOrder(order, gatewayConfig)
         .then(async (customerData) => {
           if (customerData && orderNumber) {
+            // Salvar dados para fingerprinting (usado pelo ranking opt-in)
+            lastEnrichDataRef.current = customerData;
             await salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId());
             systemLogService.info('payment', `Dados do pagador gravados: ${orderNumber}`, {
               hasName: !!customerData.customerName,
@@ -384,7 +393,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   }, [dynamicPriceResult, selectedSize, resolvedUnitPrice]);
 
   const processingSteps = useMemo(() => {
-    const order = ["awaiting_payment", "payment_approved", "recording_sale", "dispensing", "ready_pickup", "complete"] as const;
+    const order = ["awaiting_payment", "payment_approved", "recording_sale", "dispensing", "ready_pickup", "ranking_prompt", "complete"] as const;
     const statusFor = (target: typeof order[number]) => {
       const currentIndex = order.indexOf(flowState.processingStage as typeof order[number]);
       const targetIndex = order.indexOf(target);
@@ -475,6 +484,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // Reset sale guard
       saleRecordedRef.current = false;
       recordedOrderRef.current = null;
+      // Reset ranking opt-in state
+      lastEnrichDataRef.current = null;
+      recognizedCustomerRef.current = null;
+      rankingFingerprintsRef.current = [];
       // Reset dispense retry count para próximo cliente
       dispenseRetryCountRef.current = 0;
       orderNumberRef.current = '';
@@ -639,6 +652,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const dispenseRetryCountRef = useRef(0);
   const MAX_DISPENSE_RETRIES = 2;
 
+  // Ranking opt-in handlers
+  const handleRankingDone = useCallback(() => {
+    updateProcessingStage("complete");
+    setTimeout(() => { onCancel(); }, 1500);
+  }, [updateProcessingStage, onCancel]);
+
+  const handleRankingSkip = useCallback(() => {
+    updateProcessingStage("complete");
+    setTimeout(() => { onCancel(); }, 1500);
+  }, [updateProcessingStage, onCancel]);
+
   const handleRetryDispense = useCallback(async () => {
     if (!product || !selectedSize || !orderNumberRef.current) return;
     if (dispenseRetryCountRef.current >= MAX_DISPENSE_RETRIES) {
@@ -710,9 +734,27 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             totalAmount,
           },
         });
-        updateProcessingStage("complete");
+
+        // Ranking opt-in: verifica se já temos um nome real (crédito com chip) ou se precisa do form
         setIsProcessing(false);
-        setTimeout(() => { onCancel(); }, 1500);
+        const enrichData = lastEnrichDataRef.current;
+        const hasRealName = enrichData?.customerName && !enrichData.customerName.startsWith('Cervejeiro');
+        if (hasRealName) {
+          // Cliente já identificado (ex: crédito com chip) — vai direto para complete
+          updateProcessingStage("complete");
+          setTimeout(() => { onCancel(); }, 2000);
+        } else {
+          // Montar fingerprints e verificar reconhecimento
+          const fps = buildFingerprints({
+            cpf: enrichData?.customerIdentification,
+            payerId: enrichData?.payerId,
+            cardFirstDigits: enrichData?.cardFirstDigits,
+            cardLastDigits: enrichData?.cardLastDigits,
+          });
+          rankingFingerprintsRef.current = fps;
+          recognizedCustomerRef.current = findCustomerByFingerprint(fps);
+          updateProcessingStage("ranking_prompt");
+        }
       } else {
         // Retry falhou novamente
         await salesService.updateOrderDispenseStatus(orderNumberRef.current, 'failed_dispense', getCurrentStoreId())
@@ -873,13 +915,29 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           emergencyTimeoutRef.current = null;
         }
 
-        // Mostrar sucesso e finalizar
-        updateProcessingStage("complete");
+        // Ranking opt-in: verifica se já temos um nome real (crédito com chip) ou se precisa do form
         setTimerActive(false);
         setIsProcessing(false);
-        setTimeout(() => {
-          onCancel();
-        }, 1500);
+        const enrichData = lastEnrichDataRef.current;
+        const hasRealName = enrichData?.customerName && !enrichData.customerName.startsWith('Cervejeiro');
+        if (hasRealName) {
+          // Cliente já identificado (ex: crédito com chip) — vai direto para complete
+          updateProcessingStage("complete");
+          setTimeout(() => {
+            onCancel();
+          }, 2000);
+        } else {
+          // Montar fingerprints e verificar reconhecimento
+          const fps = buildFingerprints({
+            cpf: enrichData?.customerIdentification,
+            payerId: enrichData?.payerId,
+            cardFirstDigits: enrichData?.cardFirstDigits,
+            cardLastDigits: enrichData?.cardLastDigits,
+          });
+          rankingFingerprintsRef.current = fps;
+          recognizedCustomerRef.current = findCustomerByFingerprint(fps);
+          updateProcessingStage("ranking_prompt");
+        }
       } else {
         // KIO-02: Dispense falhou — NÃO chamar onComplete.
         // Entrar em estado "dispense_failed" para o cliente ver opções.
@@ -1039,7 +1097,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       if (response.status === 'paid') {
         updateProcessingStage("payment_approved");
         // Enriquecer order com dados do cliente PagBank (fire-and-forget)
-        salesService.enrichOrderWithCustomerData(orderNumber, {
+        const pagbankEnrichData: OrderCustomerData = {
           customerName: payerName || undefined,
           customerEmail: payerEmail || undefined,
           customerIdentification: payerTaxId || undefined,
@@ -1047,7 +1105,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           gatewayOrderId: response.providerOrderId || undefined,
           gatewayPaymentId: response.paymentId || undefined,
           cardLastDigits: response.cardLast4 || undefined,
-        }, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
+        };
+        lastEnrichDataRef.current = pagbankEnrichData;
+        salesService.enrichOrderWithCustomerData(orderNumber, pagbankEnrichData, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
         try {
           await finishPaymentFlow(orderNumber);
         } catch (error) {
@@ -1101,7 +1161,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             cleanupPagBankListener();
             updateProcessingStage("payment_approved");
             // Enriquecer order com dados do cliente PagBank (fire-and-forget)
-            salesService.enrichOrderWithCustomerData(orderNumberRef.current, {
+            const pagbankListenerEnrichData: OrderCustomerData = {
               customerName: payerName || undefined,
               customerEmail: payerEmail || undefined,
               customerIdentification: payerTaxId || undefined,
@@ -1109,7 +1169,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               gatewayOrderId: payment.providerOrderId || undefined,
               gatewayPaymentId: payment.id || undefined,
               cardLastDigits: (payment as any).cardLast4 || undefined,
-            }, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
+            };
+            lastEnrichDataRef.current = pagbankListenerEnrichData;
+            salesService.enrichOrderWithCustomerData(orderNumberRef.current, pagbankListenerEnrichData, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
             try {
               // Guard: se modal foi desmontado e dados limpos, persistir para reconciliação
               if (!product || !selectedSizeKey) {
@@ -1809,7 +1871,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
           {(flowState.currentStep === 3 || flowState.isProcessing) && (
             <div className="flex flex-col items-center justify-center gap-4 py-8 w-full">
-              <ProcessingProgress stage={flowState.processingStage} steps={processingSteps} />
+              {/* Ocultar barra de progresso durante o ranking opt-in para dar espaço ao formulário */}
+              {flowState.processingStage !== "ranking_prompt" && (
+                <ProcessingProgress stage={flowState.processingStage} steps={processingSteps} />
+              )}
 
               {flowState.processingStage === "awaiting_payment" && (
                 <>
@@ -2141,6 +2206,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                   <p className="text-gray-600 font-medium text-lg">{t('checkout.drinkReady')}</p>
                   <p className="text-sm text-gray-500">{t('checkout.positionCup')}</p>
                 </>
+              )}
+
+              {flowState.processingStage === "ranking_prompt" && (
+                <RankingOptIn
+                  orderNumber={orderNumberRef.current}
+                  storeId={getCurrentStoreId() || ''}
+                  fingerprints={rankingFingerprintsRef.current}
+                  recognizedCustomer={recognizedCustomerRef.current}
+                  onDone={handleRankingDone}
+                  onSkip={handleRankingSkip}
+                />
               )}
 
               {flowState.processingStage === "complete" && (

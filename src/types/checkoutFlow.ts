@@ -6,6 +6,7 @@ export type ProcessingStage =
   | "dispensing"
   | "dispense_failed"
   | "ready_pickup"
+  | "ranking_prompt"
   | "complete"
   | "error";
 
