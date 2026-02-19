@@ -10,7 +10,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { doc, onSnapshot, type Unsubscribe } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { storePath } from '@/lib/pathResolver';
+import { tvConfigPath } from '@/lib/pathResolver';
 import type { DynamicPricingConfig } from '@shared/types/dynamicPricing';
 import { DEFAULT_DYNAMIC_PRICING_CONFIG } from '@shared/types/dynamicPricing';
 
@@ -50,9 +50,11 @@ export function useTvDynamicPricing(
 
     setIsLoading(true);
 
-    const storeRef = docFromPath(storePath(franchiseId, storeId));
+    // 🔧 FIX AUD-04: Ler de tvConfig/current (acessível por anonymous auth)
+    // ao invés do doc da loja (que requer membership)
+    const tvRef = docFromPath(tvConfigPath(franchiseId, storeId));
     unsubRef.current = onSnapshot(
-      storeRef,
+      tvRef,
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();

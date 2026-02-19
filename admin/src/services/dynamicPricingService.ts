@@ -10,11 +10,12 @@
 import {
   doc,
   getDoc,
+  setDoc,
   updateDoc,
   serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { storePath } from '@/lib/pathResolver';
+import { storePath, tvConfigPath } from '@/lib/pathResolver';
 import type { DynamicPricingConfig } from '@shared/types/dynamicPricing';
 import { DEFAULT_DYNAMIC_PRICING_CONFIG } from '@shared/types/dynamicPricing';
 
@@ -76,4 +77,12 @@ export async function updateDynamicPricingConfig(
     dynamicPricingConfig: config,
     updatedAt: serverTimestamp(),
   });
+
+  // 🔧 FIX AUD-04: Espelhar em tvConfig/current para que o TV Dashboard
+  // (anonymous auth) consiga ler sem precisar de membership na loja.
+  const tvRef = docFromPath(tvConfigPath(franchiseId, storeId));
+  await setDoc(tvRef, {
+    dynamicPricingConfig: config,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
 }
