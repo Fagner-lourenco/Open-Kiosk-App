@@ -15,12 +15,11 @@ import { CartItem, Product } from "@/types/product";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
-import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning, RankingOptIn } from "./checkout/index";
+import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
 import { usePaymentGateway } from "@/context/PaymentGatewayContext";
 import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
 import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
-import { buildFingerprints, findCustomerByFingerprint, type KnownCustomer } from "@/utils/knownCustomers";
 import type { OrderCustomerData } from "@/types/sales";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
@@ -47,7 +46,7 @@ interface DrinkQuickCheckoutModalProps {
   isOpen: boolean;
   product: Product | null;
   currentCartItems: CartItem[];
-  onComplete: (data: { orderNumber: string; drinkData: DrinkCheckoutSelection }) => void;
+  onComplete: (data: { orderNumber: string; drinkData: DrinkCheckoutSelection; enrichData?: { customerName?: string; customerIdentification?: string; payerId?: string; cardFirstDigits?: string; cardLastDigits?: string; } | null; storeId?: string }) => void;
   onCancel: () => void;
 }
 
@@ -88,8 +87,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   // Ranking opt-in: dados para fingerprinting de clientes recorrentes
   const lastEnrichDataRef = useRef<OrderCustomerData | null>(null);
-  const recognizedCustomerRef = useRef<KnownCustomer | null>(null);
-  const rankingFingerprintsRef = useRef<string[]>([]);
 
   // Estados específicos para Mercado Pago Point (Terminal)
   const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'processing' | 'error'>('idle');
@@ -393,7 +390,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   }, [dynamicPriceResult, selectedSize, resolvedUnitPrice]);
 
   const processingSteps = useMemo(() => {
-    const order = ["awaiting_payment", "payment_approved", "recording_sale", "dispensing", "ready_pickup", "ranking_prompt", "complete"] as const;
+    const order = ["awaiting_payment", "payment_approved", "recording_sale", "dispensing", "ready_pickup", "complete"] as const;
     const statusFor = (target: typeof order[number]) => {
       const currentIndex = order.indexOf(flowState.processingStage as typeof order[number]);
       const targetIndex = order.indexOf(target);
@@ -486,8 +483,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       recordedOrderRef.current = null;
       // Reset ranking opt-in state
       lastEnrichDataRef.current = null;
-      recognizedCustomerRef.current = null;
-      rankingFingerprintsRef.current = [];
       // Reset dispense retry count para próximo cliente
       dispenseRetryCountRef.current = 0;
       orderNumberRef.current = '';
@@ -652,17 +647,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const dispenseRetryCountRef = useRef(0);
   const MAX_DISPENSE_RETRIES = 2;
 
-  // Ranking opt-in handlers
-  const handleRankingDone = useCallback(() => {
-    updateProcessingStage("complete");
-    setTimeout(() => { onCancel(); }, 1500);
-  }, [updateProcessingStage, onCancel]);
-
-  const handleRankingSkip = useCallback(() => {
-    updateProcessingStage("complete");
-    setTimeout(() => { onCancel(); }, 1500);
-  }, [updateProcessingStage, onCancel]);
-
   const handleRetryDispense = useCallback(async () => {
     if (!product || !selectedSize || !orderNumberRef.current) return;
     if (dispenseRetryCountRef.current >= MAX_DISPENSE_RETRIES) {
@@ -722,6 +706,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         const taxAmount = Math.round(subtotal * taxRate * 100) / 100;
         const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
 
+        const enrichData = lastEnrichDataRef.current;
         onComplete({
           orderNumber: orderNumberRef.current,
           drinkData: {
@@ -733,28 +718,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             quantity,
             totalAmount,
           },
+          enrichData: enrichData ? {
+            customerName: enrichData.customerName,
+            customerIdentification: enrichData.customerIdentification,
+            payerId: enrichData.payerId,
+            cardFirstDigits: enrichData.cardFirstDigits,
+            cardLastDigits: enrichData.cardLastDigits,
+          } : null,
+          storeId: getCurrentStoreId() || undefined,
         });
 
-        // Ranking opt-in: verifica se já temos um nome real (crédito com chip) ou se precisa do form
         setIsProcessing(false);
-        const enrichData = lastEnrichDataRef.current;
-        const hasRealName = enrichData?.customerName && !enrichData.customerName.startsWith('Cervejeiro');
-        if (hasRealName) {
-          // Cliente já identificado (ex: crédito com chip) — vai direto para complete
-          updateProcessingStage("complete");
-          setTimeout(() => { onCancel(); }, 2000);
-        } else {
-          // Montar fingerprints e verificar reconhecimento
-          const fps = buildFingerprints({
-            cpf: enrichData?.customerIdentification,
-            payerId: enrichData?.payerId,
-            cardFirstDigits: enrichData?.cardFirstDigits,
-            cardLastDigits: enrichData?.cardLastDigits,
-          });
-          rankingFingerprintsRef.current = fps;
-          recognizedCustomerRef.current = findCustomerByFingerprint(fps);
-          updateProcessingStage("ranking_prompt");
-        }
+        updateProcessingStage("complete");
+        setTimeout(() => { onCancel(); }, 1500);
       } else {
         // Retry falhou novamente
         await salesService.updateOrderDispenseStatus(orderNumberRef.current, 'failed_dispense', getCurrentStoreId())
@@ -896,6 +872,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       if (dispenseSucceeded) {
         updateProcessingStage("ready_pickup");
 
+        const enrichData = lastEnrichDataRef.current;
         onComplete({
           orderNumber,
           drinkData: {
@@ -907,6 +884,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             quantity,
             totalAmount,
           },
+          enrichData: enrichData ? {
+            customerName: enrichData.customerName,
+            customerIdentification: enrichData.customerIdentification,
+            payerId: enrichData.payerId,
+            cardFirstDigits: enrichData.cardFirstDigits,
+            cardLastDigits: enrichData.cardLastDigits,
+          } : null,
+          storeId: getCurrentStoreId() || undefined,
         });
 
         // Limpar timeout de emergência
@@ -915,29 +900,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           emergencyTimeoutRef.current = null;
         }
 
-        // Ranking opt-in: verifica se já temos um nome real (crédito com chip) ou se precisa do form
         setTimerActive(false);
         setIsProcessing(false);
-        const enrichData = lastEnrichDataRef.current;
-        const hasRealName = enrichData?.customerName && !enrichData.customerName.startsWith('Cervejeiro');
-        if (hasRealName) {
-          // Cliente já identificado (ex: crédito com chip) — vai direto para complete
-          updateProcessingStage("complete");
-          setTimeout(() => {
-            onCancel();
-          }, 2000);
-        } else {
-          // Montar fingerprints e verificar reconhecimento
-          const fps = buildFingerprints({
-            cpf: enrichData?.customerIdentification,
-            payerId: enrichData?.payerId,
-            cardFirstDigits: enrichData?.cardFirstDigits,
-            cardLastDigits: enrichData?.cardLastDigits,
-          });
-          rankingFingerprintsRef.current = fps;
-          recognizedCustomerRef.current = findCustomerByFingerprint(fps);
-          updateProcessingStage("ranking_prompt");
-        }
+        updateProcessingStage("complete");
+        setTimeout(() => {
+          onCancel();
+        }, 1500);
       } else {
         // KIO-02: Dispense falhou — NÃO chamar onComplete.
         // Entrar em estado "dispense_failed" para o cliente ver opções.
@@ -1871,10 +1839,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
           {(flowState.currentStep === 3 || flowState.isProcessing) && (
             <div className="flex flex-col items-center justify-center gap-4 py-8 w-full">
-              {/* Ocultar barra de progresso durante o ranking opt-in para dar espaço ao formulário */}
-              {flowState.processingStage !== "ranking_prompt" && (
-                <ProcessingProgress stage={flowState.processingStage} steps={processingSteps} />
-              )}
+              <ProcessingProgress stage={flowState.processingStage} steps={processingSteps} />
 
               {flowState.processingStage === "awaiting_payment" && (
                 <>
@@ -2206,17 +2171,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                   <p className="text-gray-600 font-medium text-lg">{t('checkout.drinkReady')}</p>
                   <p className="text-sm text-gray-500">{t('checkout.positionCup')}</p>
                 </>
-              )}
-
-              {flowState.processingStage === "ranking_prompt" && (
-                <RankingOptIn
-                  orderNumber={orderNumberRef.current}
-                  storeId={getCurrentStoreId() || ''}
-                  fingerprints={rankingFingerprintsRef.current}
-                  recognizedCustomer={recognizedCustomerRef.current}
-                  onDone={handleRankingDone}
-                  onSkip={handleRankingSkip}
-                />
               )}
 
               {flowState.processingStage === "complete" && (

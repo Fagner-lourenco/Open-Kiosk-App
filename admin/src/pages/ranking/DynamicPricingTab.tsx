@@ -208,10 +208,6 @@ export function DynamicPricingTab({
     }));
   };
 
-  const updateRuleParams = (ruleId: string, params: DynamicPricingRule['params']) => {
-    updateRule(ruleId, { params });
-  };
-
   // ── Happy Hour window helpers ────────────────────────────────────────
   const addWindow = (ruleId: string) => {
     setConfig(prev => ({
@@ -445,7 +441,6 @@ export function DynamicPricingTab({
               key={rule.id}
               rule={rule}
               onUpdate={(patch) => updateRule(rule.id, patch)}
-              onUpdateParams={(params) => updateRuleParams(rule.id, params)}
               onRemove={() => removeRule(rule.id)}
               // Happy Hour
               onAddWindow={() => addWindow(rule.id)}
@@ -573,7 +568,6 @@ export function DynamicPricingTab({
 function RuleEditor({
   rule,
   onUpdate,
-  onUpdateParams: _onUpdateParams,
   onRemove,
   onAddWindow,
   onRemoveWindow,
@@ -584,7 +578,6 @@ function RuleEditor({
 }: {
   rule: DynamicPricingRule;
   onUpdate: (patch: Partial<DynamicPricingRule>) => void;
-  onUpdateParams: (params: DynamicPricingRule['params']) => void;
   onRemove: () => void;
   onAddWindow: () => void;
   onRemoveWindow: (idx: number) => void;

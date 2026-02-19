@@ -181,8 +181,8 @@ function InvoiceDialog({
             <Select value={partyId} onValueChange={setPartyId}>
               <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
-                {parties.map((p) => (
-                  <SelectItem key={p.id} value={p.id || ''}>{p.name}</SelectItem>
+                {parties.filter((p) => p.id).map((p) => (
+                  <SelectItem key={p.id} value={p.id as string}>{p.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

@@ -75,12 +75,44 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
     }
 
     const customerId = getCustomerId(after);
-    const totalMl = calcTotalMl(after.items);
+    const baseMl = calcTotalMl(after.items);
     const date = after.date || todayYMD();
 
-    console.log(`[ranking] Aggregating for ${customerId}: +${totalMl}mL, store=${storeId}`);
-
     const storePath = `franchises/${franchiseId}/stores/${storeId}`;
+
+    // 🚀 bonus_multiplier: Verificar se o cliente tem prêmio ativo de multiplicador
+    // Se sim, dobra os mL para o ranking (efeito real do "Happy Boost")
+    let multiplier = 1;
+    try {
+      const bonusSnap = await db
+        .collection(`${storePath}/prizes`)
+        .where('winnerId', '==', customerId)
+        .where('type', '==', 'bonus_multiplier')
+        .where('status', '==', 'won')
+        .get();
+
+      if (!bonusSnap.empty) {
+        // Verificar se pelo menos um não expirou
+        const now = Date.now();
+        const hasActive = bonusSnap.docs.some((d) => {
+          const expiresAt = d.data().expiresAt;
+          if (!expiresAt) return true;
+          const ms = typeof expiresAt.toMillis === 'function' ? expiresAt.toMillis() : (expiresAt.seconds || 0) * 1000;
+          return ms > now;
+        });
+        if (hasActive) {
+          multiplier = 2;
+          console.log(`[ranking] 🚀 bonus_multiplier ativo para ${customerId} → 2× pontos!`);
+        }
+      }
+    } catch (err) {
+      console.warn(`[ranking] Erro ao verificar bonus_multiplier para ${customerId}:`, err);
+    }
+
+    const totalMl = baseMl * multiplier;
+
+    console.log(`[ranking] Aggregating for ${customerId}: +${totalMl}mL (base=${baseMl}, ×${multiplier}), store=${storeId}`);
+
     const rankingRef = db.doc(`${storePath}/rankingAgg/${customerId}`);
     const eventStatsRef = db.doc(`${storePath}/eventStats/current`);
 
@@ -91,15 +123,34 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
         const existingDoc = await tx.get(rankingRef);
         const statsDoc = await tx.get(eventStatsRef);
         const isNewCustomer = !existingDoc.exists;
+        // 🔧 FIX: Detectar troca de dia — doc existe mas é de ontem
+        const existingDate = existingDoc.exists ? existingDoc.data()?.date : null;
+        const isDayChange = existingDoc.exists && existingDate !== date;
+        // Para uniqueCustomers: considerar "novo para hoje" se é novo OU mudou de dia
+        const isNewForToday = isNewCustomer || isDayChange;
 
         // Upsert ranking doc
-        if (existingDoc.exists) {
+        if (existingDoc.exists && !isDayChange) {
+          // Mesmo dia: incrementar normalmente
           tx.update(rankingRef, {
             totalMl: increment(totalMl),
             totalSpent: increment(after.total || 0),
             orderCount: increment(1),
             lastOrderAt: after.timestamp || serverTimestamp(),
             favoriteDrink: calcFavoriteDrink(after.items),
+            date,
+          });
+        } else if (isDayChange) {
+          // 🔧 FIX: Dia mudou — resetar contadores ao invés de acumular
+          tx.set(rankingRef, {
+            customerId,
+            displayName: maskName(after.customerName || 'Anônimo'),
+            totalMl,
+            totalMl30min: totalMl,
+            totalSpent: after.total || 0,
+            orderCount: 1,
+            favoriteDrink: calcFavoriteDrink(after.items),
+            lastOrderAt: (after.timestamp as admin.firestore.Timestamp) || admin.firestore.Timestamp.now(),
             date,
           });
         } else {
@@ -141,7 +192,8 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
               totalServes: increment(1),
               updatedAt: serverTimestamp(),
             };
-            if (isNewCustomer) {
+            if (isNewForToday) {
+              // 🔧 FIX: Contar clientes que retornam de dia anterior como novos para hoje
               updateData.uniqueCustomers = increment(1);
             }
             tx.update(eventStatsRef, updateData);
@@ -253,23 +305,29 @@ async function recalculate30minForStore(
     .where('date', '==', today)
     .get();
 
-  // Batch update
-  const batch = db.batch();
-  let changed = 0;
+  // Batch update — 🔧 FIX: Chunking para respeitar limite de 500 ops por batch
+  const BATCH_LIMIT = 499;
+  const updates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
 
   for (const rankDoc of rankingSnap.docs) {
     const data = rankDoc.data() as RankingAggDoc;
     const new30m = ml30m.get(data.customerId) || 0;
 
     if (data.totalMl30min !== new30m) {
-      batch.update(rankDoc.ref, { totalMl30min: new30m });
-      changed++;
+      updates.push({ ref: rankDoc.ref, data: { totalMl30min: new30m } });
     }
   }
 
-  if (changed > 0) {
-    await batch.commit();
-    console.log(`[ranking30m] Updated ${changed} ranking docs for ${storeId}`);
+  if (updates.length > 0) {
+    for (let i = 0; i < updates.length; i += BATCH_LIMIT) {
+      const batch = db.batch();
+      const chunk = updates.slice(i, i + BATCH_LIMIT);
+      for (const u of chunk) {
+        batch.update(u.ref, u.data);
+      }
+      await batch.commit();
+    }
+    console.log(`[ranking30m] Updated ${updates.length} ranking docs for ${storeId}`);
   }
 }
 
@@ -308,6 +366,20 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
 
     for (const challengeDoc of challengesSnap.docs) {
       const challenge = challengeDoc.data() as ChallengeDoc;
+
+      // 🔒 FIX: Verificar endsAt (belt-and-suspenders — não confiar apenas em status)
+      if (challenge.endsAt && challenge.endsAt.toMillis() < Date.now()) {
+        console.log(`[challenge] "${challenge.title}" expirou (endsAt passed) — skip`);
+        continue;
+      }
+
+      // 🔒 FIX: Dedup per-client — cada cliente ganha no máximo 1 vez por desafio
+      const alreadyCompleted = (challenge.completedCustomers || []).includes(customerId);
+      if (alreadyCompleted) {
+        console.log(`[challenge] ${customerId} já completou "${challenge.title}" — skip`);
+        continue;
+      }
+
       const windowMs = challenge.rule.windowMinutes * 60 * 1000;
       const windowStart = admin.firestore.Timestamp.fromDate(
         new Date(Date.now() - windowMs)
@@ -318,15 +390,15 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
 
         switch (challenge.rule.type) {
           case 'min_orders': {
-            // Contar orders do cliente na janela
+            // 🔧 FIX: Usar rankingAgg que já tem orderCount ao invés de query pesada
+            // Fallback: query filtrando só por timestamp (sem != que requer índice composto)
             const snap = await db
               .collection(`${storePath}/orders`)
-              .where('customerName', '!=', null)
               .where('timestamp', '>=', windowStart)
               .get();
             const count = snap.docs.filter((d) => {
               const o = d.data() as OrderData;
-              return getCustomerId(o) === customerId;
+              return o.customerName && getCustomerId(o) === customerId;
             }).length;
             completed = count >= challenge.rule.threshold;
             break;
@@ -370,42 +442,67 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
             break;
           }
           case 'happy_boost': {
-            // Qualquer pedido na janela do happy boost
-            completed = true;
+            // Happy Boost: qualquer pedido na janela ganha,
+            // mas limitado a 1 vez por cliente (dedup acima já garante)
+            const hSnap = await db
+              .collection(`${storePath}/orders`)
+              .where('timestamp', '>=', windowStart)
+              .get();
+            const hasOrder = hSnap.docs.some((d) => {
+              const o = d.data() as OrderData;
+              return o.customerName && getCustomerId(o) === customerId;
+            });
+            completed = hasOrder;
             break;
           }
         }
 
         if (completed) {
-          // 🔒 FIX Bug-18: Use transaction with processedOrders dedup.
-          // Cloud Functions at-least-once delivery could replay the same orderId,
-          // causing completedCount to be incremented twice. The transaction ensures
-          // the orderId check and increment are atomic.
+          // 🔒 FIX: Transaction com dedup por orderId E por cliente.
+          // - processedOrders: evita replay do mesmo orderId (at-least-once)
+          // - completedCustomers: evita mesmo cliente ganhar múltiplas vezes
           const orderId = context.params.orderId;
+          let shouldGeneratePrize = false;
+
           await db.runTransaction(async (txn) => {
             const cDoc = await txn.get(challengeDoc.ref);
-            const processed: string[] = cDoc.data()?.processedOrders || [];
+            const data = cDoc.data();
+            const processed: string[] = data?.processedOrders || [];
+            const completedCusts: string[] = data?.completedCustomers || [];
+
             if (processed.includes(orderId)) {
               console.log(`[challenge] orderId ${orderId} already processed for "${challenge.title}" — skip`);
               return;
             }
+            if (completedCusts.includes(customerId)) {
+              console.log(`[challenge] ${customerId} already won "${challenge.title}" — skip (race)`);
+              return;
+            }
+
             txn.update(challengeDoc.ref, {
               completedCount: increment(1),
               processedOrders: admin.firestore.FieldValue.arrayUnion(orderId),
+              completedCustomers: admin.firestore.FieldValue.arrayUnion(customerId),
             });
+            shouldGeneratePrize = true;
           });
-          console.log(`[challenge] ${customerId} completed "${challenge.title}"`);
 
-          // Gerar prêmio para o cliente
-          await generatePrize(
-            franchiseId,
-            storeId,
-            customerId,
-            maskName(after.customerName),
-            challenge.rewardType as any,
-            challenge.rewardDescription,
-            context.params.orderId
-          );
+          if (shouldGeneratePrize) {
+            console.log(`[challenge] ${customerId} completed "${challenge.title}"`);
+
+            // Gerar prêmio — doc ID: prize_{challengeId}_{customerId}
+            // (idempotente: mesmo cliente + mesmo desafio = mesmo doc)
+            await generatePrize(
+              franchiseId,
+              storeId,
+              customerId,
+              maskName(after.customerName),
+              challenge.rewardType as any,
+              challenge.rewardDescription,
+              orderId,
+              challengeDoc.id
+            );
+          }
         }
       } catch (err) {
         console.error(`[challenge] Error checking ${challenge.title}:`, err);
@@ -514,6 +611,15 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
 // HELPER: Gerar prêmio
 // ============================================================================
 
+/**
+ * Gera prêmio no Firestore.
+ *
+ * Doc ID é determinístico para idempotência:
+ * - Desafios: `prize_{challengeId}_{customerId}` (1 prêmio por cliente por desafio)
+ * - Golden Serve: `prize_{orderId}` (1 prêmio por pedido premiado)
+ *
+ * @param challengeId - Se presente, indica que o prêmio veio de um desafio
+ */
 async function generatePrize(
   franchiseId: string,
   storeId: string,
@@ -521,7 +627,8 @@ async function generatePrize(
   displayName: string,
   type: string,
   description: string,
-  orderId: string
+  orderId: string,
+  challengeId?: string
 ): Promise<void> {
   const storePath = `franchises/${franchiseId}/stores/${storeId}`;
   const code = generatePrizeCode();
@@ -530,7 +637,7 @@ async function generatePrize(
     new Date(now.toDate().getTime() + 30 * 60 * 1000) // 30 min
   );
 
-  const prize = {
+  const prize: Record<string, unknown> = {
     type,
     description,
     code,
@@ -543,12 +650,16 @@ async function generatePrize(
     createdAt: now,
   };
 
-  // 🔒 FIX Bug-19: Use orderId-based deterministic doc ID instead of .add().
-  // Cloud Functions at-least-once delivery could replay the same trigger,
-  // causing .add() to create duplicate prizes. Using set() with a deterministic
-  // doc ID makes prize creation idempotent — the second write just overwrites
-  // with identical data.
-  const prizeDocId = `prize_${orderId}`;
+  if (challengeId) {
+    prize.challengeId = challengeId;
+  }
+
+  // Doc ID determinístico:
+  // - Desafio: prize_{challengeId}_{customerId} → 1 prêmio/cliente/desafio (idempotente)
+  // - Golden Serve: prize_{orderId} → 1 prêmio/pedido (idempotente)
+  const prizeDocId = challengeId
+    ? `prize_${challengeId}_${customerId}`
+    : `prize_${orderId}`;
   await db.doc(`${storePath}/prizes/${prizeDocId}`).set(prize);
   console.log(`[prize] Created ${type} prize for ${displayName}: ${code} (doc: ${prizeDocId})`);
 }

@@ -213,8 +213,8 @@ function QuoteDialog({
                 <SelectValue placeholder="Selecione um cliente..." />
               </SelectTrigger>
               <SelectContent>
-                {customers.map((c) => (
-                  <SelectItem key={c.id} value={c.id || ''}>
+                {customers.filter((c) => c.id).map((c) => (
+                  <SelectItem key={c.id} value={c.id as string}>
                     {c.name}
                   </SelectItem>
                 ))}

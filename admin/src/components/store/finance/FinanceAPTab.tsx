@@ -192,8 +192,8 @@ function BillDialog({
             <Select value={partyId} onValueChange={setPartyId}>
               <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
               <SelectContent>
-                {parties.map((p) => (
-                  <SelectItem key={p.id} value={p.id || ''}>{p.name}</SelectItem>
+                {parties.filter((p) => p.id).map((p) => (
+                  <SelectItem key={p.id} value={p.id as string}>{p.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -231,20 +231,23 @@ function BillDialog({
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
-                  {categories.map((c) => (
-                    <SelectItem key={c.id} value={c.id || ''}>{c.name}</SelectItem>
+                  {categories.filter((c) => c.id).map((c) => (
+                    <SelectItem key={c.id} value={c.id as string}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label>Centro de Custo</Label>
-              <Select value={costCenterId} onValueChange={setCostCenterId}>
+              <Select
+                value={costCenterId || 'none'}
+                onValueChange={(v) => setCostCenterId(v === 'none' ? '' : v)}
+              >
                 <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Nenhum</SelectItem>
-                  {costCenters.map((cc) => (
-                    <SelectItem key={cc.id} value={cc.id || ''}>{cc.name}</SelectItem>
+                  <SelectItem value="none">Nenhum</SelectItem>
+                  {costCenters.filter((cc) => cc.id).map((cc) => (
+                    <SelectItem key={cc.id} value={cc.id as string}>{cc.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

@@ -49,7 +49,9 @@ export const recalculateRanking30minNow = onCall(
     try {
       const now = new Date();
       const since = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 30 * 60 * 1000));
-      const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      // 🔧 BRT (UTC-3): consistente com helpers.ts todayYMD()
+      const brt = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+      const today = `${brt.getUTCFullYear()}-${String(brt.getUTCMonth() + 1).padStart(2, '0')}-${String(brt.getUTCDate()).padStart(2, '0')}`;
 
       const storePath = `franchises/${franchiseId}/stores/${storeId}`;
 

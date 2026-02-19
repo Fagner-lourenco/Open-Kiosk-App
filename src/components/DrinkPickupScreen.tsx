@@ -24,6 +24,9 @@ import { CupFillAnimation } from "@/components/CupFillAnimation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useToast } from "@/hooks/use-toast";
 import { systemLogService } from "@/services/systemLogService";
+import { salesService } from "@/services/salesService";
+import { RankingOptIn } from "@/components/checkout/RankingOptIn";
+import { buildFingerprints, findCustomerByFingerprint } from "@/utils/knownCustomers";
 
 interface DrinkPickupScreenProps {
   isOpen: boolean;
@@ -36,6 +39,16 @@ interface DrinkPickupScreenProps {
     price: number;
     totalAmount: number;
   } | null;
+  /** Enrichment data from payment for ranking opt-in fingerprinting */
+  enrichData?: {
+    customerName?: string;
+    customerIdentification?: string;
+    payerId?: string;
+    cardFirstDigits?: string;
+    cardLastDigits?: string;
+  } | null;
+  /** Store ID for ranking opt-in Firestore write */
+  storeId?: string;
   /** Timeout em segundos (sobrescreve configuração do admin) */
   timeoutSeconds?: number;
   onComplete: () => void;
@@ -53,6 +66,8 @@ const DrinkPickupScreen = ({
   isOpen, 
   orderNumber, 
   drinkData, 
+  enrichData,
+  storeId,
   timeoutSeconds,
   onComplete,
   onTimeout 
@@ -73,6 +88,7 @@ const DrinkPickupScreen = ({
   const [autoCloseCountdown, setAutoCloseCountdown] = useState(AUTO_CLOSE_DELAY_SECONDS);
   const [currentCupDisplay, setCurrentCupDisplay] = useState(1);
   const [totalCupsDisplay, setTotalCupsDisplay] = useState(1);
+  const [showRanking, setShowRanking] = useState(false);
   const autoCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const completionTriggeredRef = useRef(false);
   const lastCupCompletedRef = useRef(0);
@@ -138,6 +154,7 @@ const DrinkPickupScreen = ({
       setAutoCloseCountdown(AUTO_CLOSE_DELAY_SECONDS);
       setCurrentCupDisplay(1);
       setTotalCupsDisplay(1);
+      setShowRanking(false);
       completionTriggeredRef.current = false;
       lastCupCompletedRef.current = 0;
       if (autoCloseTimerRef.current) {
@@ -185,11 +202,50 @@ const DrinkPickupScreen = ({
           setDispenseState('completed');
           playCompletionSound();
           
-          // Auto-fechar após countdown - usar ref para evitar dependência
-          autoCloseTimerRef.current = setTimeout(() => {
-            console.log('[DrinkPickupScreen] Auto-fechando modal...');
-            onCompleteRef.current();
-          }, AUTO_CLOSE_DELAY_SECONDS * 1000);
+          // Verificar se devemos mostrar ranking opt-in
+          const shouldShowRanking = (() => {
+            if (!enrichData || !storeId) return false;
+            const name = enrichData.customerName || '';
+            // Se já temos nome real (não "Cervejeiro #xxx"), pular ranking
+            if (name && !name.startsWith('Cervejeiro')) return false;
+            // Verificar se há dados para fingerprinting
+            const fps = buildFingerprints({
+              cpf: enrichData.customerIdentification,
+              payerId: enrichData.payerId,
+              cardFirstDigits: enrichData.cardFirstDigits,
+              cardLastDigits: enrichData.cardLastDigits,
+            });
+            if (fps.length === 0) return false;
+            // Se cliente já é reconhecido (já participou do ranking antes),
+            // auto-enrich com dados salvos e pular formulário
+            const recognized = findCustomerByFingerprint(fps);
+            if (recognized) {
+              console.log('[DrinkPickupScreen] 🔁 Cliente reconhecido:', recognized.name, '- auto-enrich sem formulário');
+              // Fire-and-forget: gravar nome/CPF do cliente reconhecido no pedido
+              salesService.enrichOrderWithCustomerData(
+                orderNumber,
+                {
+                  customerName: recognized.name,
+                  customerIdentification: recognized.cpf || undefined,
+                },
+                storeId!,
+              ).catch(err => console.warn('[DrinkPickupScreen] Auto-enrich falhou (não-bloqueante):', err));
+              return false; // Não mostrar form
+            }
+            return true; // Cliente novo — mostrar form
+          })();
+          
+          if (shouldShowRanking) {
+            console.log('[DrinkPickupScreen] 🏆 Mostrando ranking opt-in...');
+            setShowRanking(true);
+            // NÃO iniciar auto-close: esperar ranking done/skip
+          } else {
+            // Auto-fechar após countdown - usar ref para evitar dependência
+            autoCloseTimerRef.current = setTimeout(() => {
+              console.log('[DrinkPickupScreen] Auto-fechando modal...');
+              onCompleteRef.current();
+            }, AUTO_CLOSE_DELAY_SECONDS * 1000);
+          }
         } else if (response.stage === 'error') {
           setDispenseState('error');
           systemLogService.error('dispense', `ESP32 erro durante dispense: ${orderNumber}`, { orderNumber });
@@ -257,7 +313,8 @@ const DrinkPickupScreen = ({
   // ============================================
   
   useEffect(() => {
-    if (dispenseState !== 'completed') return;
+    // Não iniciar countdown enquanto ranking está sendo exibido
+    if (dispenseState !== 'completed' || showRanking) return;
     
     const interval = setInterval(() => {
       setAutoCloseCountdown((prev) => {
@@ -270,7 +327,42 @@ const DrinkPickupScreen = ({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [dispenseState]);
+  }, [dispenseState, showRanking]);
+
+  // ============================================
+  // RANKING OPT-IN HANDLERS
+  // ============================================
+
+  const handleRankingDone = useCallback(() => {
+    console.log('[DrinkPickupScreen] 🏆 Ranking opt-in concluído!');
+    setShowRanking(false);
+    setAutoCloseCountdown(AUTO_CLOSE_DELAY_SECONDS);
+    // Iniciar auto-close após ranking
+    autoCloseTimerRef.current = setTimeout(() => {
+      console.log('[DrinkPickupScreen] Auto-fechando modal após ranking...');
+      onCompleteRef.current();
+    }, AUTO_CLOSE_DELAY_SECONDS * 1000);
+  }, []);
+
+  const handleRankingSkip = useCallback(() => {
+    console.log('[DrinkPickupScreen] ⏭️ Ranking opt-in pulado');
+    setShowRanking(false);
+    setAutoCloseCountdown(AUTO_CLOSE_DELAY_SECONDS);
+    // Iniciar auto-close após skip
+    autoCloseTimerRef.current = setTimeout(() => {
+      console.log('[DrinkPickupScreen] Auto-fechando modal após skip...');
+      onCompleteRef.current();
+    }, AUTO_CLOSE_DELAY_SECONDS * 1000);
+  }, []);
+
+  // Dados computados para ranking (memoized)
+  const rankingFingerprints = enrichData ? buildFingerprints({
+    cpf: enrichData.customerIdentification,
+    payerId: enrichData.payerId,
+    cardFirstDigits: enrichData.cardFirstDigits,
+    cardLastDigits: enrichData.cardLastDigits,
+  }) : [];
+  const rankingRecognizedCustomer = rankingFingerprints.length > 0 ? findCustomerByFingerprint(rankingFingerprints) : null;
 
   if (!drinkData) return null;
 
@@ -463,30 +555,45 @@ const DrinkPickupScreen = ({
                 exit={{ opacity: 0, scale: 0.8 }}
                 className="text-center space-y-4"
               >
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ 
-                    type: "spring",
-                    stiffness: 260,
-                    damping: 20
-                  }}
-                >
-                  <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto" />
-                </motion.div>
-                
-                <div className="rounded-xl p-6 bg-gradient-to-b from-green-50 to-white shadow-sm">
-                  <p className="text-2xl font-bold text-green-700">
-                    {t('drinkPickup.enjoyDrink')}
-                  </p>
-                  <p className="text-green-600 mt-2">
-                    {t('drinkPickup.mlDispensed', { ml: displayTargetMl })}
-                  </p>
-                </div>
+                {showRanking ? (
+                  /* ---- Ranking Opt-In Form ---- */
+                  <RankingOptIn
+                    orderNumber={orderNumber}
+                    storeId={storeId || ''}
+                    fingerprints={rankingFingerprints}
+                    recognizedCustomer={rankingRecognizedCustomer}
+                    onDone={handleRankingDone}
+                    onSkip={handleRankingSkip}
+                  />
+                ) : (
+                  /* ---- Tela de sucesso padrão ---- */
+                  <>
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ 
+                        type: "spring",
+                        stiffness: 260,
+                        damping: 20
+                      }}
+                    >
+                      <CheckCircle2 className="w-24 h-24 text-green-500 mx-auto" />
+                    </motion.div>
+                    
+                    <div className="rounded-xl p-6 bg-gradient-to-b from-green-50 to-white shadow-sm">
+                      <p className="text-2xl font-bold text-green-700">
+                        {t('drinkPickup.enjoyDrink')}
+                      </p>
+                      <p className="text-green-600 mt-2">
+                        {t('drinkPickup.mlDispensed', { ml: displayTargetMl })}
+                      </p>
+                    </div>
 
-                <p className="text-sm text-gray-500">
-                  {t('drinkPickup.closingIn', { seconds: autoCloseCountdown })}
-                </p>
+                    <p className="text-sm text-gray-500">
+                      {t('drinkPickup.closingIn', { seconds: autoCloseCountdown })}
+                    </p>
+                  </>
+                )}
               </motion.div>
             )}
 

@@ -52,9 +52,9 @@ const parseTimestamp = (ts: any): string => {
   if (!ts) return "";
   if (typeof ts === "string") return ts;
   if ("seconds" in ts) {
-    return new Date(ts.seconds * 1000).toLocaleString();
+    return new Date(ts.seconds * 1000).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
   }
-  return new Date(ts).toLocaleString();
+  return new Date(ts).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 };
 
 const parseDate = (ts: any): string => {

@@ -7,9 +7,9 @@
  * e zona de perigo (excluir loja). Substitui a antiga aba "details".
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useFranchise } from '@/context/FranchiseContext';
@@ -57,6 +57,17 @@ export function StoreOverviewPage() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Sync formData when store data changes (e.g. after refresh)
+  useEffect(() => {
+    setFormData({
+      name: store.name,
+      address: store.address || '',
+      phone: store.phone || '',
+      email: store.email || '',
+      isActive: store.isActive,
+    });
+  }, [store.name, store.address, store.phone, store.email, store.isActive]);
+
   const handleSave = async () => {
     setIsSaving(true);
     setError(null);
@@ -70,7 +81,7 @@ export function StoreOverviewPage() {
           phone: formData.phone || null,
           email: formData.email || null,
           isActive: formData.isActive,
-          updatedAt: new Date(),
+          updatedAt: serverTimestamp(),
         },
       );
 

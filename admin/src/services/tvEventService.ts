@@ -247,6 +247,7 @@ export async function createChallenge(
     ...challenge,
     id: newRef.id,
     completedCount: 0,
+    completedCustomers: [],
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -459,7 +460,7 @@ export async function listPrizes(
   const colRef = colFromPath(prizesPath(franchiseId, storeId));
 
   const q = status
-    ? query(colRef, where('status', '==', status), orderBy('createdAt', 'desc'))
+    ? query(colRef, where('status', '==', status), orderBy('createdAt', 'desc'), limit(200))
     : query(colRef, orderBy('createdAt', 'desc'), limit(100));
 
   const snap = await getDocs(q);

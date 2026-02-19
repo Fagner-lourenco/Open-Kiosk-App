@@ -64,10 +64,14 @@ export function useTvWinners(
     unsubRef.current = onSnapshot(
       q,
       (snapshot) => {
-        const docs = snapshot.docs.map((d) => ({
-          ...d.data(),
-          id: d.id,
-        })) as Prize[];
+        const docs = snapshot.docs.map((d) => {
+          // 🔧 FIX: Excluir campo 'code' para não vazar código de resgate para a TV (anon auth)
+          const { code, ...safeData } = d.data() as Record<string, unknown>;
+          return {
+            ...safeData,
+            id: d.id,
+          };
+        }) as Prize[];
         setWinners(docs);
         setIsLoading(false);
       },

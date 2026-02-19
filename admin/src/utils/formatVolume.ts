@@ -37,9 +37,9 @@ export function formatVolumeCompact(ml: number): string {
   if (liters >= 1000) {
     return `${Math.round(liters).toLocaleString('pt-BR')}L`;
   }
-  // Compact usa ponto decimal (padrão internacional) para exibição no telão
-  const str = liters.toFixed(1).replace(/\.0$/, '');
-  return `${str}L`;
+  // Compact usa vírgula decimal (pt-BR, consistente com AnimatedVolume)
+  const str = liters.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  return `${str.replace(/,0$/, '')}L`;
 }
 
 // ─── Curto (metas, totais grandes) ──────────────────────────────────────────

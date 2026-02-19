@@ -1713,15 +1713,18 @@ export const useStoreSettings = () => {
             const esData = docSnap.data();
             const eventMode = esData?.eventMode;
             if (eventMode) {
-              setSettings((prev) => ({
-                ...prev,
-                eventMode: {
-                  enabled: !!eventMode.enabled,
-                  label: eventMode.label || '',
-                  endsAt: eventMode.endsAt?.toDate?.() || null,
-                  activateDynamicPricing: !!eventMode.activateDynamicPricing,
-                },
-              }));
+              setSettings((prev) => {
+                if (!prev) return prev; // 🔧 FIX: Não fazer spread de null
+                return {
+                  ...prev,
+                  eventMode: {
+                    enabled: !!eventMode.enabled,
+                    label: eventMode.label || '',
+                    endsAt: eventMode.endsAt?.toDate?.() || null,
+                    activateDynamicPricing: !!eventMode.activateDynamicPricing,
+                  },
+                };
+              });
             }
           }
         }, (error) => {

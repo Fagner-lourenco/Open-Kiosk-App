@@ -599,12 +599,10 @@ export function TvConfigTab({
             </div>
           </div>
           <div className="flex items-center gap-2 mt-2">
-            <input
-              type="checkbox"
+            <Switch
               id="event-activate-dp"
               checked={eventActivateDP}
-              onChange={(e) => setEventActivateDP(e.target.checked)}
-              className="rounded border-gray-300"
+              onCheckedChange={(v) => setEventActivateDP(v)}
             />
             <Label htmlFor="event-activate-dp" className="text-sm cursor-pointer">
               Ativar preço dinâmico durante o evento
@@ -848,13 +846,18 @@ export function ChallengesTab({
                 <Select value={newRuleType} onValueChange={(v) => setNewRuleType(v as ChallengeRuleType)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="min_orders">Mín. Pedidos — cliente faz X pedidos</SelectItem>
-                    <SelectItem value="min_taps">Mín. Torneiras — cliente usa X torneiras diferentes</SelectItem>
-                    <SelectItem value="return_after">Voltar Após — premia quem retorna após pausa</SelectItem>
-                    <SelectItem value="happy_boost">Happy Boost — bônus de premiação ativo</SelectItem>
+                    <SelectItem value="min_orders">📦 Mín. Pedidos — cliente faz X pedidos na janela de tempo</SelectItem>
+                    <SelectItem value="min_taps">🍺 Mín. Torneiras — cliente usa X torneiras diferentes</SelectItem>
+                    <SelectItem value="return_after">🔄 Voltar Após — premia quem retorna após X min de pausa</SelectItem>
+                    <SelectItem value="happy_boost">🚀 Happy Boost — todo pedido ganha, pontos 2× no ranking</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">Como o sistema verifica se o cliente completou o desafio.</p>
+                <p className="text-xs text-muted-foreground">
+                  {newRuleType === 'min_orders' && 'O cliente precisa fazer X pedidos dentro da janela de tempo para completar.'}
+                  {newRuleType === 'min_taps' && 'O cliente precisa usar X torneiras (chopps) diferentes na janela de tempo.'}
+                  {newRuleType === 'return_after' && 'Premia clientes que saem e voltam — incentiva retorno ao evento.'}
+                  {newRuleType === 'happy_boost' && 'Qualquer pedido durante o boost ganha. O prêmio "Multiplicador" dobra os pontos do ranking.'}
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-semibold">Quantidade mínima (threshold)</Label>
@@ -876,15 +879,19 @@ export function ChallengesTab({
                 <Select value={newRewardType} onValueChange={(v) => setNewRewardType(v as RewardType)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="coupon">🎟️ Cupom de desconto</SelectItem>
-                    <SelectItem value="free_drink">🍺 Chope grátis</SelectItem>
-                    <SelectItem value="pix">💸 Pix (dinheiro)</SelectItem>
-                    <SelectItem value="ticket_extra">🎫 Bilhete extra (sorteio)</SelectItem>
-                    <SelectItem value="bonus_multiplier">🚀 Multiplicador de pontos</SelectItem>
-                    <SelectItem value="custom">🎁 Prêmio personalizado</SelectItem>
+                    <SelectItem value="coupon">🎟️ Cupom de desconto — % off no próximo pedido</SelectItem>
+                    <SelectItem value="free_drink">🍺 Chope grátis — uma dose cortesia</SelectItem>
+                    <SelectItem value="pix">💸 Pix — valor em dinheiro</SelectItem>
+                    <SelectItem value="ticket_extra">🎫 Bilhete extra — chance extra no sorteio</SelectItem>
+                    <SelectItem value="bonus_multiplier">🚀 Multiplicador 2× — dobra pontos no ranking por 30 min</SelectItem>
+                    <SelectItem value="custom">🎁 Personalizado — você define o prêmio</SelectItem>
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">O que o cliente ganha ao completar o desafio.</p>
+                <p className="text-xs text-muted-foreground">
+                  {newRewardType === 'bonus_multiplier'
+                    ? 'O multiplicador dobra (2×) os mL do cliente no ranking durante 30 min. Efeito real no ranking!'
+                    : 'O que o cliente ganha ao completar o desafio. O prêmio aparece no telão com código de resgate.'}
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-semibold">Descrição da recompensa</Label>
@@ -943,12 +950,12 @@ export function ChallengesTab({
                 const badge = STATUS_BADGE[displayStatus] || STATUS_BADGE.scheduled;
 
                 const REWARD_LABELS: Record<string, string> = {
-                  coupon: 'Cupom',
-                  free_drink: 'Chope grátis',
-                  pix: 'Pix',
-                  ticket_extra: 'Bilhete extra',
-                  bonus_multiplier: 'Multiplicador',
-                  custom: 'Especial',
+                  coupon: '🎟️ Cupom',
+                  free_drink: '🍺 Chope grátis',
+                  pix: '💸 Pix',
+                  ticket_extra: '🎫 Bilhete extra',
+                  bonus_multiplier: '🚀 Pontos 2×',
+                  custom: '🎁 Especial',
                 };
 
                 return (
@@ -1409,7 +1416,7 @@ export function PrizesTab({
                   className="flex items-center gap-3 p-3 rounded-lg border border-border text-sm"
                 >
                   <span className="text-lg">
-                    {p.type === 'coupon' ? '🎟️' : p.type === 'free_drink' ? '🍺' : p.type === 'pix' ? '💸' : '🎁'}
+                    {p.type === 'coupon' ? '🎟️' : p.type === 'free_drink' ? '🍺' : p.type === 'pix' ? '💸' : p.type === 'bonus_multiplier' ? '🚀' : p.type === 'ticket_extra' ? '🎫' : '🎁'}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">{p.description}</p>

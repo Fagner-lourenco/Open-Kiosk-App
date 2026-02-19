@@ -68,6 +68,8 @@ export interface ChallengeDoc {
   startsAt: FirebaseFirestore.Timestamp;
   endsAt: FirebaseFirestore.Timestamp;
   completedCount: number;
+  /** Clientes que já completaram este desafio (evita premiação duplicada) */
+  completedCustomers: string[];
   rewardType: string;
   rewardDescription: string;
 }

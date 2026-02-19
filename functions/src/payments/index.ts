@@ -7,7 +7,6 @@ import {
   createPaymentIntent,
   parseReferenceId,
   syncPendingPaymentsForPagBank,
-  updatePaymentStatus,
   verifyPagBankSignature,
 } from './paymentService';
 

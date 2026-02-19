@@ -164,10 +164,11 @@ export const createPaymentIntent = async (
       0,
     );
     // Verificar se o valor cobrado não excede os limites dinâmicos
-    // Permitir ±maxVariationPercent do total dos itens + margem de 5% para impostos
+    // Permitir ±maxVariationPercent do total dos itens + margem aditiva de 10% para impostos/arredondamento
     if (itemsTotal > 0) {
-      const maxAllowed = itemsTotal * (1 + maxVar) * 1.30; // 30% de margem para impostos
-      const minAllowed = itemsTotal * (1 - maxVar) * 0.70;
+      const taxMargin = itemsTotal * 0.10; // 🔧 FIX: Margem aditiva (não multiplicativa)
+      const maxAllowed = itemsTotal * (1 + maxVar) + taxMargin;
+      const minAllowed = Math.max(0, itemsTotal * (1 - maxVar) - taxMargin);
       if (amount > maxAllowed || amount < minAllowed) {
         console.warn(`[createPayment] Amount ${amount} fora dos limites DP [${minAllowed.toFixed(2)}, ${maxAllowed.toFixed(2)}] para items total ${itemsTotal.toFixed(2)}`);
         throw new HttpsError(

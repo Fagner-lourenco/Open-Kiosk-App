@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import { useESP32 } from "@/context/ESP32Context";
 import { useToast } from "@/hooks/use-toast";
 import Cart from "@/components/Cart";
@@ -21,6 +20,7 @@ import { useTranslation } from "@/i18n";
 import { useDebounce } from "@/hooks/useDebounce";
 import { enterKioskMode } from "@/services/kioskModeService";
 import { systemLogService } from "@/services/systemLogService";
+import ShopProductCard from "@/components/ShopProductCard";
 
 type DrinkCheckoutResult = {
   orderNumber: string;
@@ -33,6 +33,15 @@ type DrinkCheckoutResult = {
     quantity: number;
     totalAmount: number;
   };
+  /** Enrichment data for ranking opt-in (fingerprinting) */
+  enrichData?: {
+    customerName?: string;
+    customerIdentification?: string;
+    payerId?: string;
+    cardFirstDigits?: string;
+    cardLastDigits?: string;
+  } | null;
+  storeId?: string;
 };
 
 const INITIAL_LOAD_LIMIT = 50;
@@ -296,61 +305,13 @@ const Shop = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
           {displayedProducts.map((product) => (
-            <Card key={product.id} className="h-full">
-              <CardContent className="p-4">
-                <div className="space-y-3">
-                  {product.image && (
-                    <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
-                      <img
-                        src={product.image}
-                        alt={product.title}
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <h3 className="font-semibold text-sm line-clamp-2">{product.title}</h3>
-                    <p className="text-gray-600 text-xs line-clamp-2 mt-1">{product.description}</p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-green-600 text-sm">
-                        {(() => {
-                          const displayPrice = product.isDrink && product.defaultSizeKey
-                            ? product.sizes?.find(s => s.key === product.defaultSizeKey)?.price ?? product.price
-                            : product.price;
-                          return `${currentCurrency.symbol}${displayPrice.toFixed(2)}`;
-                        })()}
-                      </span>
-                      <Badge variant={(product.isDrink ? (product.totalMlAvailable || 0) > 0 : (product.stock || 0) > 0) ? "default" : "destructive"} className="text-xs">
-                        {product.isDrink
-                          ? `${product.totalMlAvailable || 0}ml`
-                          : (product.stock || 0) > 0 ? t('shop.stockCount', { count: product.stock }) : t('shop.outOfStock')}
-                      </Badge>
-                    </div>
-                  </div>
-
-                  <Button
-                    onClick={() => addToCart(product)}
-                    disabled={product.isDrink
-                      ? (product.totalMlAvailable || 0) <= 0 || !isEsp32Healthy
-                      : (product.stock || 0) <= 0}
-                    className="w-full text-sm py-2"
-                    size="sm"
-                  >
-                    {product.isDrink
-                      ? ((product.totalMlAvailable || 0) <= 0
-                        ? t('shop.outOfStock')
-                        : (!isEsp32Healthy
-                          ? 'Sistema temporariamente indisponível'
-                          : t('shop.selectSize')))
-                      : ((product.stock || 0) <= 0 ? t('shop.outOfStock') : t('shop.addToCart'))}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <ShopProductCard
+              key={product.id}
+              product={product}
+              currencySymbol={currentCurrency.symbol}
+              isEsp32Healthy={isEsp32Healthy}
+              onAddToCart={addToCart}
+            />
           ))}
         </div>
 
@@ -389,6 +350,8 @@ const Shop = () => {
         isOpen={!!drinkPickupData}
         orderNumber={drinkPickupData?.orderNumber || ""}
         drinkData={drinkPickupData?.drinkData || null}
+        enrichData={drinkPickupData?.enrichData}
+        storeId={drinkPickupData?.storeId}
         timeoutSeconds={80}
         onComplete={handleClosePickup}
         onTimeout={handleClosePickup}

@@ -200,6 +200,8 @@ export interface Challenge {
   endsAt: Timestamp;
   /** Quantos completaram (prova social) */
   completedCount: number;
+  /** Clientes que já completaram este desafio (dedup, 1 prêmio por cliente) */
+  completedCustomers?: string[];
   /** Tipo de recompensa ao completar */
   rewardType: RewardType;
   /** Descrição da recompensa */
@@ -220,28 +222,28 @@ export const CHALLENGE_TEMPLATES: Array<{
 }> = [
   {
     title: 'Dupla do Brinde',
-    description: '2 participações em 20 min → prêmio',
+    description: 'Faça 2 pedidos em até 20 min e ganhe um prêmio! Cada cliente ganha apenas 1 vez.',
     rule: { type: 'min_orders', threshold: 2, windowMinutes: 20 },
     durationMinutes: 20,
     rewardType: 'coupon',
   },
   {
-    title: 'Explorador',
-    description: '2 torneiras diferentes em 30 min → prêmio',
+    title: 'Explorador de Torneiras',
+    description: 'Prove 2 torneiras diferentes em 30 min e ganhe! Ideal para incentivar degustação.',
     rule: { type: 'min_taps', threshold: 2, windowMinutes: 30 },
     durationMinutes: 30,
     rewardType: 'coupon',
   },
   {
     title: 'Volta do Intervalo',
-    description: 'Voltar após uma pausa de 60 min → bilhete extra',
+    description: 'Saiu e voltou? Se retornar após 60 min, ganha bilhete extra pro sorteio!',
     rule: { type: 'return_after', threshold: 60, windowMinutes: 120 },
     durationMinutes: 120,
     rewardType: 'ticket_extra',
   },
   {
     title: 'Happy Boost',
-    description: 'Bônus de premiação ativo por 15 min',
+    description: 'Ativa pontuação em dobro (2×) no ranking! Todo mundo que comprar durante o boost ganha 2× mL no ranking.',
     rule: { type: 'happy_boost', threshold: 1, windowMinutes: 15 },
     durationMinutes: 15,
     rewardType: 'bonus_multiplier',
@@ -253,7 +255,7 @@ export const CHALLENGE_TEMPLATES: Array<{
 // ============================================================================
 
 /** Tipo do prêmio */
-export type PrizeType = 'coupon' | 'free_drink' | 'pix' | 'custom';
+export type PrizeType = 'coupon' | 'free_drink' | 'pix' | 'custom' | 'bonus_multiplier' | 'ticket_extra';
 
 /** Status do prêmio */
 export type PrizeStatus = 'available' | 'won' | 'redeemed' | 'expired';

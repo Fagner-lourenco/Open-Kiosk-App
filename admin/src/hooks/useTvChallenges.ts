@@ -60,10 +60,11 @@ export function useTvChallenges(
     unsubRef.current = onSnapshot(
       q,
       (snapshot) => {
-        const docs = snapshot.docs.map((d) => ({
-          ...d.data(),
-          id: d.id,
-        })) as Challenge[];
+        const docs = snapshot.docs.map((d) => {
+          // 🔒 Sanitizar: remover completedCustomers (IDs de clientes) do frontend público
+          const { completedCustomers, ...safeData } = d.data() as Record<string, unknown>;
+          return { ...safeData, id: d.id };
+        }) as Challenge[];
         setChallenges(docs);
         setIsLoading(false);
       },

@@ -40,23 +40,25 @@ export interface UseCustomerRankingReturn {
 }
 
 /**
- * Verifica se a data informada é hoje
+ * Verifica se a data informada é hoje (BRT — UTC-3)
  */
 function isToday(dateStr: string): boolean {
-  const today = new Date();
-  const yyyy = today.getFullYear();
-  const mm = String(today.getMonth() + 1).padStart(2, '0');
-  const dd = String(today.getDate()).padStart(2, '0');
+  const d = new Date();
+  const brt = new Date(d.getTime() - 3 * 60 * 60 * 1000);
+  const yyyy = brt.getUTCFullYear();
+  const mm = String(brt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(brt.getUTCDate()).padStart(2, '0');
   return dateStr === `${yyyy}-${mm}-${dd}`;
 }
 
 /**
- * Formata a data como YYYY-MM-DD
+ * Formata a data como YYYY-MM-DD em BRT (UTC-3)
  */
 export function formatDateYMD(date: Date): string {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
+  const brt = new Date(date.getTime() - 3 * 60 * 60 * 1000);
+  const yyyy = brt.getUTCFullYear();
+  const mm = String(brt.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(brt.getUTCDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -238,7 +240,7 @@ export function useCustomerRanking(
   );
 
   const totalOrders = useMemo(
-    () => orders.filter((o) => o.customerName && ['completed', 'paid_pending_dispense', 'dispensing'].includes(o.status)).length,
+    () => orders.filter((o) => (o.customerName || o.cardholderName) && ['completed', 'paid_pending_dispense', 'dispensing'].includes(o.status)).length,
     [orders]
   );
 

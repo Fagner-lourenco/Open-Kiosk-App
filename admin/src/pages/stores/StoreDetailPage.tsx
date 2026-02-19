@@ -8,7 +8,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
-import { doc, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
@@ -170,7 +170,7 @@ export function StoreDetailPage() {
           phone: formData.phone || null,
           email: formData.email || null,
           isActive: formData.isActive,
-          updatedAt: new Date(),
+          updatedAt: serverTimestamp(),
         }
       );
 

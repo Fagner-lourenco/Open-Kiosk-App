@@ -19,7 +19,7 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { useTvDashboard } from '@/hooks/useTvDashboard';
-import { useTvRanking } from '@/hooks/useTvRanking';
+import { useTvRanking, getWindowValue } from '@/hooks/useTvRanking';
 import { useTvChallenges } from '@/hooks/useTvChallenges';
 import { useTvWinners } from '@/hooks/useTvWinners';
 import { useAutoRotation } from '@/hooks/useAutoRotation';
@@ -131,6 +131,8 @@ const PRIZE_ICONS: Record<string, string> = {
   free_drink: '🍺',
   pix: '💸',
   custom: '🎁',
+  bonus_multiplier: '🚀',
+  ticket_extra: '🎫',
 };
 
 /** Glass panel base style */
@@ -154,12 +156,11 @@ function PageDots({
   return (
     <div className="flex items-center justify-center gap-1.5 mt-3">
       {Array.from({ length: total }, (_, i) => (
-        <button
+        <span
           key={i}
           className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
             i === current ? `${color} w-4` : 'bg-white/15'
           }`}
-          onClick={() => {}}
           aria-label={`Page ${i + 1}`}
         />
       ))}
@@ -208,7 +209,7 @@ function TvHeader({
   clock: Date;
   eventMode?: EventStats['eventMode'];
 }) {
-  const windowLabel = rankingWindow === '30min' ? 'Últimos 30 min' : rankingWindow === '1h' ? 'Última hora' : 'Hoje';
+  const windowLabel = rankingWindow === '30min' ? 'Últimos 30 min' : rankingWindow === '1h' ? 'Última hora' : rankingWindow === 'event' ? 'Evento' : 'Hoje';
 
   return (
     <header className="flex items-center justify-between px-3 sm:px-6 py-2 sm:py-3 backdrop-blur-xl bg-black/40 border-b border-white/[0.06]">
@@ -274,7 +275,7 @@ function HeroCards({
   if (top3.length === 0) return null;
 
   const getField = (entry: RankingAggEntry) =>
-    rankingWindow === '30min' || rankingWindow === '1h' ? entry.totalMl30min : entry.totalMl;
+    getWindowValue(entry, rankingWindow as import('@/types/tvDashboard').RankingWindow);
 
   const first = top3[0];
   const runners = top3.slice(1);
@@ -378,7 +379,7 @@ function RankingList({
   rotationInterval: number;
 }) {
   const getField = (entry: RankingAggEntry) =>
-    rankingWindow === '30min' || rankingWindow === '1h' ? entry.totalMl30min : entry.totalMl;
+    getWindowValue(entry, rankingWindow as import('@/types/tvDashboard').RankingWindow);
 
   const { visibleItems, currentPage, totalPages } = useAutoRotation(entries, 6, rotationInterval);
 
@@ -603,10 +604,15 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
               <p className="text-[10px] text-white/30 mb-2.5 truncate">{ch.description}</p>
               <div className="flex items-center justify-between text-[10px]">
                 <span className="text-white/30 bg-white/[0.03] px-2 py-0.5 rounded-full">
-                  🏆 {ch.rewardDescription || ch.rewardType}
+                  {ch.rewardType === 'bonus_multiplier' ? '🚀 Pontos 2×' :
+                   ch.rewardType === 'coupon' ? '🎟️ Cupom' :
+                   ch.rewardType === 'free_drink' ? '🍺 Grátis' :
+                   ch.rewardType === 'pix' ? '💸 Pix' :
+                   ch.rewardType === 'ticket_extra' ? '🎫 Bilhete' :
+                   `🏆 ${ch.rewardDescription || ch.rewardType}`}
                 </span>
                 <span className="text-green-400/70 font-semibold">
-                  {ch.completedCount} completaram
+                  {ch.completedCount} {ch.completedCount === 1 ? 'ganhou' : 'ganharam'}
                 </span>
               </div>
             </div>
@@ -678,7 +684,20 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
 }
 
 /** Footer — premium glass CTA */
-function TvFooter() {
+function TvFooter({ disclaimers }: { disclaimers?: string[] }) {
+  // Show custom disclaimers if configured, otherwise show default CTA
+  if (disclaimers && disclaimers.length > 0) {
+    return (
+      <footer className="fixed bottom-0 left-0 right-0 backdrop-blur-xl bg-black/60 border-t border-white/[0.06] h-10 sm:h-12 flex items-center justify-center gap-4 sm:gap-10 px-4 sm:px-6">
+        {disclaimers.map((text, i) => (
+          <span key={i} className="text-[10px] sm:text-xs text-white/35 font-medium">
+            {text}
+          </span>
+        ))}
+      </footer>
+    );
+  }
+
   return (
     <footer className="fixed bottom-0 left-0 right-0 backdrop-blur-xl bg-black/60 border-t border-white/[0.06] h-10 sm:h-12 flex items-center justify-center gap-4 sm:gap-10 px-4 sm:px-6">
       <span className="text-[10px] sm:text-xs text-white/35 flex items-center gap-1.5 sm:gap-2 font-medium">
@@ -873,7 +892,32 @@ export function TvDashboardPage() {
   const sid = authReady ? storeId : null;
 
   const { tvConfig, eventStats, isLoading: configLoading, error: configError } = useTvDashboard(fid, sid);
-  const { ranking } = useTvRanking(fid, sid, tvConfig.rankingWindow, tvConfig.maxDisplayPositions);
+
+  // ── Alternate ranking windows ──
+  // Quando alternateRankingWindows está ativo, alterna entre a janela configurada
+  // e uma janela complementar (ex: '30min' ↔ 'today') a cada 3 ciclos de rotação.
+  const [altWindow, setAltWindow] = useState(false);
+  useEffect(() => {
+    if (!tvConfig.alternateRankingWindows) {
+      setAltWindow(false);
+      return;
+    }
+    const interval = (tvConfig.rotationIntervalSec || 10) * 3 * 1000;
+    const timer = setInterval(() => setAltWindow((v) => !v), interval);
+    return () => clearInterval(timer);
+  }, [tvConfig.alternateRankingWindows, tvConfig.rotationIntervalSec]);
+
+  const effectiveRankingWindow = (() => {
+    if (!tvConfig.alternateRankingWindows || !altWindow) {
+      return tvConfig.rankingWindow;
+    }
+    // Janela alternativa: complemento da configurada
+    return tvConfig.rankingWindow === 'today' || tvConfig.rankingWindow === 'event'
+      ? '30min' as const
+      : 'today' as const;
+  })();
+
+  const { ranking } = useTvRanking(fid, sid, effectiveRankingWindow, tvConfig.maxDisplayPositions);
   const { challenges } = useTvChallenges(fid, sid);
   const { winners } = useTvWinners(fid, sid);
   const { config: dpConfig, isEnabled: dpEnabled } = useTvDynamicPricing(fid, sid);
@@ -922,6 +966,19 @@ export function TvDashboardPage() {
     );
   }
 
+  // ── Telão desabilitado pelo admin ──
+  if (!tvConfig.enabled) {
+    return (
+      <div className="min-h-screen bg-[#07080a] flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Beer className="h-16 w-16 text-white/10 mx-auto" />
+          <p className="text-white/30 text-xl font-medium">Telão desativado</p>
+          <p className="text-white/15 text-sm">Ative nas configurações do ranking</p>
+        </div>
+      </div>
+    );
+  }
+
   const showGoal = activePanels.includes('goal') && eventStats.goalEnabled;
   const showChallenge = activePanels.includes('challenge');
   const showWinners = activePanels.includes('winners');
@@ -955,7 +1012,7 @@ export function TvDashboardPage() {
         totalServes={eventStats.totalServes}
         totalMl={eventStats.totalMl}
         uniqueCustomers={uniqueCustomers}
-        rankingWindow={tvConfig.rankingWindow}
+        rankingWindow={effectiveRankingWindow}
         clock={clock}
         eventMode={eventStats.eventMode}
       />
@@ -971,7 +1028,7 @@ export function TvDashboardPage() {
           <div className={`${GLASS_PANEL} rounded-xl sm:rounded-2xl p-3 sm:p-6 overflow-hidden`}>
             <LeaderboardPanel
               ranking={ranking}
-              rankingWindow={tvConfig.rankingWindow}
+              rankingWindow={effectiveRankingWindow}
               rotationInterval={rotationInterval}
             />
           </div>
@@ -1005,7 +1062,7 @@ export function TvDashboardPage() {
       </main>
 
       {/* ── Footer ── */}
-      <TvFooter />
+      <TvFooter disclaimers={tvConfig.disclaimers} />
     </div>
   );
 }
