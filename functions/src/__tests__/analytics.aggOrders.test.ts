@@ -7,12 +7,15 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const set = vi.fn().mockResolvedValue(undefined);
-  const doc = vi.fn(() => ({ set }));
+  const get = vi.fn().mockResolvedValue({ exists: false, data: () => undefined });
+  const doc = vi.fn(() => ({ set, get }));
   return {
     set,
+    get,
     doc,
     increment: vi.fn((n: number) => ({ _increment: n })),
     serverTimestamp: vi.fn(() => 'SERVER_TS'),
+    arrayUnion: vi.fn((...args: any[]) => ({ _arrayUnion: args })),
   };
 });
 
@@ -23,6 +26,7 @@ vi.mock('../lib', () => ({
       FieldValue: {
         increment: mocks.increment,
         serverTimestamp: mocks.serverTimestamp,
+        arrayUnion: mocks.arrayUnion,
       },
       Timestamp: { fromDate: (d: Date) => d },
     },
@@ -70,7 +74,10 @@ describe('aggOrders', () => {
 
       // 4 doc refs: daily, hourly, store metrics, franchise metrics
       expect(mocks.doc).toHaveBeenCalledTimes(4);
-      expect(mocks.set).toHaveBeenCalledTimes(4);
+      // 5 set calls: 4 metrics + 1 idempotency mark (arrayUnion)
+      expect(mocks.set).toHaveBeenCalledTimes(5);
+      // 1 get call: idempotency check on daily ref
+      expect(mocks.get).toHaveBeenCalledTimes(1);
 
       // Verify daily doc path
       expect(mocks.doc).toHaveBeenCalledWith('analytics/daily/2026-01-15');

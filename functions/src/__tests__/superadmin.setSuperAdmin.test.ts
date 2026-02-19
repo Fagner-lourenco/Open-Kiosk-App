@@ -83,7 +83,7 @@ describe('superadmin/setSuperAdmin', () => {
       mocks.colGet.mockResolvedValueOnce({ empty: true, docs: [] });
       const result = await run({
         data: { email: 'a@b.com' },
-        auth: { uid: 'u1', token: { role: 'admin' } },
+        auth: { uid: 'u1', token: { role: 'admin', email: 'a@b.com' } },
       });
       expect(result.success).toBe(true);
     });
