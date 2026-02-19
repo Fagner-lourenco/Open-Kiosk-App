@@ -345,8 +345,8 @@ function LedgerDialog({
               <Select value={accountId} onValueChange={setAccountId}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
-                  {accounts.map((a) => (
-                    <SelectItem key={a.id} value={a.id || ''}>{a.name}</SelectItem>
+                  {accounts.filter((a) => a.id).map((a) => (
+                    <SelectItem key={a.id} value={a.id as string}>{a.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -356,8 +356,8 @@ function LedgerDialog({
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
-                  {filteredCategories.map((c) => (
-                    <SelectItem key={c.id} value={c.id || ''}>{c.name}</SelectItem>
+                  {filteredCategories.filter((c) => c.id).map((c) => (
+                    <SelectItem key={c.id} value={c.id as string}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -365,12 +365,15 @@ function LedgerDialog({
           </div>
           <div className="space-y-2">
             <Label>Parte (opcional)</Label>
-            <Select value={partyId} onValueChange={setPartyId}>
+            <Select
+              value={partyId || 'none'}
+              onValueChange={(v) => setPartyId(v === 'none' ? '' : v)}
+            >
               <SelectTrigger><SelectValue placeholder="Nenhuma" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">Nenhuma</SelectItem>
-                {parties.map((p) => (
-                  <SelectItem key={p.id} value={p.id || ''}>{p.name}</SelectItem>
+                <SelectItem value="none">Nenhuma</SelectItem>
+                {parties.filter((p) => p.id).map((p) => (
+                  <SelectItem key={p.id} value={p.id as string}>{p.name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -432,6 +435,24 @@ export function FinanceCashTab({ franchiseId, storeId }: Props) {
     accounts.forEach((a) => { if (a.id) m.set(a.id, a.name); });
     return m;
   }, [accounts]);
+
+  // 🔧 FIX Audit-20260218: Calcular saldo corrente por conta (openingBalance + entradas - saídas)
+  const accountBalances = useMemo(() => {
+    const balances = new Map<string, number>();
+    accounts.forEach((acc) => {
+      balances.set(acc.id || '', acc.openingBalance || 0);
+    });
+    entries.forEach((e) => {
+      const prev = balances.get(e.accountId) || 0;
+      const amount = typeof e.amount === 'number' ? e.amount : parseFloat(String(e.amount)) || 0;
+      if (e.direction === 'in') {
+        balances.set(e.accountId, prev + amount);
+      } else {
+        balances.set(e.accountId, prev - amount);
+      }
+    });
+    return balances;
+  }, [accounts, entries]);
 
   const categoryMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -549,7 +570,7 @@ export function FinanceCashTab({ franchiseId, storeId }: Props) {
                           {ACCOUNT_TYPE_LABELS[acc.type]}
                         </Badge>
                         <p className="mt-2 text-xl font-bold">
-                          {formatCurrency(acc.openingBalance)}
+                          {formatCurrency(accountBalances.get(acc.id || '') ?? acc.openingBalance)}
                         </p>
                       </div>
                       <DropdownMenu>
