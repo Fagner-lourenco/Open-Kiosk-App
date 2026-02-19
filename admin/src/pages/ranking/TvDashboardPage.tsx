@@ -237,7 +237,7 @@ function TvHeader({
             {/* Stats chips */}
             <div className="flex items-center gap-1 sm:gap-2">
               <span className="text-[10px] sm:text-xs text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
-                🍺 {formatMlShort(totalMl || 0)}
+                🍺 {formatMlShort(totalMl || 0)} total
               </span>
               <span className="text-[10px] sm:text-xs text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
                 ⚡ {totalServes}
@@ -463,8 +463,8 @@ function LeaderboardPanel({
             </div>
           </div>
           <div className="text-center space-y-2">
-            <p className="text-lg text-white/30 font-bold">Aguardando primeiros pedidos…</p>
-            <p className="text-sm text-white/15">Compre no Kiosk para entrar no ranking!</p>
+            <p className="text-lg text-white/50 font-bold">Aguardando primeiros pedidos…</p>
+            <p className="text-sm text-white/30">Compre no Kiosk para entrar no ranking!</p>
           </div>
         </div>
       ) : (
@@ -611,7 +611,7 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
                   </span>
                 )}
               </div>
-              <p className="text-[10px] text-white/30 mb-2.5 truncate">{ch.description}</p>
+              <p className="text-xs sm:text-sm text-white/50 mb-2.5 line-clamp-2">{ch.description}</p>
               <div className="flex items-center justify-between text-[10px]">
                 <span className="text-white/30 bg-white/[0.03] px-2 py-0.5 rounded-full">
                   {ch.rewardType === 'bonus_multiplier' ? '🚀 Pontos 2×' :
@@ -622,7 +622,7 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
                    `🏆 ${ch.rewardDescription || ch.rewardType}`}
                 </span>
                 <span className="text-green-400/70 font-semibold">
-                  {ch.completedCount} {ch.completedCount === 1 ? 'ganhou' : 'ganharam'}
+                  {ch.completedCount} {ch.completedCount === 1 ? 'pessoa completou' : 'pessoas completaram'}
                 </span>
               </div>
             </div>
@@ -649,8 +649,8 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
         </h2>
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center">
           <span className="text-3xl animate-bounce">🎁</span>
-          <p className="text-xs text-white/25 font-semibold mt-1">Seja o primeiro a ganhar!</p>
-          <p className="text-[10px] text-white/12">Complete um desafio para aparecer aqui</p>
+          <p className="text-sm text-white/40 font-semibold mt-1">Seja o próximo a ganhar!</p>
+          <p className="text-xs text-white/25">Compre no Kiosk e concorra a prêmios</p>
         </div>
       </div>
     );
@@ -677,10 +677,10 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
           >
             <span className="text-lg">{PRIZE_ICONS[w.type] || '🎁'}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-white/65 truncate">
+              <p className="text-xs sm:text-sm font-semibold text-white/70 truncate">
                 {w.winnerDisplayName || 'Anônimo'}
               </p>
-              <p className="text-[10px] text-white/25 truncate">{w.description && w.description !== w.type ? w.description : PRIZE_LABELS[w.type] || w.type}</p>
+              <p className="text-[10px] sm:text-xs text-white/40 truncate">{w.description && w.description !== w.type ? w.description : PRIZE_LABELS[w.type] || w.type}</p>
             </div>
             <span className="text-[10px] text-white/20 shrink-0 bg-white/[0.03] px-2 py-0.5 rounded-full">
               {w.wonAt ? timeAgo(w.wonAt) : ''}
@@ -709,19 +709,19 @@ function TvFooter({ disclaimers }: { disclaimers?: string[] }) {
   }
 
   return (
-    <footer className="fixed bottom-0 left-0 right-0 backdrop-blur-xl bg-black/60 border-t border-white/[0.06] h-10 sm:h-12 flex items-center justify-center gap-4 sm:gap-10 px-4 sm:px-6">
-      <span className="text-[10px] sm:text-xs text-white/35 flex items-center gap-1.5 sm:gap-2 font-medium">
-        <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center text-[9px] sm:text-[10px] font-bold text-yellow-400">1</span>
+    <footer className="fixed bottom-0 left-0 right-0 backdrop-blur-xl bg-black/60 border-t border-white/[0.06] h-10 sm:h-12 lg:h-14 flex items-center justify-center gap-4 sm:gap-10 px-4 sm:px-6">
+      <span className="text-[10px] sm:text-xs lg:text-sm text-white/45 flex items-center gap-1.5 sm:gap-2 font-medium">
+        <span className="w-5 h-5 sm:w-6 sm:h-6 lg:w-7 lg:h-7 rounded-full bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center text-[9px] sm:text-[10px] lg:text-xs font-bold text-yellow-400">1</span>
         Compre no Kiosk
       </span>
-      <span className="text-white/10 text-sm sm:text-lg hidden xs:inline">→</span>
-      <span className="text-[10px] sm:text-xs text-white/35 flex items-center gap-1.5 sm:gap-2 font-medium">
-        <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-[9px] sm:text-[10px] font-bold text-purple-400">2</span>
+      <span className="text-white/15 text-sm sm:text-lg hidden xs:inline">→</span>
+      <span className="text-[10px] sm:text-xs lg:text-sm text-white/45 flex items-center gap-1.5 sm:gap-2 font-medium">
+        <span className="w-5 h-5 sm:w-6 sm:h-6 lg:w-7 lg:h-7 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-[9px] sm:text-[10px] lg:text-xs font-bold text-purple-400">2</span>
         Suba no ranking
       </span>
-      <span className="text-white/10 text-sm sm:text-lg hidden xs:inline">→</span>
-      <span className="text-[10px] sm:text-xs text-white/35 flex items-center gap-1.5 sm:gap-2 font-medium">
-        <span className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-pink-500/10 border border-pink-500/20 flex items-center justify-center text-[9px] sm:text-[10px] font-bold text-pink-400">3</span>
+      <span className="text-white/15 text-sm sm:text-lg hidden xs:inline">→</span>
+      <span className="text-[10px] sm:text-xs lg:text-sm text-white/45 flex items-center gap-1.5 sm:gap-2 font-medium">
+        <span className="w-5 h-5 sm:w-6 sm:h-6 lg:w-7 lg:h-7 rounded-full bg-pink-500/10 border border-pink-500/20 flex items-center justify-center text-[9px] sm:text-[10px] lg:text-xs font-bold text-pink-400">3</span>
         Ganhe prêmios
       </span>
     </footer>
@@ -803,7 +803,7 @@ function DynamicPricingTickerPanel({ config }: { config: DynamicPricingConfig })
       <div className="flex items-center gap-2 mb-1">
         <div className={`w-2 h-2 rounded-full ${hasActivePromo ? 'bg-green-400 animate-pulse' : 'bg-white/20'}`} />
         <h3 className="text-xs sm:text-sm font-semibold tracking-wider uppercase text-white/70">
-          Preço Dinâmico
+          Promoções de Preço
         </h3>
         {hasActivePromo && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium border border-green-500/20">
@@ -856,8 +856,8 @@ function DynamicPricingTickerPanel({ config }: { config: DynamicPricingConfig })
       </div>
 
       {/* Limite de variação */}
-      <div className="text-[10px] text-white/25 text-center mt-1">
-        Variação máx: ±{config.maxVariationPercent}%
+      <div className="text-[10px] text-white/30 text-center mt-1">
+        Os preços podem variar até {config.maxVariationPercent}%
       </div>
     </div>
   );

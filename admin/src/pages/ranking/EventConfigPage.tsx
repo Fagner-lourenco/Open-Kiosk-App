@@ -104,6 +104,26 @@ import { formatVolume } from '@/utils/formatVolume';
 /** @deprecated Use formatVolume from shared utility */
 const formatMl = formatVolume;
 
+/** Labels amigáveis para tipos de recompensa (extraído para module-level) */
+const REWARD_LABELS: Record<string, string> = {
+  coupon: '🎟️ Cupom',
+  free_drink: '🍺 Chope grátis',
+  pix: '💸 Pix',
+  ticket_extra: '🎫 Bilhete extra',
+  bonus_multiplier: '🚀 Pontos 2×',
+  custom: '🎁 Especial',
+};
+
+/** Ícones por tipo de prêmio */
+const PRIZE_TYPE_ICONS: Record<string, string> = {
+  coupon: '🎟️',
+  free_drink: '🍺',
+  pix: '💸',
+  custom: '🎁',
+  bonus_multiplier: '🚀',
+  ticket_extra: '🎫',
+};
+
 // ============================================================================
 // TAB 1: Config TV & Metas
 // ============================================================================
@@ -318,6 +338,9 @@ export function TvConfigTab({
             <Button variant="outline" size="sm" onClick={() => copyToClipboard(tvUrl)} className="shrink-0">
               {isCopied ? <><Check className="h-4 w-4 mr-1" /> Copiado!</> : <><Copy className="h-4 w-4 mr-1" /> Copiar</>}
             </Button>
+            <Button variant="outline" size="sm" onClick={() => window.open(tvUrl, '_blank')} className="shrink-0">
+              <Tv className="h-4 w-4 mr-1" /> Visualizar
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -383,7 +406,7 @@ export function TvConfigTab({
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-sm font-semibold">Tempo de rotação (segundos)</Label>
+              <Label className="text-sm font-semibold">Tempo entre trocas de tela (segundos)</Label>
               <Input
                 type="number"
                 min={5}
@@ -594,7 +617,7 @@ export function TvConfigTab({
                 onChange={(e) => setEventModeDuration(parseInt(e.target.value) || 10)}
               />
               <p className="text-xs text-muted-foreground">
-                Tempo em minutos que o modo evento ficará ativo. Após esse período, desativa automaticamente.
+                Tempo em minutos que o modo evento ficará ativo (1”120 min). Após esse período, desativa automaticamente.
               </p>
             </div>
           </div>
@@ -860,19 +883,19 @@ export function ChallengesTab({
                 </p>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-semibold">Quantidade mínima (threshold)</Label>
+                <Label className="text-sm font-semibold">Quantidade para completar</Label>
                 <Input type="number" min={1} value={newThreshold} onChange={(e) => setNewThreshold(parseInt(e.target.value) || 1)} />
-                <p className="text-xs text-muted-foreground">Ex: 2 = cliente precisa de 2 pedidos/torneiras para completar.</p>
+                <p className="text-xs text-muted-foreground">Ex: 2 = cliente precisa de 2 pedidos/torneiras para completar o desafio.</p>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-semibold">Janela de tempo (minutos)</Label>
+                <Label className="text-sm font-semibold">Tempo para completar (minutos)</Label>
                 <Input type="number" min={1} value={newWindowMinutes} onChange={(e) => setNewWindowMinutes(parseInt(e.target.value) || 20)} />
-                <p className="text-xs text-muted-foreground">Período em que o cliente deve completar a ação (ex: 20 min para fazer 2 pedidos).</p>
+                <p className="text-xs text-muted-foreground">Período em que o cliente deve cumprir a regra (ex: 20 min para fazer 2 pedidos).</p>
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-semibold">Duração total do desafio (min)</Label>
+                <Label className="text-sm font-semibold">Quanto tempo o desafio fica disponível (min)</Label>
                 <Input type="number" min={5} value={newDuration} onChange={(e) => setNewDuration(parseInt(e.target.value) || 20)} />
-                <p className="text-xs text-muted-foreground">Quanto tempo o desafio permanece ativo. Após isso, encerra automaticamente.</p>
+                <p className="text-xs text-muted-foreground">Tempo total que o desafio aparece no telão. Após isso, encerra automaticamente.</p>
               </div>
               <div className="space-y-1.5">
                 <Label className="text-sm font-semibold">Tipo de recompensa</Label>
@@ -925,6 +948,9 @@ export function ChallengesTab({
             <Zap className="h-5 w-5" />
             Desafios ({challenges.length})
           </CardTitle>
+          <CardDescription>
+            <span className="text-xs">Fluxo: <Badge variant="secondary" className="text-[10px] py-0">Agendado</Badge> → <Badge className="text-[10px] py-0">Ativo</Badge> → <Badge variant="outline" className="text-[10px] py-0">Concluído</Badge> ou <Badge variant="destructive" className="text-[10px] py-0">Expirado</Badge>. Cancelado = encerrado manualmente.</span>
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {challenges.length === 0 ? (
@@ -949,15 +975,6 @@ export function ChallengesTab({
                 const displayStatus = isExpired ? 'expired' : ch.status;
                 const badge = STATUS_BADGE[displayStatus] || STATUS_BADGE.scheduled;
 
-                const REWARD_LABELS: Record<string, string> = {
-                  coupon: '🎟️ Cupom',
-                  free_drink: '🍺 Chope grátis',
-                  pix: '💸 Pix',
-                  ticket_extra: '🎫 Bilhete extra',
-                  bonus_multiplier: '🚀 Pontos 2×',
-                  custom: '🎁 Especial',
-                };
-
                 return (
                   <div
                     key={ch.id}
@@ -980,8 +997,12 @@ export function ChallengesTab({
                           </Button>
                         )}
                         {ch.status === 'active' && !isExpired && (
-                          <Button variant="outline" size="sm" onClick={() => handleCancel(ch)}>
-                            <Pause className="h-3 w-3 mr-1" /> Pausar
+                          <Button variant="outline" size="sm" onClick={() => {
+                            if (window.confirm(`Tem certeza que deseja cancelar o desafio "${ch.title}"? Esta ação não pode ser desfeita.`)) {
+                              handleCancel(ch);
+                            }
+                          }}>
+                            <Trash2 className="h-3 w-3 mr-1" /> Cancelar
                           </Button>
                         )}
                         {ch.status === 'active' && isExpired && (
@@ -990,7 +1011,11 @@ export function ChallengesTab({
                           </Button>
                         )}
                         {(ch.status === 'completed' || ch.status === 'cancelled') && (
-                          <Button variant="ghost" size="sm" onClick={() => handleDelete(ch)}>
+                          <Button variant="ghost" size="sm" onClick={() => {
+                            if (window.confirm(`Remover "${ch.title}" permanentemente?`)) {
+                              handleDelete(ch);
+                            }
+                          }}>
                             <Trash2 className="h-3 w-3" />
                           </Button>
                         )}
@@ -1385,10 +1410,15 @@ export function PrizesTab({
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="flex items-center gap-2">
-              <Gift className="h-5 w-5" />
-              Pool de Prêmios ({prizes.length})
-            </CardTitle>
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Gift className="h-5 w-5" />
+                Pool de Prêmios ({prizes.length})
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Disponível = no pool. Ganho = sorteado para cliente (aguardando resgate). Resgatado = entregue no balcão. Expirado = não resgatou a tempo (30 min).
+              </p>
+            </div>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-40">
                 <SelectValue />
