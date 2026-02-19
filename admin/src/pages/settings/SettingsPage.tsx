@@ -188,7 +188,8 @@ export function SettingsPage() {
       }
 
       // Delete all subcollections first
-      const subcollections = ['stores', 'members', 'auditLogs'];
+      // 🔧 FIX Audit-R2: incluir todas as subcoleções de franquia conhecidas
+      const subcollections = ['stores', 'members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary'];
       
       for (const subcol of subcollections) {
         const snapshot = await getDocs(collection(db, `franchises/${currentFranchise.id}/${subcol}`));

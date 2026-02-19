@@ -158,7 +158,8 @@ export default function FranchisesPage() {
       // Previous code deleted docs one-by-one in a loop — if one failed midway,
       // some subcollection docs would be deleted and others wouldn't (inconsistent state).
       // WriteBatch ensures all-or-nothing (up to 500 ops per batch).
-      const subcollections = ['stores', 'members', 'auditLogs', 'notifications'];
+      // 🔧 FIX Audit-R2: incluir todas as subcoleções de franquia conhecidas
+      const subcollections = ['stores', 'members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary'];
       const batch = writeBatch(db);
       let opsCount = 0;
 
