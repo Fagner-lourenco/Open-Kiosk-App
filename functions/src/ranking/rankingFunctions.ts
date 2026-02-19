@@ -173,6 +173,13 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
           const currentData = statsDoc.data();
           // Reset if it's a new day
           if (currentData?.date !== date) {
+            // 🔒 FIX #2: Resetar milestones.reached na virada de dia
+            const prevMilestones = (currentData?.milestones || []) as Array<{ targetMl: number; label: string; reached: boolean }>;
+            const resetMilestones = prevMilestones.map((m) => ({ ...m, reached: false, reachedAt: null }));
+            // 🔒 FIX #9: Preservar eventMode se ainda não expirou
+            const prevEvent = currentData?.eventMode;
+            const eventStillActive = prevEvent?.enabled && prevEvent?.endsAt &&
+              (typeof prevEvent.endsAt.toMillis === 'function' ? prevEvent.endsAt.toMillis() : (prevEvent.endsAt.seconds || 0) * 1000) > Date.now();
             tx.set(eventStatsRef, {
               totalMl,
               totalServes: 1,
@@ -181,8 +188,8 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
               goalEnabled: currentData?.goalEnabled || false,
               goalTargetMl: currentData?.goalTargetMl || 100000,
               goalLabel: currentData?.goalLabel || 'Meta do Dia',
-              milestones: currentData?.milestones || [],
-              eventMode: { enabled: false, label: '', endsAt: null },
+              milestones: resetMilestones,
+              eventMode: eventStillActive ? prevEvent : { enabled: false, label: '', endsAt: null },
               updatedAt: serverTimestamp(),
             }, { merge: false });
           } else {
@@ -290,13 +297,40 @@ async function recalculate30minForStore(
   for (const doc of ordersSnap.docs) {
     const order = doc.data() as OrderData;
     if (!order.customerName) continue;
-    // KIO-FIX: fallback para pedidos sem customerName (kiosk anônimo)
-    // Nota: se customerName existe no doc mas não no ranking, usar o nome como está
     if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(order.status)) continue;
     if (order.paymentStatus && invalidPaymentStatuses.includes(order.paymentStatus)) continue;
     const id = getCustomerId(order);
     const ml = calcTotalMl(order.items);
     ml30m.set(id, (ml30m.get(id) || 0) + ml);
+  }
+
+  // 🚀 FIX #8: Aplicar bonus_multiplier no cálculo de 30min (consistência com ranking diário)
+  const bonusCandidates = [...ml30m.keys()];
+  if (bonusCandidates.length > 0) {
+    const now = Date.now();
+    for (const custId of bonusCandidates) {
+      try {
+        const bonusSnap = await db
+          .collection(`${storePath}/prizes`)
+          .where('winnerId', '==', custId)
+          .where('type', '==', 'bonus_multiplier')
+          .where('status', '==', 'won')
+          .get();
+        if (!bonusSnap.empty) {
+          const hasActive = bonusSnap.docs.some((d) => {
+            const expiresAt = d.data().expiresAt;
+            if (!expiresAt) return true;
+            const ms = typeof expiresAt.toMillis === 'function' ? expiresAt.toMillis() : (expiresAt.seconds || 0) * 1000;
+            return ms > now;
+          });
+          if (hasActive) {
+            ml30m.set(custId, (ml30m.get(custId) || 0) * 2);
+          }
+        }
+      } catch (err) {
+        console.warn(`[ranking30m] Erro ao verificar bonus_multiplier para ${custId}:`, err);
+      }
+    }
   }
 
   // Pegar ranking atual
@@ -388,23 +422,28 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
       try {
         let completed = false;
 
+        // 🔒 FIX #1: Helper para validar se order é elegível (mesma lógica do ranking)
+        const isEligibleOrder = (o: OrderData): boolean => {
+          if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(o.status)) return false;
+          const badPayment = ['failed', 'canceled', 'cancelled', 'refunded', 'expired'];
+          if (o.paymentStatus && badPayment.includes(o.paymentStatus)) return false;
+          return true;
+        };
+
         switch (challenge.rule.type) {
           case 'min_orders': {
-            // 🔧 FIX: Usar rankingAgg que já tem orderCount ao invés de query pesada
-            // Fallback: query filtrando só por timestamp (sem != que requer índice composto)
             const snap = await db
               .collection(`${storePath}/orders`)
               .where('timestamp', '>=', windowStart)
               .get();
             const count = snap.docs.filter((d) => {
               const o = d.data() as OrderData;
-              return o.customerName && getCustomerId(o) === customerId;
+              return o.customerName && getCustomerId(o) === customerId && isEligibleOrder(o);
             }).length;
             completed = count >= challenge.rule.threshold;
             break;
           }
           case 'min_taps': {
-            // Contar productIds distintos do cliente na janela
             const snap = await db
               .collection(`${storePath}/orders`)
               .where('timestamp', '>=', windowStart)
@@ -413,6 +452,7 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
             for (const d of snap.docs) {
               const o = d.data() as OrderData;
               if (getCustomerId(o) !== customerId) continue;
+              if (!isEligibleOrder(o)) continue;
               for (const item of o.items || []) {
                 if (item.mlPerUnit && item.mlPerUnit > 0) {
                   productIds.add(item.productId);
@@ -423,7 +463,6 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
             break;
           }
           case 'return_after': {
-            // Verificar se há gap de threshold minutos entre orders
             const snap = await db
               .collection(`${storePath}/orders`)
               .where('date', '==', after.date || todayYMD())
@@ -431,7 +470,7 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
               .get();
             const customerOrders = snap.docs
               .map((d) => d.data() as OrderData)
-              .filter((o) => o.customerName && getCustomerId(o) === customerId);
+              .filter((o) => o.customerName && getCustomerId(o) === customerId && isEligibleOrder(o));
 
             if (customerOrders.length >= 2) {
               const lastTs = customerOrders[customerOrders.length - 1].timestamp?.toMillis() || 0;
@@ -442,15 +481,13 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
             break;
           }
           case 'happy_boost': {
-            // Happy Boost: qualquer pedido na janela ganha,
-            // mas limitado a 1 vez por cliente (dedup acima já garante)
             const hSnap = await db
               .collection(`${storePath}/orders`)
               .where('timestamp', '>=', windowStart)
               .get();
             const hasOrder = hSnap.docs.some((d) => {
               const o = d.data() as OrderData;
-              return o.customerName && getCustomerId(o) === customerId;
+              return o.customerName && getCustomerId(o) === customerId && isEligibleOrder(o);
             });
             completed = hasOrder;
             break;
@@ -660,7 +697,17 @@ async function generatePrize(
   const prizeDocId = challengeId
     ? `prize_${challengeId}_${customerId}`
     : `prize_${orderId}`;
-  await db.doc(`${storePath}/prizes/${prizeDocId}`).set(prize);
+
+  // 🔒 FIX #3: Transaction para não sobrescrever code existente em retry
+  const prizeRef = db.doc(`${storePath}/prizes/${prizeDocId}`);
+  await db.runTransaction(async (tx) => {
+    const existing = await tx.get(prizeRef);
+    if (existing.exists) {
+      console.log(`[prize] Doc ${prizeDocId} already exists — skip (idempotent)`);
+      return;
+    }
+    tx.set(prizeRef, prize);
+  });
   console.log(`[prize] Created ${type} prize for ${displayName}: ${code} (doc: ${prizeDocId})`);
 }
 
@@ -751,6 +798,53 @@ export const expireEventMode = onSchedule(
       }
     } catch (err) {
       console.error('[eventMode] Error expiring event modes:', err);
+    }
+  });
+
+// ============================================================================
+// 7. expireChallenges (Scheduled) — FIX #10
+// ============================================================================
+
+/**
+ * A cada 5 minutos, marca desafios ativos cujo endsAt já passou como 'expired'.
+ * Sem isso, o status fica 'active' eternamente no Firestore (client faz check visual,
+ * mas o dado fica sujo e Cloud Functions continuam tentando processá-los).
+ */
+export const expireChallenges = onSchedule(
+  { schedule: 'every 5 minutes', region: REGION },
+  async () => {
+    const now = admin.firestore.Timestamp.now();
+    console.log('[challenges] Checking for expired challenges...');
+
+    try {
+      const activeSnap = await db
+        .collectionGroup('challenges')
+        .where('status', '==', 'active')
+        .get();
+
+      let expired = 0;
+      for (const doc of activeSnap.docs) {
+        const data = doc.data();
+        if (
+          data?.endsAt &&
+          (typeof data.endsAt.toMillis === 'function' ? data.endsAt.toMillis() : (data.endsAt.seconds || 0) * 1000) <= now.toMillis()
+        ) {
+          await doc.ref.update({
+            status: 'expired',
+            updatedAt: serverTimestamp(),
+          });
+          expired++;
+          console.log(`[challenges] Expired "${data.title}" (${doc.ref.path})`);
+        }
+      }
+
+      if (expired > 0) {
+        console.log(`[challenges] Expired ${expired} challenge(s)`);
+      } else {
+        console.log('[challenges] No expired challenges found');
+      }
+    } catch (err) {
+      console.error('[challenges] Error expiring challenges:', err);
     }
   });
 

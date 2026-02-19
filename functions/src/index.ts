@@ -70,7 +70,8 @@ export {
   onOrderUpdatedChallenge,
   onOrderUpdatedGoldenServe,
   expirePrizes,
-  expireEventMode
+  expireEventMode,
+  expireChallenges
 } from './ranking/rankingFunctions';
 
 // Callable for toggling event mode from Admin UI

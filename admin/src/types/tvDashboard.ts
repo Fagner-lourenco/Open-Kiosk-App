@@ -76,6 +76,8 @@ export interface EventMode {
   enabled: boolean;
   label: string;
   endsAt: Timestamp | null;
+  /** Quando true, preço dinâmico é ativado junto com o evento */
+  activateDynamicPricing?: boolean;
 }
 
 /** Milestone de meta coletiva */
@@ -309,13 +311,15 @@ export interface GoldenServeConfig {
 export const DEFAULT_GOLDEN_SERVE_CONFIG: GoldenServeConfig = {
   enabled: false,
   frequency: 50,
-  prizeWeights: { coupon: 60, free_drink: 30, pix: 8, custom: 2 },
+  prizeWeights: { coupon: 60, free_drink: 30, pix: 8, custom: 2, bonus_multiplier: 0, ticket_extra: 0 },
   maxPixPerPerson: 1,
   prizeDescriptions: {
     coupon: 'Cupom de desconto',
     free_drink: 'Chope grátis',
     pix: 'Pix premiado',
     custom: 'Prêmio especial',
+    bonus_multiplier: 'Pontos em dobro no ranking',
+    ticket_extra: 'Bilhete extra para sorteio',
   },
 };
 

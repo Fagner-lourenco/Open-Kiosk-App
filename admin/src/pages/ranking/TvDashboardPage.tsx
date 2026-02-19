@@ -135,6 +135,16 @@ const PRIZE_ICONS: Record<string, string> = {
   ticket_extra: '🎫',
 };
 
+/** Labels amigáveis para tipos de prêmio (FIX #5: evita texto bruto no telão) */
+const PRIZE_LABELS: Record<string, string> = {
+  coupon: 'Cupom de desconto',
+  free_drink: 'Chope grátis',
+  pix: 'Pix premiado',
+  custom: 'Prêmio especial',
+  bonus_multiplier: 'Pontos 2×',
+  ticket_extra: 'Bilhete extra',
+};
+
 /** Glass panel base style */
 const GLASS_PANEL = 'backdrop-blur-md bg-white/[0.03] border border-white/[0.06] shadow-lg shadow-black/20';
 
@@ -670,7 +680,7 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
               <p className="text-xs font-semibold text-white/65 truncate">
                 {w.winnerDisplayName || 'Anônimo'}
               </p>
-              <p className="text-[10px] text-white/25 truncate">{w.description}</p>
+              <p className="text-[10px] text-white/25 truncate">{w.description && w.description !== w.type ? w.description : PRIZE_LABELS[w.type] || w.type}</p>
             </div>
             <span className="text-[10px] text-white/20 shrink-0 bg-white/[0.03] px-2 py-0.5 rounded-full">
               {w.wonAt ? timeAgo(w.wonAt) : ''}

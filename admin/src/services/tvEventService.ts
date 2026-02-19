@@ -421,6 +421,12 @@ export async function redeemPrize(
     }
     const prize = prizeSnap.data() as Prize;
 
+    // 🔒 FIX #4: Prêmios virtuais não são resgatáveis no balcão
+    const nonRedeemableTypes: string[] = ['bonus_multiplier', 'ticket_extra'];
+    if (nonRedeemableTypes.includes(prize.type)) {
+      return { success: false, error: 'Este tipo de prêmio é aplicado automaticamente e não pode ser resgatado no balcão' };
+    }
+
     if (prize.status === 'redeemed') {
       return { success: false, error: 'Prêmio já foi resgatado' };
     }
