@@ -116,9 +116,9 @@ function normalizeQuoteLine(id: string, data: Record<string, unknown>): QuoteLin
     id,
     type: (data.type as QuoteLineType) || 'service',
     description: (data.description as string) || '',
-    qty: (data.qty as number) || 0,
-    unitPrice: (data.unitPrice as number) || 0,
-    total: (data.total as number) || 0,
+    qty: Number(data.qty) || 0,
+    unitPrice: Number(data.unitPrice) || 0,
+    total: Number(data.total) || 0,
     productId: data.productId as string | undefined,
   };
 }

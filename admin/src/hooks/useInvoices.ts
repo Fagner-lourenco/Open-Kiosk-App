@@ -134,9 +134,9 @@ function normalizeInvoiceLine(id: string, data: Record<string, unknown>): Invoic
   return {
     id,
     description: (data.description as string) || '',
-    qty: (data.qty as number) || 0,
-    unitPrice: (data.unitPrice as number) || 0,
-    total: (data.total as number) || 0,
+    qty: Number(data.qty) || 0,
+    unitPrice: Number(data.unitPrice) || 0,
+    total: Number(data.total) || 0,
     categoryId: data.categoryId as string | undefined,
   };
 }
