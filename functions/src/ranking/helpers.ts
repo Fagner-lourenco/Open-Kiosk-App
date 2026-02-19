@@ -78,12 +78,19 @@ export interface ChallengeDoc {
 
 /**
  * Mascara nome para LGPD: "João Miguel Santos" → "João M. S."
+ * Tokens 100% numéricos (ex: últimos 4 dígitos do cartão/CPF) são preservados
+ * para manter a individualização de fallbacks (ex: "Cervejeiro 5557" → "Cervejeiro 5557").
  */
 export function maskName(name: string): string {
   const trimmed = name.trim();
   const parts = trimmed.split(/\s+/).filter(Boolean);
   if (parts.length <= 1) return trimmed;
-  return [parts[0], ...parts.slice(1).map((p) => `${p[0]?.toUpperCase()}.`)].join(' ');
+  return [
+    parts[0],
+    ...parts.slice(1).map((p) =>
+      /^\d+$/.test(p) ? p : `${p[0]?.toUpperCase()}.`
+    ),
+  ].join(' ');
 }
 
 /**

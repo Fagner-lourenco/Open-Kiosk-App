@@ -45,11 +45,15 @@ export interface OrderCustomerData {
   gatewayPaymentId?: string;  // MP paymentId ou PagBank chargeId
 
   // Dados do pagamento
-  paymentMethodId?: string;   // 'visa', 'master', 'pix', etc.
+  paymentMethodId?: string;   // 'debvisa', 'master', 'pix', etc.
   paymentTypeId?: string;     // 'credit_card', 'debit_card', 'bank_transfer'
   cardBrand?: string;
+  cardFirstDigits?: string;   // BIN (primeiros 6 dígitos) — para unicidade de cartão
   cardLastDigits?: string;
   cardholderName?: string;
   installments?: number;
   dateApproved?: string;
+
+  // Identificação alternativa (quando não há nome/CPF)
+  payerId?: string;           // MP payer.id — estável por pessoa para PIX
 }

@@ -12,7 +12,9 @@ import type { OrderCustomerData } from '@/types/sales';
 
 class SalesService {
   private calculateSaleTimingData(now: Date): SaleTimingData {
-    const hour = now.getHours();
+    // 🔧 BRT (UTC-3): todas as datas devem ser consistentes com Cloud Functions
+    const brt = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+    const hour = brt.getUTCHours();
     let timeSlot: SaleTimingData['timeSlot'];
 
     if (hour >= 6 && hour < 12) timeSlot = 'morning';
@@ -20,12 +22,12 @@ class SalesService {
     else if (hour >= 18 && hour < 24) timeSlot = 'evening';
     else timeSlot = 'night';
 
-    const dayOfWeek = now.getDay();
+    const dayOfWeek = brt.getUTCDay();
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
     return {
       timestamp: now,
-      date: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`,
+      date: `${brt.getUTCFullYear()}-${String(brt.getUTCMonth() + 1).padStart(2, '0')}-${String(brt.getUTCDate()).padStart(2, '0')}`,
       hourOfDay: hour,
       dayOfWeek,
       timeSlot,
@@ -490,11 +492,22 @@ class SalesService {
       };
 
       // Dados do cliente (para ranking)
-      // Só gravar customerName quando temos um nome REAL do pagador.
-      // Sem nome real, o pedido não entra no ranking — evita entradas fantasma "Kiosk #XXXXXX".
+      // Prioridade: nome real > cardholder > fallback anônimo com dados do pagamento.
+      // O antigo fallback "Kiosk #XXXX" usava device-hash — toda venda virava entrada separada.
+      // O novo fallback usa dados reais (CPF / últimos 4 do cartão / payerId) para agregar
+      // corretamente e garante que a Cloud Function de ranking SEMPRE processe o pedido.
       const effectiveCustomerName = customerData.customerName || customerData.cardholderName;
       if (effectiveCustomerName) {
         updateData.customerName = effectiveCustomerName;
+      } else {
+        // Fallback: nome genérico + sufixo individualizador
+        // - CPF disponível: últimos 4 do CPF (ex: "Cervejeiro 8901")
+        // - Cartão: BIN+last4 para unicidade (ex: "Cervejeiro 5557")
+        // - PIX sem CPF: payer.id do MP (estável por pessoa, ex: "Cervejeiro 3094070084")
+        // - Nenhum dado: genérico (todos mergem em um entry — raro em prod)
+        const cpfDigits = customerData.customerIdentification?.replace(/\D/g, '').slice(-4);
+        const suffix = cpfDigits || customerData.cardLastDigits || customerData.payerId;
+        updateData.customerName = suffix ? `Cervejeiro ${suffix}` : 'Cervejeiro Anônimo';
       }
       if (customerData.customerEmail) updateData.customerEmail = customerData.customerEmail;
       if (customerData.customerIdentification) updateData.customerIdentification = customerData.customerIdentification;
@@ -514,10 +527,12 @@ class SalesService {
       if (customerData.paymentMethodId) updateData.paymentMethodId = customerData.paymentMethodId;
       if (customerData.paymentTypeId) updateData.paymentTypeId = customerData.paymentTypeId;
       if (customerData.cardBrand) updateData.cardBrand = customerData.cardBrand;
+      if (customerData.cardFirstDigits) updateData.cardFirstDigits = customerData.cardFirstDigits;
       if (customerData.cardLastDigits) updateData.cardLastDigits = customerData.cardLastDigits;
       if (customerData.cardholderName) updateData.cardholderName = customerData.cardholderName;
       if (customerData.installments) updateData.installments = customerData.installments;
       if (customerData.dateApproved) updateData.dateApproved = customerData.dateApproved;
+      if (customerData.payerId) updateData.payerId = customerData.payerId;
 
       await updateDoc(docRef, updateData);
 

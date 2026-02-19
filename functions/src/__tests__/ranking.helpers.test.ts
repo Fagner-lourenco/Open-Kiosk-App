@@ -29,6 +29,18 @@ describe('ranking/helpers', () => {
     it('trata espaços extras', () => {
       expect(maskName('  Ana  Beatriz  ')).toBe('Ana B.');
     });
+
+    it('preserva tokens numéricos (fallback ranking: cartão/CPF)', () => {
+      expect(maskName('Cervejeiro 5557')).toBe('Cervejeiro 5557');
+    });
+
+    it('preserva números mas mascara texto misto', () => {
+      expect(maskName('Cervejeiro Anônimo')).toBe('Cervejeiro A.');
+    });
+
+    it('preserva múltiplos tokens numéricos', () => {
+      expect(maskName('Cliente 1234 5678')).toBe('Cliente 1234 5678');
+    });
   });
 
   describe('getCustomerId', () => {

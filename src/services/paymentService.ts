@@ -595,15 +595,18 @@ class PaymentService {
         return null;
       }
 
-      // Extrair payment ID da order — é o ID da transação de pagamento
-      const paymentId = order.transactions?.payments?.[0]?.id;
+      // Extrair payment ID da order.
+      // A Orders API V2 retorna IDs ULID (PAY01KHV...) no campo `id`,
+      // mas a Payments API clássica (/v1/payments/) precisa do ID numérico
+      // que está em `reference_id`. Se reference_id não existir, tenta id.
+      const orderPayment = order.transactions?.payments?.[0];
+      const paymentId = orderPayment?.reference_id || orderPayment?.id;
       if (!paymentId) {
         console.warn('[PaymentService] Order sem payment ID, não é possível buscar dados do pagador');
-        // Retornar ao menos os dados disponíveis na order
         return {
           gatewayProvider: 'mercado_pago',
           gatewayOrderId: order.id,
-          cardLastDigits: order.transactions?.payments?.[0]?.card?.last_digits,
+          cardLastDigits: orderPayment?.card?.last_digits,
         };
       }
 
@@ -611,43 +614,66 @@ class PaymentService {
 
       const payment = await mpAPI.getPayment(paymentId);
 
+      // Sanitizar cardholder.name — o MP Point retorna "{}" para NFC/contactless
+      const rawCardholderName = payment.card?.cardholder?.name;
+      const cardholderName = rawCardholderName && /[a-zA-ZÀ-ú]/.test(rawCardholderName)
+        ? rawCardholderName
+        : undefined;
+
       // Montar nome do cliente com prioridade:
-      // 1. cardholder.name (nome impresso no cartão — mais confiável para cartão)
-      // 2. payer.first_name + payer.last_name (dados do conta MP — melhor para PIX)
-      const cardholderName = payment.card?.cardholder?.name;
+      // 1. cardholder.name sanitizado (nome impresso no cartão — mais confiável)
+      // 2. payer.first_name + payer.last_name (dados da conta MP — melhor para PIX)
       const payerFullName = [payment.payer?.first_name, payment.payer?.last_name]
         .filter(Boolean)
         .join(' ')
         .trim();
-      
+
       const customerName = cardholderName || payerFullName || undefined;
+
+      // CPF: pode vir no payer.identification OU no card.cardholder.identification
+      const customerIdentification =
+        payment.payer?.identification?.number ||
+        payment.card?.cardholder?.identification?.number ||
+        undefined;
+
+      // Filtrar emails internos do MP (ventapresencialmlb@*) que não são do cliente real
+      const rawEmail = payment.payer?.email;
+      const customerEmail = rawEmail && !rawEmail.includes('ventapresencial')
+        ? rawEmail
+        : undefined;
 
       const result: OrderCustomerData = {
         customerName,
-        customerEmail: payment.payer?.email || undefined,
-        customerIdentification: payment.payer?.identification?.number || undefined,
+        customerEmail,
+        customerIdentification,
         gatewayProvider: 'mercado_pago',
         gatewayOrderId: order.id,
         gatewayPaymentId: paymentId,
         paymentMethodId: payment.payment_method_id || undefined,
         paymentTypeId: payment.payment_type_id || undefined,
         cardBrand: payment.payment_method_id || undefined,
-        cardLastDigits: payment.card?.last_four_digits || order.transactions?.payments?.[0]?.card?.last_digits || undefined,
+        cardFirstDigits: payment.card?.first_six_digits || orderPayment?.card?.first_digits || undefined,
+        cardLastDigits: payment.card?.last_four_digits || orderPayment?.card?.last_digits || undefined,
         cardholderName: cardholderName || undefined,
         installments: payment.installments || undefined,
         dateApproved: payment.date_approved || undefined,
+        payerId: payment.payer?.id ? String(payment.payer.id) : undefined,
       };
 
       console.log('[PaymentService] Dados do pagador obtidos:', {
         customerName: result.customerName ? '***' : 'N/A',
         hasEmail: !!result.customerEmail,
+        hasCpf: !!result.customerIdentification,
         cardBrand: result.cardBrand,
+        cardFirstDigits: result.cardFirstDigits,
         cardLastDigits: result.cardLastDigits,
+        payerId: result.payerId,
         installments: result.installments,
       });
       systemLogService.info('payment', `Payer data obtido: ${result.customerName ? 'com nome' : 'sem nome'}`, {
         hasName: !!result.customerName, hasEmail: !!result.customerEmail,
         hasCpf: !!result.customerIdentification, paymentMethod: result.paymentMethodId,
+        payerId: result.payerId,
       });
 
       return result;
@@ -655,11 +681,14 @@ class PaymentService {
       // Não bloquear o fluxo principal — dados do pagador são opcionais
       console.warn('[PaymentService] Erro ao buscar dados do pagador (não-bloqueante):', error);
       systemLogService.warn('payment', `Falha ao buscar payer data: ${error instanceof Error ? error.message : String(error)}`, { orderId: order.id });
+      // Fallback: retornar dados mínimos da order quando a API de payments falha
+      const fallbackPayment = order.transactions?.payments?.[0];
       return {
         gatewayProvider: 'mercado_pago',
         gatewayOrderId: order.id,
-        gatewayPaymentId: order.transactions?.payments?.[0]?.id,
-        cardLastDigits: order.transactions?.payments?.[0]?.card?.last_digits,
+        gatewayPaymentId: fallbackPayment?.reference_id || fallbackPayment?.id,
+        cardFirstDigits: fallbackPayment?.card?.first_digits,
+        cardLastDigits: fallbackPayment?.card?.last_digits,
       };
     }
   }
