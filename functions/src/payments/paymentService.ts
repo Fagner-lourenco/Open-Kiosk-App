@@ -156,19 +156,31 @@ export const createPaymentIntent = async (
   }
 
   // ====================================================================
+  // 🔒 FIX BUG-25: Server-side amount integrity check
+  // Always verify amount matches items total, regardless of DP status.
+  // ====================================================================
+  const storeData = storeSnap.data();
+  const itemsTotal = (data.items || []).reduce(
+    (sum: number, item: { unitAmount?: number; quantity?: number }) =>
+      sum + ((item.unitAmount || 0) * (item.quantity || 1)),
+    0,
+  );
+  if (itemsTotal > 0 && amount !== itemsTotal) {
+    console.warn(`[createPayment] Amount ${amount} != itemsTotal ${itemsTotal}`);
+    throw new HttpsError(
+      'invalid-argument',
+      'Valor do pagamento nao corresponde ao total dos itens.',
+    );
+  }
+
+  // ====================================================================
   // Dynamic Pricing — Server-side bounds check
   // Quando DP está ativo, valida que o amount está dentro dos limites
   // permitidos (basePrice * (1 ± maxVariationPercent/100))
   // ====================================================================
-  const storeData = storeSnap.data();
   const dpConfig = storeData?.dynamicPricingConfig;
   if (dpConfig?.enabled && dpConfig.maxVariationPercent > 0) {
     const maxVar = dpConfig.maxVariationPercent / 100;
-    const itemsTotal = (data.items || []).reduce(
-      (sum: number, item: { unitAmount?: number; quantity?: number }) =>
-        sum + ((item.unitAmount || 0) * (item.quantity || 1)),
-      0,
-    );
     // Verificar se o valor cobrado não excede os limites dinâmicos
     // Permitir ±maxVariationPercent do total dos itens + margem aditiva de 10% para impostos/arredondamento
     if (itemsTotal > 0) {

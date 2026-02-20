@@ -11,7 +11,7 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
-import { db, admin, requireAuth, requireOwnerOrAdmin, VALID_ROLES } from '../lib';
+import { db, admin, requireAuth, requireOwnerOrAdmin, VALID_ROLES, roleHierarchy } from '../lib';
 
 interface SetClaimsData {
   userId: string;
@@ -55,79 +55,77 @@ export const setCustomClaims = onCall(async (request) => {
   }
   
   try {
-    // Busca usuário alvo
-    const targetUserDoc = await db.collection('users').doc(userId).get();
+    // 🔒 FIX BUG-30: Wrap Firestore read + write in a transaction to prevent TOCTOU.
+    // Auth API (getUser/setCustomUserClaims) can't join Firestore transactions,
+    // but at least the user doc read/write is atomic.
+    const targetUserRef = db.collection('users').doc(userId);
+    const newClaims = await db.runTransaction(async (txn) => {
+      const targetUserDoc = await txn.get(targetUserRef);
     
-    if (!targetUserDoc.exists) {
-      throw new HttpsError(
-        'not-found',
-        'Usuário não encontrado'
-      );
-    }
+      if (!targetUserDoc.exists) {
+        throw new HttpsError(
+          'not-found',
+          'Usuário não encontrado'
+        );
+      }
     
-    const targetUser = targetUserDoc.data()!;
+      const targetUser = targetUserDoc.data()!;
     
-    // Verifica se o caller tem permissão sobre este usuário
-    if (callerClaims.franchiseId !== targetUser.franchiseId) {
-      throw new HttpsError(
-        'permission-denied',
-        'Você não tem permissão para modificar usuários de outra franquia'
-      );
-    }
+      // Verifica se o caller tem permissão sobre este usuário
+      if (callerClaims.franchiseId !== targetUser.franchiseId) {
+        throw new HttpsError(
+          'permission-denied',
+          'Você não tem permissão para modificar usuários de outra franquia'
+        );
+      }
     
-    // Hierarquia: owner > admin > outros
-    const roleHierarchy: Record<string, number> = {
-      owner: 100,
-      admin: 80,
-      manager: 60,
-      operator: 40,
-      employee: 40,
-      technician: 30,
-      viewer: 20,
-    };
+      // 🔒 FIX BUG-29: Use canonical roleHierarchy from ../lib (single source of truth)
     
-    const callerLevel = roleHierarchy[callerClaims.role as string] || 0;
-    const targetLevel = roleHierarchy[targetUser.role] || 0;
-    const newLevel = role ? roleHierarchy[role] || 0 : targetLevel;
+      const callerLevel = roleHierarchy[callerClaims.role as string] || 0;
+      const targetLevel = roleHierarchy[targetUser.role] || 0;
+      const newLevel = role ? roleHierarchy[role] || 0 : targetLevel;
     
-    // Não pode modificar quem está acima ou no mesmo nível (exceto owner)
-    if (callerClaims.role !== 'owner' && targetLevel >= callerLevel) {
-      throw new HttpsError(
-        'permission-denied',
-        'Você não pode modificar usuários do mesmo nível ou superior'
-      );
-    }
+      // Não pode modificar quem está acima ou no mesmo nível (exceto owner)
+      if (callerClaims.role !== 'owner' && targetLevel >= callerLevel) {
+        throw new HttpsError(
+          'permission-denied',
+          'Você não pode modificar usuários do mesmo nível ou superior'
+        );
+      }
     
-    // Não pode promover alguém ao seu nível ou acima (exceto owner)
-    if (callerClaims.role !== 'owner' && newLevel >= callerLevel) {
-      throw new HttpsError(
-        'permission-denied',
-        'Você não pode promover usuários ao seu nível ou superior'
-      );
-    }
+      // Não pode promover alguém ao seu nível ou acima (exceto owner)
+      if (callerClaims.role !== 'owner' && newLevel >= callerLevel) {
+        throw new HttpsError(
+          'permission-denied',
+          'Você não pode promover usuários ao seu nível ou superior'
+        );
+      }
     
-    // Buscar claims atuais para merge (preservar storeAccess e outras)
-    const currentUser = await admin.auth().getUser(userId);
-    const currentClaims = currentUser.customClaims || {};
+      // Buscar claims atuais para merge (preservar storeAccess e outras)
+      const currentUser = await admin.auth().getUser(userId);
+      const currentClaims = currentUser.customClaims || {};
 
-    // Monta as novas claims com merge
-    const newClaims: Record<string, unknown> = {
-      ...currentClaims,
-      role: role || targetUser.role,
-      franchiseId: franchiseId || targetUser.franchiseId,
-      storeId: storeId !== undefined ? storeId : targetUser.storeId,
-    };
+      // Monta as novas claims com merge
+      const merged: Record<string, unknown> = {
+        ...currentClaims,
+        role: role || targetUser.role,
+        franchiseId: franchiseId || targetUser.franchiseId,
+        storeId: storeId !== undefined ? storeId : targetUser.storeId,
+      };
     
-    // Atualiza as claims no Auth
-    await admin.auth().setCustomUserClaims(userId, newClaims);
-    
-    // Atualiza o documento do usuário
-    await db.collection('users').doc(userId).update({
-      role: newClaims.role,
-      storeId: newClaims.storeId,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedBy: callerUid,
+      // Atualiza o documento do usuário dentro da transação
+      txn.update(targetUserRef, {
+        role: merged.role,
+        storeId: merged.storeId,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedBy: callerUid,
+      });
+
+      return merged;
     });
+
+    // Atualiza as claims no Auth (fora da transação Firestore — Auth API)
+    await admin.auth().setCustomUserClaims(userId, newClaims);
     
     logger.info(`Claims atualizadas para usuário ${userId} por ${callerUid}`);
     

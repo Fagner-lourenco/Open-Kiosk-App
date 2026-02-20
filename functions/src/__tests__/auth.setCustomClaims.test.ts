@@ -11,12 +11,18 @@ const mocks = vi.hoisted(() => {
   const collectionFn = vi.fn(() => ({ doc: docFn }));
   const setCustomUserClaims = vi.fn().mockResolvedValue(undefined);
   const getUser = vi.fn().mockResolvedValue({ customClaims: {} });
+  // Transaction mock: txn.get returns same as docGet, txn.update is no-op
+  const txnGet = vi.fn().mockImplementation(() => docGet());
+  const txnUpdate = vi.fn();
+  const runTransaction = vi.fn().mockImplementation(async (cb: any) => {
+    return cb({ get: txnGet, update: txnUpdate });
+  });
 
-  return { docGet, docUpdate, docFn, collectionFn, setCustomUserClaims, getUser };
+  return { docGet, docUpdate, docFn, collectionFn, setCustomUserClaims, getUser, runTransaction, txnGet, txnUpdate };
 });
 
 vi.mock('../lib', () => ({
-  db: { collection: mocks.collectionFn, doc: mocks.docFn },
+  db: { collection: mocks.collectionFn, doc: mocks.docFn, runTransaction: mocks.runTransaction },
   admin: {
     auth: () => ({ setCustomUserClaims: mocks.setCustomUserClaims, getUser: mocks.getUser }),
     firestore: { FieldValue: { serverTimestamp: vi.fn(() => 'SERVER_TS') } },
@@ -27,6 +33,9 @@ vi.mock('../lib', () => ({
     if (!['owner', 'admin'].includes(role)) throw new Error('permission-denied');
   }),
   VALID_ROLES: new Set(['superadmin', 'owner', 'admin', 'manager', 'operator', 'employee', 'technician', 'viewer']),
+  roleHierarchy: {
+    superadmin: 1000, owner: 100, admin: 80, manager: 60, operator: 40, employee: 40, technician: 30, viewer: 20,
+  },
 }));
 
 vi.mock('firebase-functions/v2/https', () => ({

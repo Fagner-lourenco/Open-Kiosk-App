@@ -240,8 +240,9 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
  * ⚡ COST-OPT: Reduzido de 3→10 min — a CF onOrderUpdatedRanking já faz
  *   incremento real-time; esta CF só recalcula janela deslizante de 30min.
  */
+// 🔒 FIX BUG-32: Add memory/timeout for store-wide iteration
 export const recalculateRanking30min = onSchedule(
-  { schedule: 'every 10 minutes', region: REGION },
+  { schedule: 'every 10 minutes', region: REGION, memory: '512MiB', timeoutSeconds: 300 },
   async () => {
     const now = new Date();
     const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);

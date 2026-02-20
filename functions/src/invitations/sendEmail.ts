@@ -11,7 +11,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import * as nodemailer from 'nodemailer';
-import { db, admin, requireAuth, requireManager, serverTimestamp } from '../lib';
+import { db, admin, requireAuth, requireManager, serverTimestamp, VALID_ROLES, roleHierarchy } from '../lib';
 
 interface SendInvitationData {
   email: string;
@@ -54,21 +54,18 @@ export const sendInvitationEmail = onCall(async (request) => {
     );
   }
 
-  // 🔧 v4.0.7: Validação de role permitida
-  const validRoles = ['admin', 'manager', 'operator', 'employee', 'technician', 'viewer'];
-  if (!validRoles.includes(role)) {
+  // � FIX BUG-27: Use canonical VALID_ROLES from lib instead of hardcoded array
+  const assignableRoles = [...VALID_ROLES].filter(r => r !== 'superadmin' && r !== 'owner');
+  if (!assignableRoles.includes(role)) {
     throw new HttpsError(
       'invalid-argument',
-      `Role inválida. Permitidas: ${validRoles.join(', ')}`
+      `Role inválida. Permitidas: ${assignableRoles.join(', ')}`
     );
   }
 
-  // Verificação hierárquica: caller não pode convidar role >= própria (exceto owner)
-  const ROLE_HIERARCHY: Record<string, number> = {
-    owner: 100, admin: 80, manager: 60, operator: 40, employee: 40, technician: 30, viewer: 10,
-  };
-  const callerLevel = ROLE_HIERARCHY[callerClaims.role as string] || 0;
-  const invitedLevel = ROLE_HIERARCHY[role] || 0;
+  // 🔒 FIX BUG-28: Use canonical roleHierarchy from lib (viewer=20, not 10)
+  const callerLevel = roleHierarchy[callerClaims.role as string] || 0;
+  const invitedLevel = roleHierarchy[role] || 0;
   if (callerClaims.role !== 'owner' && invitedLevel >= callerLevel) {
     throw new HttpsError(
       'permission-denied',

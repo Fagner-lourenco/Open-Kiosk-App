@@ -18,8 +18,9 @@ import { db, admin } from '../lib';
 
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
 
+// 🔒 FIX BUG-32: Add memory/timeout for franchise-wide iteration
 export const checkKegLevels = onSchedule(
-  { schedule: '0 8 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  { schedule: '0 8 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1', memory: '512MiB', timeoutSeconds: 300 },
   async () => {
     console.log('[ERP:KegLevels] Checking keg levels');
 

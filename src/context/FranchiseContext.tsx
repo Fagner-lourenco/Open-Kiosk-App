@@ -328,6 +328,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
         try {
           const franchiseStores = await franchiseService.getFranchiseStores(franchise.id);
           
+          // 🔒 FIX BUG-19: No phantom fallback — franchises without stores simply won't appear
           if (franchiseStores.length > 0) {
             for (const store of franchiseStores) {
               const hasAccess = storeAccessList.includes('*') || storeAccessList.includes(store.id);
@@ -341,23 +342,9 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
                 });
               }
             }
-          } else {
-            stores.push({
-              franchiseId: franchise.id,
-              franchiseName: franchise.name,
-              storeId: franchise.id,
-              storeName: franchise.name,
-              role,
-            });
           }
-        } catch {
-          stores.push({
-            franchiseId: franchise.id,
-            franchiseName: franchise.name,
-            storeId: franchise.id,
-            storeName: franchise.name,
-            role,
-          });
+        } catch (err) {
+          console.error(`[FranchiseContext] Erro ao carregar lojas da franquia ${franchise.id}:`, err);
         }
       }
       setUserStores(stores);

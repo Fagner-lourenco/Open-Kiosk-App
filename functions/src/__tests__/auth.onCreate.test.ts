@@ -13,14 +13,18 @@ const mocks = vi.hoisted(() => {
   const limit = vi.fn().mockReturnThis();
   const collectionFn = vi.fn(() => ({ doc: docFn, get: colGet, where, limit }));
   const setCustomUserClaims = vi.fn().mockResolvedValue(undefined);
+  const batchSet = vi.fn();
+  const batchCommit = vi.fn().mockResolvedValue(undefined);
+  const batchFn = vi.fn(() => ({ set: batchSet, commit: batchCommit }));
 
-  return { docSet, docGet, docFn, collectionFn, setCustomUserClaims, colGet };
+  return { docSet, docGet, docFn, collectionFn, setCustomUserClaims, colGet, batchSet, batchCommit, batchFn };
 });
 
 vi.mock('../lib', () => ({
   db: {
     doc: mocks.docFn,
     collection: mocks.collectionFn,
+    batch: mocks.batchFn,
   },
   admin: {
     auth: () => ({
@@ -73,8 +77,9 @@ describe('auth/onCreate - onUserCreated', () => {
 
     await run(user);
 
-    // Verifica que set foi chamado (franchise + user docs)
-    expect(mocks.docSet).toHaveBeenCalled();
+    // Verifica que batch.set foi chamado (franchise + user docs via batch)
+    expect(mocks.batchSet).toHaveBeenCalled();
+    expect(mocks.batchCommit).toHaveBeenCalled();
     expect(mocks.setCustomUserClaims).toHaveBeenCalledWith('new-uid', expect.objectContaining({
       role: expect.any(String),
     }));

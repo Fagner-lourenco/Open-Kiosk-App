@@ -53,8 +53,9 @@ function getYesterdayRange(): { start: Date; end: Date } {
 // FUNCTION
 // ============================================================================
 
+// 🔒 FIX BUG-32: Add memory/timeout for franchise-wide iteration
 export const aggregateOperationalDaily = onSchedule(
-  { schedule: '0 2 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  { schedule: '0 2 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1', memory: '512MiB', timeoutSeconds: 540 },
   async () => {
     const dateKey = getYesterdayKey();
     const { start, end } = getYesterdayRange();

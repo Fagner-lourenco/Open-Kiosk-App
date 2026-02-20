@@ -69,12 +69,20 @@ vi.mock('../lib', () => ({
   },
   db: {
     collection: mocks.collection,
-    runTransaction: vi.fn(),
+    runTransaction: vi.fn(async (cb: any) => {
+      const txnGet = vi.fn().mockImplementation(() => mocks.get());
+      const txnUpdate = vi.fn();
+      return cb({ get: txnGet, update: txnUpdate });
+    }),
+    doc: vi.fn(() => ({ get: mocks.get, update: mocks.update })),
   },
   requireAuth: vi.fn(),
   requireOwnerOrAdmin: vi.fn(),
   requireManager: vi.fn(),
   VALID_ROLES: new Set(['superadmin', 'owner', 'admin', 'manager', 'operator', 'employee', 'technician', 'viewer']),
+  roleHierarchy: {
+    superadmin: 1000, owner: 100, admin: 80, manager: 60, operator: 40, employee: 40, technician: 30, viewer: 20,
+  },
   serverTimestamp: () => 'MOCK_TIMESTAMP',
   stripe: {
     customers: { create: vi.fn() },

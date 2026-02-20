@@ -80,11 +80,15 @@ export const onUserCreated = authUser().onCreate(async (user) => {
       new Date(Date.now() + 14 * 24 * 60 * 60 * 1000) // 14 dias trial
     );
     
-    // Cria a franquia
+    // 🔒 FIX BUG-20: Batch the two Firestore writes to ensure atomicity.
+    // setUserClaims uses Auth API and can't join a Firestore batch,
+    // but at least franchise + user docs are consistent.
     const franchiseRef = db.collection('franchises').doc();
     const baseSlug = generateSlug(displayName || email || 'franquia');
     const slug = baseSlug ? `${baseSlug}-${franchiseRef.id.slice(0, 6)}` : franchiseRef.id;
-    await franchiseRef.set({
+
+    const batch = db.batch();
+    batch.set(franchiseRef, {
       name: `Franquia de ${displayName || email}`,
       slug,
       ownerId: uid,
@@ -100,9 +104,7 @@ export const onUserCreated = authUser().onCreate(async (user) => {
       maxUsersPerStore: 5,
       features: ['basic'],
     });
-    
-    // Cria o documento do usuário
-    await db.collection('users').doc(uid).set({
+    batch.set(db.collection('users').doc(uid), {
       email,
       displayName: displayName || null,
       photoURL: photoURL || null,
@@ -114,8 +116,9 @@ export const onUserCreated = authUser().onCreate(async (user) => {
       lastLoginAt: now,
       status: 'active',
     });
+    await batch.commit();
     
-    // 🔧 v4.0.7: Usando helper centralizado
+    // 🔧 v4.0.7: Usando helper centralizado (Auth API — can't be in Firestore batch)
     await setUserClaims(uid, {
       role: 'owner',
       franchiseId: franchiseRef.id,

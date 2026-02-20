@@ -10,14 +10,16 @@ import {
   verifyPagBankSignature,
 } from './paymentService';
 
-const mapWebhookStatus = (status?: string): PaymentStatus => {
+// 🔒 FIX BUG-26: Return null for unknown webhook status instead of defaulting to 'pending'
+const mapWebhookStatus = (status?: string): PaymentStatus | null => {
   const normalized = (status || '').toUpperCase();
   if (normalized === 'PAID' || normalized === 'AUTHORIZED') return 'paid';
   if (normalized === 'CANCELED' || normalized === 'CANCELLED') return 'canceled';
   if (normalized === 'DECLINED' || normalized === 'FAILED') return 'failed';
   if (normalized === 'EXPIRED') return 'expired';
   if (normalized === 'REFUNDED') return 'refunded';
-  return 'pending';
+  if (normalized === 'WAITING' || normalized === 'IN_ANALYSIS' || normalized === 'PENDING') return 'pending';
+  return null;
 };
 
 export const createPayment = onCall(
@@ -79,6 +81,15 @@ export const pagbankWebhook = onRequest(
     const orderStatus = payload?.status || payload?.order?.status;
     const status = mapWebhookStatus(chargeStatus || orderStatus);
 
+    // 🔒 FIX BUG-26: Skip processing when status is unrecognized
+    if (status === null) {
+      logger.warn('[pagbankWebhook] Status nao mapeado, ignorando webhook', {
+        chargeStatus, orderStatus, paymentId: parsed.paymentId,
+      });
+      res.status(200).send({ received: true });
+      return;
+    }
+
     // 🔒 FIX Bug-13: Wrap read-check-write in a transaction to prevent TOCTOU.
     // Without a transaction, two concurrent webhooks (e.g. 'paid' and 'canceled')
     // could both read 'pending', both pass the terminal guard, and the last writer wins.
@@ -98,12 +109,6 @@ export const pagbankWebhook = onRequest(
 
         if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
           logger.info(`[pagbankWebhook] Ignorando webhook — pagamento ja em estado terminal: ${currentStatus}`);
-          return;
-        }
-
-        // Prevenir fallback para 'pending' se status nao reconhecido
-        if (status === 'pending' && currentStatus !== 'pending') {
-          logger.warn(`[pagbankWebhook] Status nao reconhecido, mantendo atual: ${currentStatus}`);
           return;
         }
 

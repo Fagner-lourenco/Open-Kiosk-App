@@ -17,8 +17,18 @@ import { db, admin } from '../lib';
 
 const serverTimestamp = admin.firestore.FieldValue.serverTimestamp;
 
+// 🔒 FIX BUG-31: Firestore batch limit is 500 operations
+const MAX_BATCH_OPS = 450;
+
+// 🔒 FIX BUG-32: Add memory/timeout for functions that iterate all franchises
 export const resetTapDailyCounters = onSchedule(
-  { schedule: '1 0 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  {
+    schedule: '1 0 * * *',
+    timeZone: 'America/Sao_Paulo',
+    region: 'southamerica-east1',
+    memory: '512MiB',
+    timeoutSeconds: 300,
+  },
   async () => {
     console.log('[ERP:ResetCounters] Resetting tap daily counters');
 
@@ -37,7 +47,9 @@ export const resetTapDailyCounters = onSchedule(
 
           if (tapsSnap.empty) continue;
 
-          const batch = db.batch();
+          // 🔒 FIX BUG-31: Chunk batch operations to respect Firestore 500-op limit
+          let batch = db.batch();
+          let opCount = 0;
           for (const tapDoc of tapsSnap.docs) {
             batch.update(tapDoc.ref, {
               todayMlDispensed: 0,
@@ -47,9 +59,17 @@ export const resetTapDailyCounters = onSchedule(
               updatedAt: serverTimestamp(),
               updatedBy: 'system',
             });
+            opCount++;
+            if (opCount >= MAX_BATCH_OPS) {
+              await batch.commit();
+              batch = db.batch();
+              opCount = 0;
+            }
+          }
+          if (opCount > 0) {
+            await batch.commit();
           }
 
-          await batch.commit();
           console.log(`[ERP:ResetCounters] Reset ${tapsSnap.size} taps for ${franchiseId}/${storeId}`);
         } catch (err) {
           console.error(`[ERP:ResetCounters] Error resetting ${franchiseId}/${storeId}:`, err);

@@ -18,8 +18,9 @@ import { db, admin } from '../lib';
 const RETENTION_DAYS = 30;
 const BATCH_SIZE = 400; // Firestore batch limit is 500
 
+// 🔒 FIX BUG-32: Add memory/timeout for franchise-wide iteration
 export const cleanupOldNotifications = onSchedule(
-  { schedule: '0 3 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
+  { schedule: '0 3 * * *', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1', memory: '512MiB', timeoutSeconds: 300 },
   async () => {
     console.log('[Cleanup] Starting notification cleanup');
 

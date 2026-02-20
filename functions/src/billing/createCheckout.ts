@@ -101,6 +101,19 @@ export const createCheckoutSession = onCall(async (request) => {
     const baseUrl = process.env.APP_URL || 'https://admin.openkiosk.app';
     const defaultSuccessUrl = `${baseUrl}/billing?success=true&session_id={CHECKOUT_SESSION_ID}`;
     const defaultCancelUrl = `${baseUrl}/billing?canceled=true`;
+
+    // 🔒 FIX BUG-24: Validate redirect URLs against allowed origin to prevent open redirect
+    const allowedOrigin = new URL(baseUrl).origin;
+    const safeSuccessUrl = (() => {
+      if (!successUrl) return defaultSuccessUrl;
+      try { return new URL(successUrl).origin === allowedOrigin ? successUrl : defaultSuccessUrl; }
+      catch { return defaultSuccessUrl; }
+    })();
+    const safeCancelUrl = (() => {
+      if (!cancelUrl) return defaultCancelUrl;
+      try { return new URL(cancelUrl).origin === allowedOrigin ? cancelUrl : defaultCancelUrl; }
+      catch { return defaultCancelUrl; }
+    })();
     
     // Cria sessão de checkout
     const session = await getStripeClient().checkout.sessions.create({
@@ -113,8 +126,8 @@ export const createCheckoutSession = onCall(async (request) => {
           quantity: 1,
         },
       ],
-      success_url: successUrl || defaultSuccessUrl,
-      cancel_url: cancelUrl || defaultCancelUrl,
+      success_url: safeSuccessUrl,
+      cancel_url: safeCancelUrl,
       metadata: {
         franchiseId,
         plan,

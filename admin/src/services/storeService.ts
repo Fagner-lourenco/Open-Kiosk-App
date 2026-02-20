@@ -21,6 +21,9 @@ import { db } from '@/lib/firebase';
 import { storesPath, storePath } from '@/lib/pathResolver';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
+/** 🔒 FIX BUG-33: Helper to count existing stores and enforce maxStores */
+const franchisePath = (franchiseId: string) => `franchises/${franchiseId}`;
+
 export interface Store {
   id: string;
   name: string;
@@ -100,12 +103,27 @@ export async function getStore(franchiseId: string, storeId: string): Promise<St
 
 /**
  * Create a new store
+ * 🔒 FIX BUG-33: Validates maxStores limit before creation
  */
 export async function createStore(
   franchiseId: string,
   data: CreateStoreData,
   userId: string
 ): Promise<string> {
+  // Enforce maxStores limit
+  const franchiseDoc = await getDoc(doc(db, franchisePath(franchiseId)));
+  if (!franchiseDoc.exists()) {
+    throw new Error('Franquia não encontrada');
+  }
+  const franchise = franchiseDoc.data();
+  const maxStores = franchise.maxStores ?? 1;
+  if (maxStores !== -1) { // -1 = unlimited
+    const existingStores = await getDocs(collection(db, storesPath(franchiseId)));
+    if (existingStores.size >= maxStores) {
+      throw new Error(`Limite de lojas atingido (${maxStores}). Faça upgrade do plano para criar mais lojas.`);
+    }
+  }
+
   const storeData = {
     ...data,
     franchiseId,

@@ -6,10 +6,9 @@
 
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
+import { createStore } from '@/services/storeService';
 import { logStoreAction } from '@/services/auditService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -60,23 +59,18 @@ export function StoreCreatePage() {
     setError(null);
 
     try {
-      const storeData = {
-        name: formData.name.trim(),
-        address: formData.address.trim() || null,
-        phone: formData.phone.trim() || null,
-        email: formData.email.trim() || null,
-        isActive: formData.isActive,
-        franchiseId: currentFranchise.id,
-        createdBy: user?.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        members: [],
-        settings: {},
-      };
-
-      const docRef = await addDoc(
-        collection(db, `franchises/${currentFranchise.id}/stores`),
-        storeData
+      // 🔒 FIX BUG-21/33: Use centralized service with maxStores validation
+      // instead of inline addDoc
+      const storeId = await createStore(
+        currentFranchise.id,
+        {
+          name: formData.name.trim(),
+          address: formData.address.trim() || undefined,
+          phone: formData.phone.trim() || undefined,
+          email: formData.email.trim() || undefined,
+          isActive: formData.isActive,
+        },
+        user?.uid || '',
       );
 
       if (user) {
@@ -90,8 +84,8 @@ export function StoreCreatePage() {
               name: user.displayName || undefined,
             },
             {
-              id: docRef.id,
-              name: storeData.name,
+              id: storeId,
+              name: formData.name.trim(),
             }
           );
         } catch (auditError) {
