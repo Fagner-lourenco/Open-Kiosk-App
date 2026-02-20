@@ -1361,8 +1361,19 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     const params = tapId !== undefined ? { tapId } : {};
     await esp32Service.sendCommand('stop', params);
 
+    // 🔒 FIX BUG-NEW-2: Update Firestore order status so order doesn't stay stuck in 'dispensing'
+    const activeProgress = currentProgressRef.current;
+    if (activeProgress?.orderId) {
+      try {
+        await updateDispenseStatusWithRetry(activeProgress.orderId, 'failed_dispense');
+      } catch (err) {
+        console.error('[ESP32Context] Failed to update order after stop:', err);
+      }
+    }
+
     setIsDispensing(false);
     setCurrentProgress(null);
+    currentProgressRef.current = null;
     return true;
   }, [addLog]);
 

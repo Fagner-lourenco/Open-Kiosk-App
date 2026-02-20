@@ -26,6 +26,7 @@ vi.mock('../lib', () => ({
     const role = ctx.auth?.token?.role;
     if (!['owner', 'admin'].includes(role)) throw new Error('permission-denied');
   }),
+  VALID_ROLES: new Set(['superadmin', 'owner', 'admin', 'manager', 'operator', 'employee', 'technician', 'viewer']),
 }));
 
 vi.mock('firebase-functions/v2/https', () => ({

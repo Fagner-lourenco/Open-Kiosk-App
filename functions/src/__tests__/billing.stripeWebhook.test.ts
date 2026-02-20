@@ -5,14 +5,16 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
+  const dedupGet = vi.fn().mockResolvedValue({ exists: false });
+  const dedupSet = vi.fn().mockResolvedValue(undefined);
   const docGet = vi.fn().mockResolvedValue({ exists: true, data: () => ({}), ref: { update: vi.fn(), collection: vi.fn(() => ({ add: vi.fn() })) } });
-  const docFn = vi.fn(() => ({ get: docGet, update: vi.fn(), collection: vi.fn(() => ({ add: vi.fn() })) }));
+  const docFn = vi.fn(() => ({ get: dedupGet, set: dedupSet, update: vi.fn(), collection: vi.fn(() => ({ add: vi.fn() })) }));
   const colGet = vi.fn().mockResolvedValue({ empty: false, docs: [{ id: 'f1', ref: { update: vi.fn(), collection: vi.fn(() => ({ add: vi.fn() })) } }] });
   const where = vi.fn().mockReturnThis();
   const limit = vi.fn().mockReturnThis();
   const collectionFn = vi.fn(() => ({ doc: docFn, get: colGet, where, limit }));
 
-  return { docGet, docFn, collectionFn, colGet, where };
+  return { docGet, dedupGet, dedupSet, docFn, collectionFn, colGet, where };
 });
 
 vi.mock('../lib', () => ({
@@ -31,6 +33,7 @@ vi.mock('../lib', () => ({
 
 vi.mock('../lib/stripe', () => ({
   verifyWebhookSignature: vi.fn().mockReturnValue({
+    id: 'evt_test_123',
     type: 'checkout.session.completed',
     data: {
       object: {

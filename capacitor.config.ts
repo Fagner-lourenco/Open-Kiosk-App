@@ -38,7 +38,9 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: true, // Permite HTTP em WebView (para ESP32 local)
     captureInput: true,
-    webContentsDebuggingEnabled: process.env.NODE_ENV !== 'production', // Debug apenas em desenvolvimento
+    // 🔒 FIX BUG-NEW-8: Hardcode false for production builds.
+    // process.env.NODE_ENV is unreliable during `cap sync`.
+    webContentsDebuggingEnabled: false,
   },
   
   // Servidor (para hot reload em desenvolvimento)

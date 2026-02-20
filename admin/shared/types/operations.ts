@@ -194,12 +194,18 @@ export interface MaintenanceLog {
  * Path: franchises/{fId}/stores/{sId}/notifications/{id}
  */
 export type NotificationType = 'keg_low' | 'keg_expiring' | 'maintenance_overdue' | 'tap_idle' | 'wastage_high' | 'system';
+/** @deprecated Use NotificationPriority instead */
 export type NotificationSeverity = 'info' | 'warning' | 'critical';
+/** Canonical priority values — aligned with Cloud Functions and Admin writes */
+export type NotificationPriority = 'low' | 'normal' | 'high' | 'critical';
 
 export interface OperationalNotification {
   id: string;
   type: NotificationType;
-  severity: NotificationSeverity;
+  /** @deprecated Use priority instead — kept for backward-compat reads */
+  severity?: NotificationSeverity;
+  /** 🔒 FIX BUG-A12: Aligned with Functions/Admin which write 'priority' */
+  priority: NotificationPriority;
   message: string;
   createdAt: Date;
   readAt: Date | null;

@@ -106,9 +106,10 @@ export const setAdminClaims = onCall(
         ...normalizedClaims,
       };
       
-      // Remover claims null/undefined
+      // Remover claims undefined (preservar null para reset intencional)
+      // 🔒 FIX BUG-A8: Allow null values so callers can intentionally clear fields (e.g. storeId: null)
       Object.keys(newClaims).forEach(key => {
-        if (newClaims[key] === null || newClaims[key] === undefined) {
+        if (newClaims[key] === undefined) {
           delete newClaims[key];
         }
       });

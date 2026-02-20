@@ -1,7 +1,7 @@
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as logger from 'firebase-functions/logger';
-import { db, admin, requireAuth, requireFranchiseAccess } from '../lib';
+import { db, admin, requireAuth, requireFranchiseAccess, requireStoreAccess } from '../lib';
 import type { CreatePaymentInput, PaymentStatus } from './types';
 import {
   createPaymentIntent,
@@ -141,6 +141,9 @@ export const cancelPagBankPayment = onCall(
 
     // P0-07: Require tenant access (franchise membership)
     requireFranchiseAccess(request, franchiseId);
+
+    // 🔒 FIX BUG-A3: Require store-level access (not just franchise)
+    await requireStoreAccess(request, franchiseId, storeId);
 
     const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
     const paymentSnap = await paymentRef.get();

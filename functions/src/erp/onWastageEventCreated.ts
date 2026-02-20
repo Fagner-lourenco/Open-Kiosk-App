@@ -109,19 +109,26 @@ export const onWastageEventCreated = onDocumentCreated(
       }
     }
 
-    // ── 2. Increment Tap.todayWastageMl (🔧 FIX R11-02: idempotency guard) ──
+    // ── 2. Increment Tap.todayWastageMl (� FIX BUG-A2: transaction prevents TOCTOU) ──
     if (wastage.tapId) {
       const tapRef = db.doc(`${storePath}/taps/${wastage.tapId}`);
-      const tapSnap = await tapRef.get();
-      const tapProcessed: string[] = tapSnap.exists ? (tapSnap.data()?.processedEvents || []) : [];
-      if (!tapProcessed.includes(eventId)) {
-        batch.set(tapRef, {
-          todayWastageMl: increment(wastage.mlLost),
-          updatedAt: serverTimestamp(),
-          updatedBy: 'system',
-          processedEvents: arrayUnion(eventId),
-        }, { merge: true });
-        needsBatch = true;
+      try {
+        await db.runTransaction(async (txn) => {
+          const tapSnap = await txn.get(tapRef);
+          const tapProcessed: string[] = tapSnap.exists ? (tapSnap.data()?.processedEvents || []) : [];
+          if (tapProcessed.includes(eventId)) {
+            console.log(`[ERP:Wastage] Event ${eventId} already processed for tap ${wastage.tapId} — skip`);
+            return;
+          }
+          txn.set(tapRef, {
+            todayWastageMl: increment(wastage.mlLost),
+            updatedAt: serverTimestamp(),
+            updatedBy: 'system',
+            processedEvents: arrayUnion(eventId),
+          }, { merge: true });
+        });
+      } catch (err) {
+        console.error(`[ERP:Wastage] Error updating tap ${wastage.tapId}:`, err);
       }
     }
 

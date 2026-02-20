@@ -71,6 +71,7 @@ export {
   type MaintenanceLog,
   type NotificationType,
   type NotificationSeverity,
+  type NotificationPriority,
   type OperationalNotification,
 } from './operations';
 

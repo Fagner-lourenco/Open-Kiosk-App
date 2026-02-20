@@ -22,6 +22,7 @@ vi.mock('../lib', () => ({
   },
   requireAuth: vi.fn((ctx: any) => { if (!ctx.auth) throw new Error('Usuário não autenticado'); }),
   requireFranchiseAccess: vi.fn(),
+  requireStoreAccess: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('./paymentService', () => ({

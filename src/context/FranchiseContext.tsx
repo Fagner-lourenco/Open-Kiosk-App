@@ -168,27 +168,14 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
                   });
                 }
               }
-            } else {
-              // Fallback: se não tem lojas reais, usa a franquia como loja
-              // Isso mantém compatibilidade com franquias que ainda não têm lojas criadas
-              stores.push({
-                franchiseId: franchise.id,
-                franchiseName: franchise.name,
-                storeId: franchise.id,
-                storeName: franchise.name,
-                role,
-              });
             }
+            // 🔒 FIX BUG-NEW-7: Removed fallback that used franchise.id as storeId
+            // which caused writes to a phantom namespace. If no stores exist, the
+            // user simply has an empty store list and cannot operate until a store is created.
           } catch (storeError) {
-            console.warn('[FranchiseContext] Erro ao carregar lojas, usando franquia como loja:', storeError);
-            // Fallback: usa franquia como loja
-            stores.push({
-              franchiseId: franchise.id,
-              franchiseName: franchise.name,
-              storeId: franchise.id,
-              storeName: franchise.name,
-              role,
-            });
+            console.warn('[FranchiseContext] Erro ao carregar lojas:', storeError);
+            // 🔒 FIX BUG-NEW-7: Do NOT fallback to franchise.id as storeId
+            // This prevented operations on a phantom namespace
           }
         }
         setUserStores(stores);

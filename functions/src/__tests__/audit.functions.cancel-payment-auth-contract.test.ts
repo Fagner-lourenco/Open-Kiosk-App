@@ -43,6 +43,7 @@ vi.mock('../lib', () => {
         throw new HttpsError('permission-denied', 'Você não tem acesso a esta franquia');
       }
     },
+    requireStoreAccess: vi.fn().mockResolvedValue(undefined),
   };
 });
 

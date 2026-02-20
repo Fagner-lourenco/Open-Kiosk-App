@@ -108,78 +108,77 @@ export const acceptInvitation = onCall(async (request) => {
     );
 
 
-    // Executa em batch para garantir consistência
-    const batch = db.batch();
+    // 🔒 FIX BUG-A5: Use transaction instead of batch to prevent double-accept race
+    await db.runTransaction(async (txn) => {
+      // Re-read invitation inside transaction to guard against concurrent accept
+      const freshInviteSnap = await txn.get(inviteDoc.ref);
+      if (!freshInviteSnap.exists || freshInviteSnap.data()?.status !== 'pending') {
+        throw new HttpsError('failed-precondition', 'Convite já foi utilizado ou não está pendente');
+      }
 
-    // Atualiza o convite
-    batch.update(inviteDoc.ref, {
-      status: 'accepted',
-      acceptedAt: now,
-      acceptedBy: uid,
+      // Atualiza o convite
+      txn.update(inviteDoc.ref, {
+        status: 'accepted',
+        acceptedAt: now,
+        acceptedBy: uid,
+      });
+
+      // Cria ou atualiza o documento do usuário
+      const userRef = db.collection('users').doc(uid);
+      const userDoc = await txn.get(userRef);
+
+      if (userDoc.exists) {
+        txn.update(userRef, {
+          role: invitation.role,
+          franchiseId: invitation.franchiseId,
+          storeId: resolvedStoreId,
+          storeAccess: resolvedStoreAccess,
+          updatedAt: now,
+        });
+      } else {
+        const authUser = await admin.auth().getUser(uid);
+        txn.set(userRef, {
+          email: authUser.email,
+          displayName: authUser.displayName || null,
+          photoURL: authUser.photoURL || null,
+          role: invitation.role,
+          franchiseId: invitation.franchiseId,
+          storeId: resolvedStoreId,
+          storeAccess: resolvedStoreAccess,
+          createdAt: now,
+          lastLoginAt: now,
+          status: 'active',
+          invitedBy: invitation.invitedBy,
+        });
+      }
+
+      // CRÍTICO: Criar membership na subcollection da franquia
+      const memberRef = db.collection('franchises').doc(invitation.franchiseId).collection('members').doc(uid);
+      const memberDoc = await txn.get(memberRef);
+
+      if (!memberDoc.exists) {
+        const authUser = await admin.auth().getUser(uid);
+        txn.set(memberRef, {
+          userId: uid,
+          email: authUser.email || userEmail,
+          displayName: authUser.displayName || null,
+          photoURL: authUser.photoURL || null,
+          role: invitation.role,
+          storeAccess: resolvedStoreAccess,
+          invitedBy: invitation.invitedBy,
+          invitedAt: invitation.createdAt || now,
+          joinedAt: now,
+          isActive: true,
+        });
+      } else {
+        txn.update(memberRef, {
+          role: invitation.role,
+          storeAccess: resolvedStoreAccess,
+          isActive: true,
+          updatedAt: now,
+        });
+      }
     });
-
-    // Cria ou atualiza o documento do usuário
-    const userRef = db.collection('users').doc(uid);
-    const userDoc = await userRef.get();
-
-    if (userDoc.exists) {
-      // Usuário já existe - atualiza
-      batch.update(userRef, {
-        role: invitation.role,
-        franchiseId: invitation.franchiseId,
-        storeId: resolvedStoreId,
-        storeAccess: resolvedStoreAccess,
-        updatedAt: now,
-      });
-    } else {
-      // Novo usuário - cria documento
-      const authUser = await admin.auth().getUser(uid);
-      batch.set(userRef, {
-        email: authUser.email,
-        displayName: authUser.displayName || null,
-        photoURL: authUser.photoURL || null,
-        role: invitation.role,
-        franchiseId: invitation.franchiseId,
-        storeId: resolvedStoreId,
-        storeAccess: resolvedStoreAccess,
-        createdAt: now,
-        lastLoginAt: now,
-        status: 'active',
-        invitedBy: invitation.invitedBy,
-      });
-    }
-
-    // CRÍTICO: Criar membership na subcollection da franquia
-    // Isso garante que o usuário apareça na lista de membros e tenha acesso às lojas
-    const memberRef = db.collection('franchises').doc(invitation.franchiseId).collection('members').doc(uid);
-    const memberDoc = await memberRef.get();
-
-    if (!memberDoc.exists) {
-      const authUser = await admin.auth().getUser(uid);
-      batch.set(memberRef, {
-        userId: uid,
-        email: authUser.email || userEmail,
-        displayName: authUser.displayName || null,
-        photoURL: authUser.photoURL || null,
-        role: invitation.role,
-        storeAccess: resolvedStoreAccess,
-        invitedBy: invitation.invitedBy,
-        invitedAt: invitation.createdAt || now,
-        joinedAt: now,
-        isActive: true,
-      });
-    } else {
-      // Atualiza membership existente
-      batch.update(memberRef, {
-        role: invitation.role,
-        storeAccess: resolvedStoreAccess,
-        isActive: true,
-        updatedAt: now,
-      });
-    }
-
-    // Executa o batch
-    await batch.commit();
 
     // Atualiza custom claims (merge com existentes para preservar superadmin etc.)
     const currentUser = await admin.auth().getUser(uid);

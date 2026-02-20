@@ -323,7 +323,7 @@
       ]
     },
     {
-      "collectionGroup": "ledger",
+      "collectionGroup": "finLedger",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "accountId", "order": "ASCENDING" },
@@ -331,7 +331,7 @@
       ]
     },
     {
-      "collectionGroup": "ledger",
+      "collectionGroup": "finLedger",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
@@ -339,7 +339,7 @@
       ]
     },
     {
-      "collectionGroup": "ledger",
+      "collectionGroup": "finLedger",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "direction", "order": "ASCENDING" },
@@ -348,7 +348,7 @@
       ]
     },
     {
-      "collectionGroup": "ledger",
+      "collectionGroup": "finLedger",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "sourceType", "order": "ASCENDING" },
@@ -356,7 +356,7 @@
       ]
     },
     {
-      "collectionGroup": "invoices",
+      "collectionGroup": "finInvoices",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },
@@ -364,7 +364,7 @@
       ]
     },
     {
-      "collectionGroup": "bills",
+      "collectionGroup": "finBills",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "status", "order": "ASCENDING" },

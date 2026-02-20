@@ -74,6 +74,7 @@ vi.mock('../lib', () => ({
   requireAuth: vi.fn(),
   requireOwnerOrAdmin: vi.fn(),
   requireManager: vi.fn(),
+  VALID_ROLES: new Set(['superadmin', 'owner', 'admin', 'manager', 'operator', 'employee', 'technician', 'viewer']),
   serverTimestamp: () => 'MOCK_TIMESTAMP',
   stripe: {
     customers: { create: vi.fn() },

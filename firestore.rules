@@ -334,9 +334,11 @@ service cloud.firestore {
                             'paymentTypeId',
                             'cardBrand',
                             'cardLastDigits',
+                            'cardFirstDigits',
                             'cardholderName',
                             'installments',
-                            'dateApproved'
+                            'dateApproved',
+                            'payerId'
                           ]);
           
           // Pedidos nunca podem ser deletados (audit trail)

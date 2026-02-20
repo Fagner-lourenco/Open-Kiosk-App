@@ -11,7 +11,7 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
-import { db, admin, requireAuth, requireOwnerOrAdmin } from '../lib';
+import { db, admin, requireAuth, requireOwnerOrAdmin, VALID_ROLES } from '../lib';
 
 interface SetClaimsData {
   userId: string;
@@ -45,6 +45,14 @@ export const setCustomClaims = onCall(async (request) => {
       'userId é obrigatório'
     );
   }
+
+  // 🔒 FIX BUG-A6: Validate role against canonical enum
+  if (role && !VALID_ROLES.has(role)) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Role inválida: ${role}. Válidas: ${[...VALID_ROLES].join(', ')}`
+    );
+  }
   
   try {
     // Busca usuário alvo
@@ -74,7 +82,7 @@ export const setCustomClaims = onCall(async (request) => {
       manager: 60,
       operator: 40,
       employee: 40,
-      technician: 40,
+      technician: 30,
       viewer: 20,
     };
     

@@ -40,6 +40,15 @@ export const stripeWebhook = onRequest(async (req, res) => {
   
   logger.info(`Stripe webhook received: ${event.type}`);
   
+  // 🔒 FIX BUG-A4: Idempotency guard — Stripe may deliver the same event multiple times
+  const dedupRef = db.collection('_webhookDedup').doc(event.id);
+  const dedupSnap = await dedupRef.get();
+  if (dedupSnap.exists) {
+    logger.info(`[stripeWebhook] Duplicate event ${event.id} — skipping`);
+    res.json({ received: true, duplicate: true });
+    return;
+  }
+
   try {
     switch (event.type) {
       case 'checkout.session.completed':
@@ -68,6 +77,9 @@ export const stripeWebhook = onRequest(async (req, res) => {
     }
     
     res.json({ received: true });
+
+    // Mark event as processed (after successful handling)
+    await dedupRef.set({ type: event.type, processedAt: admin.firestore.FieldValue.serverTimestamp() });
     
   } catch (error) {
     logger.error('Erro ao processar webhook:', error);

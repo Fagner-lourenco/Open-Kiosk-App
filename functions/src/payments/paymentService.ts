@@ -62,7 +62,13 @@ const assertStoreAccess = async (
     throw new HttpsError('permission-denied', 'Sem acesso a esta loja');
   }
 
-  const membership = memberDoc.data() as { storeAccess?: string[] } | undefined;
+  const membership = memberDoc.data() as { storeAccess?: string[]; isActive?: boolean } | undefined;
+
+  // 🔒 FIX BUG-A7: Check isActive flag on membership
+  if (membership?.isActive === false) {
+    throw new HttpsError('permission-denied', 'Membro desativado');
+  }
+
   const accessList = Array.isArray(membership?.storeAccess) ? membership?.storeAccess : [];
   if (accessList.includes('*') || accessList.includes(storeId)) return;
 
@@ -340,52 +346,67 @@ export const updatePaymentStatus = async (
 };
 
 export const syncPendingPaymentsForPagBank = async (): Promise<void> => {
-  const pendingSnap = await db
-    .collectionGroup('payments')
-    .where('status', '==', 'pending')
-    .limit(50)
-    .get();
+  // 🔒 FIX BUG-A10: Paginate with startAfter to avoid starvation of docs beyond limit
+  let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  let hasMore = true;
+  const BATCH_SIZE = 50;
 
-  for (const doc of pendingSnap.docs) {
-    const payment = doc.data() as PaymentRecord;
-    if (payment.provider !== 'pagbank') continue;
-    if (!payment.providerOrderId) continue;
+  while (hasMore) {
+    let query = db
+      .collectionGroup('payments')
+      .where('status', '==', 'pending')
+      .limit(BATCH_SIZE);
 
-    try {
-      const pagbankConfig = resolvePagBankConfig(payment.environment || 'sandbox');
-      const provider = createPagBankProvider(pagbankConfig);
-      const statusResult = await provider.getPaymentStatus?.(payment);
-      if (!statusResult) continue;
-      if (statusResult.status !== payment.status) {
-        // KIO-03/KIO-04: If cancel was requested but provider says paid,
-        // mark as paid_after_cancel for admin reconciliation (requires manual refund).
-        const isCancelRequested = !!(payment as any).cancelRequested;
-        const newStatus = (isCancelRequested && statusResult.status === 'paid')
-          ? 'paid' as PaymentStatus  // still mark as paid — but flag for refund
-          : statusResult.status;
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
 
-        const extraUpdate: Record<string, unknown> = {
-          providerOrderId: statusResult.providerOrderId,
-          providerPaymentId: statusResult.providerPaymentId,
-          pix: statusResult.pix,
-        };
+    const pendingSnap = await query.get();
+    hasMore = pendingSnap.size === BATCH_SIZE;
+    if (pendingSnap.empty) break;
+    lastDoc = pendingSnap.docs[pendingSnap.docs.length - 1];
 
-        if (isCancelRequested && statusResult.status === 'paid') {
-          extraUpdate.requiresRefund = true;
-          extraUpdate.cancelRequestedBeforePayment = true;
-          logger.warn('[payments] Payment arrived AFTER cancel_requested — needs refund', {
-            paymentId: doc.id,
-            orderId: payment.orderId,
-          });
+    for (const doc of pendingSnap.docs) {
+      const payment = doc.data() as PaymentRecord;
+      if (payment.provider !== 'pagbank') continue;
+      if (!payment.providerOrderId) continue;
+
+      try {
+        const pagbankConfig = resolvePagBankConfig(payment.environment || 'sandbox');
+        const provider = createPagBankProvider(pagbankConfig);
+        const statusResult = await provider.getPaymentStatus?.(payment);
+        if (!statusResult) continue;
+        if (statusResult.status !== payment.status) {
+          // KIO-03/KIO-04: If cancel was requested but provider says paid,
+          // mark as paid_after_cancel for admin reconciliation (requires manual refund).
+          const isCancelRequested = !!(payment as any).cancelRequested;
+          const newStatus = (isCancelRequested && statusResult.status === 'paid')
+            ? 'paid' as PaymentStatus  // still mark as paid — but flag for refund
+            : statusResult.status;
+
+          const extraUpdate: Record<string, unknown> = {
+            providerOrderId: statusResult.providerOrderId,
+            providerPaymentId: statusResult.providerPaymentId,
+            pix: statusResult.pix,
+          };
+
+          if (isCancelRequested && statusResult.status === 'paid') {
+            extraUpdate.requiresRefund = true;
+            extraUpdate.cancelRequestedBeforePayment = true;
+            logger.warn('[payments] Payment arrived AFTER cancel_requested — needs refund', {
+              paymentId: doc.id,
+              orderId: payment.orderId,
+            });
+          }
+
+          await updatePaymentStatus(doc.ref, newStatus, extraUpdate);
         }
-
-        await updatePaymentStatus(doc.ref, newStatus, extraUpdate);
+      } catch (error) {
+        logger.warn('[payments] sync pending failed', {
+          paymentId: doc.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
-    } catch (error) {
-      logger.warn('[payments] sync pending failed', {
-        paymentId: doc.id,
-        error: error instanceof Error ? error.message : String(error),
-      });
     }
   }
 };
