@@ -14,7 +14,10 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage",
     "test:coverage:watch": "vitest --coverage --watch",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "audit:firestore": "node scripts/audit-firestore.js",
+    "audit:unused": "npm run audit:firestore && node scripts/audit-unused.js",
+    "audit:full": "npm run audit:unused"
   },
   "dependencies": {
     "@capacitor-community/bluetooth-le": "^7.3.0",

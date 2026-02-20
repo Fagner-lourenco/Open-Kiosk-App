@@ -1,0 +1,152 @@
+{
+  "franchises": {
+    "name": "franchises",
+    "found": true,
+    "fileCount": 110,
+    "files": [
+      "functions\\src\\analytics\\aggOrders.ts",
+      "functions\\src\\analytics\\aggregateDailySales.ts",
+      "functions\\src\\analytics\\getMetricsAdmin.ts",
+      "functions\\src\\auth\\claims.ts",
+      "functions\\src\\auth\\onCreate.ts"
+    ]
+  },
+  "users": {
+    "name": "users",
+    "found": true,
+    "fileCount": 32,
+    "files": [
+      "functions\\src\\auth\\claims.ts",
+      "functions\\src\\auth\\onCreate.ts",
+      "functions\\src\\auth\\setCustomClaims.ts",
+      "functions\\src\\invitations\\accept.ts",
+      "functions\\src\\lib\\claims.ts"
+    ]
+  },
+  "invitations": {
+    "name": "invitations",
+    "found": true,
+    "fileCount": 23,
+    "files": [
+      "functions\\src\\auth\\onCreate.ts",
+      "functions\\src\\index.ts",
+      "functions\\src\\invitations\\accept.ts",
+      "functions\\src\\invitations\\sendEmail.ts",
+      "functions\\src\\__tests__\\functions.coverage.test.ts"
+    ]
+  },
+  "superadmins": {
+    "name": "superadmins",
+    "found": true,
+    "fileCount": 10,
+    "files": [
+      "functions\\src\\analytics\\aggregateDailySales.ts",
+      "functions\\src\\analytics\\getMetricsAdmin.ts",
+      "functions\\src\\auth\\claims.ts",
+      "functions\\src\\auth\\onCreate.ts",
+      "functions\\src\\lib\\auth.ts"
+    ]
+  },
+  "payments": {
+    "name": "payments",
+    "found": true,
+    "fileCount": 39,
+    "files": [
+      "functions\\src\\cleanup\\onDeleteStore.ts",
+      "functions\\src\\index.ts",
+      "functions\\src\\migrations\\consolidatePaymentGatewayConfig.ts",
+      "functions\\src\\payments\\index.ts",
+      "functions\\src\\payments\\onPaymentUpdated.ts"
+    ]
+  },
+  "sessions": {
+    "name": "sessions",
+    "found": true,
+    "fileCount": 8,
+    "files": [
+      "functions\\src\\billing\\createCheckout.ts",
+      "functions\\src\\erp\\aggregateOperationalDaily.ts",
+      "functions\\src\\__tests__\\billing.createCheckout.test.ts",
+      "functions\\src\\__tests__\\functions.test.ts",
+      "admin\\src\\components\\store\\StoreOperationsTab.tsx"
+    ]
+  },
+  "tv-config": {
+    "name": "tv-config",
+    "found": false,
+    "fileCount": 0,
+    "files": []
+  },
+  "stores": {
+    "name": "stores",
+    "found": true,
+    "fileCount": 119,
+    "files": [
+      "functions\\src\\analytics\\aggOrders.ts",
+      "functions\\src\\analytics\\aggregateDailySales.ts",
+      "functions\\src\\analytics\\getMetricsAdmin.ts",
+      "functions\\src\\cleanup\\onDeleteStore.ts",
+      "functions\\src\\erp\\aggregateOperationalDaily.ts"
+    ]
+  },
+  "taps": {
+    "name": "taps",
+    "found": true,
+    "fileCount": 43,
+    "files": [
+      "functions\\src\\cleanup\\onDeleteStore.ts",
+      "functions\\src\\erp\\aggregateOperationalDaily.ts",
+      "functions\\src\\erp\\onServingSessionCreated.ts",
+      "functions\\src\\erp\\onWastageEventCreated.ts",
+      "functions\\src\\erp\\resetTapDailyCounters.ts"
+    ]
+  },
+  "members": {
+    "name": "members",
+    "found": true,
+    "fileCount": 42,
+    "files": [
+      "functions\\src\\analytics\\getMetricsAdmin.ts",
+      "functions\\src\\auth\\claims.ts",
+      "functions\\src\\invitations\\accept.ts",
+      "functions\\src\\lib\\auth.ts",
+      "functions\\src\\payments\\index.ts"
+    ]
+  },
+  "products": {
+    "name": "products",
+    "found": true,
+    "fileCount": 48,
+    "files": [
+      "functions\\src\\cleanup\\onDeleteStore.ts",
+      "admin\\src\\App.tsx",
+      "admin\\src\\components\\Can.tsx",
+      "admin\\src\\components\\dashboard\\TopProductsTable.tsx",
+      "admin\\src\\components\\store\\StoreInventoryTab.tsx"
+    ]
+  },
+  "kegs": {
+    "name": "kegs",
+    "found": true,
+    "fileCount": 20,
+    "files": [
+      "functions\\src\\cleanup\\onDeleteStore.ts",
+      "functions\\src\\erp\\checkKegLevels.ts",
+      "functions\\src\\erp\\onServingSessionCreated.ts",
+      "functions\\src\\erp\\onWastageEventCreated.ts",
+      "functions\\src\\__tests__\\audit.functions.contracts.test.ts"
+    ]
+  },
+  "events": {
+    "name": "events",
+    "found": true,
+    "fileCount": 55,
+    "files": [
+      "functions\\src\\analytics\\aggOrders.ts",
+      "functions\\src\\erp\\onWastageEventCreated.ts",
+      "functions\\src\\lib\\sanitize.ts",
+      "functions\\src\\ranking\\rankingFunctions.ts",
+      "admin\\src\\App.tsx"
+    ]
+  }
+}
