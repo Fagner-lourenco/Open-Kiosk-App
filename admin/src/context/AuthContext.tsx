@@ -147,6 +147,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        // 🔒 Ignorar usuários anônimos no AuthContext do admin.
+        // O signInAnonymously é usado APENAS pela rota pública do TV Dashboard
+        // (/ranking/display/:storeId) e não deve interferir no fluxo de login
+        // do painel administrativo. Sem isso, abrir o TV Dashboard cria uma
+        // sessão anônima que impede o login com email/senha.
+        if (firebaseUser.isAnonymous) {
+          setUser(null);
+          setIsLoading(false);
+          return;
+        }
+
         // Obter claims do token
         const claims = await getClaims();
         

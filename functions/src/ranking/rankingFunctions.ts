@@ -235,11 +235,13 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
 // ============================================================================
 
 /**
- * A cada 3 minutos, recalcula totalMl30min para todos os clientes.
+ * A cada 10 minutos, recalcula totalMl30min para todos os clientes.
  * Query: orders dos últimos 30 min com customerName.
+ * ⚡ COST-OPT: Reduzido de 3→10 min — a CF onOrderUpdatedRanking já faz
+ *   incremento real-time; esta CF só recalcula janela deslizante de 30min.
  */
 export const recalculateRanking30min = onSchedule(
-  { schedule: 'every 3 minutes', region: REGION },
+  { schedule: 'every 10 minutes', region: REGION },
   async () => {
     const now = new Date();
     const thirtyMinAgo = new Date(now.getTime() - 30 * 60 * 1000);
@@ -290,6 +292,25 @@ async function recalculate30minForStore(
     .where('timestamp', '>=', since)
     .where('date', '==', today)
     .get();
+
+  // ⚡ COST-OPT: Early-exit quando não há orders recentes — evita reads desnecessários de ranking/prizes
+  if (ordersSnap.empty) {
+    // Mesmo sem orders, precisamos zerar totalMl30min de docs antigos
+    const rankingSnap = await db
+      .collection(`${storePath}/rankingAgg`)
+      .where('date', '==', today)
+      .where('totalMl30min', '>', 0)
+      .get();
+    if (!rankingSnap.empty) {
+      const batch = db.batch();
+      for (const rankDoc of rankingSnap.docs) {
+        batch.update(rankDoc.ref, { totalMl30min: 0 });
+      }
+      await batch.commit();
+      console.log(`[ranking30m] Zeroed ${rankingSnap.size} stale 30min docs for ${storeId}`);
+    }
+    return;
+  }
 
   // Agrupar por cliente
   const ml30m = new Map<string, number>();
@@ -760,11 +781,12 @@ export const expirePrizes = onSchedule(
 // ============================================================================
 
 /**
- * A cada 1 minuto, desativa Modo Evento se expirado.
+ * A cada 5 minutos, desativa Modo Evento se expirado.
  * Usa collectionGroup para evitar N+1 queries.
+ * ⚡ COST-OPT: Reduzido de 1→5 min — atraso imperceptível na expiração.
  */
 export const expireEventMode = onSchedule(
-  { schedule: 'every 1 minutes', region: REGION },
+  { schedule: 'every 5 minutes', region: REGION },
   async () => {
     const now = admin.firestore.Timestamp.now();
 

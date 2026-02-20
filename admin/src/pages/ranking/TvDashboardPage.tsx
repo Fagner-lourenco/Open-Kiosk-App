@@ -42,7 +42,6 @@ import {
   TrendingDown,
 } from 'lucide-react';
 import { formatVolumeCompact, formatVolumeShort } from '@/utils/formatVolume';
-import { useTvDynamicPricing } from '@/hooks/useTvDynamicPricing';
 import type { DynamicPricingConfig, HappyHourParams, KegProgressiveParams } from '@shared/types/dynamicPricing';
 
 // ============================================================================
@@ -901,7 +900,7 @@ export function TvDashboardPage() {
   const fid = authReady ? franchiseId : null;
   const sid = authReady ? storeId : null;
 
-  const { tvConfig, eventStats, isLoading: configLoading, error: configError } = useTvDashboard(fid, sid);
+  const { tvConfig, eventStats, dynamicPricingConfig: dpConfig, isDynamicPricingEnabled: dpEnabled, isLoading: configLoading, error: configError } = useTvDashboard(fid, sid);
 
   // ── Alternate ranking windows ──
   // Quando alternateRankingWindows está ativo, alterna entre a janela configurada
@@ -930,7 +929,7 @@ export function TvDashboardPage() {
   const { ranking } = useTvRanking(fid, sid, effectiveRankingWindow, tvConfig.maxDisplayPositions);
   const { challenges } = useTvChallenges(fid, sid);
   const { winners } = useTvWinners(fid, sid);
-  const { config: dpConfig, isEnabled: dpEnabled } = useTvDynamicPricing(fid, sid);
+  // ⚡ COST-OPT: dpConfig/dpEnabled já vem de useTvDashboard (mesmo snapshot de tvConfig/current)
 
   const activePanels = tvConfig.panels || ['ranking', 'goal', 'challenge', 'winners'];
 

@@ -17,10 +17,15 @@ import { db } from '@/lib/firebase';
 import { tvConfigPath, eventStatsPath } from '@/lib/pathResolver';
 import type { TvConfig, EventStats } from '@/types/tvDashboard';
 import { DEFAULT_TV_CONFIG, DEFAULT_EVENT_STATS } from '@/types/tvDashboard';
+import type { DynamicPricingConfig } from '@shared/types/dynamicPricing';
+import { DEFAULT_DYNAMIC_PRICING_CONFIG } from '@shared/types/dynamicPricing';
 
 export interface UseTvDashboardReturn {
   tvConfig: TvConfig;
   eventStats: EventStats;
+  /** ⚡ COST-OPT: Extraído do mesmo snapshot de tvConfig/current (evita listener duplicado) */
+  dynamicPricingConfig: DynamicPricingConfig;
+  isDynamicPricingEnabled: boolean;
   isLoading: boolean;
   error: string | null;
 }
@@ -42,6 +47,7 @@ export function useTvDashboard(
     ...DEFAULT_TV_CONFIG,
     updatedAt: undefined,
   });
+  const [dynamicPricingConfig, setDynamicPricingConfig] = useState<DynamicPricingConfig>({ ...DEFAULT_DYNAMIC_PRICING_CONFIG });
   const [eventStats, setEventStats] = useState<EventStats>({
     ...DEFAULT_EVENT_STATS,
     updatedAt: undefined,
@@ -80,9 +86,16 @@ export function useTvDashboard(
       tvRef,
       (snap) => {
         if (snap.exists()) {
-          setTvConfig({ ...DEFAULT_TV_CONFIG, ...snap.data() } as TvConfig);
+          const data = snap.data();
+          setTvConfig({ ...DEFAULT_TV_CONFIG, ...data } as TvConfig);
+          // ⚡ COST-OPT: Extrai dynamicPricingConfig do mesmo snapshot
+          setDynamicPricingConfig({
+            ...DEFAULT_DYNAMIC_PRICING_CONFIG,
+            ...(data.dynamicPricingConfig || {}),
+          });
         } else {
           setTvConfig({ ...DEFAULT_TV_CONFIG, updatedAt: undefined });
+          setDynamicPricingConfig({ ...DEFAULT_DYNAMIC_PRICING_CONFIG });
         }
         checkReady();
       },
@@ -115,5 +128,7 @@ export function useTvDashboard(
     return cleanup;
   }, [franchiseId, storeId, cleanup]);
 
-  return { tvConfig, eventStats, isLoading, error };
+  const isDynamicPricingEnabled = dynamicPricingConfig.enabled && dynamicPricingConfig.rules.length > 0;
+
+  return { tvConfig, eventStats, dynamicPricingConfig, isDynamicPricingEnabled, isLoading, error };
 }
