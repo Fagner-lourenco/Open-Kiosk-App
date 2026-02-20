@@ -12,6 +12,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import * as nodemailer from 'nodemailer';
 import { db, admin, requireAuth, requireManager, serverTimestamp, VALID_ROLES, roleHierarchy } from '../lib';
+import type { UserRole } from '../lib';
 
 interface SendInvitationData {
   email: string;
@@ -64,8 +65,8 @@ export const sendInvitationEmail = onCall(async (request) => {
   }
 
   // 🔒 FIX BUG-28: Use canonical roleHierarchy from lib (viewer=20, not 10)
-  const callerLevel = roleHierarchy[callerClaims.role as string] || 0;
-  const invitedLevel = roleHierarchy[role] || 0;
+  const callerLevel = roleHierarchy[callerClaims.role as UserRole] || 0;
+  const invitedLevel = roleHierarchy[role as UserRole] || 0;
   if (callerClaims.role !== 'owner' && invitedLevel >= callerLevel) {
     throw new HttpsError(
       'permission-denied',

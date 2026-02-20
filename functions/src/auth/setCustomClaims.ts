@@ -12,6 +12,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
 import { db, admin, requireAuth, requireOwnerOrAdmin, VALID_ROLES, roleHierarchy } from '../lib';
+import type { UserRole } from '../lib';
 
 interface SetClaimsData {
   userId: string;
@@ -81,9 +82,9 @@ export const setCustomClaims = onCall(async (request) => {
     
       // 🔒 FIX BUG-29: Use canonical roleHierarchy from ../lib (single source of truth)
     
-      const callerLevel = roleHierarchy[callerClaims.role as string] || 0;
-      const targetLevel = roleHierarchy[targetUser.role] || 0;
-      const newLevel = role ? roleHierarchy[role] || 0 : targetLevel;
+      const callerLevel = roleHierarchy[callerClaims.role as UserRole] || 0;
+      const targetLevel = roleHierarchy[targetUser.role as UserRole] || 0;
+      const newLevel = role ? roleHierarchy[role as UserRole] || 0 : targetLevel;
     
       // Não pode modificar quem está acima ou no mesmo nível (exceto owner)
       if (callerClaims.role !== 'owner' && targetLevel >= callerLevel) {

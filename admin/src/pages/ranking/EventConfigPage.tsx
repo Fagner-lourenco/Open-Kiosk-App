@@ -114,15 +114,11 @@ const REWARD_LABELS: Record<string, string> = {
   custom: '🎁 Especial',
 };
 
-/** Ícones por tipo de prêmio */
-const PRIZE_TYPE_ICONS: Record<string, string> = {
-  coupon: '🎟️',
-  free_drink: '🍺',
-  pix: '💸',
-  custom: '🎁',
-  bonus_multiplier: '🚀',
-  ticket_extra: '🎫',
-};
+// Ícones por tipo de prêmio — available for future UI use
+// const PRIZE_TYPE_ICONS: Record<string, string> = {
+//   coupon: '🎟️', free_drink: '🍺', pix: '💸',
+//   custom: '🎁', bonus_multiplier: '🚀', ticket_extra: '🎫',
+// };
 
 // ============================================================================
 // TAB 1: Config TV & Metas

@@ -94,7 +94,7 @@ export function StoreCreatePage() {
       }
 
       await refreshStores();
-      navigate(`/stores/${docRef.id}`);
+      navigate(`/stores/${storeId}`);
     } catch (err) {
       console.error('Error creating store:', err);
       setError('Erro ao criar loja. Tente novamente.');
