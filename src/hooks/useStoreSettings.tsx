@@ -23,7 +23,7 @@ import { authService } from '@/services/authService';
 
 
 import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
-
+import { onAuthStateChanged } from 'firebase/auth';
 
 
 import { cacheSet, cacheGet, ensureDBReady, STORES, CachedSettings } from '@/services/cacheService';
@@ -97,6 +97,8 @@ const useStoreSettingsCore = () => {
 
 
   const [isSyncing, setIsSyncing] = useState(false);
+  // v4.1.5: flag reativo para autenticação Firebase — setado via onAuthStateChanged
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   // Permission-denied guard: evita retry infinito quando listeners falham
   const permissionDeniedRef = useRef({ store: false, kioskConfig: false, eventStats: false });
@@ -1232,22 +1234,10 @@ const useStoreSettingsCore = () => {
 
 
 
-    const auth = getFirebaseAuth();
-
-
-
-    if (!auth?.currentUser) {
-
-
-
-      console.log('[useStoreSettings] Sem autenticacao - aguardando login para criar listeners');
-
-
-
+    // v4.1.5: auth reativo via onAuthStateChanged (isAuthReady setado no effect abaixo)
+    if (!isAuthReady) {
+      console.log('[useStoreSettings] Aguardando autenticação Firebase para criar listeners...');
       return;
-
-
-
     }
 
     // Permission-denied guard: se TODOS os listeners já falharam, não recriar
@@ -1756,12 +1746,27 @@ const useStoreSettingsCore = () => {
 
 
 
-  }, [isInitialized, settings?.storeId, settings?.franchiseId, firebaseConfigKey]);
+  }, [isInitialized, isAuthReady, settings?.storeId, settings?.franchiseId, firebaseConfigKey]);
 
   // Reset permission-denied flags quando store/franchise mudar (novas credentials podem aplicar)
   useEffect(() => {
     permissionDeniedRef.current = { store: false, kioskConfig: false, eventStats: false };
-  }, [settings?.storeId, settings?.franchiseId]);
+  }, [settings?.storeId, settings?.franchiseId, isAuthReady]);
+
+  /**
+   * v4.1.5: Listener reativo de autenticação Firebase.
+   * Garante que os listeners do Firestore sejam criados/recriados APÓS o Firebase Auth
+   * restaurar a sessão (browserLocalPersistence é assíncrono no restart do app).
+   */
+  useEffect(() => {
+    if (!isInitialized || !isFirebaseInitialized()) return;
+    const auth = getFirebaseAuth();
+    if (!auth) return;
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      setIsAuthReady(!!user);
+    });
+    return () => unsubAuth();
+  }, [isInitialized, firebaseConfigKey]);
 
 
 

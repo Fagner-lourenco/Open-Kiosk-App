@@ -142,7 +142,7 @@ const uint32_t BLE_PIN = 123456;              // 🔒 PIN para pareamento BLE
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // ----- VERSÃO DO FIRMWARE -----
-const char* FIRMWARE_VERSION = "4.1.0";  // set_config + OTA + /status pins
+const char* FIRMWARE_VERSION = "4.1.3";  // FIX: Remover ESP_LE_AUTH_REQ_SC_MITM_BOND — causava security timeout de ~28s no Android
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
@@ -243,9 +243,9 @@ unsigned long lastHeartbeat = 0;
 // Evita bloqueio prolongado da torneira em caso de abandono
 const unsigned long SESSION_TIMEOUT_MS = 120000;  // 2 minutos (120 segundos)
 // Timeout após o fluxo parar (sensor parou de detectar pulsos)
-// 🔧 KIO-FIX: Aumentado de 10s para 30s — chopp draft pode ter pausas no fluxo
-// (espuma, bolha de ar, queda momentânea de pressão na linha)
-const unsigned long NO_FLOW_TIMEOUT_MS = 30000;   // 30 segundos sem pulsos após iniciar
+// 🔧 v4.1.4: Aumentado de 30s para 60s — chopp artesanal pode ter pausas prolongadas
+// (espuma, bolha de ar, queda momentânea de pressão na linha, troca de barril)
+const unsigned long NO_FLOW_TIMEOUT_MS = 60000;   // 60 segundos sem pulsos após iniciar
 
 // ============================================================================
 // 🆕 DECLARAÇÕES ANTECIPADAS DE FUNÇÕES (Forward Declarations)
@@ -286,7 +286,7 @@ void openValveTap(int tapId);
 void closeValveTap(int tapId);
 void processDispensingTap(int tapId);
 String handleGetTaps();
-String handleReleaseDrinkTap(int tapId, JsonDocument& doc);
+// handleReleaseDrinkTap removida: nunca implementada, handleReleaseDrink é a função real
 void sendStatusTap(int tapId, const char* orderId, const char* stage, String message);
 void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec);
 
@@ -320,6 +320,27 @@ class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* server) override {
     connectedCount++;
     Serial.println("[BLE] Cliente conectado! Total: " + String(connectedCount));
+
+    // � FIX v4.1.1: Solicitar connection parameters otimizados para energia
+    // Isso evita que Android/MIUI classifique a conexão como "alto consumo" e a mate.
+    // Parâmetros: minInterval=80(100ms), maxInterval=160(200ms), latency=4, timeout=600(6s)
+#ifdef CONFIG_NIMBLE_ENABLED
+    struct ble_gap_conn_desc desc;
+    int rc = ble_gap_conn_find(0, &desc);
+    if (rc == 0) {
+      uint16_t connHandle = desc.conn_handle;
+      Serial.printf("[BLE] conn_interval=%d (%.1fms) latency=%d supervision=%d (%dms)\n",
+        desc.conn_itvl, desc.conn_itvl * 1.25,
+        desc.conn_latency,
+        desc.supervision_timeout, desc.supervision_timeout * 10);
+      
+      // NOTA v4.1.2: ble_gap_update_params() removido.
+      // Solicitar conn params imediatamente em onConnect() causa rejeição
+      // instantânea pelo Android/MIUI (disconnect no mesmo segundo).
+      // A correção real é via otimização de bateria no Android app.
+    }
+#endif
+
     server->startAdvertising();  // keep advertising to allow multiple clients
   }
 
@@ -327,7 +348,20 @@ class MyServerCallbacks : public BLEServerCallbacks {
     if (connectedCount > 0) {
       connectedCount--;
     }
-    Serial.println("[BLE] Cliente desconectado! Total: " + String(connectedCount));
+    
+    // 🔧 FIX v4.1.1: Logar desconexão com uptime
+    Serial.printf("[BLE] Desconectado! uptime=%lums Total=%d\n", millis(), connectedCount);
+
+#ifdef CONFIG_NIMBLE_ENABLED
+    // Tentar ler conn params do último peer para diagnóstico
+    struct ble_gap_conn_desc desc;
+    int rc = ble_gap_conn_find(0, &desc);
+    if (rc == 0) {
+      Serial.printf("[BLE] Último peer: interval=%d latency=%d timeout=%d\n",
+        desc.conn_itvl, desc.conn_latency, desc.supervision_timeout);
+    }
+#endif
+
     server->startAdvertising();  // resume advertising after disconnect
   }
 };
@@ -868,7 +902,12 @@ void initHTTPServer() {
   // Habilitar CORS básico (complementar aos handlers OPTIONS acima)
   server.enableCORS(true);
 
-  // v4.1.0: Register OTA endpoint before server.begin()
+  // 🔧 FIX v4.1.1: Registrar headers customizados ANTES de server.begin()
+  // Sem isso, server.header("Content-Length") retorna "" sempre
+  const char* collectHeader[] = {"Content-Length"};
+  server.collectHeaders(collectHeader, 1);
+
+  // Register OTA endpoint before server.begin()
   initOTA();
 
   server.begin();
@@ -966,15 +1005,12 @@ void handleCommand() {
 void initBluetooth() {
   BLEDevice::init(BLE_DEVICE_NAME);
   
-  // 🔒 Configurar segurança BLE com PIN (NimBLE - ESP32 Core 3.x)
-  BLEDevice::setSecurityCallbacks(new MySecurity());
-  
-  // Configurar autenticação com PIN estático usando API NimBLE
-  BLESecurity* pSecurity = new BLESecurity();
-  pSecurity->setPassKey(true, BLE_PIN);  // PIN estático = true, valor do PIN
-  pSecurity->setAuthenticationMode(ESP_LE_AUTH_REQ_SC_MITM_BOND);
-  pSecurity->setCapability(ESP_IO_CAP_OUT);  // Display only - mostra PIN
-  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+  // ✅ FIX v4.1.3: SEM configuração de segurança BLE.
+  // A v4.1.2 e anteriores usavam ESP_LE_AUTH_REQ_SC_MITM_BOND + ESP_IO_CAP_OUT (Display Only).
+  // Isso fazia o Android iniciar um fluxo de pairing com PIN; o BleClient.connect()
+  // não trata esse fluxo, então o security procedure timeout expirava em ~28s,
+  // gerando GATT_CONN_TERMINATE_LOCAL_HOST (status=22) + showUnbondMessage: reason: 9.
+  // Para um kiosk com acesso físico controlado, conexão BLE aberta é segura e suficiente.
   
   // Criar servidor BLE
   pServer = BLEDevice::createServer();
@@ -1004,10 +1040,9 @@ void initBluetooth() {
   pAdvertising->setScanResponse(true);
   pAdvertising->start();
   
-  Serial.println("[BLE] ✅ Bluetooth iniciado com segurança!");
+  Serial.println("[BLE] ✅ Bluetooth iniciado (sem pareamento)!");
   Serial.println("  → Nome: " + String(BLE_DEVICE_NAME));
-  Serial.println("  → PIN: " + String(BLE_PIN));
-  Serial.println("  → Aguardando conexões pareadas...");
+  Serial.println("  → Conexão aberta, sem PIN/bonding (FIX v4.1.3)");
 }
 
 // ============================================================================
@@ -2563,10 +2598,21 @@ void applyTapPins() {
 }
 
 // ============================================================================
-// v4.1.0: OTA UPDATE via HTTP
+// v4.1.1: OTA UPDATE via HTTP — reescrito para corrigir 3 bugs:
+//   Bug 1: Auth dentro do upload callback não funciona (requestAuthentication()
+//           não pode enviar headers 401 no meio de um stream multipart)
+//   Bug 2: PowerShell envia Content-Type:application/octet-stream (raw body),
+//           mas o upload callback só dispara com multipart/form-data.
+//           O novo /ota lê o body diretamente do stream TCP.
+//   Bug 3: server.header("Content-Length") retornava "" porque
+//           collectHeaders() não era chamado antes de server.begin()
+//           (corrigido em initHTTPServer()).
+//
+// Endpoints disponíveis após este fix:
+//   POST /ota          → raw binary  (PowerShell, curl --data-binary)
+//   POST /ota/upload   → multipart   (curl -F, browsers)
+//   GET  /ota          → status JSON
 // ============================================================================
-// POST /ota with binary firmware payload.
-// Protected by basic auth (otaUsername/otaPassword).
 
 void initOTA() {
   if (!otaEnabled) {
@@ -2574,54 +2620,181 @@ void initOTA() {
     return;
   }
 
-  // OTA upload endpoint
+  // ── GET /ota ─ página de status ──────────────────────────────────────────
+  server.on("/ota", HTTP_GET, []() {
+    sendCORSHeaders();
+    String json = String("{\"ota\":\"ready\",\"firmware\":\"") + FIRMWARE_VERSION +
+                  "\",\"chip\":\"" + ESP.getChipModel() +
+                  "\",\"method\":\"POST /ota  Content-Type:application/octet-stream  Authorization:Basic <base64>\"}";
+    server.send(200, "application/json", json);
+  });
+
+  // ── OPTIONS /ota ─ preflight CORS ────────────────────────────────────────
   server.on("/ota", HTTP_OPTIONS, []() {
     sendCORSHeaders();
     server.send(204);
   });
 
+  // ── POST /ota ─ raw binary body (PowerShell Invoke-RestMethod / curl --data-binary)
+  //
+  // O ESP32 Arduino WebServer NÃO consome o body para Content-Type que não
+  // seja application/x-www-form-urlencoded ou multipart/form-data.
+  // Logo, server.client().readBytes() lê o body intacto do buffer TCP.
+  // O Content-Length é capturado via server.collectHeaders() (ver initHTTPServer).
+  //
+  // Uso PowerShell:
+  //   $cred = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("admin:kiosk2026"))
+  //   Invoke-RestMethod -Uri http://192.168.4.1/ota -Method Post `
+  //     -Headers @{"Authorization"="Basic $cred"} `
+  //     -InFile firmware.ino.bin -ContentType application/octet-stream -TimeoutSec 180
+  //
+  // Uso curl:
+  //   curl -X POST http://192.168.4.1/ota -u admin:kiosk2026 \
+  //        -H "Content-Type: application/octet-stream" \
+  //        --data-binary @firmware.ino.bin --max-time 180
+  // ─────────────────────────────────────────────────────────────────────────
   server.on("/ota", HTTP_POST, []() {
-    // After upload completes
+    sendCORSHeaders();
+
+    // 1) Autenticação ────────────────────────────────────────────────────────
+    if (!server.authenticate(otaUsername.c_str(), otaPassword.c_str())) {
+      return server.requestAuthentication();
+    }
+
+    // 2) Content-Length ───────────────────────────────────────────────────────
+    String clHeader = server.header("Content-Length");
+    int contentLength = clHeader.toInt();
+
+    if (contentLength <= 0) {
+      Serial.println("[OTA] Content-Length ausente ou zero");
+      server.send(400, "application/json",
+        "{\"error\":\"Content-Length obrigatorio\",\"dica\":\"Use -InFile no PowerShell ou --data-binary no curl\"}");
+      return;
+    }
+    if (contentLength > 4 * 1024 * 1024) {
+      server.send(400, "application/json", "{\"error\":\"Arquivo maior que 4MB\"}");
+      return;
+    }
+
+    Serial.printf("[OTA] Iniciando: %d bytes\n", contentLength);
+
+    // 3) Update.begin ─────────────────────────────────────────────────────────
+    if (!Update.begin(contentLength)) {
+      String err = String("{\"error\":\"Update.begin: ") + Update.errorString() + "\"}";
+      Serial.println("[OTA] " + err);
+      server.send(500, "application/json", err);
+      return;
+    }
+
+    // 4) Leitura do stream TCP ────────────────────────────────────────────────
+    WiFiClient& client = server.client();
+    uint8_t buf[512];
+    int remaining    = contentLength;
+    int bytesWritten = 0;
+    unsigned long lastLog = millis();
+
+    while (remaining > 0) {
+      esp_task_wdt_reset();
+
+      int toRead    = min((int)sizeof(buf), remaining);
+      int bytesRead = client.readBytes(buf, toRead);
+
+      if (bytesRead <= 0) {
+        Update.abort();
+        Serial.printf("[OTA] Stream encerrou cedo: %d/%d bytes\n", bytesWritten, contentLength);
+        server.send(500, "application/json",
+          "{\"error\":\"Stream encerrado antes do fim do arquivo\"}");
+        return;
+      }
+
+      size_t written = Update.write(buf, bytesRead);
+      if ((int)written != bytesRead) {
+        Update.abort();
+        String err = String("{\"error\":\"Write: ") + Update.errorString() + "\"}";
+        Serial.println("[OTA] " + err);
+        server.send(500, "application/json", err);
+        return;
+      }
+
+      remaining    -= bytesRead;
+      bytesWritten += bytesRead;
+
+      if (millis() - lastLog > 2000) {
+        Serial.printf("[OTA] %d/%d bytes (%.0f%%)\n",
+          bytesWritten, contentLength,
+          (float)bytesWritten / contentLength * 100.0f);
+        lastLog = millis();
+      }
+    }
+
+    // 5) Finalizar ────────────────────────────────────────────────────────────
+    if (!Update.end(true)) {
+      String err = String("{\"error\":\"Update.end: ") + Update.errorString() + "\"}";
+      Serial.println("[OTA] " + err);
+      server.send(500, "application/json", err);
+      return;
+    }
+
+    Serial.printf("[OTA] Sucesso! %d bytes gravados. Reiniciando...\n", bytesWritten);
+    server.send(200, "application/json",
+      String("{\"success\":true,\"bytes\":") + bytesWritten +
+      ",\"message\":\"Firmware atualizado. Reiniciando em 1s...\"}");
+    delay(1000);
+    ESP.restart();
+  });
+
+  // ── POST /ota/upload ─ multipart (curl -F, browser form) ─────────────────
+  //
+  // Uso:
+  //   curl -u admin:kiosk2026 -F "firmware=@firmware.ino.bin" http://192.168.4.1/ota/upload
+  // ─────────────────────────────────────────────────────────────────────────
+  server.on("/ota/upload", HTTP_POST, []() {
     sendCORSHeaders();
     if (Update.hasError()) {
-      String errMsg = String("{\"type\":\"error\",\"message\":\"OTA failed: ") + Update.errorString() + "\"}";
-      server.send(500, "application/json", errMsg);
+      String err = String("{\"error\":\"") + Update.errorString() + "\"}";
+      server.send(500, "application/json", err);
     } else {
       server.send(200, "application/json",
-        "{\"type\":\"success\",\"message\":\"OTA OK. Rebooting...\"}");
+        "{\"success\":true,\"message\":\"Firmware atualizado. Reiniciando...\"}");
       delay(1000);
       ESP.restart();
     }
   }, []() {
-    // During upload (streaming)
-    // Basic auth check on first chunk
-    HTTPUpload& upload = server.upload();
+    static bool authOk = false;
+    HTTPUpload& upload  = server.upload();
 
     if (upload.status == UPLOAD_FILE_START) {
-      // Authenticate
-      if (!server.authenticate(otaUsername.c_str(), otaPassword.c_str())) {
-        server.requestAuthentication();
+      // Verificar auth — se falhar, abortar update para que hasError()=true
+      authOk = server.authenticate(otaUsername.c_str(), otaPassword.c_str());
+      if (!authOk) {
+        Serial.println("[OTA/upload] Auth falhou");
+        Update.abort();
         return;
       }
-      Serial.println(String("[OTA] Starting update: ") + upload.filename);
+      Serial.printf("[OTA/upload] Start: %s\n", upload.filename.c_str());
       if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-        Serial.println(String("[OTA] Begin failed: ") + Update.errorString());
+        Serial.printf("[OTA/upload] begin(): %s\n", Update.errorString());
       }
     } else if (upload.status == UPLOAD_FILE_WRITE) {
+      if (!authOk) return;
       if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-        Serial.println(String("[OTA] Write failed: ") + Update.errorString());
+        Serial.printf("[OTA/upload] write(): %s\n", Update.errorString());
       }
-      esp_task_wdt_reset();  // Keep watchdog happy during long uploads
+      esp_task_wdt_reset();
     } else if (upload.status == UPLOAD_FILE_END) {
+      if (!authOk) return;
       if (Update.end(true)) {
-        Serial.println(String("[OTA] Update complete: ") + upload.totalSize + " bytes");
+        Serial.printf("[OTA/upload] Sucesso: %u bytes\n", upload.totalSize);
       } else {
-        Serial.println(String("[OTA] End failed: ") + Update.errorString());
+        Serial.printf("[OTA/upload] end(): %s\n", Update.errorString());
       }
     }
   });
 
-  Serial.println(String("[OTA] Endpoint /ota enabled (basic auth: ") + otaUsername + ")");
+  Serial.println("[OTA] Endpoints prontos:");
+  Serial.println("  POST /ota          raw binary (PowerShell / curl --data-binary)");
+  Serial.println("  POST /ota/upload   multipart  (curl -F)");
+  Serial.println("  GET  /ota          status JSON");
 }
 
 // ============================================================================

@@ -103,6 +103,41 @@ export async function reconcileOnStartup(): Promise<void> {
   isReconciling = true;
 
   try {
+    // v4.1.5: Bridge checkpoint localStorage → IndexedDB para crash recovery.
+    // Detecta se o app travou entre pagamento aprovado e persistFailedDispense,
+    // garantindo que nenhum pagamento seja perdido silenciosamente.
+    const CKPT_KEY = 'kiosk_checkout_progress';
+    const rawCheckpoint = typeof localStorage !== 'undefined' ? localStorage.getItem(CKPT_KEY) : null;
+    if (rawCheckpoint) {
+      try {
+        const checkpoint = JSON.parse(rawCheckpoint) as {
+          orderNumber: string; ml: number; quantity: number;
+          tapId: number; sizeLabel: string; timestamp: number;
+        };
+        const ageMs = Date.now() - checkpoint.timestamp;
+        if (ageMs < 10 * 60 * 1000) {  // ignorar checkpoints com mais de 10 min
+          const existingItems = await cacheGetAll<FailedDispense>(STORES.FAILED_DISPENSES);
+          const alreadyInQueue = existingItems.some(e => e.orderNumber === checkpoint.orderNumber);
+          if (!alreadyInQueue) {
+            console.warn(`[DispenseRecovery] Crash recovery via checkpoint: ${checkpoint.orderNumber} (${Math.round(ageMs / 1000)}s atrás)`);
+            systemLogService.error('dispense', `Crash recovery via checkpoint localStorage: ${checkpoint.orderNumber}`, { orderNumber: checkpoint.orderNumber, ageMs });
+            await persistFailedDispense(checkpoint.orderNumber, 'crash_recovery', {
+              mlDispensed: 0,
+              targetMl: checkpoint.ml,
+              cup: 1,
+              totalCups: checkpoint.quantity,
+              tapId: checkpoint.tapId,
+              sizeLabel: checkpoint.sizeLabel,
+            });
+          }
+        }
+        localStorage.removeItem(CKPT_KEY);
+      } catch (ckptErr) {
+        console.warn('[DispenseRecovery] Falha ao processar checkpoint localStorage:', ckptErr);
+        localStorage.removeItem(CKPT_KEY);
+      }
+    }
+
     const pending = await cacheGetAll<FailedDispense>(STORES.FAILED_DISPENSES);
     if (pending.length === 0) return;
 

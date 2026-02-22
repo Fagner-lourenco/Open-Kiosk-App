@@ -73,4 +73,11 @@
     <!-- Keep Screen On (para kiosk mode) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     
+    <!-- 🔧 FIX v4.1.1: Solicitar exclusão de battery optimization para manter BLE vivo (MIUI/Xiaomi) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    
+    <!-- Foreground Service para manter conexão BLE estável -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    
 </manifest>

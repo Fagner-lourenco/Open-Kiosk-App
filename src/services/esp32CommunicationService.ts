@@ -113,8 +113,8 @@ const DEFAULT_BAUDRATE = 115200;
 // ConfiguraÃ§Ã£o de heartbeat (melhores prÃ¡ticas)
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 15000;  // 15 segundos
 const HEARTBEAT_FAIL_THRESHOLD = 3;           // 3 falhas = desconexÃ£o
-const SUPERVISOR_HEALTHCHECK_INTERVAL_MS = 7000;
-const SUPERVISOR_HEALTHCHECK_FAIL_THRESHOLD = 2;
+const SUPERVISOR_HEALTHCHECK_INTERVAL_MS = 12000;  // 12s (era 7s — reduzido para economizar rádio BLE e evitar kill da MIUI)
+const SUPERVISOR_HEALTHCHECK_FAIL_THRESHOLD = 3;   // 3 falhas = 36s sem resposta antes de dropar
 // KIO-14 fix: increased base delay and reduced attempts to prevent reconnect storm
 const SUPERVISOR_BASE_DELAY_MS = 2000;
 const SUPERVISOR_MAX_DELAY_MS = 60000;
@@ -1119,14 +1119,15 @@ class ESP32CommunicationService {
   async reconnectNow(reason: string = 'manual_reconnect_now'): Promise<boolean> {
     // Guard: se já está em voo ou dentro do cooldown, não duplicar
     if (this.supervisorReconnectInFlight) {
-      console.log('[ESP32Supervisor] reconnectNow ignorado: tentativa em andamento');
+      console.log(`[ESP32Supervisor][DIAG] reconnectNow BLOQUEADO (inFlight) reason=${reason} at=${Date.now()}`);
       return false;
     }
     const now = Date.now();
     if (now - this.lastReconnectNowAt < RECONNECT_NOW_COOLDOWN_MS) {
-      console.log('[ESP32Supervisor] reconnectNow ignorado: cooldown ativo');
+      console.log(`[ESP32Supervisor][DIAG] reconnectNow BLOQUEADO (cooldown ${now - this.lastReconnectNowAt}ms) reason=${reason}`);
       return false;
     }
+    console.warn(`[ESP32Supervisor][DIAG] reconnectNow EXECUTANDO reason=${reason} at=${now} attempt=${this.supervisorStatus.attempt}`);
     this.lastReconnectNowAt = now;
 
     this.manualDisconnectRequested = false;
@@ -1218,10 +1219,14 @@ class ESP32CommunicationService {
       clearInterval(this.supervisorHealthInterval);
     }
 
+    console.log(`[ESP32Supervisor][DIAG] startSupervisorHealthCheck interval=${SUPERVISOR_HEALTHCHECK_INTERVAL_MS}ms threshold=${SUPERVISOR_HEALTHCHECK_FAIL_THRESHOLD} at=${Date.now()}`);
     this.supervisorHealthInterval = setInterval(async () => {
       if (!this.supervisorStatus.active || !this.connectionStatus.connected) {
         return;
       }
+
+      const tickAt = Date.now();
+      const sinceLastInbound = this.lastInboundAt ? (tickAt - this.lastInboundAt) : -1;
 
       // 🔧 FIX: Skip healthcheck ping during active dispensation
       // The ESP32 is busy with solenoid/flow control and may not reply to pings in time.
@@ -1229,9 +1234,10 @@ class ESP32CommunicationService {
       // could cause 2 consecutive healthcheck failures → false disconnect → BLE reconnect.
       // Instead, trust inbound data: if we received anything in the last 10s, consider healthy.
       if (this.dispensingInProgress) {
-        const recentInboundMs = this.lastInboundAt ? (Date.now() - this.lastInboundAt) : Number.POSITIVE_INFINITY;
-        if (recentInboundMs <= 10000) {
+        const recentInboundMs = this.lastInboundAt ? (tickAt - this.lastInboundAt) : Number.POSITIVE_INFINITY;
+        if (recentInboundMs <= 15000) {
           // Got data from ESP32 recently — connection is fine, skip ping
+          // v4.1.4: 15s (era 10s) — cobre até 5 copos no multi-cup (3s gap/copo) sem falso disconnect
           this.markConnectionHealthy('healthcheck_skip_dispensing');
           return;
         }
@@ -1239,7 +1245,19 @@ class ESP32CommunicationService {
         console.warn('[ESP32Supervisor] Dispensing but no ESP32 data for', Math.round(recentInboundMs / 1000), 's — checking connection...');
       }
 
+      // 🔍 DIAG: Logar cada tick do healthcheck com resultado
+      const pingStart = Date.now();
       const healthy = await this.verifyConnection(2500);
+      const pingDuration = Date.now() - pingStart;
+      console.log(
+        `[ESP32Supervisor][DIAG] healthcheck tick=${tickAt}`,
+        `healthy=${healthy}`,
+        `pingMs=${pingDuration}`,
+        `sinceLastInbound=${sinceLastInbound}ms`,
+        `failures=${this.supervisorStatus.consecutiveHealthFailures}`,
+        `transport=${this.connectionStatus.type}`
+      );
+
       if (healthy) {
         this.markConnectionHealthy('healthcheck_ok');
         return;
@@ -1293,9 +1311,11 @@ class ESP32CommunicationService {
 
   private scheduleReconnect(reason: string, immediate: boolean = false): void {
     if (!this.supervisorStatus.active || this.manualDisconnectRequested) {
+      console.log(`[ESP32Supervisor][DIAG] scheduleReconnect ABORTADO (inactive/manual) reason=${reason}`);
       return;
     }
     if (this.connectionStatus.connected || this.supervisorReconnectInFlight || this.supervisorReconnectTimer) {
+      console.log(`[ESP32Supervisor][DIAG] scheduleReconnect BLOQUEADO reason=${reason} connected=${this.connectionStatus.connected} inFlight=${this.supervisorReconnectInFlight} hasTimer=${!!this.supervisorReconnectTimer}`);
       return;
     }
 
@@ -1407,6 +1427,15 @@ class ESP32CommunicationService {
   }
 
   private handleConnectionEstablished(reason: string): void {
+    // 🔍 DIAG: Logar reconexão com tempo total
+    const establishedAt = Date.now();
+    console.warn(
+      `[ESP32][DIAG] handleConnectionEstablished reason=${reason}`,
+      `at=${establishedAt}`,
+      `type=${this.connectionStatus.type}`,
+      `device=${this.connectionStatus.deviceName}`,
+      `attempt=${this.supervisorStatus.attempt}`
+    );
     this.manualDisconnectRequested = false;
     this.clearSupervisorReconnectTimer();
     this.markConnectionHealthy(reason);
@@ -1415,6 +1444,18 @@ class ESP32CommunicationService {
   }
 
   private handleConnectionDropped(reason: string): void {
+    const droppedAt = Date.now();
+    // 🔍 DIAG: Marcar flag ANTES de notifyConnectionChange para detectar race com useESP32Reconnect
+    const wasInFlight = this.supervisorReconnectInFlight;
+    console.warn(
+      `[ESP32][DIAG] handleConnectionDropped reason=${reason}`,
+      `at=${droppedAt}`,
+      `wasConnected=${this.connectionStatus.connected}`,
+      `type=${this.connectionStatus.type}`,
+      `inFlight=${wasInFlight}`,
+      `attempt=${this.supervisorStatus.attempt}`
+    );
+
     this.stopHeartbeat();
     this.stopSupervisorHealthCheck();
     this.resolvePendingPingWaiters(false);
@@ -1448,6 +1489,8 @@ class ESP32CommunicationService {
       consecutiveHealthFailures: 0,
     });
     this.logSupervisor('connection_dropped');
+    // 🔍 DIAG: Logar se scheduleReconnect vai de fato agendar (ou se guard vai bloquear)
+    console.log(`[ESP32][DIAG] about to scheduleReconnect: connected=${this.connectionStatus.connected} inFlight=${this.supervisorReconnectInFlight} hasTimer=${!!this.supervisorReconnectTimer}`);
     this.scheduleReconnect(reason, true);
   }
 

@@ -187,12 +187,13 @@ class StoreService {
         updatedAt: serverTimestamp(),
       });
 
-      const settingsRef = doc(db, storePath(franchiseId, store.storeId), 'settings', 'general');
+      // v4.1.5: usar 'config' (alinhado com Listener 2 em useStoreSettings.tsx)
+      const settingsRef = doc(db, storePath(franchiseId, store.storeId), 'settings', 'config');
       await setDoc(settingsRef, {
         currency: store.currency,
         language: store.language || 'pt-BR',
         createdAt: serverTimestamp(),
-      });
+      }, { merge: true });
 
       console.log('[StoreService] Store created:', store.storeId);
       return store.storeId;

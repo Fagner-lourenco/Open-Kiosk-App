@@ -433,7 +433,8 @@ class SalesService {
       pending: ['dispensing', 'dispensed', 'failed_dispense'],
       dispensing: ['dispensed', 'failed_dispense'],
       dispensed: [],         // terminal — nenhuma transição permitida
-      failed_dispense: [],   // terminal — nenhuma transição permitida
+      // v4.1.5: permitir retry após falha (failed_dispense → dispensing → dispensed)
+      failed_dispense: ['dispensing', 'dispensed'],
     };
 
     try {

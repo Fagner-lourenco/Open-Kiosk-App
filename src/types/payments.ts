@@ -84,6 +84,10 @@ export interface CreatePaymentResponse {
   pix?: PaymentPixPayload;
   providerOrderId?: string;
   providerPaymentId?: string;
+  /** Últimos 4 dígitos do cartão (quando pagamento é card) */
+  cardLast4?: string;
+  /** Primeiros 6 dígitos do cartão (BIN) */
+  cardFirst6?: string;
 }
 
 export interface PaymentRecord {
@@ -100,4 +104,8 @@ export interface PaymentRecord {
   createdAt?: unknown;
   updatedAt?: unknown;
   error?: string;
+  /** Últimos 4 dígitos do cartão (quando pagamento é card) */
+  cardLast4?: string;
+  /** Primeiros 6 dígitos do cartão (BIN) */
+  cardFirst6?: string;
 }

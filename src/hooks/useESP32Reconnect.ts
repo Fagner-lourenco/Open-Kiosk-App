@@ -122,9 +122,15 @@ export function useESP32Reconnect(
 
     const handleConnectionChange = (status: ConnectionStatus) => {
       if (wasConnected.current && !status.connected) {
-        // Conexão perdida - tentar reconectar
-        console.log('[useESP32Reconnect] Conexão perdida, tentando reconectar...');
+        // 🔍 DIAG: Logar com timestamp para detectar race com supervisor scheduleReconnect
+        console.warn(
+          `[useESP32Reconnect][DIAG] Conexão perdida detectada at=${Date.now()}`,
+          `status=${JSON.stringify(status)}`,
+          `— chamando attemptReconnect (pode competir com supervisor scheduleReconnect)`
+        );
         attemptReconnect();
+      } else if (!wasConnected.current && status.connected) {
+        console.log(`[useESP32Reconnect][DIAG] Conexão restaurada at=${Date.now()} type=${status.type}`);
       }
 
       wasConnected.current = status.connected;

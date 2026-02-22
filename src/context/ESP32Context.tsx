@@ -101,11 +101,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
   // Dispense timeout: marca como failed_dispense se ESP32 não responder
   const dispenseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const DISPENSE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutos
+  // v4.1.4: Reduzido de 5min para 3min — alinhado ao SESSION_TIMEOUT do firmware (2min) + margem
+  const DISPENSE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutos
 
   // Grace period: tolerar BLE drop transitório durante dispense ativo sem declarar falha imediatamente
   const disconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const DISCONNECT_GRACE_MS = 15_000; // 15s para reconectar antes de declarar falha
+  // v4.1.4: Aumentado de 15s para 30s — dá mais margem para supervisor reconectar (normal: ~5s)
+  const DISCONNECT_GRACE_MS = 30_000; // 30s para reconectar antes de declarar falha
 
   // Inicializar systemLogService
   useEffect(() => {
@@ -670,6 +672,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         disconnectGraceTimerRef.current = null;
         console.log('[ESP32Context] ✅ Reconectado durante grace period — dispense ativo continua');
         systemLogService.info('dispense', 'Reconexão BLE durante dispense ativo, continuando');
+        // v4.1.4: Solicitar status ao ESP32 após reconexão para ressincronizar progresso.
+        // Garante que um 'completed' enviado pelo firmware enquanto o BLE estava offline
+        // seja recebido agora, encerrando o dispense corretamente.
+        // Se o firmware ainda está dispensando, o próximo sendProgressTap (a cada 250ms)
+        // ressincronizará o display naturalmente.
+        setTimeout(() => {
+          esp32Service.sendCommand('get_status', {}).catch(() => { /* next progress notify (~250ms) covers this */ });
+        }, 600);
       }
 
       // Dedup: só logar se tipo/device mudou (evita 6x "Conexão estabelecida" no startup)

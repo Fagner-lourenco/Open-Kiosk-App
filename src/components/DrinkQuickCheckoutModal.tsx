@@ -50,6 +50,10 @@ interface DrinkQuickCheckoutModalProps {
   onCancel: () => void;
 }
 
+// v4.1.5: Checkpoint key para crash recovery entre pagamento aprovado e persistFailedDispense.
+// Salvo em localStorage (síncrono) antes de qualquer chamada async — garante durabilidade imediata.
+const CHECKOUT_PROGRESS_KEY = 'kiosk_checkout_progress';
+
 const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete, onCancel }: DrinkQuickCheckoutModalProps) => {
   const [selectedSizeKey, setSelectedSizeKey] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(0);
@@ -697,8 +701,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
       if (releaseSuccess) {
         // Sucesso no retry — concluir fluxo
-        await salesService.updateOrderDispenseStatus(orderNumberRef.current, 'dispensed', getCurrentStoreId())
-          .catch(e => console.warn('[DrinkMP] Falha ao atualizar status dispensed:', e));
+        // v4.1.5: Status 'dispensed' será atualizado pelo ESP32Context ao receber stage:'completed'
+        // (igual ao fluxo principal — não escrever aqui para evitar inconsistência/bypass da confirmação física)
         updateProcessingStage("ready_pickup");
 
         const subtotal = Math.round(resolvedUnitPrice * quantity * 100) / 100;
@@ -758,6 +762,18 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const taxAmount = Math.round(subtotal * taxRate * 100) / 100;
     const totalAmount = Math.round((subtotal + taxAmount) * 100) / 100;
 
+    // v4.1.5: Checkpoint de crash — gravado em localStorage ANTES de qualquer chamada async.
+    // Se o app travar entre pagamento aprovado e persistFailedDispense, reconcileOnStartup
+    // detecta via bridging localStorage→IndexedDB e marca o pedido como failed_dispense.
+    localStorage.setItem(CHECKOUT_PROGRESS_KEY, JSON.stringify({
+      orderNumber,
+      ml: selectedSize.ml,
+      quantity,
+      tapId: selectedTapId,
+      sizeLabel: selectedSize.label,
+      timestamp: Date.now(),
+    }));
+
     try {
       // STEP 2: Gravar venda no sistema (skip if already recorded for this order)
       if (recordedOrderRef.current === orderNumber) {
@@ -791,17 +807,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // STEP 3: Dispensar bebida (ESP32)
       updateProcessingStage("dispensing");
 
-      // Marcar como "dispensing" no Firestore — retry 1x se falhar
-      try {
-        await salesService.updateOrderDispenseStatus(orderNumber, 'dispensing', getCurrentStoreId());
-      } catch (e) {
-        console.warn('[DrinkMP] Falha ao atualizar status dispensing, tentando novamente...', e);
-        try {
-          await salesService.updateOrderDispenseStatus(orderNumber, 'dispensing', getCurrentStoreId());
-        } catch (retryErr) {
-          console.error('[DrinkMP] Retry falhou. Prosseguindo com dispense mesmo assim.', retryErr);
-        }
-      }
+      // NOTA v4.1.4: Status 'dispensing' é escrito no Firestore com retry automático
+      // dentro de esp32ReleaseDrink() (ESP32Context.releaseDrink → updateDispenseStatusWithRetry).
+      // Double-write removido aqui para evitar write contention e desperdício de cota Firestore.
 
       let dispenseSucceeded = false;
 
@@ -832,6 +840,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             tapId: selectedTapId,
             sizeLabel: selectedSize.label,
           });
+          // v4.1.5: Falha persistida no IndexedDB — remover checkpoint localStorage
+          localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
           systemLogService.error('dispense', `Dispense command_failed: ${orderNumber}`, { orderNumber, esp32Connected: esp32Status.connected, tapId: selectedTapId, ml: selectedSize.ml, quantity });
 
           toast({
@@ -861,6 +871,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           tapId: selectedTapId,
           sizeLabel: selectedSize.label,
         });
+        // v4.1.5: Falha persistida no IndexedDB — remover checkpoint localStorage
+        localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
 
         toast({
           title: t('checkout.dispenserWarning'),
@@ -894,6 +906,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           storeId: getCurrentStoreId() || undefined,
         });
 
+        // v4.1.5: Pagamento+dispense concluídos com sucesso — removendo checkpoint de crash
+        localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
+
         // Limpar timeout de emergência
         if (emergencyTimeoutRef.current) {
           clearTimeout(emergencyTimeoutRef.current);
@@ -920,6 +935,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // If sale was already recorded, persist failure for recovery/compensation
       if (saleRecordedRef.current && orderNumber) {
         await persistFailedDispense(orderNumber, 'flow_exception').catch(() => {});
+        // v4.1.5: Falha persistida no IndexedDB — remover checkpoint localStorage
+        localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
         // 🔧 FIX Audit-R2: NÃO resetar flags se a venda já foi persistida no Firestore.
         // Resetar causaria dupla gravação de venda no retry (double-decrement de estoque).
         // O guard recordedOrderRef garante que o retry pule direto para dispense.
@@ -1136,7 +1153,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               gatewayProvider: 'pagbank',
               gatewayOrderId: payment.providerOrderId || undefined,
               gatewayPaymentId: payment.id || undefined,
-              cardLastDigits: (payment as any).cardLast4 || undefined,
+              cardLastDigits: payment.cardLast4 || undefined,
             };
             lastEnrichDataRef.current = pagbankListenerEnrichData;
             salesService.enrichOrderWithCustomerData(orderNumberRef.current, pagbankListenerEnrichData, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));

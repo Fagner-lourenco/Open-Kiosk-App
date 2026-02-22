@@ -1,7 +1,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { getFirebaseDb, getStoreDoc, getCurrentStoreId } from '@/services/firebase';
+import { getFirebaseDb, getStoreDoc, getCurrentStoreId, getCurrentFranchiseId } from '@/services/firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { STORE_CHANGED_EVENT } from '@/context/StoreContext';
 
@@ -78,16 +78,20 @@ export const useSettings = (storeId?: string) => {
           // Notify all listeners
           currencyListeners.forEach(listener => listener(currency));
         } else {
-          // Fallback: try root collection for backward compatibility
+          // v4.1.5: Fallback — lê currency do doc raiz da loja (path que o Admin Web escreve)
+          // Admin salva em: franchises/${franchiseId}/stores/${storeId} (campo 'currency')
+          // NÃO em settings/default_currency (path interno do Kiosk-side AdminSettings.tsx)
           const db = getFirebaseDb();
-          const rootDocRef = doc(db, 'settings', 'default_currency');
-          const rootDocSnap = await getDoc(rootDocRef);
-          
-          if (rootDocSnap.exists()) {
-            const currency = currencies.find(c => c.code === rootDocSnap.data().value) || currencies[0];
-            currentCurrencyGlobal = currency;
-            setCurrentCurrency(currency);
-            currencyListeners.forEach(listener => listener(currency));
+          const franchiseId = getCurrentFranchiseId();
+          if (franchiseId) {
+            const storeDocRef = doc(db, 'franchises', franchiseId, 'stores', effectiveStoreId);
+            const storeDocSnap = await getDoc(storeDocRef);
+            if (storeDocSnap.exists() && storeDocSnap.data().currency) {
+              const currency = currencies.find(c => c.code === storeDocSnap.data().currency) || currencies[0];
+              currentCurrencyGlobal = currency;
+              setCurrentCurrency(currency);
+              currencyListeners.forEach(listener => listener(currency));
+            }
           }
         }
         currencyInitializedForStore = effectiveStoreId;
