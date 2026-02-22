@@ -54,9 +54,9 @@ const VoiceSearchButton = ({ onTranscript, className }: VoiceSearchButtonProps) 
     <div className="relative">
       <Button
         variant={isListening ? "default" : "outline"}
-        size="sm"
+        size="default"
         onClick={handleClick}
-        className={`${className} ${getButtonColor()} transition-all duration-200`}
+        className={`${className} ${getButtonColor()} transition-all duration-200 touch-target`}
       >
         {isListening ? (
           <>
@@ -71,7 +71,7 @@ const VoiceSearchButton = ({ onTranscript, className }: VoiceSearchButtonProps) 
         )}
       </Button>
       {isListening && (
-        <div className="absolute -bottom-8 left-0 right-0 text-xs text-center text-gray-500">
+        <div className="absolute -bottom-8 left-0 right-0 text-xs text-center text-muted-foreground">
           {confidence > 0 && t('voice.confident', { percent: Math.round(confidence * 100) })}
         </div>
       )}

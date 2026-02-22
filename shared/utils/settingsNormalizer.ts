@@ -58,10 +58,6 @@ export interface RawStoreData {
   language?: string;
   attractVideoConfig?: AttractVideoConfig;
 
-  // Legacy fields (Admin Web wrote these)
-  kioskMode?: boolean;
-  idleTimeout?: number;
-
   // Allow additional fields to pass through
   [key: string]: unknown;
 }
@@ -80,29 +76,22 @@ export interface NormalizedStoreSettings {
 /**
  * Normalizes store-level settings from a raw Firestore document.
  *
- * Reconciliation rules (canonical takes precedence over legacy):
- * - `kioskEnabled` ?? `kioskMode`
- * - `attractTimeoutSeconds` ?? `idleTimeout`
- * - `language` → normalizeLanguage()
- * - `attractScreenEnabled` → pass-through
- * - `attractVideoConfig` → pass-through
+ * All fields are now canonical (legacy fields removed after tablet reset).
  *
- * @param data - Raw store document data (may have legacy field names)
+ * @param data - Raw store document data
  * @returns Normalized settings with canonical field names only
  */
 export function normalizeStoreSettings(data: RawStoreData): NormalizedStoreSettings {
   const result: NormalizedStoreSettings = {};
 
-  // kioskEnabled: canonical takes precedence over legacy kioskMode
-  const kioskValue = data.kioskEnabled ?? data.kioskMode;
-  if (kioskValue !== undefined) {
-    result.kioskEnabled = kioskValue;
+  // kioskEnabled: direct read
+  if (data.kioskEnabled !== undefined) {
+    result.kioskEnabled = data.kioskEnabled;
   }
 
-  // attractTimeoutSeconds: canonical takes precedence over legacy idleTimeout
-  const timeoutValue = data.attractTimeoutSeconds ?? data.idleTimeout;
-  if (timeoutValue !== undefined) {
-    result.attractTimeoutSeconds = timeoutValue;
+  // attractTimeoutSeconds: direct read
+  if (data.attractTimeoutSeconds !== undefined) {
+    result.attractTimeoutSeconds = data.attractTimeoutSeconds;
   }
 
   // attractScreenEnabled: no legacy alias, pass-through
@@ -129,26 +118,22 @@ export function normalizeStoreSettings(data: RawStoreData): NormalizedStoreSetti
 // ============================================================================
 
 /**
- * Produces a dual-write payload that writes both canonical and legacy field names.
+ * Produces a write payload with canonical field names.
  *
- * During the transition period (Phase 2), Admin Web should use this to ensure
- * that old Kiosk versions still see the legacy field names while new versions
- * read the canonical ones.
+ * Legacy dual-write removed — all tablets reset from scratch.
  *
  * @param settings - Settings in canonical format
- * @returns Object with both canonical and legacy field names
+ * @returns Object with canonical field names
  */
 export function toDualWritePayload(settings: NormalizedStoreSettings): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
 
   if (settings.kioskEnabled !== undefined) {
     payload.kioskEnabled = settings.kioskEnabled;
-    payload.kioskMode = settings.kioskEnabled; // legacy
   }
 
   if (settings.attractTimeoutSeconds !== undefined) {
     payload.attractTimeoutSeconds = settings.attractTimeoutSeconds;
-    payload.idleTimeout = settings.attractTimeoutSeconds; // legacy
   }
 
   if (settings.attractScreenEnabled !== undefined) {

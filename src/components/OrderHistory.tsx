@@ -1,16 +1,11 @@
 /**
- * OrderHistory - Histórico de pedidos com opção de reimprimir recibos
- * 
- * NOTA: Este componente usa esp32Printer APENAS para IMPRESSÃO TÉRMICA,
- * não para dispensação de bebidas. O uso do esp32Printer aqui é apropriado
- * pois impressora térmica pode ser um dispositivo separado do dispensador.
+ * OrderHistory - Histórico de pedidos com opção de reimprimir recibos (PDF)
  */
 
 import { useEffect, useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { esp32Printer } from "@/services/esp32PrinterService";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useSettings } from "@/hooks/useSettings";
 import { useToast } from "@/hooks/use-toast";
@@ -178,45 +173,15 @@ const OrderHistory = () => {
         mlPerUnit: item.mlPerUnit,
       }));
 
-      // Check thermal printer setting
-      if (settings.useThermalPrinter && settings.comPort) {
-        // Use thermal printer
-        const printData = esp32Printer.generatePrintData(fullCartItems, settings, order.orderNumber);
-        
-        if (!esp32Printer.isConnected()) {
-          const connected = await esp32Printer.connectToComPort(settings.comPort);
-          if (!connected) {
-            throw new Error(`Failed to connect to COM port ${settings.comPort}`);
-          }
-        }
-        
-        const result = await esp32Printer.sendPrintData(printData);
-        
-        if (result.success) {
-          toast({ 
-            title: t('common.success'), 
-            description: t('orders.reprintSuccess')
-          });
-        } else {
-          toast({ 
-            title: t('orders.printError'), 
-            description: result.message, 
-            variant: "destructive" 
-          });
-        }
-      } else {
-        // Use PDF printer
-        pdfReceiptService.generateReceiptPDF(fullCartItems, settings, order.orderNumber);
-        toast({ 
-          title: t('common.success'), 
-          description: t('orders.pdfSuccess')
-        });
-      }
+      // Generate PDF receipt
+      pdfReceiptService.generateReceiptPDF(fullCartItems, settings, order.orderNumber);
+      toast({ 
+        title: t('common.success'), 
+        description: t('orders.pdfSuccess')
+      });
     } catch (error) {
       console.error('Reprint error:', error);
-      const errorMessage = settings?.useThermalPrinter 
-        ? t('orders.reprintError')
-        : t('orders.pdfError');
+      const errorMessage = t('orders.pdfError');
       toast({ 
         title: t('orders.printError'), 
         description: errorMessage, 

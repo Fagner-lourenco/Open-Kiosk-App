@@ -2,7 +2,7 @@
 
 
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, type ReactNode } from 'react';
 
 
 
@@ -80,7 +80,7 @@ let initializationPromise: Promise<void> | null = null;
 
 
 
-export const useStoreSettings = () => {
+const useStoreSettingsCore = () => {
 
 
 
@@ -97,6 +97,9 @@ export const useStoreSettings = () => {
 
 
   const [isSyncing, setIsSyncing] = useState(false);
+
+  // Permission-denied guard: evita retry infinito quando listeners falham
+  const permissionDeniedRef = useRef({ store: false, kioskConfig: false, eventStats: false });
 
 
 
@@ -132,7 +135,12 @@ export const useStoreSettings = () => {
 
 
 
-        return JSON.parse(savedSettings);
+        const parsed = JSON.parse(savedSettings);
+        // Garantir language default ao carregar de cache antigo
+        if (!parsed.language) parsed.language = 'pt-BR';
+        // 🔍 DIAG: verificar se localStorage contém attractVideoConfig
+        console.warn('[useStoreSettings] localStorage attractVideoConfig:', JSON.stringify(parsed.attractVideoConfig ?? 'UNDEFINED'));
+        return parsed;
 
 
 
@@ -410,8 +418,6 @@ export const useStoreSettings = () => {
           esp32LastWifiIp: offlinePayload.esp32LastWifiIp,
           drinkPickupTimeoutSeconds: offlinePayload.drinkPickupTimeoutSeconds,
           drinkPickupSoundEnabled: offlinePayload.drinkPickupSoundEnabled,
-          useThermalPrinter: offlinePayload.useThermalPrinter,
-          comPort: offlinePayload.comPort,
         };
 
         for (const key of Object.keys(deviceLevelOffline)) {
@@ -572,8 +578,6 @@ export const useStoreSettings = () => {
         esp32LastWifiIp: syncPayload.esp32LastWifiIp,
         drinkPickupTimeoutSeconds: syncPayload.drinkPickupTimeoutSeconds,
         drinkPickupSoundEnabled: syncPayload.drinkPickupSoundEnabled,
-        useThermalPrinter: syncPayload.useThermalPrinter,
-        comPort: syncPayload.comPort,
       };
 
       // Remove undefined values so we don't overwrite with undefined
@@ -992,6 +996,10 @@ export const useStoreSettings = () => {
 
 
 
+              language: 'pt-BR',
+
+
+
               taxId: '',
 
 
@@ -1242,13 +1250,11 @@ export const useStoreSettings = () => {
 
     }
 
-
-
-
-
-
-
-
+    // Permission-denied guard: se TODOS os listeners já falharam, não recriar
+    if (permissionDeniedRef.current.store && permissionDeniedRef.current.kioskConfig) {
+      console.warn('[useStoreSettings] Listeners bloqueados por permission-denied. Ignorando retry.');
+      return;
+    }
 
 
 
@@ -1272,7 +1278,7 @@ export const useStoreSettings = () => {
 
 
 
-        const storeId = settings.storeId || getCurrentStoreId();
+        const storeId = getCurrentStoreId() || settings.storeId;
 
 
 
@@ -1300,11 +1306,11 @@ export const useStoreSettings = () => {
 
 
 
-        // Determinar paths canonicos (franchise)
+        // Determinar paths canonicos (franchise) — preferir slug centralizado
 
 
 
-        const franchiseId = settings.franchiseId || getCurrentFranchiseId();
+        const franchiseId = getCurrentFranchiseId() || settings.franchiseId;
 
 
 
@@ -1479,11 +1485,16 @@ export const useStoreSettings = () => {
                 // ✅ Reconciliação via settingsNormalizer (campos canônicos)
                 ...(() => {
                   const normalized = normalizeStoreSettings(storeData);
+                  // 🔍 DIAG: rastrear attractVideoConfig no fluxo Firestore
+                  console.warn('[useStoreSettings] Firestore storeData.attractVideoConfig:', JSON.stringify(storeData.attractVideoConfig ?? 'UNDEFINED'));
+                  console.warn('[useStoreSettings] normalized.attractVideoConfig:', JSON.stringify(normalized.attractVideoConfig ?? 'UNDEFINED'));
+                  console.warn('[useStoreSettings] prev.attractVideoConfig:', JSON.stringify(prev.attractVideoConfig ?? 'UNDEFINED'));
                   return {
                     kioskEnabled: normalized.kioskEnabled ?? prev.kioskEnabled,
                     attractTimeoutSeconds: normalized.attractTimeoutSeconds ?? prev.attractTimeoutSeconds,
                     attractScreenEnabled: normalized.attractScreenEnabled ?? prev.attractScreenEnabled,
-                    language: normalized.language ?? prev.language,
+                    // Language: Firebase é fonte verdade. Se ausente no doc, default pt-BR.
+                    language: normalized.language ?? prev.language ?? 'pt-BR',
                     attractVideoConfig: normalized.attractVideoConfig ?? prev.attractVideoConfig,
                   };
                 })(),
@@ -1532,18 +1543,13 @@ export const useStoreSettings = () => {
 
 
         }, (error) => {
-
-
-
           console.error('[useStoreSettings] Store listener error:', error);
-
-
-
+          // permission-denied: operador sem acesso — manter dados em cache, não limpar state
+          if ((error as { code?: string })?.code === 'permission-denied') {
+            permissionDeniedRef.current.store = true;
+            console.warn('[useStoreSettings] Store listener: permission-denied. Keeping cached data. Retry bloqueado.');
+          }
         });
-
-
-
-
 
 
 
@@ -1603,7 +1609,9 @@ export const useStoreSettings = () => {
 
 
 
-                // Configs do Kiosk
+                // Configs do Kiosk (apenas campos device-level)
+                // NOTA: attractTimeoutSeconds, language, kioskEnabled são Admin-owned
+                // e vêm pelo Listener 1 (store doc). NÃO ler daqui.
 
 
 
@@ -1628,26 +1636,6 @@ export const useStoreSettings = () => {
 
 
                 drinkPickupSoundEnabled: kioskConfig.drinkPickupSoundEnabled ?? prev.drinkPickupSoundEnabled,
-
-
-
-                useThermalPrinter: kioskConfig.useThermalPrinter ?? prev.useThermalPrinter,
-
-
-
-                comPort: kioskConfig.comPort ?? prev.comPort,
-
-
-
-                attractTimeoutSeconds: kioskConfig.attractTimeoutSeconds ?? prev.attractTimeoutSeconds,
-
-
-
-                language: kioskConfig.language ?? prev.language,
-
-
-
-                kioskEnabled: kioskConfig.kioskEnabled ?? prev.kioskEnabled,
 
 
 
@@ -1688,18 +1676,13 @@ export const useStoreSettings = () => {
 
 
         }, (error) => {
-
-
-
           console.error('[useStoreSettings] Kiosk config listener error:', error);
-
-
-
+          // permission-denied: operador sem write — silent, dados vêm do Listener 1
+          if ((error as { code?: string })?.code === 'permission-denied') {
+            permissionDeniedRef.current.kioskConfig = true;
+            console.warn('[useStoreSettings] Kiosk config: permission-denied (expected for operator role). Retry bloqueado.');
+          }
         });
-
-
-
-
 
 
 
@@ -1773,7 +1756,12 @@ export const useStoreSettings = () => {
 
 
 
-  }, [isInitialized, settings?.storeId, firebaseConfigKey]);
+  }, [isInitialized, settings?.storeId, settings?.franchiseId, firebaseConfigKey]);
+
+  // Reset permission-denied flags quando store/franchise mudar (novas credentials podem aplicar)
+  useEffect(() => {
+    permissionDeniedRef.current = { store: false, kioskConfig: false, eventStats: false };
+  }, [settings?.storeId, settings?.franchiseId]);
 
 
 
@@ -2005,6 +1993,41 @@ export const useStoreSettings = () => {
 
 };
 
+// ============================================
+// Context / Provider Singleton
+// Evita 30 listeners duplicados (10 instâncias × 3 listeners)
+// ============================================
+
+interface StoreSettingsContextType {
+  settings: StoreSettings | null;
+  isInitialized: boolean;
+  loading: boolean;
+  isSyncing: boolean;
+  updateSettings: (newSettings: StoreSettings) => void;
+  resetStore: () => void;
+}
+
+const StoreSettingsContext = createContext<StoreSettingsContextType | null>(null);
+
+export const StoreSettingsProvider = ({ children }: { children: ReactNode }) => {
+  const value = useStoreSettingsCore();
+  return (
+    <StoreSettingsContext.Provider value={value}>
+      {children}
+    </StoreSettingsContext.Provider>
+  );
+};
+
+export const useStoreSettings = (): StoreSettingsContextType => {
+  const ctx = useContext(StoreSettingsContext);
+  if (!ctx) {
+    throw new Error(
+      '[useStoreSettings] Must be used within <StoreSettingsProvider>. ' +
+      'Wrap your app with <StoreSettingsProvider>.'
+    );
+  }
+  return ctx;
+};
 
 
 

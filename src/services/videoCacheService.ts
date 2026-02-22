@@ -335,18 +335,17 @@ export const getCachedVideoUrl = async (url: string): Promise<string> => {
     }
 
     // Tenta obter do Cache API
+    // 🔧 Reutiliza Object URL existente se já tiver sido criada (evita blob churn + GC pressure)
+    const existingUrl = activeObjectURLs.get(videoId);
+    if (existingUrl) {
+      return existingUrl;
+    }
+
     const cache = await getVideoCache();
     if (cache) {
       const response = await cache.match(url);
       if (response) {
         const blob = await response.blob();
-        
-        // 🔧 v4.0.7: Revogar URL anterior se existir (evita memory leak)
-        const previousUrl = activeObjectURLs.get(videoId);
-        if (previousUrl) {
-          URL.revokeObjectURL(previousUrl);
-        }
-        
         const objectUrl = URL.createObjectURL(blob);
         activeObjectURLs.set(videoId, objectUrl);
         return objectUrl;

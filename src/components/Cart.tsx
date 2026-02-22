@@ -57,9 +57,9 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
             </SheetTitle>
           </SheetHeader>
           <div className="flex flex-col items-center justify-center h-64">
-            <ShoppingCart className="w-16 h-16 text-gray-300 mb-4" />
-            <p className="text-gray-500 text-center">{t('cart.emptyCart')}</p>
-            <p className="text-sm text-gray-400 text-center mt-2">{t('cart.emptyCartHint')}</p>
+            <ShoppingCart className="w-16 h-16 text-muted-foreground/40 mb-4" />
+            <p className="text-muted-foreground text-center">{t('cart.emptyCart')}</p>
+            <p className="text-sm text-muted-foreground/70 text-center mt-2">{t('cart.emptyCartHint')}</p>
           </div>
         </SheetContent>
       </Sheet>
@@ -102,18 +102,18 @@ const Cart = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, onChe
                       className="w-16 h-16 object-cover rounded-md"
                     />
                   ) : (
-                    <div className="w-16 h-16 bg-gray-200 rounded-md flex items-center justify-center">
-                      <ShoppingCart className="w-6 h-6 text-gray-400" />
+                    <div className="w-16 h-16 bg-muted rounded-md flex items-center justify-center">
+                      <ShoppingCart className="w-6 h-6 text-muted-foreground" />
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
                     <h4 className="font-medium text-sm line-clamp-2">
                       {item.product.title}
                       {item.sizeLabel && (
-                        <span className="text-gray-500"> ({item.sizeLabel})</span>
+                        <span className="text-muted-foreground"> ({item.sizeLabel})</span>
                       )}
                     </h4>
-                    <p className="text-sm text-gray-500">{currentCurrency.symbol}{item.unitPrice.toFixed(2)}</p>
+                    <p className="text-sm text-muted-foreground">{currentCurrency.symbol}{item.unitPrice.toFixed(2)}</p>
                     <div className="flex items-center justify-between mt-3">
                       <div className="flex items-center gap-2">
                         <Button

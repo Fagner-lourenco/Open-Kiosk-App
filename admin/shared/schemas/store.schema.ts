@@ -189,21 +189,16 @@ export const StoreSchema = z.object({
   // Interface
   language: z.enum(['pt-BR', 'en']).default('pt-BR'),
   attractTimeoutSeconds: z.number().min(10).max(600).default(60),
-  useThermalPrinter: z.boolean().default(false),
 
   // Kiosk (store-level)
   kioskEnabled: z.boolean().default(false),
   attractScreenEnabled: z.boolean().default(true),
   attractVideoConfig: AttractVideoConfigSchema.optional(),
 
-  // Legacy fields (backward compat)
-  kioskMode: z.boolean().optional(),
-  idleTimeout: z.number().optional(),
   _migrationVersion: z.number().optional(),
 
   // Hardware
   esp32Config: ESP32ConfigSchema.optional(),
-  comPort: z.string().optional(),
   paymentGatewayConfig: PaymentGatewayConfigSchema.optional(),
   
   // Metadados
@@ -240,7 +235,6 @@ export const CreateStoreSchema = z.object({
 export const UpdateStoreSchema = CreateStoreSchema.partial().extend({
   isActive: z.boolean().optional(),
   attractTimeoutSeconds: z.number().min(10).max(600).optional(),
-  useThermalPrinter: z.boolean().optional(),
   kioskEnabled: z.boolean().optional(),
   attractScreenEnabled: z.boolean().optional(),
   attractVideoConfig: AttractVideoConfigSchema.partial().optional(),

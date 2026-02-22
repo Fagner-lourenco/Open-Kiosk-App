@@ -15,7 +15,6 @@ interface EnvConfig {
   currency?: string;
   taxPercentage?: number;
   taxId?: string;
-  comPort?: string;
   firebaseConfig?: {
     apiKey?: string;
     authDomain?: string;
@@ -33,7 +32,6 @@ export interface PartialStoreConfig {
   currency?: string;
   taxPercentage?: number;
   taxId?: string;
-  comPort?: string;
   firebaseConfig?: {
     apiKey?: string;
     authDomain?: string;
@@ -206,7 +204,6 @@ export const mergeWithDefaults = (
     currency: envConfig.currency || defaults.currency,
     taxPercentage: envConfig.taxPercentage ?? defaults.taxPercentage,
     taxId: envConfig.taxId || defaults.taxId,
-    comPort: envConfig.comPort || defaults.comPort,
     firebaseConfig: {
       apiKey: envConfig.firebaseConfig?.apiKey || defaults.firebaseConfig?.apiKey || '',
       authDomain: envConfig.firebaseConfig?.authDomain || defaults.firebaseConfig?.authDomain || '',

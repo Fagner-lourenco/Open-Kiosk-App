@@ -28,24 +28,13 @@ describe('shared/utils/settingsNormalizer', () => {
   });
 
   describe('normalizeStoreSettings', () => {
-    it('converte campos legados para canônicos', () => {
+    it('lê campos canônicos diretamente', () => {
       const result = normalizeStoreSettings({
-        kioskMode: true,
-        idleTimeout: 120,
+        kioskEnabled: true,
+        attractTimeoutSeconds: 120,
       });
       expect(result.kioskEnabled).toBe(true);
       expect(result.attractTimeoutSeconds).toBe(120);
-    });
-
-    it('campos canônicos têm precedência sobre legados', () => {
-      const result = normalizeStoreSettings({
-        kioskEnabled: false,
-        kioskMode: true,
-        attractTimeoutSeconds: 30,
-        idleTimeout: 120,
-      });
-      expect(result.kioskEnabled).toBe(false);
-      expect(result.attractTimeoutSeconds).toBe(30);
     });
 
     it('normaliza language', () => {
@@ -71,15 +60,16 @@ describe('shared/utils/settingsNormalizer', () => {
   });
 
   describe('toDualWritePayload', () => {
-    it('escreve campos canônicos e legados', () => {
+    it('escreve apenas campos canônicos', () => {
       const payload = toDualWritePayload({
         kioskEnabled: true,
         attractTimeoutSeconds: 90,
       });
       expect(payload.kioskEnabled).toBe(true);
-      expect(payload.kioskMode).toBe(true);
       expect(payload.attractTimeoutSeconds).toBe(90);
-      expect(payload.idleTimeout).toBe(90);
+      // Legacy fields no longer written
+      expect(payload.kioskMode).toBeUndefined();
+      expect(payload.idleTimeout).toBeUndefined();
     });
 
     it('preserva language e attractScreenEnabled', () => {

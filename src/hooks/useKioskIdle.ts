@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 
 export type UseKioskIdleOptions = {
   timeoutSeconds?: number; // default 120s
@@ -9,36 +9,54 @@ export const useKioskIdle = (options: UseKioskIdleOptions = {}) => {
   const { timeoutSeconds = 120, suppressed = false } = options;
   const [isIdle, setIsIdle] = useState(false);
   const timerRef = useRef<number | null>(null);
-  const listenersRegisteredRef = useRef(false);
+  const isIdleRef = useRef(false); // mirror for event handler (avoids setState when already !idle)
+  const suppressedRef = useRef(suppressed);
+  const timeoutRef = useRef(timeoutSeconds);
 
-  const clearTimer = () => {
+  // Keep refs in sync
+  suppressedRef.current = suppressed;
+  timeoutRef.current = timeoutSeconds;
+
+  const clearTimer = useCallback(() => {
     if (timerRef.current) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-  };
+  }, []);
 
-  const startTimer = () => {
+  const startTimer = useCallback(() => {
     clearTimer();
     timerRef.current = window.setTimeout(() => {
+      isIdleRef.current = true;
       setIsIdle(true);
-    }, timeoutSeconds * 1000);
-  };
+    }, timeoutRef.current * 1000);
+  }, [clearTimer]);
 
-  const resetIdle = () => {
+  const resetIdle = useCallback(() => {
+    isIdleRef.current = false;
     setIsIdle(false);
-    if (!suppressed) {
+    if (!suppressedRef.current) {
       startTimer();
     } else {
       clearTimer();
     }
-  };
+  }, [startTimer, clearTimer]);
 
   useEffect(() => {
     const onAnyInteraction = () => {
-      setIsIdle(false);
-      if (!suppressed) {
-        startTimer();
+      // Guard: skip setState when not idle (avoids thousands of no-op setStates on pointermove)
+      if (isIdleRef.current) {
+        isIdleRef.current = false;
+        setIsIdle(false);
+      }
+      // Always restart timer
+      if (!suppressedRef.current) {
+        // Inline timer restart to use current ref values
+        if (timerRef.current) window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => {
+          isIdleRef.current = true;
+          setIsIdle(true);
+        }, timeoutRef.current * 1000);
       }
     };
 
@@ -51,33 +69,26 @@ export const useKioskIdle = (options: UseKioskIdleOptions = {}) => {
       'wheel',
     ];
 
-    // Avoid duplicate listeners if effect re-runs unexpectedly
-    if (listenersRegisteredRef.current) {
-      events.forEach((evt) => window.removeEventListener(evt, onAnyInteraction));
-    }
-
     events.forEach((evt) => window.addEventListener(evt, onAnyInteraction, { passive: true }));
-    listenersRegisteredRef.current = true;
 
-    if (!suppressed) {
+    if (!suppressedRef.current) {
       startTimer();
     }
 
     return () => {
       events.forEach((evt) => window.removeEventListener(evt, onAnyInteraction));
-      listenersRegisteredRef.current = false;
       clearTimer();
     };
-  }, [suppressed, timeoutSeconds]);
+  }, [startTimer, clearTimer]);
 
   // If suppression toggles while idle, ensure consistent state
   useEffect(() => {
     if (suppressed) {
       clearTimer();
-    } else if (!isIdle) {
+    } else if (!isIdleRef.current) {
       startTimer();
     }
-  }, [suppressed]);
+  }, [suppressed, clearTimer, startTimer]);
 
   return { isIdle, resetIdle };
 };

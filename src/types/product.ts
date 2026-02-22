@@ -22,6 +22,14 @@ export interface Product {
   sizes?: ProductSize[];
   defaultSizeKey?: string;
   totalMlAvailable?: number;
+
+  // Beer info (UI "Quadro de Chopes")
+  tapNumber?: number;
+  style?: string;
+  abv?: number;
+  ibu?: number;
+  priceUnitLabel?: string;
+  accentColor?: string;
   
   // Multi-store support
   storeId?: string;

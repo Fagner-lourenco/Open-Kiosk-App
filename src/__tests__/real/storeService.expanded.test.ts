@@ -530,7 +530,6 @@ describe('StoreService - Expanded Tests', () => {
           phone: '+5511999999999',
           email: 'teste@store.com',
         },
-        useThermalPrinter: true,
         attractTimeoutSeconds: 120,
       };
 
@@ -648,7 +647,6 @@ describe('StoreService - Expanded Tests', () => {
           taxPercentage: 10,
           isActive: true,
           slug: 'new-store',
-          useThermalPrinter: false,
           attractTimeoutSeconds: 60,
           language: 'pt-BR',
           created_at: expect.any(String),

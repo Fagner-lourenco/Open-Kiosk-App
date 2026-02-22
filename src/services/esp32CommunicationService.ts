@@ -3305,19 +3305,6 @@ class ESP32CommunicationService {
     return this.sendCommand('ping');
   }
 
-  /**
-   * @deprecated NÃ£o implementado no firmware atual. Reservado para expansÃ£o futura.
-   */
-  async printReceipt(_receiptData: {
-    orderId: string;
-    items: Array<{ name: string; quantity: number; price: number }>;
-    total: number;
-    paymentMethod: string;
-  }): Promise<boolean> {
-    console.warn('[ESP32] printReceipt nÃ£o estÃ¡ implementado no firmware');
-    return false;
-  }
-
   // ============================================
   // NOVOS MÃ‰TODOS (Firmware v2.1+)
   // ============================================

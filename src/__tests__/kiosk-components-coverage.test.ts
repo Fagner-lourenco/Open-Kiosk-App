@@ -34,7 +34,6 @@ import OrderHistory from '@/components/OrderHistory';
 import ProductForm from '@/components/ProductForm';
 import ProductList from '@/components/ProductList';
 import Reports from '@/components/Reports';
-import UartPortSelector from '@/components/UartPortSelector';
 import VoiceSearchButton from '@/components/VoiceSearchButton';
 
 // ---- Named + Default exports ----
@@ -67,7 +66,7 @@ const defaultComponents = {
   AdminProducts, AdminReports, AdminSettings, AttractScreen,
   Checkout, DrinkPickupScreen, DrinkQuickCheckoutModal,
   ESP32StatusIndicator, Header, InventoryManager, OnScreenKeyboard,
-  OrderHistory, ProductForm, ProductList, Reports, UartPortSelector,
+  OrderHistory, ProductForm, ProductList, Reports,
   VoiceSearchButton, CupFillAnimation, ESP32DispenserPanel,
   FranchiseGuard, StoreSelector, StoreSwitcher, TapSelector, PWAUpdatePrompt,
 };

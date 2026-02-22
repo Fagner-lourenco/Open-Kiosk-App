@@ -181,8 +181,9 @@ export const getCurrentFranchiseId = (): string | null => {
       try {
         const storeSettings = JSON.parse(storeSettingsStr);
         if (storeSettings.franchiseId) {
-          // Sincroniza com chave padronizada para futuras consultas
-          localStorage.setItem('open-kiosk-admin:selectedFranchise', storeSettings.franchiseId);
+          // NOTA: NÃO sincronizar de volta para chave padronizada —
+          // storeSettings pode ter auto-generated IDs divergentes do slug canônico.
+          // Apenas retorna como fallback sem contaminar a chave Admin.
           return storeSettings.franchiseId;
         }
       } catch (parseError) {

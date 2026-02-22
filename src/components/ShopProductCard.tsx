@@ -48,7 +48,7 @@ export default function ShopProductCard({
       <CardContent className="p-4">
         <div className="space-y-3">
           {product.image && (
-            <div className="aspect-square overflow-hidden rounded-lg bg-gray-100">
+            <div className="aspect-square overflow-hidden rounded-lg bg-muted">
               <img
                 src={product.image}
                 alt={product.title}
@@ -59,20 +59,20 @@ export default function ShopProductCard({
 
           <div>
             <h3 className="font-semibold text-sm line-clamp-2">{product.title}</h3>
-            <p className="text-gray-600 text-xs line-clamp-2 mt-1">{product.description}</p>
+            <p className="text-muted-foreground text-xs line-clamp-2 mt-1">{product.description}</p>
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <span className={`font-medium text-sm ${dp.isModified ? 'text-orange-600' : 'text-green-600'}`}>
+              <span className={`font-medium text-sm ${dp.isModified ? 'text-orange-600 dark:text-orange-400' : 'text-green-600 dark:text-green-400'}`}>
                 {dp.isModified && (
-                  <span className="line-through text-gray-400 text-xs mr-1">
+                  <span className="line-through text-muted-foreground text-xs mr-1">
                     {currencySymbol}{basePrice.toFixed(2)}
                   </span>
                 )}
                 {currencySymbol}{displayPrice.toFixed(2)}
                 {dp.isModified && dp.deltaPercent < 0 && (
-                  <span className="ml-1 text-xs text-green-600 font-bold">
+                  <span className="ml-1 text-xs text-green-600 dark:text-green-400 font-bold">
                     {dp.deltaPercent.toFixed(0)}%
                   </span>
                 )}
@@ -102,7 +102,7 @@ export default function ShopProductCard({
               ? ((product.totalMlAvailable || 0) <= 0
                 ? t('shop.outOfStock')
                 : (!isEsp32Healthy
-                  ? 'Sistema temporariamente indisponível'
+                  ? t('shop.tempUnavailable')
                   : t('shop.selectSize')))
               : ((product.stock || 0) <= 0 ? t('shop.outOfStock') : t('shop.addToCart'))}
           </Button>

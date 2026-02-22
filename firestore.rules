@@ -385,10 +385,10 @@ service cloud.firestore {
                         isFranchiseOwner(franchiseId) ||
                         hasStoreAccess(franchiseId, storeId);
           
-          // Owner da franquia ou admin/manager podem editar configurações
+          // Owner da franquia ou admin/manager/operator podem editar configurações
           allow create, update: if isSuperAdmin() || 
                                   isFranchiseOwner(franchiseId) ||
-                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+                                  canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'operator']);
           
           allow delete: if false;
         }

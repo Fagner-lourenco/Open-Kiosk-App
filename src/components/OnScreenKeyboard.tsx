@@ -7,9 +7,10 @@ interface OnScreenKeyboardProps {
   onKeyPress: (key: string) => void;
   onClose: () => void;
   isVisible: boolean;
+  darkMode?: boolean;
 }
 
-const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardProps) => {
+const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible, darkMode = false }: OnScreenKeyboardProps) => {
   const { t } = useTranslation();
   const keyboardRef = useRef<HTMLDivElement>(null);
 
@@ -57,10 +58,12 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end">
-      <div ref={keyboardRef} className="w-full bg-white p-4 rounded-t-lg shadow-2xl">
+      <div ref={keyboardRef} className={"w-full p-4 rounded-t-lg shadow-2xl " + (darkMode ? "bg-neutral-900 text-white" : "bg-white")}>
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-lg font-semibold">{t('keyboard.title')}</h3>
-          <Button variant="outline" size="sm" onClick={onClose}>
+          <Button variant="outline" size="sm" onClick={onClose}
+            className={darkMode ? "border-neutral-700 text-white hover:bg-neutral-800" : ""}
+          >
             {t('keyboard.close')}
           </Button>
         </div>
@@ -73,7 +76,7 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
                   key={key}
                   variant="outline"
                   size="sm"
-                  className="min-w-[2.5rem] h-10 active:bg-blue-100"
+                  className={"min-w-[2.5rem] h-10 " + (darkMode ? "border-neutral-700 text-white hover:bg-neutral-800 active:bg-neutral-700" : "active:bg-blue-100")}
                   onClick={() => handleKeyPress(key)}
                 >
                   {key.toUpperCase()}
@@ -86,7 +89,7 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
             <Button
               variant="outline"
               size="sm"
-              className="px-6"
+              className={"px-6 " + (darkMode ? "border-neutral-700 text-white hover:bg-neutral-800" : "")}
               onClick={() => handleSpecialKey('space')}
             >
               {t('keyboard.space')}
@@ -94,7 +97,7 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
             <Button
               variant="outline"
               size="sm"
-              className="px-4"
+              className={"px-4 " + (darkMode ? "border-neutral-700 text-white hover:bg-neutral-800" : "")}
               onClick={() => handleSpecialKey('backspace')}
             >
               ⌫
@@ -102,7 +105,7 @@ const OnScreenKeyboard = ({ onKeyPress, onClose, isVisible }: OnScreenKeyboardPr
             <Button
               variant="outline"
               size="sm"
-              className="px-4"
+              className={"px-4 " + (darkMode ? "border-neutral-700 text-white hover:bg-neutral-800" : "")}
               onClick={() => handleSpecialKey('clear')}
             >
               {t('keyboard.clear')}

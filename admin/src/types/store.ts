@@ -122,7 +122,6 @@ export interface Store {
   taxPercentage: number;
   isActive: boolean;
   attractTimeoutSeconds: number;
-  useThermalPrinter: boolean;
   esp32Config?: ESP32Config;
   paymentGatewayConfig?: PaymentGatewayConfig;
   createdAt: Timestamp | Date;
@@ -133,11 +132,6 @@ export interface Store {
   attractScreenEnabled?: boolean;
   attractVideoConfig?: AttractVideoConfig;
 
-  // Legacy fields (backward compat)
-  /** @deprecated Use kioskEnabled */
-  kioskMode?: boolean;
-  /** @deprecated Use attractTimeoutSeconds */
-  idleTimeout?: number;
   /** Versão da migração */
   _migrationVersion?: number;
 }
@@ -164,7 +158,6 @@ export interface CreateStoreData {
 export interface UpdateStoreData extends Partial<CreateStoreData> {
   isActive?: boolean;
   attractTimeoutSeconds?: number;
-  useThermalPrinter?: boolean;
   kioskEnabled?: boolean;
   attractScreenEnabled?: boolean;
   attractVideoConfig?: Partial<AttractVideoConfig>;

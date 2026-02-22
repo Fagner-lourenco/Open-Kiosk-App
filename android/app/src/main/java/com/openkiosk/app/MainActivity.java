@@ -17,6 +17,7 @@ import android.view.WindowManager;
 import androidx.core.view.WindowCompat;
 
 import com.getcapacitor.BridgeActivity;
+import androidx.appcompat.app.AlertDialog;
 
 public class MainActivity extends BridgeActivity {
 
@@ -37,7 +38,24 @@ public class MainActivity extends BridgeActivity {
         // Registrar plugin PlugPagTerminal (PlugPag SDK 4.11.0)
         registerPlugin(PlugPagTerminalPlugin.class);
         
-        super.onCreate(savedInstanceState);
+        try {
+            super.onCreate(savedInstanceState);
+        } catch (RuntimeException e) {
+            // Captura falha crítica ao inicializar WebView (ex: "Package not found: com.google.android.webview").
+            // Em dispositivos sem um WebView provider instalado o app crasha durante a criação do WebView.
+            String msg = e.getMessage() != null ? e.getMessage() : (e.getCause() != null ? e.getCause().getMessage() : "");
+            if (msg.contains("Package not found") || msg.toLowerCase().contains("webview")) {
+                // Mostrar diálogo amigável e encerrar a activity.
+                new AlertDialog.Builder(this)
+                    .setTitle("Componente WebView ausente")
+                    .setMessage("O componente WebView do sistema não foi encontrado. Instale o 'Android System WebView' (ou Google WebView) e reinicie o aplicativo.")
+                    .setCancelable(false)
+                    .setPositiveButton("OK", (d, w) -> finish())
+                    .show();
+                return;
+            }
+            throw e;
+        }
         enableImmersiveMode();
         enableKioskProtections();
     }

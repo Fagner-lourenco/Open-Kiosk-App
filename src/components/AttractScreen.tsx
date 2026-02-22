@@ -53,12 +53,46 @@ const AttractScreen = ({
   const displayTitle = title || videoSettings?.displayTitle || t('attract.title');
   const displaySubtitle = subtitle || videoSettings?.displaySubtitle || t('attract.subtitle');
 
+  // Whether video is actively playing (controls conditional rendering of heavy decorations)
+  const hasVideo = !!(cachedVideoUrl && videoSettings?.isEnabled);
+
+  // 🔍 DIAG: rastrear toda a cadeia de vídeo quando tela visível
   useEffect(() => {
-    if (visible && cachedVideoUrl && videoSettings?.isEnabled) {
-      videoRef.current?.play().catch(() => {
-        // Autoplay can be blocked without user gesture.
-      });
+    if (visible) {
+      console.warn('[AttractScreen] attractVideoConfig:', JSON.stringify(attractVideoConfig ?? 'UNDEFINED'));
+      console.warn('[AttractScreen] videoSettings:', JSON.stringify(videoSettings));
+      console.warn('[AttractScreen] cachedVideoUrl:', cachedVideoUrl ?? 'NULL');
+      console.warn('[AttractScreen] hasVideo:', hasVideo);
     }
+  }, [visible, attractVideoConfig, videoSettings, cachedVideoUrl, hasVideo]);
+
+  // Swap video src via ref instead of remounting with key={url}
+  const prevVideoUrlRef = useRef<string | null>(null);
+  useEffect(() => {
+    const vid = videoRef.current;
+    if (!vid || !cachedVideoUrl || !videoSettings?.isEnabled) return;
+
+    const tryPlay = () => {
+      if (visible) {
+        vid.play().catch(() => {
+          // Autoplay can be blocked without user gesture.
+        });
+      }
+    };
+
+    if (prevVideoUrlRef.current !== cachedVideoUrl) {
+      prevVideoUrlRef.current = cachedVideoUrl;
+      vid.src = cachedVideoUrl;
+      // Wait for enough data before playing (avoids race on slow GPUs)
+      vid.addEventListener('canplay', tryPlay, { once: true });
+      vid.load();
+    } else {
+      tryPlay();
+    }
+
+    return () => {
+      vid.removeEventListener('canplay', tryPlay);
+    };
   }, [visible, cachedVideoUrl, videoSettings?.isEnabled]);
 
   useEffect(() => {
@@ -121,12 +155,12 @@ const AttractScreen = ({
       }
       onKeyDown={onKeyDown}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-blue-50 z-0" />
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-white to-amber-50 z-0" />
 
-      {cachedVideoUrl && videoSettings?.isEnabled && (
+      {/* Video element always mounted when enabled — src swapped via ref to avoid remount */}
+      {hasVideo && (
         <>
           <video
-            key={cachedVideoUrl}
             ref={videoRef}
             autoPlay
             muted
@@ -134,15 +168,13 @@ const AttractScreen = ({
             playsInline
             className="absolute inset-0 w-full h-full pointer-events-none z-[1]"
             style={{
-              objectFit: videoSettings.videoCoverMode === 'contain' ? 'contain' : 'cover',
-              opacity: videoSettings.videoOpacity ?? 0.4,
+              objectFit: videoSettings!.videoCoverMode === 'contain' ? 'contain' : 'cover',
+              opacity: videoSettings!.videoOpacity ?? 0.4,
             }}
             onError={(e) => {
               console.error('Error loading attract video:', e);
             }}
-          >
-            <source src={cachedVideoUrl} type="video/mp4" />
-          </video>
+          />
 
           {isDownloading && (
             <div className="absolute bottom-4 right-4 z-[2] bg-black/60 text-white text-xs px-2 py-1 rounded">
@@ -157,20 +189,24 @@ const AttractScreen = ({
         </>
       )}
 
-      <div className="absolute inset-0 overflow-hidden pointer-events-none z-10">
-        <div className="absolute top-20 left-10 w-72 h-72 bg-blue-200/30 rounded-full blur-3xl animate-pulse" />
-        <div
-          className="absolute bottom-20 right-10 w-96 h-96 bg-purple-200/20 rounded-full blur-3xl animate-pulse"
-          style={{ animationDelay: '1s' }}
-        />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-r from-blue-100/20 to-purple-100/20 rounded-full blur-3xl" />
-      </div>
+      {/* Decorative blur orbs — hidden when video is active (saves ~60% GPU compositing budget) */}
+      {!hasVideo && (
+        <div className="absolute inset-0 overflow-hidden pointer-events-none z-10">
+          <div className="absolute top-20 left-10 w-72 h-72 bg-amber-200/30 rounded-full blur-xl animate-pulse" />
+          <div
+            className="absolute bottom-20 right-10 w-96 h-96 bg-yellow-200/20 rounded-full blur-xl animate-pulse"
+            style={{ animationDelay: '1s' }}
+          />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-gradient-to-r from-amber-100/20 to-yellow-100/20 rounded-full blur-xl" />
+        </div>
+      )}
 
       <div className="relative text-center px-8 max-w-2xl z-20">
         <div className="flex items-center justify-center mb-2">
           <div className="relative">
+            {/* Glow behind mug — lighter blur when video active to reduce GPU load */}
             <div
-              className="absolute inset-0 blur-3xl opacity-40"
+              className={'absolute inset-0 opacity-40 ' + (hasVideo ? 'blur-lg' : 'blur-xl')}
               style={{
                 background:
                   'radial-gradient(circle, rgba(251,191,36,0.6) 0%, rgba(245,158,11,0.3) 50%, transparent 70%)',
@@ -203,19 +239,19 @@ const AttractScreen = ({
           </div>
         </div>
 
-        <h1 className="text-5xl sm:text-6xl font-bold text-gray-900 mt-2 mb-3 tracking-tight leading-tight">
+        <h1 className="text-5xl sm:text-6xl font-bold text-gray-800 mt-2 mb-3 tracking-tight leading-tight">
           {displayTitle}
         </h1>
 
-        <p className="text-xl sm:text-2xl text-gray-600/75 mb-7 font-medium">{displaySubtitle}</p>
+        <p className="text-xl sm:text-2xl text-gray-500/80 mb-7 font-medium">{displaySubtitle}</p>
 
         <div className="flex items-center justify-center">
           <div className="relative">
-            <div className="pointer-events-none absolute -inset-3 rounded-2xl bg-blue-500/20 blur-2xl animate-pulse" />
+            <div className="pointer-events-none absolute -inset-3 rounded-2xl bg-amber-500/20 blur-xl attract-btn-glow" />
 
             <Button
               ref={startBtnRef}
-              className="relative bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 shadow-xl shadow-blue-500/30 transition-all duration-300 hover:scale-[1.04] hover:shadow-2xl hover:shadow-blue-500/35 flex items-center justify-center gap-3"
+              className="relative bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white shadow-xl shadow-amber-500/30 transition-all duration-300 hover:scale-[1.04] hover:shadow-2xl hover:shadow-amber-500/35 flex items-center justify-center gap-3"
               style={{ width: '320px', height: '76px', fontSize: '22px', fontWeight: '600', borderRadius: '12px' }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -228,7 +264,7 @@ const AttractScreen = ({
           </div>
         </div>
 
-        <p className="text-xs text-gray-400/60 mt-10 font-light">{t('attract.keyboardHint')}</p>
+        <p className="text-xs text-gray-400/50 mt-10 font-light">{t('attract.keyboardHint')}</p>
       </div>
     </div>
   );

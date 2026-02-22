@@ -71,9 +71,11 @@ export const useCachedVideo = (
   // Verifica cache e carrega URL
   const checkAndLoadVideo = useCallback(async () => {
     if (!url) {
+      console.warn('[useCachedVideo] URL is null/undefined — skipping video load');
       setState((prev) => ({ ...prev, videoUrl: null, isCached: false }));
       return;
     }
+    console.warn('[useCachedVideo] Checking cache for URL:', url.substring(0, 100));
 
     try {
       const cached = await isVideoCached(url);

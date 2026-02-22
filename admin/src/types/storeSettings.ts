@@ -61,12 +61,6 @@ export interface StoreSettings {
   attractScreenEnabled?: boolean;
   attractTimeoutSeconds?: number;
   attractVideoConfig?: AttractVideoConfig;
-
-  // Legacy fields (read from Firestore, kept for backward compat)
-  /** @deprecated Use kioskEnabled */
-  kioskMode?: boolean;
-  /** @deprecated Use attractTimeoutSeconds */
-  idleTimeout?: number;
 }
 
 export interface StoreSettingsTabProps {

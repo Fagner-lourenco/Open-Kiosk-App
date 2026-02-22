@@ -84,6 +84,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
       return snapshot.docs.map(doc => {
         const data = doc.data();
         return {
+          ...data,  // Preserve all Firestore fields (including new beer info fields)
           id: doc.id,
           title: data.title || '',
           description: data.description || '',
@@ -414,8 +415,8 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Adicionar Produto</DialogTitle>
-            <DialogDescription>Preencha os dados do novo produto</DialogDescription>
+            <DialogTitle>Novo Produto</DialogTitle>
+            <DialogDescription>Preencha as informações abaixo para cadastrar um produto. Campos com * são obrigatórios.</DialogDescription>
           </DialogHeader>
           <ProductForm 
             onSubmit={handleCreate} 
@@ -429,7 +430,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Produto</DialogTitle>
-            <DialogDescription>Atualize as informações do produto</DialogDescription>
+            <DialogDescription>Altere os campos necessários e clique em "Atualizar Produto" para salvar.</DialogDescription>
           </DialogHeader>
           {editingProduct && (
             <ProductForm 

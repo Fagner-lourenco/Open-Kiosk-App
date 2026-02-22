@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { ShoppingCart } from "lucide-react";
+import { ShoppingCart, Search, PackageX } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useESP32 } from "@/context/ESP32Context";
 import { useToast } from "@/hooks/use-toast";
@@ -21,6 +21,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { enterKioskMode } from "@/services/kioskModeService";
 import { systemLogService } from "@/services/systemLogService";
 import ShopProductCard from "@/components/ShopProductCard";
+import DrinkCard from "@/components/DrinkCard";
 
 type DrinkCheckoutResult = {
   orderNumber: string;
@@ -127,7 +128,8 @@ const Shop = () => {
       const filtered = sortedByMostSold.filter(product =>
         product.title.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
         product.description?.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-        product.tags?.some(tag => tag.toLowerCase().includes(debouncedSearchQuery.toLowerCase()))
+        product.tags?.some(tag => tag.toLowerCase().includes(debouncedSearchQuery.toLowerCase())) ||
+        product.style?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
       );
       setFilteredProducts(filtered);
     }
@@ -149,8 +151,8 @@ const Shop = () => {
       if (!isEsp32Healthy) {
         systemLogService.warn('kiosk', 'Checkout bebida bloqueado: ESP32 não saudável', { productId: product.id, esp32Connected: esp32Status.connected });
         toast({
-          title: 'Sistema temporariamente indisponível',
-          description: 'Tente novamente em instantes.',
+          title: t('shop.tempUnavailable'),
+          description: t('shop.tryAgainSoon'),
           variant: 'destructive',
         });
         return;
@@ -247,38 +249,60 @@ const Shop = () => {
     }
   };
 
+  // Separate drink and normal products for different card styles
+  const drinkProducts = displayedProducts.filter(p => p.isDrink);
+  const normalProducts = displayedProducts.filter(p => !p.isDrink);
+  const isSingleDrink = drinkProducts.length === 1 && normalProducts.length === 0;
+  const hasDrinks = drinkProducts.length > 0;
+  const isDrinkOnlyMode = hasDrinks && normalProducts.length === 0;
+
+  // ---------- Dark mode ----------
+  // Applied via className on the Shop container div (NOT on <html>)
+  // so that portal-based modals (checkout, cart) stay in light mode.
+  // Keep useEffect as a no-op to preserve hook count across renders.
+  useEffect(() => {
+    // Dark mode is now scoped to the Shop container div.
+    // Ensure <html> never has stale .dark from a previous version.
+    document.documentElement.classList.remove('dark');
+  }, [hasDrinks]);
+
+  const noResults = displayedProducts.length === 0 && searchQuery.trim().length > 0;
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        <p className="ml-4 text-gray-600">{t('shop.loadingProducts')}</p>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        <p className="ml-4 text-muted-foreground">{t('shop.loadingProducts')}</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Search Bar */}
-      <div className="bg-white border-b">
+    <div className={`min-h-screen ${hasDrinks ? 'bg-gradient-to-b from-[#0B0B0B] to-[#111827]' : 'bg-background'} text-foreground${hasDrinks ? ' dark' : ''}`}>
+      {/* Search Bar — hidden in drink-only mode */}
+      {!isDrinkOnlyMode && (
+      <div className="bg-card border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center gap-4">
             <div className="flex-1 relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <input
                 type="text"
                 placeholder={t('shop.searchProducts')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onFocus={() => setIsKeyboardVisible(true)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                aria-label={t('shop.searchProducts')}
+                className="w-full pl-10 pr-4 py-3 border border-input rounded-lg bg-background text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring focus:border-transparent touch-target"
               />
             </div>
             <VoiceSearchButton onTranscript={handleVoiceTranscript} />
             <div>
               <Button
                 variant="outline"
-                size="sm"
+                size="default"
                 onClick={() => setIsCartOpen(true)}
-                className="relative"
+                className="relative touch-target"
               >
                 <ShoppingCart className="w-4 h-4 mr-2" />
                 {t('shop.cart')}
@@ -292,42 +316,94 @@ const Shop = () => {
           </div>
         </div>
       </div>
+      )}
 
       {!isEsp32Healthy && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4">
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3">
-            <p className="text-sm font-medium text-red-700">Sistema temporariamente indisponível</p>
+          <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3">
+            <p className="text-sm font-medium text-destructive">
+              {t('shop.tempUnavailable')}
+            </p>
           </div>
         </div>
       )}
 
-      {/* Products with improved image sizing */}
+      {/* Products */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-          {displayedProducts.map((product) => (
-            <ShopProductCard
-              key={product.id}
-              product={product}
-              currencySymbol={currentCurrency.symbol}
-              isEsp32Healthy={isEsp32Healthy}
-              onAddToCart={addToCart}
-            />
-          ))}
-        </div>
 
-        {/* Show More Button */}
-        {hasMoreProducts && (
-          <div className="flex justify-center mt-8">
-            <Button onClick={loadMore} variant="outline" size="lg">
-              {t('shop.showMore')} ({filteredProducts.length - displayLimit} {t('shop.remaining')})
+        {/* Empty state — search with no results */}
+        {noResults ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-4">
+            <PackageX className="w-16 h-16 text-muted-foreground/50" />
+            <p className="text-lg font-semibold text-muted-foreground">{t('shop.noProducts')}</p>
+            <p className="text-sm text-muted-foreground/70">{t('shop.noResultsHint')}</p>
+            <Button variant="outline" size="default" onClick={() => setSearchQuery('')}>
+              {t('shop.clearSearch')}
             </Button>
           </div>
+        ) : (
+          <>
+            {/* Drink products — "Quadro de Chopes" style */}
+            {isSingleDrink ? (
+              /* Single drink: full screen card */
+              <DrinkCard
+                product={drinkProducts[0]}
+                currencySymbol={currentCurrency.symbol}
+                isEsp32Healthy={isEsp32Healthy}
+                onAdd={addToCart}
+                fullScreen
+              />
+            ) : drinkProducts.length > 0 ? (
+              <div className="grid gap-5 [grid-template-columns:repeat(auto-fit,minmax(320px,1fr))]">
+                {drinkProducts.map((product) => (
+                  <DrinkCard
+                    key={product.id}
+                    product={product}
+                    currencySymbol={currentCurrency.symbol}
+                    isEsp32Healthy={isEsp32Healthy}
+                    onAdd={addToCart}
+                  />
+                ))}
+              </div>
+            ) : null}
+
+            {/* Normal products — original card style */}
+            {normalProducts.length > 0 && (
+              <>
+                {hasDrinks && normalProducts.length > 0 && (
+                  <div className="my-8 border-t border-border" />
+                )}
+                <div className="grid gap-6 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+                  {normalProducts.map((product) => (
+                    <ShopProductCard
+                      key={product.id}
+                      product={product}
+                      currencySymbol={currentCurrency.symbol}
+                      isEsp32Healthy={isEsp32Healthy}
+                      onAddToCart={addToCart}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+
+            {/* Show More Button */}
+            {hasMoreProducts && (
+              <div className="flex justify-center mt-8">
+                <Button onClick={loadMore} variant="outline" size="lg">
+                  {t('shop.showMore')} ({filteredProducts.length - displayLimit} {t('shop.remaining')})
+                </Button>
+              </div>
+            )}
+          </>
         )}
 
         {/* Results Info */}
-        <div className="text-center mt-4 text-gray-500 text-sm">
-          {t('shop.showingProducts', { displayed: displayedProducts.length, total: filteredProducts.length })}
-        </div>
+        {!isDrinkOnlyMode && (
+          <div className="text-center mt-4 text-sm text-muted-foreground">
+            {t('shop.showingProducts', { displayed: displayedProducts.length, total: filteredProducts.length })}
+          </div>
+        )}
       </div>
 
       {/* Cart */}
@@ -362,6 +438,7 @@ const Shop = () => {
         isVisible={isKeyboardVisible}
         onKeyPress={handleKeyPress}
         onClose={() => setIsKeyboardVisible(false)}
+        darkMode={hasDrinks}
       />
 
       {/* Attract Screen Overlay */}

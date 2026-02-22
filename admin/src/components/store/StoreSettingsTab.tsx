@@ -367,12 +367,6 @@ interface StoreSettings {
   attractScreenEnabled?: boolean;
   attractTimeoutSeconds?: number;
   attractVideoConfig?: AttractVideoConfig;
-
-  // Legacy fields (read from Firestore, kept for backward compat)
-  /** @deprecated Use kioskEnabled */
-  kioskMode?: boolean;
-  /** @deprecated Use attractTimeoutSeconds */
-  idleTimeout?: number;
 }
 
 interface StoreSettingsTabProps {
@@ -786,8 +780,9 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
       setSettings({
         ...storeData,
         // Normalize legacy field names on load
-        kioskEnabled: storeData.kioskEnabled ?? storeData.kioskMode ?? false,
-        attractTimeoutSeconds: storeData.attractTimeoutSeconds ?? storeData.idleTimeout ?? 60,
+        kioskEnabled: storeData.kioskEnabled ?? false,
+        attractTimeoutSeconds: storeData.attractTimeoutSeconds ?? 60,
+        language: storeData.language || 'pt-BR',
         paymentGatewayConfig: normalizedConfig,
         taps: loadedTaps,
       });

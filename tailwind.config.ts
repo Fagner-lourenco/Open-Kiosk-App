@@ -10,6 +10,17 @@ export default {
 		"./src/**/*.{ts,tsx}",
 	],
 	prefix: "",
+	safelist: [
+		// DrinkCard accent colors (used dynamically by pickAccent)
+		{ pattern: /bg-(violet|sky|amber|yellow|red|green|stone)-(300|400|500|600|700)/ },
+		{ pattern: /text-(violet|sky|amber|yellow|red|green|stone)-(300|400|500|600|700)/ },
+		{ pattern: /shadow-\[.*\]/ },
+		'bg-white/18', 'bg-white/10', 'bg-white/15', 'bg-black/12', 'bg-black/14', 'bg-black/20',
+		'bg-black/45', 'bg-black/55', 'bg-black/70', 'bg-black/85',
+		'text-white', 'text-black', 'text-stone-800',
+		// Cream palette (pickAccent)
+		'bg-gradient-to-br', 'from-amber-50', 'to-amber-100', 'bg-amber-300', 'bg-stone-800/15',
+	],
 	theme: {
 		container: {
 			center: true,

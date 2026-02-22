@@ -12,7 +12,7 @@ import { PaymentGatewayProvider } from "@/context/PaymentGatewayContext";
 import { FranchiseProvider } from "@/context/FranchiseContext";
 import { PermissionProvider } from "@/context/PermissionContext";
 import { AdminSecretAccess } from "@/components/AdminSecretAccess";
-import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { useStoreSettings, StoreSettingsProvider } from "@/hooks/useStoreSettings";
 import { LanguageProvider } from "@/i18n";
 import type { Language } from "@/i18n";
 import { StoreProvider } from "@/context/StoreContext";
@@ -258,7 +258,9 @@ const App = () => (
     <TooltipProvider>
       <Toaster />
       <Sonner />
-      <AppContent />
+      <StoreSettingsProvider>
+        <AppContent />
+      </StoreSettingsProvider>
       {/* PWA Update Prompt apenas na web */}
       {!Capacitor.isNativePlatform() && (
         <Suspense fallback={null}>

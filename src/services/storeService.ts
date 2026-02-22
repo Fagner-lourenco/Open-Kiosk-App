@@ -300,7 +300,6 @@ class StoreService {
             currency,
             taxId,
             taxPercentage,
-            useThermalPrinter: false,
             attractTimeoutSeconds: 60,
             language: 'pt-BR',
             createdAt: serverTimestamp(),

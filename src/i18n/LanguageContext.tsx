@@ -35,6 +35,9 @@ const getStorageKey = (isKiosk: boolean, storeId?: string) => {
   return 'admin_language';
 };
 
+/** Chave genérica que sempre persiste o último idioma do kiosk (independente de storeId) */
+const KIOSK_LANGUAGE_LAST_KEY = 'kiosk_language_last';
+
 /**
  * Carrega idioma do localStorage (hot cache)
  */
@@ -56,6 +59,8 @@ const loadLanguageFromStorage = (key: string): Language | null => {
 const saveLanguageToStorage = (key: string, lang: Language): void => {
   try {
     localStorage.setItem(key, lang);
+    // Sempre salvar também na chave genérica para fallback de boot
+    localStorage.setItem(KIOSK_LANGUAGE_LAST_KEY, lang);
   } catch {
     // localStorage indisponível
   }
@@ -75,12 +80,21 @@ export const LanguageProvider = ({
   // Ref para rastrear se o primeiro carregamento do Firebase já aconteceu
   const firebaseDataApplied = useRef(false);
 
-  // Inicialização: Prioridade: localStorage > initialLanguage (se pronto) > 'en'
+  // Inicialização: Prioridade: localStorage(storeKey) > localStorage(lastKey) > initialLanguage > 'pt-BR'
   const [language, setLanguageState] = useState<Language>(() => {
     const stored = loadLanguageFromStorage(storageKey);
     if (stored) {
       console.log(`[LanguageContext:Init] Found stored lang for ${storageKey}:`, stored);
       return stored;
+    }
+
+    // Fallback: chave genérica (último idioma salvo, qualquer loja)
+    if (isKiosk) {
+      const lastKnown = loadLanguageFromStorage(KIOSK_LANGUAGE_LAST_KEY);
+      if (lastKnown) {
+        console.log(`[LanguageContext:Init] Using last known kiosk lang:`, lastKnown);
+        return lastKnown;
+      }
     }
 
     // Se initialLanguage já veio (raro no boot frio, mas possível no hot reload)
@@ -89,8 +103,9 @@ export const LanguageProvider = ({
       return initialLanguage;
     }
 
-    // Importante: não salvar 'en' no storage agora se for apenas fallback de boot
-    return 'en';
+    // Default: pt-BR (idioma padrão do projeto)
+    console.log(`[LanguageContext:Init] Fallback to pt-BR`);
+    return 'pt-BR';
   });
 
   // Reconciliação com Firebase/Settings
@@ -105,16 +120,6 @@ export const LanguageProvider = ({
       return;
     }
 
-    const stored = loadLanguageFromStorage(storageKey);
-
-    // Hardening: Se for kiosk e storeId ainda for 'default', evitamos aplicar logicamente
-    // se o initialLanguage (Firestore) vier de uma loja específica. 
-    // Isso evita fragmentação de chaves durante o boot.
-    if (isKiosk && storageKey === 'kiosk_language_default' && initialLanguage) {
-      console.log('[LanguageContext:Sync] Waiting for stable storeId before applying Firebase settings...');
-      return;
-    }
-
     // Se o que temos no state (ou storage) é diferente do que veio do Firebase
     // e NÃO houve override manual, o Firebase vence (Fonte Única)
     if (language !== initialLanguage) {
@@ -122,6 +127,9 @@ export const LanguageProvider = ({
       setLanguageState(initialLanguage);
 
       // Persiste no storage apenas para cache de boot rápido (fallback offline)
+      saveLanguageToStorage(storageKey, initialLanguage);
+    } else if (!loadLanguageFromStorage(storageKey)) {
+      // Mesmo idioma mas sem cache local — persiste para próximo boot
       saveLanguageToStorage(storageKey, initialLanguage);
     }
 
@@ -159,8 +167,9 @@ export const LanguageProvider = ({
       if (value && typeof value === 'object' && k in value) {
         value = (value as Record<string, unknown>)[k];
       } else {
-        // Fallback para inglês
-        let fallbackValue: unknown = translationsMap['en'];
+        // Fallback: tenta no outro idioma (pt-BR → en, en → pt-BR)
+        const fallbackLang = language === 'pt-BR' ? 'en' : 'pt-BR';
+        let fallbackValue: unknown = translationsMap[fallbackLang];
         let found = true;
         for (const fk of keys) {
           if (fallbackValue && typeof fallbackValue === 'object' && fk in fallbackValue) {

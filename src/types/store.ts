@@ -39,8 +39,6 @@ export interface Store {
   contact?: StoreContact;
 
   // Configurações do kiosk
-  comPort?: string;
-  useThermalPrinter?: boolean;
   attractTimeoutSeconds?: number;
   language?: 'en' | 'pt-BR';
 
@@ -131,9 +129,7 @@ export interface StoreSettings {
   // Configurações do Kiosk
   // ============================================
 
-  comPort?: string;
-  useThermalPrinter?: boolean;
-  // Optional: tempo de inatividade para mostrar tela de atração
+  // Tempo de inatividade para mostrar tela de atração
   attractTimeoutSeconds?: number;
   // Idioma da interface (salvo no Firebase para sincronizar entre dispositivos)
   language?: 'en' | 'pt-BR';

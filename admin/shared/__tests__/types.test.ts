@@ -148,7 +148,7 @@ describe('shared/types/store', () => {
       id: 's1', name: 'Test', franchiseId: 'f1', slug: 'test',
       isActive: true, timezone: 'America/Sao_Paulo', currency: 'BRL',
       taxPercentage: 0, language: 'pt-BR', attractTimeoutSeconds: 60,
-      useThermalPrinter: false, createdAt: new Date(), updatedAt: new Date(),
+      createdAt: new Date(), updatedAt: new Date(),
     };
     expect(store.id).toBe('s1');
   });

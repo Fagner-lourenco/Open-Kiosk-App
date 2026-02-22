@@ -12,12 +12,9 @@ import { CartItem } from "@/types/product";
 import { useTranslation } from "@/i18n";
 import { useCurrentCurrency } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
-// NOTA: esp32Printer usado APENAS para impressão térmica (printReceipt), não para dispensação
-import { esp32Printer } from "@/services/esp32PrinterService";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
-import UartPortSelector from "./UartPortSelector";
 import { pdfReceiptService } from "@/services/pdfReceiptService";
 import { paymentService } from "@/services/paymentService";
 import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig } from "@/config/mercadopago";
@@ -614,10 +611,8 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
       paymentInProgressRef.current = null;
     }
 
-    // Print receipt before clearing the cart so data remains available
-    if (settings?.useThermalPrinter && settings?.comPort) {
-      await handleESP32Print();
-    } else if (!settings?.useThermalPrinter && settings) {
+    // Print receipt (PDF) before clearing the cart so data remains available
+    if (settings) {
       await handlePDFPrint();
     }
 
@@ -628,38 +623,6 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
     setTimeout(() => {
       setIsCompleted(true);
     }, 1000);
-  };
-
-  const handleESP32Print = async () => {
-    if (!settings?.comPort) {
-      toast({
-        title: t('checkout.noComPortConfigured'),
-        description: t('checkout.comPortNotSet'),
-        variant: "destructive"
-      });
-      return;
-    }
-    setIsPrinting(true);
-    try {
-      const result = await esp32Printer.printReceipt(cartItems, settings, orderNumber);
-      if (result.success) {
-        toast({
-          title: t('common.success'),
-          description: t('checkout.printSuccess'),
-        });
-      } else {
-        toast({
-          title: t('checkout.printError'),
-          description: result.message,
-          variant: "destructive"
-        });
-      }
-    } catch (error) {
-      console.error('Print error:', error);
-      toast({ title: t('checkout.printError'), description: t('checkout.printFailed'), variant: "destructive" });
-    } finally {
-      setIsPrinting(false);
-    }
   };
 
   const handlePDFPrint = async () => {
@@ -1163,36 +1126,19 @@ const Checkout = ({ isOpen, onClose, cartItems, onUpdateQuantity, onClearCart, o
                     <p>{t('checkout.orderNumberLabel')}: {orderNumber}</p>
                     <p>{t('common.date')}: {new Date().toLocaleDateString()}</p>
                     <p>{t('common.time')}: {new Date().toLocaleTimeString()}</p>
-                    {settings?.useThermalPrinter && settings?.comPort && (
-                      <p>{t('checkout.thermalPrinter')}: {settings.comPort}</p>
-                    )}
-                    {!settings?.useThermalPrinter && (
-                      <p>{t('checkout.printMode')}: {t('checkout.pdfReceipt')}</p>
-                    )}
+                    <p>{t('checkout.printMode')}: {t('checkout.pdfReceipt')}</p>
                   </div>
                   
-                  {/* Print button based on printer type */}
-                  {settings?.useThermalPrinter && settings?.comPort ? (
-                    <Button
-                      className="w-full mt-4"
-                      variant="outline"
-                      onClick={handleESP32Print}
-                      disabled={isPrinting}
-                    >
-                      <Printer className="w-4 h-4 mr-2" />
-                      {isPrinting ? t('checkout.printing') : `${t('checkout.printTo')} ${settings.comPort}`}
-                    </Button>
-                  ) : (
-                    <Button
-                      className="w-full mt-4"
-                      variant="outline"
-                      onClick={handlePDFPrint}
-                      disabled={isPrinting}
-                    >
-                      <Printer className="w-4 h-4 mr-2" />
-                      {isPrinting ? t('checkout.generating') : t('checkout.generatePdfReceipt')}
-                    </Button>
-                  )}
+                  {/* Print PDF receipt */}
+                  <Button
+                    className="w-full mt-4"
+                    variant="outline"
+                    onClick={handlePDFPrint}
+                    disabled={isPrinting}
+                  >
+                    <Printer className="w-4 h-4 mr-2" />
+                    {isPrinting ? t('checkout.generating') : t('checkout.generatePdfReceipt')}
+                  </Button>
                 </CardContent>
               </Card>
 

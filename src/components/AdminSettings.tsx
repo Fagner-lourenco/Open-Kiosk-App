@@ -1,5 +1,4 @@
 import { useState, useEffect } from "react";
-import { doc, getDoc, setDoc } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -7,16 +6,14 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Printer, Video, Store, MonitorPlay, Droplets, Lock, Unlock, Smartphone } from "lucide-react";
+import { Settings, Globe, Usb, Wifi, Bluetooth, Zap, Trash2, Beer, Volume2, Video, Store, MonitorPlay, Droplets, Lock, Unlock, Smartphone } from "lucide-react";
 import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useESP32 } from "@/context/ESP32Context";
 import { useLanguage, useTranslation } from "@/i18n";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import type { Language } from "@/i18n";
-import type { ESP32ConnectionType, AttractVideoSettings } from "@/types/store";
-import { getFirebaseDb, getCurrentFranchiseId } from "@/services/firebase";
+import type { ESP32ConnectionType } from "@/types/store";
 import esp32Service from "@/services/esp32CommunicationService";
 import { getDefaultTapId, setDefaultTapId } from "@/components/TapSettingsSync";
 import { enterKioskMode, exitKioskMode, isInKioskMode } from "@/services/kioskModeService";
@@ -25,7 +22,7 @@ import { Capacitor } from "@capacitor/core";
 export default function AdminSettings() {
   const { currentCurrency, currencies, updateCurrency, loading } = useSettings();
   const { settings, updateSettings, loading: settingsLoading } = useStoreSettings();
-  const { language, setLanguage } = useLanguage();
+  const { language } = useLanguage();
   const { t } = useTranslation();
 
   // ESP32 context para obter número de torneiras
@@ -53,14 +50,6 @@ export default function AdminSettings() {
   const [showPinDialog, setShowPinDialog] = useState<boolean>(false);
   const [maintenancePin, setMaintenancePin] = useState<string>('');
   const isNativePlatform = Capacitor.isNativePlatform();
-
-  // Estado para configurações de vídeo de fundo
-  const [attractVideoSettings, setAttractVideoSettings] = useState<AttractVideoSettings>({
-    isEnabled: false,
-    videoOpacity: 0.4,
-    videoCoverMode: 'cover'
-  });
-  const [videoSaving, setVideoSaving] = useState(false);
 
   // Verificar estado do modo kiosk na inicialização
   useEffect(() => {
@@ -149,102 +138,6 @@ export default function AdminSettings() {
         await updateSettings({ ...settings, attractTimeoutSeconds: normalizedSeconds });
         toast.success(`${t('settings.attractTimeoutUpdated') || 'Tempo de inatividade atualizado'}: ${normalizedSeconds}s`);
       }
-    }
-  };
-
-  // Carregar configurações de vídeo do Firestore
-  useEffect(() => {
-    const loadAttractVideoSettings = async () => {
-      try {
-        if (!settings?.storeId) return;
-
-        const db = getFirebaseDb();
-
-        const franchiseId = getCurrentFranchiseId();
-        if (!franchiseId) {
-          console.warn('[AdminSettings] franchiseId ausente para carregar attract_video');
-          return;
-        }
-
-        const videoDocRef = doc(
-          db,
-          'franchises',
-          franchiseId,
-          'stores',
-          settings.storeId,
-          'settings',
-          'attract_video'
-        );
-
-        const videoSnap = await getDoc(videoDocRef);
-
-        if (videoSnap.exists()) {
-          setAttractVideoSettings(videoSnap.data() as AttractVideoSettings);
-        }
-      } catch (error) {
-        console.error('Error loading attract video settings:', error);
-      }
-    };
-
-    loadAttractVideoSettings();
-  }, [settings?.storeId]);
-
-  const handleAttractVideoChange = (field: keyof AttractVideoSettings, value: string | number | boolean) => {
-    setAttractVideoSettings(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const handleSaveVideoSettings = async () => {
-    if (!settings?.storeId) return;
-
-    setVideoSaving(true);
-    try {
-      const db = getFirebaseDb();
-
-      const franchiseId = getCurrentFranchiseId();
-      if (!franchiseId) {
-        console.warn('[AdminSettings] franchiseId ausente para salvar attract_video');
-        return;
-      }
-
-      const videoDocRef = doc(
-        db,
-        'franchises',
-        franchiseId,
-        'stores',
-        settings.storeId,
-        'settings',
-        'attract_video'
-      );
-
-      await setDoc(videoDocRef, attractVideoSettings, { merge: true });
-      toast.success(t('settings.attractVideoSaved') || 'Configurações de vídeo salvas!');
-    } catch (error) {
-      console.error('Error saving attract video settings:', error);
-      toast.error(t('common.error') || 'Erro ao salvar');
-    } finally {
-      setVideoSaving(false);
-    }
-  };
-
-  const handleLanguageChange = async (newLanguage: Language) => {
-    try {
-      console.log('[AdminSettings] Mudando idioma para:', newLanguage);
-
-      // Atualiza o contexto local primeiro (imediato)
-      setLanguage(newLanguage);
-
-      // Depois salva no Firebase para sincronizar entre dispositivos
-      if (settings) {
-        await updateSettings({ ...settings, language: newLanguage });
-        console.log('[AdminSettings] Idioma salvo no Firebase:', newLanguage);
-        toast.success(t('settings.languageChanged'));
-      }
-    } catch (error) {
-      console.error('Erro ao salvar idioma no Firebase:', error);
-      toast.error(t('common.error'));
     }
   };
 
@@ -638,57 +531,6 @@ export default function AdminSettings() {
         </CardContent>
       </Card>
 
-      {/* Configurações de Impressora */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Printer className="h-5 w-5" />
-            {t('settings.printer')}
-          </CardTitle>
-          <CardDescription>
-            {t('settings.printerDescription') || 'Configure a impressora para recibos'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <Label htmlFor="thermalPrinter">{t('settings.useThermalPrinter')}</Label>
-              <p className="text-xs text-muted-foreground">
-                {t('settings.thermalPrinterDescription')}
-              </p>
-            </div>
-            <Switch
-              id="thermalPrinter"
-              checked={settings?.useThermalPrinter || false}
-              onCheckedChange={(checked) => settings && updateSettings({ ...settings, useThermalPrinter: checked })}
-            />
-          </div>
-
-          {settings?.useThermalPrinter && (
-            <div>
-              <Label htmlFor="comPort">{t('settings.comPortThermal')}</Label>
-              <Input
-                id="comPort"
-                value={settings?.comPort || ""}
-                onChange={(e) => settings && updateSettings({ ...settings, comPort: e.target.value })}
-                placeholder={t('settings.comPortPlaceholder')}
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                {t('settings.comPortHelp')}
-              </p>
-            </div>
-          )}
-
-          {!settings?.useThermalPrinter && (
-            <div className="p-3 bg-blue-50 rounded-lg">
-              <p className="text-blue-800 text-sm">
-                {t('settings.pdfModeDescription')}
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
       {/* Configurações de Vídeo de Fundo - Read-only (gerenciado pelo Admin Web) */}
       <Card>
         <CardHeader>
@@ -704,38 +546,38 @@ export default function AdminSettings() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Status do vídeo */}
+          {/* Status do vídeo — lido do store doc (attractVideoConfig) via Listener 1 */}
           <div className="p-3 bg-muted rounded-lg space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Video habilitado</span>
               <span className="text-sm font-medium">
-                {(settings?.attractVideoConfig?.isEnabled || attractVideoSettings.isEnabled) ? 'Sim' : 'Nao'}
+                {settings?.attractVideoConfig?.isEnabled ? 'Sim' : 'Nao'}
               </span>
             </div>
-            {(settings?.attractVideoConfig?.videoUrl || attractVideoSettings.videoUrl) && (
+            {settings?.attractVideoConfig?.videoUrl && (
               <>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">URL</span>
                   <span className="text-xs font-mono truncate max-w-[200px]">
-                    {settings?.attractVideoConfig?.videoUrl || attractVideoSettings.videoUrl}
+                    {settings.attractVideoConfig.videoUrl}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Titulo</span>
                   <span className="text-sm">
-                    {settings?.attractVideoConfig?.displayTitle || attractVideoSettings.displayTitle || '-'}
+                    {settings.attractVideoConfig.displayTitle || '-'}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Opacidade</span>
                   <span className="text-sm">
-                    {Math.round((settings?.attractVideoConfig?.videoOpacity ?? attractVideoSettings.videoOpacity ?? 0.4) * 100)}%
+                    {Math.round((settings.attractVideoConfig.videoOpacity ?? 0.4) * 100)}%
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Modo</span>
                   <span className="text-sm">
-                    {(settings?.attractVideoConfig?.videoCoverMode || attractVideoSettings.videoCoverMode || 'cover') === 'cover' ? 'Preencher' : 'Ajustar'}
+                    {(settings.attractVideoConfig.videoCoverMode || 'cover') === 'cover' ? 'Preencher' : 'Ajustar'}
                   </span>
                 </div>
               </>

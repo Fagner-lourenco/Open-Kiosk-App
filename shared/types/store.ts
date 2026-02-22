@@ -263,9 +263,6 @@ export interface Store {
   /** Tempo de inatividade para tela de atração (segundos) */
   attractTimeoutSeconds: number;
 
-  /** Usar impressora térmica */
-  useThermalPrinter: boolean;
-
   // =========================================
   // Configurações do Kiosk (store-level)
   // =========================================
@@ -279,16 +276,6 @@ export interface Store {
   /** Configuração do vídeo da tela de atração */
   attractVideoConfig?: AttractVideoConfig;
 
-  // =========================================
-  // Campos legados (backward compat)
-  // =========================================
-
-  /** @deprecated Use kioskEnabled */
-  kioskMode?: boolean;
-
-  /** @deprecated Use attractTimeoutSeconds */
-  idleTimeout?: number;
-
   /** Versão da migração de settings */
   _migrationVersion?: number;
 
@@ -298,9 +285,6 @@ export interface Store {
 
   /** Configuração do ESP32 */
   esp32Config?: ESP32Config;
-
-  /** Porta COM para comunicação serial (legado) */
-  comPort?: string;
 
   /** Configuração do gateway de pagamento */
   paymentGatewayConfig?: PaymentGatewayConfig;
@@ -400,7 +384,6 @@ export interface CreateStoreData {
 export interface UpdateStoreData extends Partial<CreateStoreData> {
   isActive?: boolean;
   attractTimeoutSeconds?: number;
-  useThermalPrinter?: boolean;
   kioskEnabled?: boolean;
   attractScreenEnabled?: boolean;
   attractVideoConfig?: Partial<AttractVideoConfig>;

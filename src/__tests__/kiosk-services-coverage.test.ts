@@ -28,11 +28,6 @@ import {
   mergeWithDefaults,
 } from '@/services/environmentConfigLoader';
 
-import {
-  ESP32PrinterService,
-  esp32Printer,
-} from '@/services/esp32PrinterService';
-
 import { franchiseService } from '@/services/franchiseService';
 
 import {
@@ -129,17 +124,6 @@ describe('services/environmentConfigLoader', () => {
     expect(typeof importConfigFromFile).toBe('function');
     expect(typeof importConfigFromClipboard).toBe('function');
     expect(typeof exportConfigToClipboard).toBe('function');
-  });
-});
-
-describe('services/esp32PrinterService', () => {
-  it('ESP32PrinterService é classe', () => {
-    expect(typeof ESP32PrinterService).toBe('function');
-  });
-
-  it('esp32Printer é singleton instanciado', () => {
-    expect(esp32Printer).toBeDefined();
-    expect(typeof esp32Printer).toBe('object');
   });
 });
 
