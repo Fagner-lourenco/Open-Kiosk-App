@@ -37,6 +37,9 @@ export interface FailedDispense {
   totalCups?: number;     // total cups in the order
   tapId?: number;         // which tap was dispensing
   sizeLabel?: string;     // size label for the drink
+  /** Se o fluxo já havia começado (solenóide abriu) quando a falha ocorreu.
+   * true + mlDispensed=0 = caso ambíguo: pode ter dispensado sem medir. Não fazer retry automático. */
+  flowStarted?: boolean;
 }
 
 // ============================================================================
@@ -57,6 +60,7 @@ export async function persistFailedDispense(
     totalCups?: number;
     tapId?: number;
     sizeLabel?: string;
+    flowStarted?: boolean;
   }
 ): Promise<void> {
   try {
@@ -74,6 +78,7 @@ export async function persistFailedDispense(
       totalCups: partialProgress?.totalCups,
       tapId: partialProgress?.tapId,
       sizeLabel: partialProgress?.sizeLabel,
+      flowStarted: partialProgress?.flowStarted,
     };
     await cacheSet(STORES.FAILED_DISPENSES, entry);
     console.log(`[DispenseRecovery] Persisted failed dispense: ${orderNumber} (reason: ${reason}, ml: ${partialProgress?.mlDispensed ?? 0}/${partialProgress?.targetMl ?? '?'})`);
@@ -115,7 +120,8 @@ export async function reconcileOnStartup(): Promise<void> {
           tapId: number; sizeLabel: string; timestamp: number;
         };
         const ageMs = Date.now() - checkpoint.timestamp;
-        if (ageMs < 10 * 60 * 1000) {  // ignorar checkpoints com mais de 10 min
+        if (ageMs < 30 * 60 * 1000) {  // 🔧 FIX Bug #18: ampliado de 10min para 30min
+          // Um device desligado por até 30min após um crash ainda deve reconciliar o pedido.
           const existingItems = await cacheGetAll<FailedDispense>(STORES.FAILED_DISPENSES);
           const alreadyInQueue = existingItems.some(e => e.orderNumber === checkpoint.orderNumber);
           if (!alreadyInQueue) {
@@ -145,11 +151,24 @@ export async function reconcileOnStartup(): Promise<void> {
     systemLogService.info('dispense', `Reconciliando ${pending.length} dispense(s) falhados no startup`);
 
     for (const entry of pending) {
+      const MAX_RECONCILE_RETRIES = 5;
       try {
+        // 🔧 FIX Bug #19: Expirar itens após MAX_RECONCILE_RETRIES tentativas.
+        // Sem isso, itens com storeId inválido ou Firestore deórbita acumulam indefinidamente,
+        // poluindo logs a cada startup do app.
+        if ((entry.retryCount ?? 0) >= MAX_RECONCILE_RETRIES) {
+          console.warn(`[DispenseRecovery] Desistindo de reconciliar ${entry.orderNumber} após ${MAX_RECONCILE_RETRIES} tentativas`);
+          systemLogService.error('dispense', `Reconciliação abandonada após ${MAX_RECONCILE_RETRIES} tentativas: ${entry.orderNumber}`, { orderNumber: entry.orderNumber, retryCount: entry.retryCount });
+          await cacheDelete(STORES.FAILED_DISPENSES, entry.id);
+          continue;
+        }
+
         // Validate storeId before attempting update
         if (!entry.storeId) {
           console.error(`[DispenseRecovery] Missing storeId for ${entry.orderNumber}, keeping in queue for manual intervention`);
           systemLogService.error('dispense', `Missing storeId para reconciliação: ${entry.orderNumber}`, { orderNumber: entry.orderNumber });
+          // Incrementar retryCount mesmo na falta de storeId (evita loop infinito)
+          await cacheSet(STORES.FAILED_DISPENSES, { ...entry, retryCount: (entry.retryCount ?? 0) + 1 });
           continue;
         }
 
@@ -164,7 +183,8 @@ export async function reconcileOnStartup(): Promise<void> {
       } catch (err) {
         console.error(`[DispenseRecovery] Failed to reconcile ${entry.orderNumber}:`, err);
         systemLogService.error('dispense', `Falha ao reconciliar dispense: ${entry.orderNumber}`, { orderNumber: entry.orderNumber, error: err instanceof Error ? err.message : String(err) });
-        // Mantém na fila para próxima tentativa
+        // Incrementar retryCount antes de manter na fila para próxima tentativa
+        await cacheSet(STORES.FAILED_DISPENSES, { ...entry, retryCount: (entry.retryCount ?? 0) + 1 }).catch(() => {});
       }
     }
   } catch (err) {

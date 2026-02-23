@@ -61,9 +61,19 @@ export function useESP32Reconnect(
   const [attemptCount, setAttemptCount] = useState(0);
 
   const wasConnected = useRef(false);
+  // 🔧 FIX Bug #4: Ref para sempre apontar para a versão atual de attemptReconnect sem
+  // causar re-registro do listener a cada mudança de isReconnecting.
+  const attemptReconnectRef = useRef<() => Promise<boolean>>(() => Promise.resolve(false));
 
   const attemptReconnect = useCallback(async (): Promise<boolean> => {
     if (isReconnecting) return false;
+
+    // Guard: não competir com o supervisor de conexão se ele já está no processo de reconexão.
+    // Evita race condition onde o hook e o supervisor chamam reconnectNow() simultaneamente.
+    if (esp32Service.getConnectionSupervisorStatus().state === 'reconnecting') {
+      console.log('[useESP32Reconnect] Supervisor já reconectando — ignorando tentativa do hook');
+      return false;
+    }
 
     setIsReconnecting(true);
     setAttemptCount(0);
@@ -93,8 +103,9 @@ export function useESP32Reconnect(
         return true;
       } else {
         if (showToasts) {
+          // 🔧 FIX Bug #3: toast de falha distinto (era idêntico ao de início)
           toast({
-            title: '🔄 ' + t('esp32.reconnecting'),
+            title: '⚠️ ' + t('esp32.reconnectFailed'),
             description: t('esp32.connectionLost'),
           });
         }
@@ -116,6 +127,11 @@ export function useESP32Reconnect(
     toast,
   ]);
 
+  // 🔧 FIX Bug #4: Manter ref sempre atual sem dep no useEffect do listener
+  useEffect(() => {
+    attemptReconnectRef.current = attemptReconnect;
+  }, [attemptReconnect]);
+
   // Registrar callback para mudanças de conexão
   useEffect(() => {
     if (!enabled) return;
@@ -126,9 +142,9 @@ export function useESP32Reconnect(
         console.warn(
           `[useESP32Reconnect][DIAG] Conexão perdida detectada at=${Date.now()}`,
           `status=${JSON.stringify(status)}`,
-          `— chamando attemptReconnect (pode competir com supervisor scheduleReconnect)`
+          `— chamando attemptReconnect via ref (race com supervisor fechada via Bug #1 fix)`
         );
-        attemptReconnect();
+        attemptReconnectRef.current();
       } else if (!wasConnected.current && status.connected) {
         console.log(`[useESP32Reconnect][DIAG] Conexão restaurada at=${Date.now()} type=${status.type}`);
       }
@@ -140,13 +156,13 @@ export function useESP32Reconnect(
     const currentStatus = esp32Service.getConnectionStatus();
     wasConnected.current = currentStatus.connected;
 
-    // Registrar callback
+    // Registrar callback — deps:[enabled] apenas, sem attemptReconnect para evitar re-registro
     const unsubscribe = esp32Service.setOnConnectionChange(handleConnectionChange);
 
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [enabled, attemptReconnect]);
+  }, [enabled]); // ✔ apenas [enabled]: handleConnectionChange usa ref, sem stale closure
 
   // Sincronizar estado visual com supervisor global
   useEffect(() => {

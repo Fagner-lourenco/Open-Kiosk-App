@@ -104,10 +104,19 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // v4.1.4: Reduzido de 5min para 3min — alinhado ao SESSION_TIMEOUT do firmware (2min) + margem
   const DISPENSE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutos
 
+  // 🔧 FIX Bug #2: Contador de auto-retry após reboot do ESP32 durante dispense.
+  // Permite 1 tentativa silenciosa de reenvio do comando release_drink antes de declarar failed_dispense.
+  const autoRetryCountRef = useRef<number>(0);
+  // Captura o sizeLabel do último dispense para usar no auto-retry (não está em ESP32DispensingProgress).
+  const dispenseSizeLabelRef = useRef<string>('');
+
   // Grace period: tolerar BLE drop transitório durante dispense ativo sem declarar falha imediatamente
   const disconnectGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // v4.1.4: Aumentado de 15s para 30s — dá mais margem para supervisor reconectar (normal: ~5s)
-  const DISCONNECT_GRACE_MS = 30_000; // 30s para reconectar antes de declarar falha
+  // 🔧 FIX Bug #7 (grace period): Ampliado de 60s para 120s.
+  // Reboot real do ESP32 (boot + WiFi/BLE stack init) pode levar até 90s no pior caso.
+  // Configurável via storeSettings.esp32DisconnectGraceMs para ajuste sem deploy.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const DISCONNECT_GRACE_MS = (storeSettings as any)?.esp32DisconnectGraceMs ?? 120_000;
 
   // Inicializar systemLogService
   useEffect(() => {
@@ -386,8 +395,69 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         // Quando stage === 'ready' mas ainda temos um dispense em andamento,
         // significa que o ESP32 reiniciou e perdeu o estado da dispensação.
         if (response.stage === 'ready' && currentProgressRef.current) {
-          console.error('[ESP32Context] ⚡ ESP32 reiniciou durante dispense ativo! orderId:', currentProgressRef.current.orderId);
-          
+          const rebootProgress = currentProgressRef.current;
+
+          // 🔧 FIX Bug #2: Na 1ª detecção de reboot, tentar reenvio automático transparente
+          // com o volume restante (targetMl - ml já dispensado). Só declara failed_dispense
+          // na 2ª detecção (reboot recorrente) ou se targetMl for inválido.
+          if (autoRetryCountRef.current === 0 && rebootProgress.targetMl > 0) {
+            autoRetryCountRef.current = 1;
+
+            const mlAlreadyDispensed = rebootProgress.ml ?? 0;
+            const remainingMl = Math.max(1, rebootProgress.targetMl - mlAlreadyDispensed);
+            const alreadyCompletedCups = Math.max(0, (rebootProgress.cup ?? 1) - 1);
+            const remainingCups = Math.max(1, (rebootProgress.totalCups ?? 1) - alreadyCompletedCups);
+
+            console.warn(
+              `[ESP32Context] ⚡ ESP32 reboot detectado — auto-retry para ${rebootProgress.orderId}`,
+              `(${mlAlreadyDispensed}/${rebootProgress.targetMl}ml, reenviar ${remainingMl}ml restantes)`
+            );
+            systemLogService.warn('dispense', `ESP32 reboot: auto-retry ${remainingMl}ml para ${rebootProgress.orderId}`, {
+              orderId: rebootProgress.orderId, mlAlreadyDispensed, remainingMl, remainingCups,
+            });
+
+            // Atualizar o ref para refletir o que o firmware dispensará nesta nova sessão
+            currentProgressRef.current = {
+              ...rebootProgress,
+              ml: 0,
+              targetMl: remainingMl,
+              totalCups: remainingCups,
+            };
+
+            // Reenviar diretamente ao serviço (singleton disponível em toda closure)
+            esp32Service.sendCommand('release_drink', {
+              orderId: rebootProgress.orderId,
+              mlPerUnit: remainingMl,
+              quantity: remainingCups,
+              sizeLabel: dispenseSizeLabelRef.current || rebootProgress.tapId?.toString() || '',
+              tapId: rebootProgress.tapId ?? 0,
+            }).then(success => {
+              if (!success) {
+                // sendCommand falhou no transport layer (ex: conexão caiu logo após o ready).
+                // NÃO declarar failed_dispense aqui: o ESP32 pode ter recebido o comando via
+                // buffer BLE/USB e já estar dispensando — declarar falha agora causaria
+                // reembolso + dispense simultâneo (prejuízo financeiro).
+                // autoRetryCountRef já está em 1 neste ponto, portanto:
+                //   - Se o ESP32 enviar 'ready' novamente → 2ª detecção → failed_dispense imediato
+                //   - Se nada acontecer → DISPENSE_TIMEOUT_MS (3min) dispara → failed_dispense
+                console.warn('[ESP32Context] Auto-retry sendCommand retornou false — aguardando 2ª detecção de ready ou timeout de 3min');
+                systemLogService.warn('dispense', `Auto-retry sendCommand falhou no transport: ${rebootProgress.orderId} — aguardando timeout`, {
+                  orderId: rebootProgress.orderId,
+                });
+              } else {
+                console.log('[ESP32Context] ✅ Auto-retry release_drink reenviado após reboot');
+              }
+            }).catch((err) => {
+              console.error('[ESP32Context] Erro no auto-retry sendCommand:', err);
+            });
+
+            return; // Não declarar failed_dispense ainda — aguardar resultado do retry
+          }
+
+          // 2ª detecção de reboot (retry já tentado) ou targetMl inválido: declarar falha
+          console.error('[ESP32Context] ⚡ ESP32 reiniciou durante dispense ativo (2ª detecção)! orderId:', rebootProgress.orderId);
+          autoRetryCountRef.current = 0; // reset para próxima sessão de dispense
+
           // Limpar timeout de segurança
           if (dispenseTimeoutRef.current) {
             clearTimeout(dispenseTimeoutRef.current);
@@ -395,7 +465,6 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           }
 
           // Persist session como falha
-          const rebootProgress = currentProgressRef.current;
           persistSession({
             progress: rebootProgress,
             stage: 'error',
@@ -412,6 +481,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             cup: rebootProgress.cup,
             totalCups: rebootProgress.totalCups,
             tapId: rebootProgress.tapId,
+            flowStarted: rebootProgress.flowStarted, // 🔧 FIX Bug #23: capturar para bloquear retry ambíguo
           });
 
           systemLogService.error('dispense', `Dispense interrompido por reboot: ${rebootProgress.orderId}`, {
@@ -690,8 +760,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       }
 
       // Iniciar heartbeat remoto com o mesmo intervalo (heartbeat local é gerenciado pelo useEffect dinâmico)
+      // 🔧 FIX Bug #15: Não iniciar legacy heartbeat quando o supervisor healthcheck já está ativo.
+      // Dois mecanismos independentes (legacy 15s×3 + supervisor 12s×3) podem disparar
+      // handleConnectionDropped em sequência, gerando dois ciclos de reconnect sobrepostos.
       const interval = storeSettings?.esp32HeartbeatIntervalMs || 60000;
-      hardwareStatusService.startHeartbeat(interval);
+      if (!esp32Service.getConnectionSupervisorStatus().active) {
+        hardwareStatusService.startHeartbeat(interval);
+      }
     } else {
       // Parar heartbeat local e remoto
       lastConnectionKeyRef.current = 'none'; // Reset para logar na próxima conexão
@@ -726,6 +801,27 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             const stillDisconnected = !esp32Service.getConnectionStatus().connected;
 
             if (stillActive && stillActive.orderId && stillDisconnected) {
+              // F4: Se o usuário ainda não abriu a torneira (ESP32 não estava fluindo ativamente),
+              // não declarar erro duro — nada foi dispensado e a situação é recuperável.
+              // Emitir waiting_next silenciosamente para que o pickup countdown resolva normalmente.
+              if (!stillActive.flowStarted) {
+                console.warn('[ESP32Context] Grace expirado mas flowStarted=false — descartando silenciosamente (0ml dispensado, situação recuperável)');
+                systemLogService.warn('dispense', `Grace expirado com flowStarted=false — não declarando erro: ${stillActive.orderId}`, {
+                  orderId: stillActive.orderId, ml: stillActive.ml, targetMl: stillActive.targetMl,
+                });
+                esp32Service.setDispensingInProgress(false);
+                setIsDispensing(false);
+                setCurrentProgress(null);
+                currentProgressRef.current = null;
+                dispensingStartedAtRef.current = null;
+                responseListeners.current.forEach(listener => {
+                  try {
+                    listener({ type: 'status', stage: 'waiting_next', orderId: stillActive.orderId } as ESP32Response);
+                  } catch (e) { /* ignore */ }
+                });
+                return;
+              }
+
               console.error('[ESP32Context] ❌ Grace period expirado — declarando falha de dispense:', stillActive.orderId);
               systemLogService.error('dispense', `Grace period expirado, dispense falhou: ${stillActive.orderId}`);
 
@@ -752,6 +848,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
                 cup: stillActive.cup,
                 totalCups: stillActive.totalCups,
                 tapId: stillActive.tapId,
+                flowStarted: stillActive.flowStarted, // 🔧 FIX Bug #23: capturar para bloquear retry ambíguo
               });
 
               // Notificar listeners como erro
@@ -1161,16 +1258,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         reconnected = await esp32Serial.tryAutoReconnect();
       } else {
         // No Android, tentar reconectar via serviço (que usa último tipo conhecido)
+        // 🔧 FIX Bug #9/#11: reconnectNow() reseta manualDisconnectRequested=false antes
+        // de tentar. connect() internamente chama disconnect() que seta
+        // manualDisconnectRequested=true, bloqueando o supervisor após qualquer falha USB.
         try {
-          const lastConnection = esp32Service.getLastConnection();
-          if (lastConnection) {
-            reconnected = await esp32Service.connect({
-              id: lastConnection.deviceId || 'auto',
-              name: lastConnection.deviceName || 'ESP32',
-              type: lastConnection.type,
-              ipAddress: lastConnection.ipAddress,
-            });
-          }
+          reconnected = await esp32Service.reconnectNow('release_drink_reconnect');
         } catch (e) {
           console.error('[ESP32Context] Erro ao tentar reconectar:', e);
         }
@@ -1201,18 +1293,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       addLog('error', 'Conexão BLE/USB stale - verificação falhou');
 
       // Tentar reconectar uma vez
-      const lastConn = esp32Service.getLastConnection();
-      if (lastConn) {
-        try {
-          await esp32Service.connect({
-            id: lastConn.deviceId || 'auto',
-            name: lastConn.deviceName || 'ESP32',
-            type: lastConn.type,
-            ipAddress: lastConn.ipAddress,
-          });
-        } catch (e) {
-          console.error('[ESP32Context] Reconexão após verify falhou:', e);
-        }
+      // 🔧 FIX Bug #9/#11: usar reconnectNow() que não envenena manualDisconnectRequested
+      try {
+        await esp32Service.reconnectNow('release_drink_verify_reconnect');
+      } catch (e) {
+        console.error('[ESP32Context] Reconexão após verify falhou:', e);
       }
 
       // Verificar de novo após reconexão
@@ -1231,6 +1316,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     // Preparar UI para dispensação
     setIsDispensing(true);
+    autoRetryCountRef.current = 0; // reset contador de auto-retry para nova sessão de dispense
     dispensingStartedAtRef.current = new Date(); // capture start time for ServingSession
     // 🔧 FIX: Sinalizar ao supervisor que dispense está ativo
     // Previne healthcheck pings durante dispensação — o ESP32 está ocupado com
@@ -1252,6 +1338,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     currentProgressRef.current = initialProgress;
 
     addLog('sent', `release_drink: ${orderId} (${mlPerUnit}ml x${quantity}) [Tap ${tapId}]`);
+    dispenseSizeLabelRef.current = sizeLabel; // capturar para uso no auto-retry de reboot
 
     try {
       // 🔒 FIX Bug-11: Mark as dispensing in Firestore BEFORE sending ESP32 command.
@@ -1323,6 +1410,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         esp32Service.setDispensingInProgress(false);
         setIsDispensing(false);
         setCurrentProgress(null);
+        currentProgressRef.current = null; // 🔧 FIX: evitar grace timer e auto-retry fantasma após falha de envio
+        dispensingStartedAtRef.current = null;
       }
 
       return success;
@@ -1339,6 +1428,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       esp32Service.setDispensingInProgress(false);
       setIsDispensing(false);
       setCurrentProgress(null);
+      currentProgressRef.current = null; // 🔧 FIX: evitar grace timer e auto-retry fantasma após exceção
+      dispensingStartedAtRef.current = null;
       return false;
     }
     } finally {
@@ -1384,6 +1475,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     setIsDispensing(false);
     setCurrentProgress(null);
     currentProgressRef.current = null;
+    dispensingStartedAtRef.current = null; // 🔧 FIX Bug #7: zerar para evitar ServingSession com duração inflada no próximo dispense
+    // 🔧 FIX: liberar healthcheck do supervisor e cancelar timeout de 3min orfão
+    esp32Service.setDispensingInProgress(false);
+    if (dispenseTimeoutRef.current) {
+      clearTimeout(dispenseTimeoutRef.current);
+      dispenseTimeoutRef.current = null;
+    }
     return true;
   }, [addLog]);
 

@@ -31,6 +31,7 @@ import type { CreatePaymentInput, PaymentMethod as GatewayPaymentMethod, Payment
 import { encryptCard } from "@/utils/pagbankEncrypt";
 import { evaluateDynamicPrice, toPricingSnapshot } from "../../shared/utils/dynamicPricingEngine";
 import type { DynamicPricingResult, PricingSnapshot } from "../../shared/types/dynamicPricing";
+import { useAudioVoice } from "@/hooks/useAudioVoice";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -99,6 +100,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const { toast } = useToast();
   const { settings: storeSettings } = useStoreSettings();
   const { t } = useTranslation();
+
+  // ── Áudio de voz ─────────────────────────────────────────────────────
+  const soundEnabled = storeSettings?.drinkPickupSoundEnabled ?? true;
+  const { playGuarded, playGuardedDelayed, clearScope } = useAudioVoice(soundEnabled);
+  /** ID único por abertura do modal — garante que prompts once-per-scope se reiniciem para cada cliente */
+  const modalScopeId = useRef('');
+  /** Contador de tentativas de pagamento — scope único por tentativa */
+  const paymentAttemptRef = useRef(0);
   
   // Configuração do gateway de pagamento (Firestore > env vars)
   const { gatewayConfig, resolvedConfig, isConfigured, enabledMethods } = usePaymentGateway();
@@ -238,6 +247,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setIsProcessing(false);
       updateProcessingStage("idle");
       moveToStep(2);
+      // Áudio: erro de pagamento com cooldown de 10s (evita repetição em retry rápido)
+      playGuarded('payment_error', modalScopeId.current, 10_000);
     },
     onStatusChange: (status: OrderStatus, paymentStatus?: PaymentStatus) => {
       console.log('[DrinkMP] Status changed:', { status, paymentStatus });
@@ -283,6 +294,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         clearTimeout(emergencyTimeoutRef.current);
         emergencyTimeoutRef.current = null;
       }
+      // 🔧 FIX Bug #22: Garantir limpeza do checkpoint no unmount do componente.
+      // Cobre desmonte abrupto por navegação ou React StrictMode sem ter passado
+      // pelo handleCancelPayment ou pelos paths de sucesso/falha normais.
+      localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
       cleanupPagBankListener();
     };
   }, [cleanupPagBankListener]);
@@ -427,6 +442,66 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
   }, [isOpen, product, moveToStep, reset, resetInactivityTimer, setIsProcessing, setMaxInactivityTime, setTimerActive, updateProcessingStage]);
 
+  // ── Áudio: gerar scope ao abrir modal, limpar ao fechar ────────────────
+  useEffect(() => {
+    if (isOpen) {
+      modalScopeId.current = `modal-${Date.now()}`;
+    } else {
+      clearScope(modalScopeId.current);
+      paymentAttemptRef.current = 0;
+      modalScopeId.current = '';
+    }
+  }, [isOpen, clearScope]);
+
+  // ── Áudio: verificação de idade ────────────────────────────────────────
+  useEffect(() => {
+    if (isOpen && !ageVerified && modalScopeId.current) {
+      playGuarded('age_verify', modalScopeId.current);
+    }
+  }, [isOpen, ageVerified, playGuarded]);
+
+  // ── Áudio: step 1 — tamanho e quantidade ──────────────────────────────
+  useEffect(() => {
+    if (flowState.currentStep === 1 && ageVerified && modalScopeId.current) {
+      playGuarded('choose_size_and_quantity', modalScopeId.current);
+    }
+  }, [flowState.currentStep, ageVerified, playGuarded]);
+
+  // ── Áudio: estoque baixo (cooldown 10s) ───────────────────────────────
+  useEffect(() => {
+    if (flowState.currentStep === 1 && maxQty > 0 && maxQty <= 2) {
+      playGuarded('stock_limit', modalScopeId.current, 10_000);
+    }
+  }, [maxQty, flowState.currentStep, playGuarded]);
+
+  // ── Áudio: step 2 — escolha do pagamento (cooldown 15s para replay nas tentativas) ──
+  useEffect(() => {
+    if (flowState.currentStep === 2 && modalScopeId.current) {
+      playGuarded('choose_payment', modalScopeId.current, 15_000);
+    }
+  }, [flowState.currentStep, playGuarded]);
+
+  // ── Áudio: pagamento aprovado ──────────────────────────────────────────
+  useEffect(() => {
+    if (flowState.processingStage === 'payment_approved' && orderNumberRef.current) {
+      playGuarded('payment_approved', `${orderNumberRef.current}-approved`);
+    }
+  }, [flowState.processingStage, playGuarded]);
+
+  // ── Áudio: gravando venda (sistema confirmando/processando) ────────────
+  useEffect(() => {
+    if (flowState.processingStage === 'recording_sale' && orderNumberRef.current) {
+      playGuarded('processing_payment', `${orderNumberRef.current}-recording`);
+    }
+  }, [flowState.processingStage, playGuarded]);
+
+  // ── Áudio: dispense_failed ────────────────────────────────────────────
+  useEffect(() => {
+    if (flowState.processingStage === 'dispense_failed' && orderNumberRef.current) {
+      playGuarded('dispense_failed', `${orderNumberRef.current}-dispense`);
+    }
+  }, [flowState.processingStage, playGuarded]);
+
   useEffect(() => {
     if (!product || !selectedSizeKey) {
       setMaxQty(0);
@@ -558,6 +633,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       emergencyTimeoutRef.current = null;
     }
 
+    // 🔧 FIX Bug #22: Limpar checkpoint de crash ao cancelar pagamento.
+    // Sem isso, se finishPaymentFlow gravou o checkpoint antes do cancelamento
+    // (ex: emergencyTimeout dispara logo após pagamento aprovado), o reconcileOnStartup
+    // marcaria o pedido como failed_dispense mesmo sem pagamento confirmado.
+    localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
+
     if (isPagBank) {
       // KIO-03 fix: Cancel PagBank remotely via Cloud Function (not local-only)
       cleanupPagBankListener();
@@ -670,7 +751,23 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       let remainingCups = quantity;
       const pendingDispenses = await getPendingFailedDispenses();
       const failedEntry = pendingDispenses.find(d => d.orderNumber === orderNumberRef.current);
-      
+
+      // 🔧 FIX Bug #23: Se flowStarted=true E mlDispensed=0, a solenóide pode ter aberto
+      // sem o sensor de fluxo medir nada — caso ambíguo, pode ter dispensado tudo sem registro.
+      // Dispensar novamente poderia entregar o dobro do produto. Exigir atendente.
+      if (failedEntry?.flowStarted === true && (!failedEntry.mlDispensed || failedEntry.mlDispensed === 0)) {
+        toast({
+          title: t('checkout.dispenserWarning'),
+          description: 'Não foi possível confirmar o volume dispensado. Procure um atendente para verificar.',
+          variant: 'destructive',
+        });
+        updateProcessingStage("dispense_failed");
+        systemLogService.error('dispense', `Retry bloqueado: ambiguous flow (flowStarted=true, mlDispensed=0)`, {
+          orderNumber: orderNumberRef.current, reason: failedEntry.reason,
+        });
+        return;
+      }
+
       if (failedEntry?.mlDispensed && failedEntry.mlDispensed > 0 && failedEntry?.targetMl) {
         const alreadyDispensed = Math.floor(failedEntry.mlDispensed);
         remainingMl = Math.max(1, failedEntry.targetMl - alreadyDispensed);
@@ -932,6 +1029,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     } catch (error) {
       console.error("Error in finishPaymentFlow:", error);
       systemLogService.error('payment', `Erro pós-pagamento: ${(error as Error)?.message}`, { orderNumber, saleRecorded: saleRecordedRef.current });
+      // 🔧 FIX Bug #25: Cancelar emergencyTimeout no catch — sem isso, se processingStage ainda
+      // for 'awaiting_payment' quando a exceção ocorrer, o timer dispararia e chamaria
+      // handleCancelPayment sobre um fluxo já resetado, causando navegação dupla.
+      if (emergencyTimeoutRef.current) {
+        clearTimeout(emergencyTimeoutRef.current);
+        emergencyTimeoutRef.current = null;
+      }
       // If sale was already recorded, persist failure for recovery/compensation
       if (saleRecordedRef.current && orderNumber) {
         await persistFailedDispense(orderNumber, 'flow_exception').catch(() => {});
@@ -1197,6 +1301,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             setIsProcessing(false);
             updateProcessingStage("idle");
             moveToStep(2);
+            // Áudio: erro de pagamento com cooldown 10s
+            playGuarded('payment_error', modalScopeId.current, 10_000);
           },
         }
       );
@@ -1213,6 +1319,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         description: errorMsg,
         variant: 'destructive',
       });
+      // Áudio: erro de pagamento com cooldown 10s
+      playGuarded('payment_error', modalScopeId.current, 10_000);
     }
   };
 
@@ -1223,6 +1331,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     moveToStep(3);
     updateProcessingStage("awaiting_payment");
     setMpError(null);
+
+    // ── Áudio: prompt de pagamento (por tentativa) ────────────────────────
+    paymentAttemptRef.current += 1;
+    const attemptScope = `${modalScopeId.current}-attempt-${paymentAttemptRef.current}`;
+    if (selectedPayment === 'pix_qr') {
+      playGuarded('pix_scan', attemptScope);
+    } else {
+      playGuarded('card_terminal', attemptScope);
+    }
+    // processing_payment toca em recording_sale (quando o sistema de fato confirma)
 
     // Timeout de emergência: cancela pagamento após ~2 minutos (alinhado com PT2M + margem)
     if (emergencyTimeoutRef.current) {

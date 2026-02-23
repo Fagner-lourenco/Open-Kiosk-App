@@ -125,7 +125,10 @@ const RECONNECT_NOW_COOLDOWN_MS = 5000; // Cooldown entre chamadas de reconnectN
 const USB_NATIVE_CONNECT_TIMEOUT_MS = 8000;
 const USB_ENUMERATION_TIMEOUT_MS = 3000;
 const USB_ERROR_COOLDOWN_MS = 3000; // Cooldown após erro USB antes de tentar reconectar
-const BLE_DISCONNECT_SUPPRESS_MS = 6000; // Janela para ignorar callback BLE após disconnect intencional
+// 🔧 FIX Bug #12: Aumentado de 6s para 18s para cobrir dialog de permissão USB Android (MIUI: até 15s).
+// Sem isso, quando o USB connect demora mais que 6s, o callback BLE de desconexão intencional
+// dispara dentro da janela e inicia reconexão BLE concorrente com o USB já em andamento.
+const BLE_DISCONNECT_SUPPRESS_MS = 18000; // Janela para ignorar callback BLE após disconnect intencional
 const ESP32_USB_VENDOR_IDS = new Set<number>([
   0x303A, // Espressif
   0x10C4, // Silicon Labs (CP210x)
@@ -1235,9 +1238,11 @@ class ESP32CommunicationService {
       // Instead, trust inbound data: if we received anything in the last 10s, consider healthy.
       if (this.dispensingInProgress) {
         const recentInboundMs = this.lastInboundAt ? (tickAt - this.lastInboundAt) : Number.POSITIVE_INFINITY;
-        if (recentInboundMs <= 15000) {
+        if (recentInboundMs <= 30000) {
           // Got data from ESP32 recently — connection is fine, skip ping
-          // v4.1.4: 15s (era 10s) — cobre até 5 copos no multi-cup (3s gap/copo) sem falso disconnect
+          // 🔧 FIX Bug #16: Ampliado de 15s para 30s (era 10s nas versões anteriores).
+          // Em dispensers lentos ou com MIUI agressivo (CPU throttle), o ESP32 pode levar >15s
+          // entre envios de progress, causando false-disconnect durante dispense ativo.
           this.markConnectionHealthy('healthcheck_skip_dispensing');
           return;
         }
@@ -1461,10 +1466,25 @@ class ESP32CommunicationService {
     this.resolvePendingPingWaiters(false);
     systemLogService.warn('esp32', `Conexão perdida: ${reason}`);
 
+    // 🔧 FIX Bug #1: Atualizar estado do supervisor ANTES de notifyConnectionChange().
+    // O hook useESP32Reconnect checava supervisor.state imediatamente após o evento de
+    // conexão disparado pelo notify — mas o estado só era atualizado para 'reconnecting'
+    // DEPOIS do notify. O guard do hook passava sempre (state ainda era 'idle'), causando
+    // chamadas duplas de reconnectNow() do hook + supervisor simultaneamente.
+    // Agora o hook lê state:'reconnecting' e seu guard bloqueia a tentativa duplicada.
+    if (!this.manualDisconnectRequested) {
+      this.updateSupervisorStatus({
+        state: 'reconnecting',
+        consecutiveHealthFailures: 0,
+        transport: 'none',
+        deviceId: undefined,
+      });
+    }
+
     if (this.connectionStatus.type !== 'none' || this.connectionStatus.connected) {
       this.connectionStatus = { connected: false, type: 'none' };
       this.connectedDevice = null;
-      this.notifyConnectionChange();
+      this.notifyConnectionChange(); // hook agora vê state:'reconnecting' — guard funciona
     }
 
     if (this.manualDisconnectRequested) {
@@ -1481,13 +1501,8 @@ class ESP32CommunicationService {
       return;
     }
 
-    this.updateSupervisorStatus({
-      state: 'reconnecting',
-      reason,
-      transport: 'none',
-      deviceId: undefined,
-      consecutiveHealthFailures: 0,
-    });
+    // Atualizar reason e demais campos (state/'reconnecting' + transport/deviceId já atualizados acima)
+    this.updateSupervisorStatus({ reason });
     this.logSupervisor('connection_dropped');
     // 🔍 DIAG: Logar se scheduleReconnect vai de fato agendar (ou se guard vai bloquear)
     console.log(`[ESP32][DIAG] about to scheduleReconnect: connected=${this.connectionStatus.connected} inFlight=${this.supervisorReconnectInFlight} hasTimer=${!!this.supervisorReconnectTimer}`);
@@ -2544,10 +2559,13 @@ class ESP32CommunicationService {
 
     this.nativeUsbConnectPromise = (async () => {
       try {
-        // 🔧 PR2: Desconectar transporte anterior se estiver conectado em outro tipo
+        // 🔧 FIX Bug #11: Usar disconnectCurrentTransportOnly() em vez de disconnect().
+        // disconnect() seta manualDisconnectRequested=true — se o USB connect falhar
+        // em seguida, o supervisor nunca mais tenta reconexão automática (bloqueado).
+        // disconnectCurrentTransportOnly() encerra o transporte sem tocar no flag.
         if (this.connectionStatus.connected && this.connectionStatus.type !== 'usb') {
           console.log(`[USB OTG] Desconectando transporte atual (${this.connectionStatus.type}) antes de conectar USB`);
-          await this.disconnect();
+          await this.disconnectCurrentTransportOnly();
         }
 
         await ensureUsbSerialPluginLoaded();

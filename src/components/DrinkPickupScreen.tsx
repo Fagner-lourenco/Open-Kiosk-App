@@ -27,6 +27,7 @@ import { systemLogService } from "@/services/systemLogService";
 import { salesService } from "@/services/salesService";
 import { RankingOptIn } from "@/components/checkout/RankingOptIn";
 import { buildFingerprints, findCustomerByFingerprint } from "@/utils/knownCustomers";
+import { useAudioVoice } from "@/hooks/useAudioVoice";
 
 interface DrinkPickupScreenProps {
   isOpen: boolean;
@@ -81,6 +82,9 @@ const DrinkPickupScreen = ({
   // Configurações do admin (com fallback para defaults)
   const pickupTimeout = timeoutSeconds ?? settings?.drinkPickupTimeoutSeconds ?? DEFAULT_PICKUP_TIMEOUT_SECONDS;
   const soundEnabled = settings?.drinkPickupSoundEnabled ?? DEFAULT_SOUND_ENABLED;
+
+  const { playGuarded, playGuardedDelayed, clearScope } = useAudioVoice(soundEnabled);
+  const pickupScopeRef = useRef('');
   
   // Estado local
   const [dispenseState, setDispenseState] = useState<DispenseState>('waiting');
@@ -101,6 +105,49 @@ const DrinkPickupScreen = ({
     onCompleteRef.current = onComplete;
     onTimeoutRef.current = onTimeout;
   }, [onComplete, onTimeout]);
+
+  // 🔧 FIX Bug #26: Cancelar autoCloseTimer no unmount do componente.
+  // Sem isso, se o parent desmontar DrinkPickupScreen (navegação ou React StrictMode),
+  // o setTimeout ainda está vivo e chama onCompleteRef.current() sobre componente desmontado.
+  useEffect(() => {
+    return () => {
+      if (autoCloseTimerRef.current) {
+        clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // ============================================
+  // VOZ — ABRIR / FECHAR TELA
+  // ============================================
+
+  useEffect(() => {
+    if (isOpen && orderNumber) {
+      pickupScopeRef.current = `pickup-${orderNumber}`;
+      playGuarded('place_cup', pickupScopeRef.current);
+      playGuardedDelayed(4000, 'how_to_pour_full', pickupScopeRef.current);
+    }
+    if (!isOpen) {
+      clearScope(pickupScopeRef.current);
+      pickupScopeRef.current = '';
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, orderNumber]);
+
+  // Start flow hint após 20 s em estado waiting
+  // (garante que place_cup + how_to_pour_full (~4s+14s) terminaram antes)
+  useEffect(() => {
+    if (!isOpen || dispenseState !== 'waiting') return;
+    const stateSnapshot = dispenseState;
+    const timer = setTimeout(() => {
+      if (stateSnapshot === 'waiting') {
+        playGuarded('start_flow_hint', pickupScopeRef.current);
+      }
+    }, 20000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, dispenseState]);
 
   // ============================================
   // FEEDBACK SONORO (SEM VIBRAÇÃO)
@@ -183,6 +230,8 @@ const DrinkPickupScreen = ({
               title: `✅ ${t('drinkPickup.cupCompleteTitle', { cup: cupNum })}`,
               description: t('drinkPickup.cupCompleteDesc', { next: cupNum + 1, total: totalCups }),
             });
+
+            playGuarded('cup_complete', `${pickupScopeRef.current}-cup-${cupNum}`);
           }
         }
         
@@ -193,6 +242,8 @@ const DrinkPickupScreen = ({
           setPickupCountdown(pickupTimeout);
           // NÃO incrementar manualmente aqui - o useEffect de currentProgress
           // vai atualizar currentCupDisplay quando receber o próximo progress do ESP32
+          const nextCupNum = currentProgressRef.current?.cup ?? 1;
+          playGuarded('next_cup', `${pickupScopeRef.current}-next-${nextCupNum}`);
         }
         
         // Todos os copos concluídos
@@ -201,6 +252,7 @@ const DrinkPickupScreen = ({
           completionTriggeredRef.current = true;
           setDispenseState('completed');
           playCompletionSound();
+          playGuarded('done', pickupScopeRef.current);
           
           // Verificar se devemos mostrar ranking opt-in
           const shouldShowRanking = (() => {
@@ -249,6 +301,7 @@ const DrinkPickupScreen = ({
         } else if (response.stage === 'error') {
           setDispenseState('error');
           systemLogService.error('dispense', `ESP32 erro durante dispense: ${orderNumber}`, { orderNumber });
+          playGuarded('dispense_error', pickupScopeRef.current);
         }
       }
     });
@@ -258,6 +311,28 @@ const DrinkPickupScreen = ({
       // NÃO cancelar o timer de auto-close aqui - ele deve continuar rodando
     };
   }, [isOpen, addResponseListener, playCompletionSound, toast, t]);
+
+  // ============================================
+  // AUTO-CLOSE NO ESTADO DE ERRO (safety net)
+  // ============================================
+  // Garante que o modal nunca fique congelado se o estado de erro for atingido.
+  // Sem isso, disabled={dispenseState !== 'completed'} + ausência de onError handler
+  // bloqueia a tela permanentemente (F1 + F2 juntos = freeze eterno confirmado em logcat).
+  useEffect(() => {
+    if (!isOpen || dispenseState !== 'error') return;
+
+    const timer = setTimeout(() => {
+      systemLogService.warn('dispense', `Auto-fechando tela de erro após timeout: ${orderNumber}`, { orderNumber });
+      if (onTimeoutRef.current) {
+        onTimeoutRef.current();
+      } else {
+        onCompleteRef.current();
+      }
+    }, 60_000); // 60s de safety net — dá tempo para atendente agir antes de fechar sozinho
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, dispenseState]);
 
   // ============================================
   // ATUALIZAR ESTADO BASEADO NO PROGRESSO
@@ -293,8 +368,7 @@ const DrinkPickupScreen = ({
         if (prev <= 1) {
           clearInterval(interval);
           // Timeout: usuário não iniciou o fluxo a tempo
-          systemLogService.warn('dispense', `Pickup timeout: ${orderNumber}`, { orderNumber, timeoutSeconds: pickupTimeout });
-          if (onTimeoutRef.current) {
+          systemLogService.warn('dispense', `Pickup timeout: ${orderNumber}`, { orderNumber, timeoutSeconds: pickupTimeout });          playGuarded('pickup_timeout', pickupScopeRef.current);          if (onTimeoutRef.current) {
             onTimeoutRef.current();
           } else {
             onCompleteRef.current();
@@ -306,7 +380,8 @@ const DrinkPickupScreen = ({
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [isOpen, dispenseState, onTimeout, onComplete]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, dispenseState]); // onTimeout/onComplete acessados via ref — não precisam de dep
 
   // ============================================
   // CONTADOR REGRESSIVO - FASE CONCLUÍDO
@@ -564,6 +639,7 @@ const DrinkPickupScreen = ({
                     recognizedCustomer={rankingRecognizedCustomer}
                     onDone={handleRankingDone}
                     onSkip={handleRankingSkip}
+                    soundEnabled={soundEnabled}
                   />
                 ) : (
                   /* ---- Tela de sucesso padrão ---- */
@@ -653,7 +729,7 @@ const DrinkPickupScreen = ({
             onClick={onComplete} 
             size="lg"
             variant={dispenseState === 'completed' ? 'default' : 'outline'}
-            disabled={dispenseState !== 'completed'}
+            disabled={dispenseState === 'dispensing'}
           >
             {dispenseState === 'completed'
               ? t('drinkPickup.close')

@@ -154,6 +154,11 @@ export interface StoreSettings {
   /** Intervalo de heartbeat em ms (padrão: 15000) */
   esp32HeartbeatIntervalMs?: number;
 
+  /** Período de graça para manter sessão de dispense ativo durante reconexão em ms (padrão: 120000).
+   * Deve cobrir o tempo de reboot completo do ESP32: boot + stack WiFi/BLE + handshake.
+   * Configurável via Firestore sem necessidade de novo deploy. */
+  esp32DisconnectGraceMs?: number;
+
   /** Último IP WiFi do ESP32 (para reconexão) */
   esp32LastWifiIp?: string;
 

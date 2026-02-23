@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useAudioVoice } from '@/hooks/useAudioVoice';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,6 +41,8 @@ export interface RankingOptInProps {
   onDone: () => void;
   /** Called when user skips or countdown expires */
   onSkip: () => void;
+  /** Whether voice prompts are enabled (inherited from parent) */
+  soundEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,8 +58,10 @@ export function RankingOptIn({
   recognizedCustomer,
   onDone,
   onSkip,
+  soundEnabled = true,
 }: RankingOptInProps) {
   const { t } = useTranslation();
+  const { playGuarded } = useAudioVoice(soundEnabled);
 
   // Form fields — pre-populate from recognised customer
   const [name, setName] = useState(recognizedCustomer?.name || '');
@@ -74,6 +79,12 @@ export function RankingOptIn({
   // Guard: stable onSkip ref so interval cleanup doesn't re-create
   const onSkipRef = useRef(onSkip);
   onSkipRef.current = onSkip;
+
+  // Voz: convidar ao ranking no mount
+  useEffect(() => {
+    playGuarded('isis_ranking_invite', orderNumber);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Start countdown on mount
   useEffect(() => {
@@ -126,6 +137,7 @@ export function RankingOptIn({
       registerCustomer(name.trim(), cpfDigits, fingerprints);
 
       setSubmitted(true);
+      playGuarded('ranking_thanks', orderNumber);
       // Brief success flash then close
       setTimeout(() => onDone(), 800);
     } catch (err) {

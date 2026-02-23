@@ -5,6 +5,7 @@ import { useTranslation } from '@/i18n';
 import { AttractVideoSettings } from '@/types/store';
 import type { AttractVideoConfig } from '../../shared/types/store';
 import { useCachedVideo } from '@/hooks/useCachedVideo';
+import { unlockAudio } from '@/hooks/useAudioVoice';
 
 type AttractScreenProps = {
   visible: boolean;
@@ -131,6 +132,8 @@ const AttractScreen = ({
   const handleStart = () => {
     if (startTriggeredRef.current) return;
     startTriggeredRef.current = true;
+    // Desbloquear contexto de áudio do Android WebView (silencioso, exige gesto do usuário)
+    unlockAudio();
     setIsExiting(true);
     window.setTimeout(() => {
       onStart();
