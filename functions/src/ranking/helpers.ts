@@ -153,12 +153,15 @@ export function todayYMD(): string {
 /**
  * Gera código aleatório de 8 chars para prêmios.
  * Exclui caracteres ambíguos (0, O, I, 1, L).
+ * Usa crypto.randomBytes para segurança criptográfica.
  */
 export function generatePrizeCode(): string {
+  const crypto = require('crypto');
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const bytes = crypto.randomBytes(8);
   let code = '';
   for (let i = 0; i < 8; i++) {
-    code += chars[Math.floor(Math.random() * chars.length)];
+    code += chars[bytes[i] % chars.length];
   }
   return code;
 }

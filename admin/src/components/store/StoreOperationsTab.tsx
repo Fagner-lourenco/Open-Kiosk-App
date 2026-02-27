@@ -13,6 +13,7 @@
  */
 
 import { useState } from 'react';
+import { formatVolumeCompact } from '@/utils/formatVolume';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -105,9 +106,9 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
+// formatMl delegado ao utilitário centralizado formatVolume
 function formatMl(ml: number): string {
-  if (ml >= 1000) return `${(ml / 1000).toFixed(1)}L`;
-  return `${Math.round(ml)}ml`;
+  return formatVolumeCompact(ml);
 }
 
 // ============================================================================
@@ -237,7 +238,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
   const base = storePath(franchiseId, storeId);
 
   // ── Real-time tap subscription (shared hook) ─────────────────────────────
-  const { taps, loading: loadingTaps } = useTapsRealtime(franchiseId, storeId);
+  const { taps, loading: loadingTaps, error: tapsError } = useTapsRealtime(franchiseId, storeId);
 
   // ── Fetch kegs (shared cache key with useKegs) ───────────────────────────
   const { data: kegsMap = {} } = useQuery({
@@ -356,6 +357,16 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
 
   return (
     <div className="space-y-6">
+      {/* [FIX Bug-5] Exibir erro do listener de taps */}
+      {tapsError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-red-800">Erro ao carregar torneiras</p>
+            <p className="text-xs text-red-600">{tapsError && typeof tapsError === 'object' && 'message' in tapsError ? (tapsError as Error).message : 'Verifique as permissões ou a conexão.'}</p>
+          </div>
+        </div>
+      )}
       {/* ── SUMMARY CARDS ──────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
@@ -442,7 +453,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
             </CardTitle>
             <div className="flex items-center gap-2">
               <Select value={tapFilter} onValueChange={setTapFilter}>
-                <SelectTrigger className="w-[130px]">
+                <SelectTrigger className="w-full sm:w-[130px]">
                   <SelectValue placeholder="Tap" />
                 </SelectTrigger>
                 <SelectContent>
@@ -455,7 +466,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
                 </SelectContent>
               </Select>
               <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-[130px]">
+                <SelectTrigger className="w-full sm:w-[130px]">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>

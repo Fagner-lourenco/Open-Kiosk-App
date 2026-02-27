@@ -9,11 +9,12 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate, Link } from 'react-router-dom';
-import { doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useFranchise } from '@/context/FranchiseContext';
 import { logStoreAction } from '@/services/auditService';
+import { deleteStore } from '@/services/storeService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -123,9 +124,8 @@ export function StoreOverviewPage() {
     const deletedStoreName = store.name || storeId;
 
     try {
-      await deleteDoc(
-        doc(db, `franchises/${franchiseId}/stores/${storeId}`),
-      );
+      // [FIX BUG-S1] Cascade delete via storeService
+      await deleteStore(franchiseId, storeId);
 
       if (user) {
         try {

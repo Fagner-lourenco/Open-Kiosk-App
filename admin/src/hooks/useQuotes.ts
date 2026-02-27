@@ -23,11 +23,13 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useToast } from '@/hooks/useToast';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
+import { roundCurrency } from '@/utils/currency';
 import type {
   Quote,
   QuoteStatus,
@@ -94,13 +96,24 @@ const VALID_QUOTE_STATUSES: QuoteStatus[] = ['draft', 'sent', 'accepted', 'rejec
 
 function normalizeQuote(id: string, data: Record<string, unknown>): Quote {
   const st = data.status as string;
+  let status: QuoteStatus = VALID_QUOTE_STATUSES.includes(st as QuoteStatus) ? (st as QuoteStatus) : 'draft';
+
+  // [FIX COM-11] Derivar status 'expired' se validUntil já passou e status ainda é draft/sent
+  const validUntil = data.validUntil as Timestamp | undefined;
+  if (validUntil && (status === 'draft' || status === 'sent')) {
+    const expiryDate = typeof validUntil.toDate === 'function' ? validUntil.toDate() : new Date(validUntil as unknown as string);
+    if (expiryDate.getTime() < Date.now()) {
+      status = 'expired';
+    }
+  }
+
   return {
     id,
     customerId: (data.customerId as string) || '',
     dealId: data.dealId as string | undefined,
     eventId: data.eventId as string | undefined,
-    status: VALID_QUOTE_STATUSES.includes(st as QuoteStatus) ? (st as QuoteStatus) : 'draft',
-    validUntil: data.validUntil as Timestamp | undefined,
+    status,
+    validUntil,
     subtotal: Number(data.subtotal) || 0,
     discounts: Number(data.discounts) || 0,
     fees: Number(data.fees) || 0,
@@ -263,13 +276,12 @@ export function useQuotes(franchiseId: string, storeId: string) {
   // ── Delete quote ────────────────────────────────────────────────────────
   const deleteMutation = useMutation({
     mutationFn: async (quoteId: string) => {
-      // Cascade: delete lines subcollection first
+      // [FIX BUG-COM-01] Usar writeBatch para deleção atômica
+      const batch = writeBatch(db);
       const linesSnap = await getDocs(quoteLinesRef(franchiseId, storeId, quoteId));
-      for (const lineDoc of linesSnap.docs) {
-        await deleteDoc(lineDoc.ref);
-      }
-      const ref = quoteDocRef(franchiseId, storeId, quoteId);
-      await deleteDoc(ref);
+      linesSnap.docs.forEach((lineDoc) => batch.delete(lineDoc.ref));
+      batch.delete(quoteDocRef(franchiseId, storeId, quoteId));
+      await batch.commit();
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: quoteKeys.all(franchiseId, storeId) });
@@ -298,7 +310,7 @@ export function useQuotes(franchiseId: string, storeId: string) {
         description: input.description,
         qty: input.qty,
         unitPrice: input.unitPrice,
-        total: input.qty * input.unitPrice,
+        total: roundCurrency(input.qty * input.unitPrice),
         productId: input.productId || null,
       });
       return newRef.id;
@@ -337,7 +349,7 @@ export function useQuotes(franchiseId: string, storeId: string) {
         }
         const qty = cleanFields.qty as number;
         const unitPrice = cleanFields.unitPrice as number;
-        cleanFields.total = qty * unitPrice;
+        cleanFields.total = roundCurrency(qty * unitPrice);
       }
       await updateDoc(ref, cleanFields);
     },

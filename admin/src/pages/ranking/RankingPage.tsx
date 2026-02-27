@@ -136,6 +136,15 @@ export function RankingPage() {
     return <NoFranchiseSelected description="Selecione uma franquia no menu lateral para ver o ranking" />;
   }
 
+  if (!storeId) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-muted-foreground text-sm">Nenhuma loja configurada para esta franquia.</p>
+        <p className="text-muted-foreground text-xs mt-1">Adicione uma loja nas configurações antes de acessar o ranking.</p>
+      </div>
+    );
+  }
+
   const dateInputCls = 'flex h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring';
 
   return (
@@ -195,7 +204,7 @@ export function RankingPage() {
 
       {/* ── Tabs ── */}
       <Tabs defaultValue="ranking" className="space-y-5">
-        <TabsList className="h-auto p-1 bg-muted/50 border">
+        <TabsList className="h-auto p-1 bg-muted/50 border flex-wrap">
           <TabsTrigger value="ranking" className="gap-1.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
             <Trophy className="h-4 w-4" />
             Ranking
@@ -244,7 +253,7 @@ export function RankingPage() {
                 <div className="flex items-center gap-2">
                   <span title="Métrica de ordenação"><Beer className="h-4 w-4 text-muted-foreground shrink-0" /></span>
                   <Select value={metric} onValueChange={(v) => setMetric(v as RankingFilters['metric'])}>
-                    <SelectTrigger className="w-[155px] h-9">
+                    <SelectTrigger className="w-full sm:w-[155px] h-9">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -259,7 +268,7 @@ export function RankingPage() {
                 <div className="flex items-center gap-2">
                   <span title="Nº de posições exibidas"><TrendingUp className="h-4 w-4 text-muted-foreground shrink-0" /></span>
                   <Select value={String(limit)} onValueChange={(v) => setLimit(Number(v))}>
-                    <SelectTrigger className="w-[110px] h-9">
+                    <SelectTrigger className="w-full sm:w-[110px] h-9">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -363,7 +372,7 @@ export function RankingPage() {
                   </CardHeader>
                   <CardContent className="pt-0">
                     <div className="overflow-x-auto -mx-6">
-                      <table className="w-full text-sm">
+                      <table className="w-full text-sm" aria-label="Ranking de clientes">
                         <thead>
                           <tr className="border-b">
                             <th className="pb-2 pl-6 pr-3 text-left font-medium text-muted-foreground w-12">#</th>

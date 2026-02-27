@@ -22,6 +22,8 @@ export interface Product {
   sizes?: ProductSize[];
   defaultSizeKey?: string;
   totalMlAvailable?: number;
+  /** % consumido do barril (0 = cheio, 100 = vazio). Populado por Cloud Function. */
+  kegLevelPercent?: number;
 
   // Beer info (UI "Quadro de Chopes")
   tapNumber?: number;

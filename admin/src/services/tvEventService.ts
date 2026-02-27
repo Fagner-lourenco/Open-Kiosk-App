@@ -27,6 +27,7 @@ import {
   Timestamp,
   orderBy,
   limit,
+  startAfter,
   writeBatch,
   runTransaction,
 } from 'firebase/firestore';
@@ -239,6 +240,7 @@ export async function createChallenge(
   if (typeof challenge.rule?.threshold !== 'number') throw new Error('Threshold deve ser um número');
   if (!challenge.rule?.threshold || challenge.rule.threshold <= 0) throw new Error('Threshold deve ser maior que zero');
   if (!challenge.rule?.windowMinutes || challenge.rule.windowMinutes <= 0) throw new Error('windowMinutes deve ser maior que zero');
+  if (typeof challenge.durationMinutes !== 'number' || challenge.durationMinutes < 1) throw new Error('durationMinutes deve ser pelo menos 1');
 
   const colRef = colFromPath(challengesPath(franchiseId, storeId));
   const newRef = doc(colRef);
@@ -272,6 +274,7 @@ export async function updateChallengeStatus(
 
 /**
  * Ativa um desafio (muda status para 'active' e define horários)
+ * Apenas desafios com status 'scheduled' podem ser ativados.
  */
 export async function activateChallenge(
   franchiseId: string,
@@ -281,6 +284,15 @@ export async function activateChallenge(
 ): Promise<void> {
   const path = challengesPath(franchiseId, storeId);
   const ref = docFromPath(`${path}/${challengeId}`);
+
+  // Guard: só desafios agendados podem ser ativados
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error('Desafio não encontrado');
+  const current = snap.data();
+  if (current.status !== 'scheduled') {
+    throw new Error(`Desafio não pode ser ativado (status atual: ${current.status})`);
+  }
+
   const now = Timestamp.now();
   const endsAt = Timestamp.fromDate(new Date(Date.now() + durationMinutes * 60_000));
 
@@ -461,13 +473,14 @@ export async function redeemPrize(
 export async function listPrizes(
   franchiseId: string,
   storeId: string,
-  status?: PrizeStatus
+  status?: PrizeStatus,
+  maxResults: number = 100
 ): Promise<Prize[]> {
   const colRef = colFromPath(prizesPath(franchiseId, storeId));
 
   const q = status
-    ? query(colRef, where('status', '==', status), orderBy('createdAt', 'desc'), limit(200))
-    : query(colRef, orderBy('createdAt', 'desc'), limit(100));
+    ? query(colRef, where('status', '==', status), orderBy('createdAt', 'desc'), limit(maxResults))
+    : query(colRef, orderBy('createdAt', 'desc'), limit(maxResults));
 
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ ...d.data(), id: d.id } as Prize));
@@ -547,18 +560,29 @@ export async function resetRanking(
   storeId: string
 ): Promise<number> {
   const colRef = colFromPath(rankingAggPath(franchiseId, storeId));
-  const snap = await getDocs(colRef);
 
-  if (snap.empty) return 0;
+  // Paginação: lê e deleta em blocos de 500 para evitar OOM em coleções grandes
+  const PAGE_SIZE = 500;
+  let deleted = 0;
+  let lastDoc: any = null;
 
-  // Firestore limita batches a 500 operações
-  const BATCH_LIMIT = 500;
-  for (let i = 0; i < snap.docs.length; i += BATCH_LIMIT) {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const q = lastDoc
+      ? query(colRef, startAfter(lastDoc), limit(PAGE_SIZE))
+      : query(colRef, limit(PAGE_SIZE));
+    const snap = await getDocs(q);
+    if (snap.empty) break;
+
     const batchOp = writeBatch(db);
-    snap.docs.slice(i, i + BATCH_LIMIT).forEach((d) => batchOp.delete(d.ref));
+    snap.docs.forEach((d) => batchOp.delete(d.ref));
     await batchOp.commit();
+
+    deleted += snap.size;
+    lastDoc = snap.docs[snap.docs.length - 1];
   }
-  return snap.size;
+
+  return deleted;
 }
 
 // ============================================================================

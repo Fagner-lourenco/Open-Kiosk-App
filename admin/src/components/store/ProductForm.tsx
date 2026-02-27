@@ -75,7 +75,10 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>(initialProduct?.tags || []);
   const [stock, setStock] = useState(initialProduct?.stock || 0);
-  const [minStock, setMinStock] = useState(initialProduct?.minStock || 5);
+  const [minStock, setMinStock] = useState(initialProduct?.minStock ?? 5);
+
+  // [FIX BUG-CAT-04] Estado controlado para 'active' (antes era hardcoded true)
+  const [active, setActive] = useState(initialProduct?.active ?? true);
 
   // Bebidas
   const [isDrink, setIsDrink] = useState(initialProduct?.isDrink || false);
@@ -139,7 +142,7 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
         price: sizes[0]?.price || 0,
         stock: 0,
         inStock: totalMlAvailable > 0,
-        active: true,
+        active,
         // Beer info fields (only include if set)
         ...(tapNumber != null ? { tapNumber } : {}),
         ...(beerStyle ? { style: beerStyle } : {}),
@@ -160,7 +163,7 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
         inStock: stock > 0,
         stock,
         minStock,
-        active: true,
+        active,
       });
     }
   };
@@ -197,6 +200,10 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
 
   const updateSize = (index: number, field: keyof ProductSize, value: string | number) => {
     const newSizes = [...sizes];
+    // [FIX CAT-11] Se renomeou a key, atualizar defaultSizeKey
+    if (field === 'key' && sizes[index]?.key === defaultSizeKey) {
+      setDefaultSizeKey(value as string);
+    }
     newSizes[index] = { ...newSizes[index], [field]: value };
     setSizes(newSizes);
   };
@@ -691,6 +698,26 @@ export function ProductForm({ onSubmit, initialProduct, isSubmitting }: ProductF
             ))}
           </div>
         )}
+      </fieldset>
+
+      {/* ═══ STATUS DO PRODUTO ═══ */}
+      <fieldset className="space-y-3">
+        <legend className="text-sm font-semibold text-foreground uppercase tracking-wide border-b pb-2 mb-2 w-full">
+          Status
+        </legend>
+        <div className="flex items-center justify-between rounded-lg border p-3">
+          <div className="space-y-0.5">
+            <Label htmlFor="active">Produto Ativo</Label>
+            <p className="text-xs text-muted-foreground">
+              Produtos inativos não aparecem no kiosk para os clientes.
+            </p>
+          </div>
+          <Switch
+            id="active"
+            checked={active}
+            onCheckedChange={setActive}
+          />
+        </div>
       </fieldset>
 
       {/* Submit */}

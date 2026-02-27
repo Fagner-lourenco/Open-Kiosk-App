@@ -53,8 +53,8 @@ export default function DrinkCard({
   const basePrice = defaultSize?.price ?? product.price;
   const sizeMl = defaultSize?.ml;
 
-  // Dynamic Pricing hook
-  const dp = useDynamicPrice(basePrice, sizeMl);
+  // Dynamic Pricing hook — [FIX BUG-CAT-01] passa kegLevelPercent para regras de barril progressivo
+  const dp = useDynamicPrice(basePrice, sizeMl, product.kegLevelPercent);
   const displayPrice = dp.effectivePrice ?? basePrice;
 
   // Product state

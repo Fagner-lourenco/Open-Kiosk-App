@@ -130,6 +130,16 @@ service cloud.firestore {
               hasRole(franchiseId, minRoles));
     }
     
+    /**
+     * [FIX BUG-F06] Verifica se o usuário tem acesso financeiro à loja.
+     * Requer role owner, admin ou manager — operators/employees/viewers NÃO
+     * podem ler dados financeiros.
+     */
+    function hasFinancialAccess(franchiseId, storeId) {
+      return hasStoreAccess(franchiseId, storeId) &&
+             hasRole(franchiseId, ['owner', 'admin', 'manager']);
+    }
+    
     // ════════════════════════════════════════════════════════════════════════
     // SUPERADMINS COLLECTION (Gerenciado apenas por Cloud Functions)
     // ════════════════════════════════════════════════════════════════════════
@@ -210,7 +220,12 @@ service cloud.firestore {
                       isFranchiseMember(franchiseId);
         
         // Super admin ou owner/admin podem adicionar membros
-        allow create: if isOwnerAdminOrSuperAdmin(franchiseId);
+        // [FIX BUG-GES-02] Usuário convidado pode criar seu PRÓPRIO doc de membership
+        allow create: if isOwnerAdminOrSuperAdmin(franchiseId) ||
+                        (isAuthenticated() &&
+                         memberId == request.auth.uid &&
+                         request.resource.data.userId == request.auth.uid &&
+                         request.resource.data.isActive == true);
         
         // Super admin pode atualizar qualquer membro
         // Owner e admin podem atualizar membros (não podem mudar próprio role)
@@ -514,7 +529,9 @@ service cloud.firestore {
                                   isFranchiseOwner(franchiseId) ||
                                   canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
 
-          allow delete: if false;
+          allow delete: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin']);
         }
 
         // ────────────────────────────────────────────────────────────────────
@@ -765,9 +782,10 @@ service cloud.firestore {
         // ────────────────────────────────────────────────────────────────────
 
         match /finAccounts/{docId} {
+          // [FIX BUG-F06] Restringe leitura financeira a owner/admin/manager
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -779,9 +797,10 @@ service cloud.firestore {
         }
 
         match /finCategories/{docId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -793,9 +812,10 @@ service cloud.firestore {
         }
 
         match /finCostCenters/{docId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -807,9 +827,10 @@ service cloud.firestore {
         }
 
         match /finParties/{docId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -821,9 +842,10 @@ service cloud.firestore {
         }
 
         match /finLedger/{docId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -835,9 +857,10 @@ service cloud.firestore {
         }
 
         match /finInvoices/{invoiceId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -849,9 +872,10 @@ service cloud.firestore {
 
           // Linhas da fatura (subcollection)
           match /lines/{lineId} {
+            // [FIX BUG-F06]
             allow read: if isSuperAdmin() ||
                           isFranchiseOwner(franchiseId) ||
-                          hasStoreAccess(franchiseId, storeId);
+                          hasFinancialAccess(franchiseId, storeId);
 
             allow create, update: if isSuperAdmin() ||
                                      isFranchiseOwner(franchiseId) ||
@@ -864,9 +888,10 @@ service cloud.firestore {
         }
 
         match /finBills/{docId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create, update: if isSuperAdmin() ||
                                    isFranchiseOwner(franchiseId) ||
@@ -878,9 +903,10 @@ service cloud.firestore {
         }
 
         match /finPayments/{docId} {
+          // [FIX BUG-F06]
           allow read: if isSuperAdmin() ||
                         isFranchiseOwner(franchiseId) ||
-                        hasStoreAccess(franchiseId, storeId);
+                        hasFinancialAccess(franchiseId, storeId);
 
           allow create: if isSuperAdmin() ||
                           isFranchiseOwner(franchiseId) ||
@@ -911,8 +937,11 @@ service cloud.firestore {
         // Event Stats (doc único)
         match /eventStats/{docId} {
           allow read: if isAuthenticated();
-          // Apenas Cloud Functions escrevem
-          allow write: if false;
+          // Admin/owner/manager podem escrever (meta coletiva, milestones)
+          // Cloud Functions também escrevem (totalMl, totalServes, etc.)
+          allow write: if isSuperAdmin() ||
+                         isFranchiseOwner(franchiseId) ||
+                         canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
         }
 
         // Ranking Agregado (docs pre-agregados por cliente)
@@ -1055,8 +1084,11 @@ service cloud.firestore {
                     isOwnerOrAdmin(resource.data.franchiseId));
       
       // Owner e admin podem criar convites
+      // [FIX BUG-GES-03] Apenas franchise owner pode convidar com role 'owner'
       allow create: if isAuthenticated() && 
-                     isOwnerOrAdmin(request.resource.data.franchiseId);
+                     isOwnerOrAdmin(request.resource.data.franchiseId) &&
+                     (request.resource.data.role != 'owner' || 
+                      isFranchiseOwner(request.resource.data.franchiseId));
       
       // Pode atualizar status (aceitar convite)
       // 🔒 FIX Bug-1: Destinatário só pode alterar status (não role/franchiseId)

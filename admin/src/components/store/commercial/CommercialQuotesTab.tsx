@@ -75,6 +75,7 @@ import {
   CheckCircle2,
   Eye,
   ClipboardList,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   useQuotes,
@@ -89,7 +90,8 @@ import type {
   QuoteLine,
   QuoteLineType,
 } from '@/types/commercial';
-import { Timestamp } from 'firebase/firestore';
+import { Timestamp, doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 // ============================================================================
 // CONSTANTS
@@ -166,6 +168,19 @@ function QuoteDialog({
     return '';
   });
   const [paymentTerms, setPaymentTerms] = useState(initialData?.paymentTerms || '');
+
+  // [FIX COM-09] Sincronizar state quando initialData mudar
+  useEffect(() => {
+    setCustomerId(initialData?.customerId || '');
+    setStatus(initialData?.status || 'draft');
+    setPaymentTerms(initialData?.paymentTerms || '');
+    if (initialData?.validUntil) {
+      const d = toDateSafe(initialData.validUntil);
+      setValidUntil(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+    } else {
+      setValidUntil('');
+    }
+  }, [initialData]);
 
   const isEditing = !!initialData;
 
@@ -386,14 +401,21 @@ function QuoteDetailDialog({
   const [lines, setLines] = useState<QuoteLine[]>([]);
   const [loadingLines, setLoadingLines] = useState(false);
   const [showAddLine, setShowAddLine] = useState(false);
+  const [linesError, setLinesError] = useState<string | null>(null);
 
   const loadLines = useCallback(async (): Promise<QuoteLine[]> => {
     if (!quote?.id) return [];
     setLoadingLines(true);
+    setLinesError(null);
     try {
       const data = await fetchQuoteLines(quote.id);
       setLines(data);
       return data;
+    } catch (err) {
+      // [FIX COM-07] Capturar e exibir erros de loadLines
+      console.error('[QuoteDetail] loadLines error:', err);
+      setLinesError(err instanceof Error ? err.message : 'Erro ao carregar itens da proposta');
+      return [];
     } finally {
       setLoadingLines(false);
     }
@@ -407,16 +429,22 @@ function QuoteDetailDialog({
 
   const linesTotal = lines.reduce((s, l) => s + l.total, 0);
 
-  // Sync totals back to quote when lines change
+  // Sync totals back to quote when lines change (reads fresh discounts/fees to avoid stale closure)
   const syncTotals = useCallback(async (lines: QuoteLine[]) => {
     if (!quote?.id) return;
     const subtotal = lines.reduce((s, l) => s + l.total, 0);
+    // Read fresh quote doc to get current discounts/fees
+    const quoteRef = doc(db, 'franchises', franchiseId, 'stores', storeId, 'quotes', quote.id);
+    const snap = await getDoc(quoteRef);
+    const fresh = snap.data() as { discounts?: number; fees?: number } | undefined;
+    const discounts = fresh?.discounts || 0;
+    const fees = fresh?.fees || 0;
     await updateQuote({
       quoteId: quote.id,
       subtotal,
-      total: subtotal - (quote.discounts || 0) + (quote.fees || 0),
+      total: subtotal - discounts + fees,
     });
-  }, [quote, updateQuote]);
+  }, [quote?.id, franchiseId, storeId, updateQuote]);
 
   if (!quote) return null;
 
@@ -455,7 +483,12 @@ function QuoteDetailDialog({
                   Item
                 </Button>
               </div>
-              {loadingLines ? (
+              {linesError ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                  <p className="text-sm text-red-700">{linesError}</p>
+                </div>
+              ) : loadingLines ? (
                 <div className="flex justify-center py-4">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
@@ -552,6 +585,7 @@ export function CommercialQuotesTab({ franchiseId, storeId }: Props) {
   const {
     quotes,
     loadingQuotes,
+    quotesError,
     draftQuotes,
     sentQuotes,
     acceptedQuotes,
@@ -603,6 +637,17 @@ export function CommercialQuotesTab({ franchiseId, storeId }: Props) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // [FIX COM-06] Exibir erro quando query falha
+  if (quotesError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+        <h4 className="text-lg font-medium mb-2">Erro ao carregar propostas</h4>
+        <p className="text-sm text-muted-foreground">{quotesError instanceof Error ? quotesError.message : 'Verifique permissões e conexão.'}</p>
       </div>
     );
   }

@@ -135,7 +135,10 @@ export const useFirebaseProducts = () => {
       const productsCollection = getProductsCollection(storeId);
       
       unsubscribeGlobal = onSnapshot(productsCollection, (snapshot) => {
-        const productsData = snapshot.docs.map(d => {
+        const productsData = snapshot.docs
+          // [FIX BUG-CAT-03] Filtrar produtos inativos — não devem aparecer no kiosk
+          .filter(d => d.data().active !== false)
+          .map(d => {
           const data = d.data() as Record<string, unknown>;
           return {
             id: d.id,

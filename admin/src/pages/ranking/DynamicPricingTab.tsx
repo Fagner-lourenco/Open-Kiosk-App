@@ -58,7 +58,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 
 function generateRuleId(type: DynamicPricingRuleType): string {
   const prefix = type === 'happy_hour' ? 'hh' : 'keg';
-  return `${prefix}-${Date.now().toString(36)}`;
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
 const DEFAULT_HH_WINDOW: HappyHourWindow = {
@@ -126,6 +126,17 @@ export function DynamicPricingTab({
     () => JSON.stringify(config) !== JSON.stringify(savedConfig),
     [config, savedConfig],
   );
+
+  // ── Prevent accidental navigation when dirty ─────────────────────────
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
 
   // ── Load ─────────────────────────────────────────────────────────────
   const loadConfig = useCallback(async () => {
@@ -538,7 +549,10 @@ export function DynamicPricingTab({
         <div className="flex gap-2">
           <Button
             variant="outline"
-            onClick={loadConfig}
+            onClick={() => {
+              if (isDirty && !window.confirm('Existem alterações não salvas. Deseja recarregar mesmo assim?')) return;
+              loadConfig();
+            }}
             disabled={saving}
           >
             <RefreshCw className="h-4 w-4 mr-1.5" />

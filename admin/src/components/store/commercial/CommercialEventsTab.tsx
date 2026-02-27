@@ -75,6 +75,8 @@ import {
   DollarSign,
   Users,
   Eye,
+  AlertTriangle,
+  Zap,
 } from 'lucide-react';
 import {
   useCommercialEvents,
@@ -93,6 +95,9 @@ import type {
   PaidBy,
 } from '@/types/commercial';
 import { Timestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/lib/firebase';
+import { toast } from 'sonner';
 
 // ============================================================================
 // CONSTANTS
@@ -204,6 +209,23 @@ function EventDialog({
   const [startTime, setStartTime] = useState(initStart ? toTimeInput(initStart) : toTimeInput(now));
   const [endDate, setEndDate] = useState(initEnd ? toDateInput(initEnd) : '');
   const [endTime, setEndTime] = useState(initEnd ? toTimeInput(initEnd) : '');
+
+  // [FIX COM-09] Sincronizar state quando initialData mudar (ex: editar outro item)
+  useEffect(() => {
+    setTitle(initialData?.title || '');
+    setCustomerId(initialData?.customerId || '');
+    setStatus(initialData?.status || 'draft');
+    setLocationType(initialData?.locationType || 'external');
+    setPricingModel(initialData?.pricingModel || '');
+    setAttendeesEstimate(initialData?.attendeesEstimate?.toString() || '');
+    setDescription(initialData?.description || '');
+    const s = initialData?.startAt ? toDateSafe(initialData.startAt) : null;
+    const e = initialData?.endAt ? toDateSafe(initialData.endAt) : null;
+    setStartDate(s ? toDateInput(s) : toDateInput(new Date()));
+    setStartTime(s ? toTimeInput(s) : toTimeInput(new Date()));
+    setEndDate(e ? toDateInput(e) : '');
+    setEndTime(e ? toTimeInput(e) : '');
+  }, [initialData]);
 
   const isEditing = !!initialData;
 
@@ -499,12 +521,19 @@ function EventDetailDialog({
   const [loadingLines, setLoadingLines] = useState(false);
   const [showAddLine, setShowAddLine] = useState(false);
 
+  const [linesError, setLinesError] = useState<string | null>(null);
+
   const loadLines = useCallback(async () => {
     if (!event?.id) return;
     setLoadingLines(true);
+    setLinesError(null);
     try {
       const lines = await fetchBudgetLines(event.id);
       setBudgetLines(lines);
+    } catch (err) {
+      // [FIX COM-07] Capturar e exibir erros de loadLines
+      console.error('[EventDetail] loadLines error:', err);
+      setLinesError(err instanceof Error ? err.message : 'Erro ao carregar itens do orçamento');
     } finally {
       setLoadingLines(false);
     }
@@ -560,7 +589,12 @@ function EventDetailDialog({
                   Linha
                 </Button>
               </div>
-              {loadingLines ? (
+              {linesError ? (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                  <p className="text-sm text-red-700">{linesError}</p>
+                </div>
+              ) : loadingLines ? (
                 <div className="flex justify-center py-4">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
@@ -639,6 +673,7 @@ export function CommercialEventsTab({ franchiseId, storeId }: Props) {
   const {
     events,
     loadingEvents,
+    eventsError,
     activeEvents,
     upcomingEvents,
     createEvent,
@@ -666,6 +701,46 @@ export function CommercialEventsTab({ franchiseId, storeId }: Props) {
   const [editingEvent, setEditingEvent] = useState<CommercialEvent | null>(null);
   const [deletingEvent, setDeletingEvent] = useState<CommercialEvent | null>(null);
   const [viewingEvent, setViewingEvent] = useState<CommercialEvent | null>(null);
+  const [togglingKioskId, setTogglingKioskId] = useState<string | null>(null);
+
+  // [FIX COM-12] Toggle event mode no kiosk via Cloud Function
+  const handleToggleKiosk = useCallback(async (ev: CommercialEvent, enabled: boolean) => {
+    if (!ev.id) return;
+    setTogglingKioskId(ev.id);
+    try {
+      const toggle = httpsCallable<{
+        franchiseId: string;
+        storeId: string;
+        enabled: boolean;
+        label?: string;
+        durationMinutes?: number;
+        activateDynamicPricing?: boolean;
+      }>(functions, 'toggleEventMode');
+
+      let durationMinutes: number | undefined;
+      if (enabled && ev.startAt && ev.endAt) {
+        const start = ev.startAt instanceof Timestamp ? ev.startAt.toDate() : new Date();
+        const end = ev.endAt instanceof Timestamp ? ev.endAt.toDate() : new Date();
+        durationMinutes = Math.max(30, Math.round((end.getTime() - start.getTime()) / 60000));
+      }
+
+      await toggle({
+        franchiseId,
+        storeId,
+        enabled,
+        label: enabled ? ev.title : undefined,
+        durationMinutes: enabled ? durationMinutes : undefined,
+        activateDynamicPricing: enabled ? true : undefined,
+      });
+
+      toast.success(enabled ? 'Evento ativado no kiosk!' : 'Evento desativado no kiosk');
+    } catch (err) {
+      console.error('[COM-12] toggleEventMode error:', err);
+      toast.error('Erro ao alterar modo de evento no kiosk');
+    } finally {
+      setTogglingKioskId(null);
+    }
+  }, [franchiseId, storeId]);
 
   // Filter
   const filteredEvents = useMemo(() => {
@@ -688,6 +763,17 @@ export function CommercialEventsTab({ franchiseId, storeId }: Props) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // [FIX COM-06] Exibir erro quando query falha
+  if (eventsError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+        <h4 className="text-lg font-medium mb-2">Erro ao carregar eventos</h4>
+        <p className="text-sm text-muted-foreground">{eventsError instanceof Error ? eventsError.message : 'Verifique permissões e conexão.'}</p>
       </div>
     );
   }
@@ -864,6 +950,25 @@ export function CommercialEventsTab({ franchiseId, storeId }: Props) {
                             <Edit className="h-4 w-4 mr-2" />
                             Editar
                           </DropdownMenuItem>
+                          {/* [FIX COM-12] Toggle kiosk event mode */}
+                          {(ev.status === 'confirmed' || ev.status === 'in_progress') && (
+                            <DropdownMenuItem
+                              onClick={() => handleToggleKiosk(ev, true)}
+                              disabled={togglingKioskId === ev.id}
+                            >
+                              <Zap className="h-4 w-4 mr-2 text-yellow-600" />
+                              {togglingKioskId === ev.id ? 'Ativando...' : 'Ativar no Kiosk'}
+                            </DropdownMenuItem>
+                          )}
+                          {ev.status === 'in_progress' && (
+                            <DropdownMenuItem
+                              onClick={() => handleToggleKiosk(ev, false)}
+                              disabled={togglingKioskId === ev.id}
+                            >
+                              <Zap className="h-4 w-4 mr-2 text-muted-foreground" />
+                              Desativar no Kiosk
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={() => setDeletingEvent(ev)}

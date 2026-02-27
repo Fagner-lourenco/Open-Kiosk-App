@@ -109,9 +109,9 @@ const Shop = () => {
       // Sort products by most sold (assuming we track sales in a field like 'salesCount')
       // For now, we'll sort by stock level as a proxy (lower stock = more sold)
       const sortedByMostSold = [...products].sort((a, b) => {
-        // Products with lower stock are considered "more sold"
-        const stockA = a.stock || 0;
-        const stockB = b.stock || 0;
+        // [FIX BUG-CAT-06] Usar totalMlAvailable para drinks, stock para produtos normais
+        const stockA = a.isDrink ? (a.totalMlAvailable || 0) : (a.stock || 0);
+        const stockB = b.isDrink ? (b.totalMlAvailable || 0) : (b.stock || 0);
 
         // If both have stock, sort by lowest stock first (most sold)
         if (stockA > 0 && stockB > 0) {

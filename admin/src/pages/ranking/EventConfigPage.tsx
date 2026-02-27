@@ -145,8 +145,8 @@ export function TvConfigTab({
   const [savedGoalLabel, setSavedGoalLabel] = useState('');
   const [goalTargetMl, setGoalTargetMl] = useState(100000);
   const [savedGoalTargetMl, setSavedGoalTargetMl] = useState(100000);
-  const [milestoneInputs, setMilestoneInputs] = useState<Array<{ targetMl: number; label: string }>>([]);
-  const [savedMilestoneInputs, setSavedMilestoneInputs] = useState<Array<{ targetMl: number; label: string }>>([]);
+  const [milestoneInputs, setMilestoneInputs] = useState<Array<{ targetMl: number; label: string; activatesEventMode?: boolean; eventMinutes?: number }>>([]);
+  const [savedMilestoneInputs, setSavedMilestoneInputs] = useState<Array<{ targetMl: number; label: string; activatesEventMode?: boolean; eventMinutes?: number }>>([]);
 
   // Event mode
   const [eventModeLabel, setEventModeLabel] = useState('');
@@ -177,7 +177,7 @@ export function TvConfigTab({
 
       const gl = st.goalLabel || 'Meta do Dia';
       const gt = st.goalTargetMl || 100000;
-      const mi = (st.milestones || []).map((m) => ({ targetMl: m.targetMl, label: m.label }));
+      const mi = (st.milestones || []).map((m) => ({ targetMl: m.targetMl, label: m.label, activatesEventMode: m.activatesEventMode, eventMinutes: m.eventMinutes }));
 
       setGoalLabel(gl);
       setSavedGoalLabel(gl);
@@ -215,12 +215,25 @@ export function TvConfigTab({
   };
 
   const handleSaveGoal = async () => {
+    // Validação local antes de enviar ao Firestore
+    for (const m of milestoneInputs) {
+      if (!m.label?.trim()) {
+        setMessage({ type: 'error', text: 'Preencha o nome de todos os marcos antes de salvar.' });
+        return;
+      }
+      if (!m.targetMl || m.targetMl <= 0) {
+        setMessage({ type: 'error', text: 'Volume alvo de cada marco deve ser maior que zero.' });
+        return;
+      }
+    }
     try {
       setSaving(true);
       const milestones: GoalMilestone[] = milestoneInputs.map((m) => ({
         targetMl: m.targetMl,
-        label: m.label,
+        label: m.label.trim(),
         reached: false,
+        activatesEventMode: m.activatesEventMode || false,
+        eventMinutes: m.eventMinutes || 10,
       }));
       await setCollectiveGoal(franchiseId, storeId, goalTargetMl, goalLabel, milestones);
       setSavedGoalLabel(goalLabel);
@@ -230,8 +243,9 @@ export function TvConfigTab({
       audit(AuditActions.EVENT_GOAL_SET, { type: 'store', id: storeId, name: storeId }, { goalTargetMl, goalLabel, milestones: milestones.length });
       setMessage({ type: 'success', text: 'Meta coletiva atualizada!' });
       setTimeout(() => setMessage(null), 4000);
-    } catch (err) {
-      setMessage({ type: 'error', text: 'Erro ao salvar meta' });
+    } catch (err: any) {
+      console.error('[EventConfig] Erro ao salvar meta:', err);
+      setMessage({ type: 'error', text: err?.message || 'Erro ao salvar meta' });
     } finally {
       setSaving(false);
     }
@@ -264,7 +278,7 @@ export function TvConfigTab({
   };
 
   const addMilestone = () => {
-    setMilestoneInputs((prev) => [...prev, { targetMl: 50000, label: '' }]);
+    setMilestoneInputs((prev) => [...prev, { targetMl: 50000, label: '', activatesEventMode: false, eventMinutes: 10 }]);
   };
 
   const removeMilestone = (index: number) => {
@@ -547,6 +561,36 @@ export function TvConfigTab({
                     }}
                     placeholder="Descrição do benefício (ex: Ativa Happy Hour 15min)"
                   />
+                  <label className="flex items-center gap-1 text-xs whitespace-nowrap cursor-pointer" title="Ao atingir este marco, ativa o Modo Evento automaticamente">
+                    <input
+                      type="checkbox"
+                      checked={m.activatesEventMode || false}
+                      onChange={(e) => {
+                        const updated = [...milestoneInputs];
+                        updated[i] = { ...updated[i], activatesEventMode: e.target.checked };
+                        setMilestoneInputs(updated);
+                      }}
+                      className="rounded border-gray-300"
+                    />
+                    <Zap className="h-3 w-3 text-yellow-500" />
+                    Evento
+                  </label>
+                  {m.activatesEventMode && (
+                    <Input
+                      type="number"
+                      className="w-20"
+                      min={1}
+                      max={120}
+                      value={m.eventMinutes || 10}
+                      onChange={(e) => {
+                        const updated = [...milestoneInputs];
+                        updated[i] = { ...updated[i], eventMinutes: parseInt(e.target.value) || 10 };
+                        setMilestoneInputs(updated);
+                      }}
+                      placeholder="min"
+                      title="Duração do modo evento em minutos"
+                    />
+                  )}
                   <Button variant="ghost" size="sm" onClick={() => removeMilestone(i)}>
                     <Trash2 className="h-4 w-4 text-destructive" />
                   </Button>
@@ -664,6 +708,13 @@ export function ChallengesTab({
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Timer tick para atualizar contadores em tempo real
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Create form state
   const [showCreate, setShowCreate] = useState(false);
   const [newTitle, setNewTitle] = useState('');
@@ -744,12 +795,26 @@ export function ChallengesTab({
   const handleCancel = async (ch: Challenge) => {
     try {
       await updateChallengeStatus(franchiseId, storeId, ch.id, 'cancelled');
+      audit(AuditActions.CHALLENGE_DELETE, { type: 'challenge', id: ch.id, name: ch.title }, { action: 'cancel' });
       setMessage({ type: 'success', text: 'Desafio cancelado' });
       setTimeout(() => setMessage(null), 4000);
       loadChallenges();
     } catch (err) {
       console.error('[EventConfig] Erro ao cancelar desafio:', err);
       setMessage({ type: 'error', text: 'Erro ao cancelar' });
+    }
+  };
+
+  const handleExpire = async (ch: Challenge) => {
+    try {
+      await updateChallengeStatus(franchiseId, storeId, ch.id, 'expired');
+      audit(AuditActions.CHALLENGE_DELETE, { type: 'challenge', id: ch.id, name: ch.title }, { action: 'expire' });
+      setMessage({ type: 'success', text: 'Desafio encerrado' });
+      setTimeout(() => setMessage(null), 4000);
+      loadChallenges();
+    } catch (err) {
+      console.error('[EventConfig] Erro ao encerrar desafio:', err);
+      setMessage({ type: 'error', text: 'Erro ao encerrar' });
     }
   };
 
@@ -773,6 +838,7 @@ export function ChallengesTab({
     setNewWindowMinutes(t.rule.windowMinutes);
     setNewDuration(t.durationMinutes);
     setNewRewardType(t.rewardType);
+    setNewRewardDesc(t.rewardDescription);
     setShowCreate(true);
   };
 
@@ -1002,11 +1068,11 @@ export function ChallengesTab({
                           </Button>
                         )}
                         {ch.status === 'active' && isExpired && (
-                          <Button variant="outline" size="sm" onClick={() => handleCancel(ch)}>
+                          <Button variant="outline" size="sm" onClick={() => handleExpire(ch)}>
                             <Trash2 className="h-3 w-3 mr-1" /> Encerrar
                           </Button>
                         )}
-                        {(ch.status === 'completed' || ch.status === 'cancelled') && (
+                        {(ch.status === 'completed' || ch.status === 'cancelled' || ch.status === 'expired') && (
                           <Button variant="ghost" size="sm" onClick={() => {
                             if (window.confirm(`Remover "${ch.title}" permanentemente?`)) {
                               handleDelete(ch);

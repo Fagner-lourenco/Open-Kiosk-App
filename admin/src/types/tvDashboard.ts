@@ -84,12 +84,16 @@ export interface EventMode {
 export interface GoalMilestone {
   /** mL para atingir */
   targetMl: number;
-  /** Label exibido (ex: "Modo Evento 10min") */
+  /** Label exibido (ex: "Ativa Happy Hour") */
   label: string;
   /** Já atingido? */
   reached: boolean;
   /** Quando atingiu */
   reachedAt?: Timestamp;
+  /** Se true, ativa modo evento ao atingir este marco */
+  activatesEventMode?: boolean;
+  /** Duração do evento em minutos (default 10) */
+  eventMinutes?: number;
 }
 
 /** Estatísticas do evento/dia — doc: eventStats */
@@ -178,7 +182,7 @@ export interface ChallengeRule {
 }
 
 /** Status do desafio */
-export type ChallengeStatus = 'scheduled' | 'active' | 'completed' | 'cancelled';
+export type ChallengeStatus = 'scheduled' | 'active' | 'completed' | 'cancelled' | 'expired';
 
 /** Tipo de recompensa */
 export type RewardType = 'coupon' | 'free_drink' | 'pix' | 'ticket_extra' | 'bonus_multiplier' | 'custom';
@@ -221,6 +225,7 @@ export const CHALLENGE_TEMPLATES: Array<{
   rule: ChallengeRule;
   durationMinutes: number;
   rewardType: RewardType;
+  rewardDescription: string;
 }> = [
   {
     title: 'Dupla do Brinde',
@@ -228,6 +233,7 @@ export const CHALLENGE_TEMPLATES: Array<{
     rule: { type: 'min_orders', threshold: 2, windowMinutes: 20 },
     durationMinutes: 20,
     rewardType: 'coupon',
+    rewardDescription: '10% de desconto no próximo pedido',
   },
   {
     title: 'Explorador de Torneiras',
@@ -235,6 +241,7 @@ export const CHALLENGE_TEMPLATES: Array<{
     rule: { type: 'min_taps', threshold: 2, windowMinutes: 30 },
     durationMinutes: 30,
     rewardType: 'coupon',
+    rewardDescription: '15% de desconto na próxima degustação',
   },
   {
     title: 'Volta do Intervalo',
@@ -242,6 +249,7 @@ export const CHALLENGE_TEMPLATES: Array<{
     rule: { type: 'return_after', threshold: 60, windowMinutes: 120 },
     durationMinutes: 120,
     rewardType: 'ticket_extra',
+    rewardDescription: 'Bilhete extra para o sorteio do dia',
   },
   {
     title: 'Happy Boost',
@@ -249,6 +257,7 @@ export const CHALLENGE_TEMPLATES: Array<{
     rule: { type: 'happy_boost', threshold: 1, windowMinutes: 15 },
     durationMinutes: 15,
     rewardType: 'bonus_multiplier',
+    rewardDescription: 'Pontuação 2× no ranking por 30 minutos',
   },
 ];
 

@@ -85,15 +85,17 @@ export const onServingSessionCreated = onDocumentCreated(
           const newRemaining = currentRemaining - session.actualMl;
 
           if (newRemaining <= 0) {
+            // [FIX Bug-7] Ao depletar keg, zerar processedEvents — array de idempotência
+            // não tem valor após o keg ser finalizado e evita crescimento ilimitado.
             txn.update(kegRef, {
               remainingMl: 0,
               status: 'depleted',
               depletedAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
               updatedBy: 'system',
-              processedEvents: arrayUnion(eventId),
+              processedEvents: [],
             });
-            console.log(`[ERP:ServingSession] Keg ${session.kegId} marked depleted`);
+            console.log(`[ERP:ServingSession] Keg ${session.kegId} marked depleted (processedEvents cleared)`);
             return true;
           } else {
             txn.update(kegRef, {
@@ -105,6 +107,23 @@ export const onServingSessionCreated = onDocumentCreated(
             return false;
           }
         });
+
+        // [FIX BUG-OP-2] Quando keg esgota, limpar referência no tap e setar idle
+        if (kegDepleted && session.tapId) {
+          const depTapRef = db.doc(`${storePath}/taps/${session.tapId}`);
+          batch.update(depTapRef, {
+            currentKegId: null,
+            status: 'idle',
+            updatedAt: serverTimestamp(),
+            updatedBy: 'system',
+          });
+          // Também limpar tapId do keg esgotado
+          batch.update(kegRef, {
+            tapId: null,
+            updatedAt: serverTimestamp(),
+          });
+          needsBatch = true;
+        }
 
         // Create depletion notification outside transaction
         if (kegDepleted) {
@@ -165,13 +184,14 @@ export const onServingSessionCreated = onDocumentCreated(
           processedEvents: arrayUnion(eventId),
         }, { merge: true });
 
-        // Also increment active TapAssignment inside same transaction
-        const assignmentsSnap = await db
+        // [FIX Bug-4 CF] Admin SDK supports transactional queries via txn.get(query).
+        // Previously db.collection().get() was used outside txn, missing OCC guarantees.
+        const assignmentsQuery = db
           .collection(`${storePath}/tapAssignments`)
           .where('tapId', '==', session.tapId)
           .where('status', '==', 'active')
-          .limit(1)
-          .get();
+          .limit(1);
+        const assignmentsSnap = await txn.get(assignmentsQuery);
 
         if (!assignmentsSnap.empty) {
           const assignmentRef = assignmentsSnap.docs[0].ref;

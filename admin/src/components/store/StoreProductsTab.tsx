@@ -9,7 +9,7 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { collection, query, getDocs, doc, deleteDoc, addDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, getDocs, doc, deleteDoc, addDoc, updateDoc, serverTimestamp, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
@@ -154,6 +154,18 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
   // Delete product mutation
   const deleteProductMutation = useMutation({
     mutationFn: async (productId: string) => {
+      // [FIX CAT-05] Verificar dependências antes de deletar
+      const kegsRef = collection(db, 'franchises', franchiseId, 'stores', storeId, 'kegs');
+      const kegsSnap = await getDocs(query(kegsRef, where('productId', '==', productId)));
+      if (!kegsSnap.empty) {
+        const activeKegs = kegsSnap.docs.filter(d => {
+          const s = d.data().status;
+          return s === 'tapped' || s === 'in_stock';
+        });
+        if (activeKegs.length > 0) {
+          throw new Error(`Produto vinculado a ${activeKegs.length} barril(is) ativo(s). Desconecte ou deplecione antes de excluir.`);
+        }
+      }
       await deleteDoc(doc(db, 'franchises', franchiseId, 'stores', storeId, 'products', productId));
       return productId;
     },
@@ -334,11 +346,19 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <h4 className="font-semibold line-clamp-1 flex-1">{product.title}</h4>
-                      {product.isDrink && product.sizes && product.sizes.length > 0 && (
-                        <Badge variant="outline" className="text-xs shrink-0">
-                          {product.sizes.length} tam.
-                        </Badge>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {/* [FIX CAT-13] Badge visual para produtos inativos */}
+                        {product.active === false && (
+                          <Badge variant="destructive" className="text-xs shrink-0">
+                            Inativo
+                          </Badge>
+                        )}
+                        {product.isDrink && product.sizes && product.sizes.length > 0 && (
+                          <Badge variant="outline" className="text-xs shrink-0">
+                            {product.sizes.length} tam.
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-2">{product.description}</p>
                     

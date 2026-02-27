@@ -6,7 +6,7 @@ import { Separator } from "@/components/ui/separator";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle, RefreshCw, PhoneCall, TrendingDown } from "lucide-react";
+import { Minus, Plus, CreditCard, QrCode, Clock, Loader, AlertCircle, Smartphone, Check, ShieldAlert, AlertTriangle, RefreshCw, PhoneCall, TrendingDown, TrendingUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { salesService } from "@/services/salesService";
 import { useESP32 } from "@/context/ESP32Context";
@@ -1736,9 +1736,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                     </div>
                   </div>
                   {currentPricingSnapshot && (
-                    <div className="flex items-center gap-1.5 mt-2 text-sm text-green-700">
-                      <TrendingDown className="h-4 w-4" />
-                      <span>{currentPricingSnapshot.reason} ({currentPricingSnapshot.deltaPercent}%)</span>
+                    <div className={`flex items-center gap-1.5 mt-2 text-sm ${currentPricingSnapshot.deltaPercent < 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {currentPricingSnapshot.deltaPercent < 0 ? <TrendingDown className="h-4 w-4" /> : <TrendingUp className="h-4 w-4" />}
+                      <span>{currentPricingSnapshot.reason} ({currentPricingSnapshot.deltaPercent > 0 ? '+' : ''}{currentPricingSnapshot.deltaPercent}%)</span>
                     </div>
                   )}
                 </Card>

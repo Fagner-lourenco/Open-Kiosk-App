@@ -9,6 +9,7 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Check, CreditCard, AlertCircle, Loader2, ExternalLink, Crown } from 'lucide-react';
 import { LoadingState } from '@/components/common/LoadingState';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -46,9 +47,25 @@ export default function BillingPage() {
   
   const franchiseId = currentFranchise?.id;
   
-  const [billing, setBilling] = useState<FranchiseBilling | null>(null);
-  const [history, setHistory] = useState<BillingEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  // React Query — cache billing data, resolve erro silencioso
+  const { data: billingData, isLoading: loading, isError, error: billingError } = useQuery({
+    queryKey: ['billing', franchiseId],
+    queryFn: async () => {
+      if (!franchiseId) return { billing: null as FranchiseBilling | null, history: [] as BillingEvent[] };
+      const [billingResult, historyResult] = await Promise.all([
+        getFranchiseBilling(franchiseId),
+        getBillingHistory(franchiseId),
+      ]);
+      return { billing: billingResult, history: historyResult };
+    },
+    enabled: !!franchiseId,
+    staleTime: 5 * 60 * 1000, // 5 min — planos raramente mudam
+    retry: 1,
+  });
+
+  const billing = billingData?.billing ?? null;
+  const history = billingData?.history ?? [];
+
   const [checkoutLoading, setCheckoutLoading] = useState<BillingPlan | null>(null);
   const [portalLoading, setPortalLoading] = useState(false);
   const [selectedInterval, setSelectedInterval] = useState<BillingInterval>('yearly');
@@ -60,29 +77,6 @@ export default function BillingPage() {
       setSuccessMessage('Pagamento realizado com sucesso! Seu plano foi atualizado.');
     }
   }, [searchParams]);
-  
-  // Carrega dados
-  useEffect(() => {
-    async function loadBilling() {
-      if (!franchiseId) return;
-      
-      try {
-        const [billingData, historyData] = await Promise.all([
-          getFranchiseBilling(franchiseId),
-          getBillingHistory(franchiseId),
-        ]);
-        
-        setBilling(billingData);
-        setHistory(historyData);
-      } catch (error) {
-        console.error('Erro ao carregar billing:', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-    
-    loadBilling();
-  }, [franchiseId]);
   
   const handleUpgrade = async (plan: 'starter' | 'pro' | 'enterprise') => {
     setCheckoutLoading(plan);
@@ -116,6 +110,20 @@ export default function BillingPage() {
     }
   };
   
+  if (isError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Faturamento" />
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {billingError instanceof Error ? billingError.message : 'Erro ao carregar dados de faturamento. Tente novamente.'}
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
   if (loading) {
     return <LoadingState className="min-h-[400px]" />;
   }
@@ -250,7 +258,7 @@ export default function BillingPage() {
       </div>
       
       {/* Grid de planos */}
-      <div className="grid md:grid-cols-3 gap-6 mb-8">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-8 mt-4">
         {plans.map((plan) => {
           const isCurrent = billing?.plan === plan.id;
           const price = selectedInterval === 'monthly' ? plan.pricing.monthly : plan.pricing.yearly;
@@ -321,7 +329,7 @@ export default function BillingPage() {
           <CardContent className="p-6">
           <h2 className="text-lg font-semibold mb-4">Histórico de pagamentos</h2>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm" aria-label="Histórico de pagamentos">
               <thead>
                 <tr className="border-b">
                   <th className="text-left py-3 px-4">Data</th>

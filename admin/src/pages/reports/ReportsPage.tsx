@@ -11,6 +11,7 @@ import { useQuery } from '@tanstack/react-query';
 import { collection, query, getDocs, orderBy, where, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { ordersPath } from '@/lib/pathResolver';
+import { downloadCSV } from '@/utils/csvExport';
 import { useFranchise } from '@/context/FranchiseContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -96,7 +97,6 @@ export function ReportsPage() {
     
     setIsExporting(true);
     
-    // Create CSV content
     const headers = ['Métrica', 'Valor'];
     const rows = [
       ['Receita Total', `R$ ${reportData.totalRevenue.toFixed(2)}`],
@@ -108,26 +108,17 @@ export function ReportsPage() {
       ['Data de Exportação', new Date().toLocaleString('pt-BR')],
     ];
     
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.join(','))
-    ].join('\n');
-    
-    // Create and download file
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `relatorio-${currentFranchise.name}-${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV(
+      `relatorio-${currentFranchise.name}-${new Date().toISOString().split('T')[0]}.csv`,
+      headers,
+      rows,
+    );
     
     setIsExporting(false);
   };
 
-  const { data: reportData, isLoading } = useQuery({
+  // [FIX BUG-R1/R2] Extrair isError e error para feedback ao usu\u00e1rio
+  const { data: reportData, isLoading, isError, error } = useQuery({
     queryKey: ['reports', currentFranchise?.id, selectedStore, dateRange],
     queryFn: async () => {
       if (!currentFranchise) return null;
@@ -173,8 +164,9 @@ export function ReportsPage() {
         });
       }
       
-      for (const store of storesToQuery) {
-        try {
+      // [FIX PERF] Paralelizar queries de lojas com Promise.allSettled
+      const queryResults = await Promise.allSettled(
+        storesToQuery.map(async (store) => {
           const ordersCollectionPath = ordersPath(currentFranchise.id, store.id);
           const pathSegments = ordersCollectionPath.split('/') as [string, ...string[]];
           const ordersSnapshot = await getDocs(
@@ -184,8 +176,18 @@ export function ReportsPage() {
               orderBy('timestamp', 'desc')
             )
           );
-          
-          ordersSnapshot.docs.forEach(doc => {
+          return { store, ordersSnapshot };
+        })
+      );
+
+      for (const result of queryResults) {
+        if (result.status !== 'fulfilled') {
+          console.warn('[Reports] Store query failed:', result.reason);
+          continue;
+        }
+        const { store, ordersSnapshot } = result.value;
+
+        ordersSnapshot.docs.forEach(doc => {
             const order = doc.data() as OrderData;
             const isPaid = !order.paymentStatus || order.paymentStatus === 'paid';
             
@@ -193,7 +195,7 @@ export function ReportsPage() {
               totalOrders++;
               totalRevenue += order.total || 0;
             }
-            const customerKey = order.customerIdentification || order.customerName;
+            const customerKey = order.customerId || order.customerIdentification || order.customerName;
             if (customerKey) {
               uniqueCustomers.add(customerKey);
             }
@@ -228,9 +230,6 @@ export function ReportsPage() {
               });
             }
           });
-        } catch (err) {
-          console.error(`Error fetching orders for store ${store.id}:`, err);
-        }
       }
       
       // Convert maps to arrays
@@ -348,6 +347,20 @@ export function ReportsPage() {
       {/* KPIs */}
       {isLoading ? (
         <LoadingState />
+      ) : isError ? (
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-destructive font-medium">Erro ao carregar relatórios</p>
+            <p className="text-sm text-muted-foreground mt-1">{(error as Error)?.message || 'Tente novamente mais tarde'}</p>
+          </CardContent>
+        </Card>
+      ) : !reportData || reportData.totalOrders === 0 ? (
+        <Card>
+          <CardContent className="p-6 text-center">
+            <p className="text-muted-foreground">Nenhum dado encontrado para o período selecionado.</p>
+            <p className="text-sm text-muted-foreground mt-1">Tente alterar o filtro de data ou a loja.</p>
+          </CardContent>
+        </Card>
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -756,15 +769,15 @@ export function ReportsPage() {
                       key={store.storeId}
                       className="hover:shadow-md transition-shadow"
                     >
-                      <CardContent className="p-6">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
+                      <CardContent className="p-4 sm:p-6">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <div className="flex items-center gap-3 sm:gap-4">
                             <div 
-                              className="w-12 h-12 rounded-full flex items-center justify-center"
+                              className="w-10 h-10 sm:w-12 sm:h-12 rounded-full flex items-center justify-center shrink-0"
                               style={{ backgroundColor: getChartColor(index) + '20' }}
                             >
                               <Store 
-                                className="h-6 w-6" 
+                                className="h-5 w-5 sm:h-6 sm:w-6" 
                                 style={{ color: getChartColor(index) }} 
                               />
                             </div>
@@ -773,8 +786,8 @@ export function ReportsPage() {
                               <p className="text-sm text-muted-foreground">{store.orders} pedidos realizados</p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-2xl font-bold text-green-600">
+                          <div className="text-left sm:text-right pl-13 sm:pl-0">
+                            <p className="text-xl sm:text-2xl font-bold text-green-600">
                               R$ {store.revenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
                             </p>
                             <p className="text-sm text-muted-foreground">

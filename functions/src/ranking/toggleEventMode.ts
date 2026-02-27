@@ -1,4 +1,5 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions/v2';
 import { db, admin, serverTimestamp } from '../lib';
 
 interface ToggleEventModeInput {
@@ -23,6 +24,10 @@ export const toggleEventMode = onCall(
 
     if (!franchiseId || !storeId || typeof enabled !== 'boolean') {
       throw new HttpsError('invalid-argument', 'Parâmetros inválidos');
+    }
+
+    if (enabled && (typeof durationMinutes !== 'number' || durationMinutes < 1 || durationMinutes > 1440)) {
+      throw new HttpsError('invalid-argument', 'durationMinutes deve ser entre 1 e 1440');
     }
 
     try {
@@ -65,7 +70,7 @@ export const toggleEventMode = onCall(
 
       return { success: true };
     } catch (err: any) {
-      console.error('[toggleEventMode] error:', err);
+      logger.error('[toggleEventMode] error:', err);
       if (err instanceof HttpsError) throw err;
       throw new HttpsError('internal', err?.message || 'Erro interno');
     }

@@ -14,6 +14,7 @@ import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { 
   Store, 
   Users, 
@@ -82,19 +83,24 @@ export function DashboardPage() {
       const now = new Date();
       const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
-      // Try to get orders from stores
-      for (const store of storesSnapshot.docs) {
-        const ordersCollectionPath = ordersPath(currentFranchise.id, store.id);
-        const pathSegments = ordersCollectionPath.split('/') as [string, ...string[]];
-        const ordersSnapshot = await getDocs(
-          query(
-            collection(db, ...pathSegments),
-            where('timestamp', '>=', Timestamp.fromDate(startOfMonth)),
-            orderBy('timestamp', 'desc')
-          )
-        );
-        
-        ordersSnapshot.docs.forEach(doc => {
+      // Paralelizar queries de orders (evita N+1 sequencial)
+      const orderResults = await Promise.allSettled(
+        storesSnapshot.docs.map(store => {
+          const ordersCollectionPath = ordersPath(currentFranchise.id, store.id);
+          const pathSegments = ordersCollectionPath.split('/') as [string, ...string[]];
+          return getDocs(
+            query(
+              collection(db, ...pathSegments),
+              where('timestamp', '>=', Timestamp.fromDate(startOfMonth)),
+              orderBy('timestamp', 'desc')
+            )
+          );
+        })
+      );
+
+      for (const result of orderResults) {
+        if (result.status !== 'fulfilled') continue;
+        result.value.docs.forEach(doc => {
           const order = doc.data();
           // Apenas pedidos pagos contam (exclui cancelados/reembolsados)
           const isPaid = order.paymentStatus === 'paid' ||
@@ -246,9 +252,9 @@ export function DashboardPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-[13px] font-medium text-muted-foreground">{stat.title}</p>
-                    <p className="text-2xl font-bold mt-1.5 tracking-tight">
-                      {isLoading ? '...' : stat.value}
-                    </p>
+                    <div className="text-2xl font-bold mt-1.5 tracking-tight">
+                      {isLoading ? <Skeleton className="h-8 w-20" /> : stat.value}
+                    </div>
                     <p className="text-xs text-muted-foreground mt-1">{stat.description}</p>
                   </div>
                   <div className={`p-3 rounded-xl ${stat.bgColor} group-hover:scale-110 transition-transform duration-200`}>

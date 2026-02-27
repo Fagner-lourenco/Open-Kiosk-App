@@ -19,6 +19,8 @@ import {
   updateDoc,
   collection,
   getDocs,
+  query,
+  where,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
@@ -107,7 +109,7 @@ interface MemberData {
 export default function FranchiseDetailPage() {
   const { franchiseId } = useParams<{ franchiseId: string }>();
   const navigate = useNavigate();
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, user: authUser } = useAuth();
   const { selectFranchise, refreshFranchises } = useFranchise();
 
   const [franchise, setFranchise] = useState<FranchiseData | null>(null);
@@ -153,7 +155,8 @@ export default function FranchiseDetailPage() {
 
       // Membros
       const membersRef = collection(db, `franchises/${franchiseId}/members`);
-      const membersSnap = await getDocs(membersRef);
+      // [FIX SA5] Filtrar apenas membros ativos
+      const membersSnap = await getDocs(query(membersRef, where('isActive', '!=', false)));
       const membersData = membersSnap.docs.map((d) => ({
         id: d.id,
         ...d.data(),
@@ -180,7 +183,9 @@ export default function FranchiseDetailPage() {
     setSaving(true);
     try {
       const franchiseRef = doc(db, 'franchises', franchiseId);
-      await updateDoc(franchiseRef, {
+
+      // [FIX BUG-SA2] Se ownerEmail mudou, tentar resolver ownerId
+      const updateData: Record<string, unknown> = {
         name: editForm.name,
         description: editForm.description || null,
         ownerEmail: editForm.ownerEmail,
@@ -189,7 +194,43 @@ export default function FranchiseDetailPage() {
         plan: editForm.plan,
         status: editForm.status,
         updatedAt: serverTimestamp(),
-      });
+      };
+
+      // Se o email mudou, buscar o UID correspondente via members
+      if (editForm.ownerEmail !== franchise?.ownerEmail) {
+        try {
+          const membersSnap = await getDocs(
+            query(
+              collection(db, 'franchises', franchiseId, 'members'),
+              where('email', '==', editForm.ownerEmail),
+            )
+          );
+          if (!membersSnap.empty) {
+            const newOwnerDoc = membersSnap.docs[0];
+            updateData.ownerId = newOwnerDoc.id;
+          } else {
+            console.warn('[SA] Novo ownerEmail não encontrado em members — ownerId não atualizado');
+          }
+        } catch (err) {
+          console.warn('[SA] Erro ao resolver ownerId:', err);
+        }
+      }
+
+      await updateDoc(franchiseRef, updateData);
+
+      // [FIX SA4] Registrar ação no log de auditoria
+      try {
+        const { logUserAction } = await import('@/services/auditService');
+        await logUserAction(
+          franchiseId!,
+          'FRANCHISE_UPDATE',
+          { id: authUser?.uid || 'unknown', email: authUser?.email || 'unknown', name: authUser?.displayName || undefined },
+          { type: 'franchise', id: franchiseId!, name: editForm.name },
+          { updatedFields: Object.keys(updateData).filter(k => k !== 'updatedAt') },
+        );
+      } catch (auditErr) {
+        console.warn('[SA] Audit log failed:', auditErr);
+      }
 
       toast.success('Franquia atualizada com sucesso!');
       setIsEditing(false);
@@ -289,6 +330,7 @@ export default function FranchiseDetailPage() {
         <Button
           variant="ghost"
           size="icon"
+          aria-label="Voltar para franquias"
           onClick={() => navigate('/superadmin/franchises')}
         >
           <ArrowLeft className="h-5 w-5" />

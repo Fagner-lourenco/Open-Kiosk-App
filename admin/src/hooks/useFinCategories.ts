@@ -9,7 +9,7 @@
  * @version 1.0.0
  */
 
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   collection,
@@ -175,6 +175,50 @@ export function useFinCategories(franchiseId: string, storeId: string) {
     [activeCategories],
   );
 
+  // [FIX F13] Hierarchy helpers ───────────────────────────────────────────
+
+  /** Root categories (no parent) */
+  const rootCategories = useMemo(
+    () => activeCategories.filter((c) => !c.parentId),
+    [activeCategories],
+  );
+
+  /** Get direct children of a given category */
+  const getChildCategories = useCallback(
+    (parentId: string) => activeCategories.filter((c) => c.parentId === parentId),
+    [activeCategories],
+  );
+
+  /** Map: parentId → children[] for efficient lookups */
+  const childrenMap = useMemo(() => {
+    const map = new Map<string, FinCategory[]>();
+    for (const cat of activeCategories) {
+      if (cat.parentId) {
+        const siblings = map.get(cat.parentId) || [];
+        siblings.push(cat);
+        map.set(cat.parentId, siblings);
+      }
+    }
+    return map;
+  }, [activeCategories]);
+
+  /** Flatten a tree with depth info (useful for indented selects) */
+  const flatTree = useMemo(() => {
+    const result: Array<FinCategory & { depth: number }> = [];
+    const visited = new Set<string>();
+    const walk = (cats: FinCategory[], depth: number) => {
+      for (const cat of cats) {
+        if (!cat.id || visited.has(cat.id)) continue; // prevent circular ref
+        visited.add(cat.id);
+        result.push({ ...cat, depth });
+        const children = childrenMap.get(cat.id) || [];
+        if (children.length) walk(children, depth + 1);
+      }
+    };
+    walk(rootCategories, 0);
+    return result;
+  }, [rootCategories, childrenMap]);
+
   return {
     categories,
     loadingCategories,
@@ -183,6 +227,10 @@ export function useFinCategories(franchiseId: string, storeId: string) {
     activeCategories,
     incomeCategories,
     expenseCategories,
+    rootCategories,
+    getChildCategories,
+    childrenMap,
+    flatTree,
     createCategory: createMutation.mutateAsync,
     isCreatingCategory: createMutation.isPending,
     updateCategory: updateMutation.mutateAsync,

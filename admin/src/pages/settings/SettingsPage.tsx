@@ -4,12 +4,13 @@
  * ============================================================================
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { doc, updateDoc, deleteDoc, collection, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
+import { deleteStore } from '@/services/storeService';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,6 +81,11 @@ export function SettingsPage() {
       logoUrl: '',
     },
   });
+  const initialSettingsRef = useRef<string>('');
+  const isDirty = useMemo(
+    () => initialSettingsRef.current !== '' && JSON.stringify(settings) !== initialSettingsRef.current,
+    [settings],
+  );
 
   useEffect(() => {
     if (currentFranchise) {
@@ -98,6 +104,13 @@ export function SettingsPage() {
           logoUrl: currentFranchise.settings?.appearance?.logoUrl || '',
         },
       });
+      // Snapshot used for isDirty comparison
+      setTimeout(() => {
+        setSettings(prev => {
+          initialSettingsRef.current = JSON.stringify(prev);
+          return prev;
+        });
+      }, 0);
     }
   }, [currentFranchise]);
 
@@ -107,6 +120,22 @@ export function SettingsPage() {
     setIsSaving(true);
     setError(null);
     setSaveSuccess(false);
+
+    // [FIX ST4] Validar logoUrl antes de salvar
+    if (settings.appearance.logoUrl) {
+      try {
+        const url = new URL(settings.appearance.logoUrl);
+        if (!['http:', 'https:'].includes(url.protocol)) {
+          setError('URL do logo deve usar protocolo http ou https');
+          setIsSaving(false);
+          return;
+        }
+      } catch {
+        setError('URL do logo inválida');
+        setIsSaving(false);
+        return;
+      }
+    }
 
     try {
       await updateDoc(doc(db, 'franchises', currentFranchise.id), {
@@ -157,6 +186,8 @@ export function SettingsPage() {
       }
 
       await refreshFranchises();
+      // Reset dirty state after successful save
+      initialSettingsRef.current = JSON.stringify(settings);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
@@ -188,9 +219,20 @@ export function SettingsPage() {
       }
 
       // Delete all subcollections first
-      // 🔧 FIX Audit-R2: incluir todas as subcoleções de franquia conhecidas
-      const subcollections = ['stores', 'members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary'];
-      
+      // [FIX BUG-S1] Cascade delete stores e suas subcoleções
+      const subcollections = ['members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary', 'invitations'];
+
+      // 1. Cascade delete every store (with their own subcollections)
+      const storesSnap = await getDocs(collection(db, `franchises/${currentFranchise.id}/stores`));
+      for (const storeDoc of storesSnap.docs) {
+        try {
+          await deleteStore(currentFranchise.id, storeDoc.id);
+        } catch (err) {
+          console.warn(`[Settings] Failed to cascade-delete store ${storeDoc.id}:`, err);
+        }
+      }
+
+      // 2. Delete remaining franchise-level subcollections
       for (const subcol of subcollections) {
         const snapshot = await getDocs(collection(db, `franchises/${currentFranchise.id}/${subcol}`));
         for (const docSnap of snapshot.docs) {
@@ -221,7 +263,7 @@ export function SettingsPage() {
         title="Configurações"
         description={`Gerencie as configurações de ${currentFranchise.name}`}
         actions={
-          <Button onClick={handleSave} disabled={isSaving}>
+          <Button onClick={handleSave} disabled={!isDirty || isSaving}>
             {isSaving ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

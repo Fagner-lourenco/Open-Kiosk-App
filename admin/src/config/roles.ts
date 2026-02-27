@@ -33,7 +33,7 @@ export interface RoleOption {
 
 export const FRANCHISE_ROLE_OPTIONS: RoleOption[] = [
   { value: 'manager', label: 'Gerente' },
-  { value: 'employee', label: 'Operador' },
+  { value: 'operator', label: 'Operador' },
   { value: 'viewer', label: 'Visualizador' },
 ];
 

@@ -126,7 +126,15 @@ export function useWastage(franchiseId: string, storeId: string) {
     queryKey: wastageKeys.all(franchiseId, storeId),
     queryFn: async (): Promise<WastageEvent[]> => {
       const ref = wastageRef(franchiseId, storeId);
-      const q = query(ref, orderBy('createdAt', 'desc'), limit(100));
+      // [FIX PERF] Filtrar por data no Firestore em vez de trazer tudo
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      const q = query(
+        ref,
+        where('createdAt', '>=', Timestamp.fromDate(thirtyDaysAgo)),
+        orderBy('createdAt', 'desc'),
+        limit(200),
+      );
       const snap = await getDocs(q);
       return snap.docs.map((d) => normalizeWastage(d.id, d.data()));
     },

@@ -175,11 +175,19 @@ export const createPaymentIntent = async (
 
   // ====================================================================
   // Dynamic Pricing — Server-side bounds check
-  // Quando DP está ativo, valida que o amount está dentro dos limites
-  // permitidos (basePrice * (1 ± maxVariationPercent/100))
+  // Quando DP está ativo (via config OU event mode), valida que o amount
+  // está dentro dos limites permitidos (basePrice * (1 ± maxVariationPercent/100))
   // ====================================================================
   const dpConfig = storeData?.dynamicPricingConfig;
-  if (dpConfig?.enabled && dpConfig.maxVariationPercent > 0) {
+  // Verificar se DP ativo via event mode (eventStats/current)
+  let eventDpOverride = false;
+  try {
+    const esSnap = await db.doc(`franchises/${franchiseId}/stores/${storeId}/eventStats/current`).get();
+    const esData = esSnap.data();
+    eventDpOverride = !!(esData?.eventMode?.enabled && esData?.eventMode?.activateDynamicPricing);
+  } catch { /* eventStats não existe — sem override */ }
+  const isDpActive = dpConfig && dpConfig.maxVariationPercent > 0 && (dpConfig.enabled || eventDpOverride);
+  if (isDpActive) {
     const maxVar = dpConfig.maxVariationPercent / 100;
     // Verificar se o valor cobrado não excede os limites dinâmicos
     // Permitir ±maxVariationPercent do total dos itens + margem aditiva de 10% para impostos/arredondamento

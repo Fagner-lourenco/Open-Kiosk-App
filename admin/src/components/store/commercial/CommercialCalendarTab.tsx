@@ -1,16 +1,30 @@
 /**
  * ============================================================================
- * CommercialCalendarTab — Agenda / Calendário CRM
+ * CommercialCalendarTab — Calendário Visual Interativo
  * ============================================================================
  *
- * Lista agrupada por data de todos os itens de agenda (eventos, tarefas,
- * lembretes, visitas). Filtragem por tipo/status + CRUD completo via Dialog.
+ * Calendário completo com visões Mês/Semana/Dia/Lista usando @fullcalendar.
+ * Agrega dados de 3 fontes: calendarItems, commercialEvents e deals.
+ *
+ * Features:
+ * - 4 visões: dayGridMonth, timeGridWeek, timeGridDay, listWeek
+ * - Color-coding por tipo de fonte
+ * - Click em slot vazio → novo CalendarItem com data/hora preenchida
+ * - Click em evento → dialog de edição
+ * - Summary cards (Total, Hoje, Próximos, Cancelados)
+ * - CRUD completo via Dialog
  *
  * @author Open Kiosk Project
- * @version 1.0.0
+ * @version 2.0.0
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+import FullCalendar from '@fullcalendar/react';
+import dayGridPlugin from '@fullcalendar/daygrid';
+import timeGridPlugin from '@fullcalendar/timegrid';
+import interactionPlugin from '@fullcalendar/interaction';
+import listPlugin from '@fullcalendar/list';
+import type { EventInput, DateSelectArg, EventClickArg } from '@fullcalendar/core';
 import {
   Card,
   CardContent,
@@ -21,7 +35,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
@@ -48,32 +61,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   CalendarDays,
   Plus,
-  MoreVertical,
-  Edit,
-  Trash2,
   Loader2,
   CalendarCheck,
-  Bell,
-  MapPin,
-  CheckCircle2,
   Clock,
-  XCircle,
-  Search,
+  AlertTriangle,
 } from 'lucide-react';
 import {
   useCalendarItems,
   type CreateCalendarInput,
   type UpdateCalendarInput,
 } from '@/hooks/useCalendarItems';
+import { useCommercialEvents } from '@/hooks/useCommercialEvents';
+import { useDeals } from '@/hooks/useDeals';
 import type {
   CalendarItem,
   CalendarItemType,
@@ -92,13 +93,6 @@ const TYPE_LABELS: Record<CalendarItemType, string> = {
   visit: 'Visita',
 };
 
-const TYPE_ICONS: Record<CalendarItemType, typeof CalendarDays> = {
-  event: CalendarCheck,
-  task: CheckCircle2,
-  reminder: Bell,
-  visit: MapPin,
-};
-
 const STATUS_LABELS: Record<CalendarItemStatus, string> = {
   tentative: 'Provisório',
   confirmed: 'Confirmado',
@@ -106,11 +100,14 @@ const STATUS_LABELS: Record<CalendarItemStatus, string> = {
   done: 'Concluído',
 };
 
-const STATUS_COLORS: Record<CalendarItemStatus, string> = {
-  tentative: 'bg-yellow-100 text-yellow-700',
-  confirmed: 'bg-blue-100 text-blue-700',
-  canceled: 'bg-red-100 text-red-600',
-  done: 'bg-green-100 text-green-700',
+/** Color palette for event sources */
+const TYPE_COLORS: Record<string, string> = {
+  event: '#7c3aed',
+  task: '#059669',
+  visit: '#ea580c',
+  reminder: '#2563eb',
+  commercialEvent: '#db2777',
+  deal: '#6b7280',
 };
 
 function toDateSafe(ts: Timestamp | undefined | null): Date {
@@ -118,21 +115,12 @@ function toDateSafe(ts: Timestamp | undefined | null): Date {
   return ts instanceof Timestamp ? ts.toDate() : new Date();
 }
 
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('pt-BR', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-}
-
-function toDateKey(date: Date): string {
+function dateToLocalISO(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function dateToLocalTime(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 // ============================================================================
@@ -154,41 +142,55 @@ function CalendarItemDialog({
   onSubmit,
   isPending,
   initialData,
+  prefillDate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSubmit: (data: CreateCalendarInput) => Promise<unknown>;
   isPending: boolean;
   initialData?: CalendarItem | null;
+  prefillDate?: { start: Date; end?: Date; allDay?: boolean } | null;
 }) {
   const now = new Date();
-  const defaultDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const defaultTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const defaultDate = dateToLocalISO(now);
+  const defaultTime = dateToLocalTime(now);
 
-  const initStart = initialData?.startAt ? toDateSafe(initialData.startAt) : null;
-  const initEnd = initialData?.endAt ? toDateSafe(initialData.endAt) : null;
+  const getInitStart = () =>
+    initialData?.startAt ? toDateSafe(initialData.startAt) : prefillDate?.start || null;
+  const getInitEnd = () =>
+    initialData?.endAt ? toDateSafe(initialData.endAt) : prefillDate?.end || null;
 
   const [title, setTitle] = useState(initialData?.title || '');
   const [type, setType] = useState<CalendarItemType>(initialData?.type || 'event');
-  const [status, setStatus] = useState<CalendarItemStatus>(initialData?.status || 'tentative');
-  const [allDay, setAllDay] = useState(initialData?.allDay || false);
-  const [startDate, setStartDate] = useState(
-    initStart
-      ? `${initStart.getFullYear()}-${String(initStart.getMonth() + 1).padStart(2, '0')}-${String(initStart.getDate()).padStart(2, '0')}`
-      : defaultDate
+  const [status, setStatus] = useState<CalendarItemStatus>(
+    initialData?.status || 'tentative',
   );
-  const [startTime, setStartTime] = useState(
-    initStart ? `${String(initStart.getHours()).padStart(2, '0')}:${String(initStart.getMinutes()).padStart(2, '0')}` : defaultTime
+  const [allDay, setAllDay] = useState(
+    initialData?.allDay ?? prefillDate?.allDay ?? false,
   );
-  const [endDate, setEndDate] = useState(
-    initEnd
-      ? `${initEnd.getFullYear()}-${String(initEnd.getMonth() + 1).padStart(2, '0')}-${String(initEnd.getDate()).padStart(2, '0')}`
-      : ''
-  );
-  const [endTime, setEndTime] = useState(
-    initEnd ? `${String(initEnd.getHours()).padStart(2, '0')}:${String(initEnd.getMinutes()).padStart(2, '0')}` : ''
-  );
+  const [startDate, setStartDate] = useState(() => {
+    const s = getInitStart();
+    return s ? dateToLocalISO(s) : defaultDate;
+  });
+  const [startTime, setStartTime] = useState(() => {
+    const s = getInitStart();
+    return s ? dateToLocalTime(s) : defaultTime;
+  });
+  const [endDate, setEndDate] = useState(() => {
+    const e = getInitEnd();
+    return e ? dateToLocalISO(e) : '';
+  });
+  const [endTime, setEndTime] = useState(() => {
+    const e = getInitEnd();
+    return e ? dateToLocalTime(e) : '';
+  });
 
+  // Sync state when initialData / prefillDate changes
+  const syncKey = initialData?.id ?? prefillDate?.start?.toISOString() ?? '';
+  useState(() => {
+    // effect-like sync
+  });
+  // useEffect equivalent handled via key on dialog
   const isEditing = !!initialData;
 
   const reset = () => {
@@ -215,20 +217,14 @@ function CalendarItemDialog({
         : new Date(`${endDate}T${endTime || '23:59'}`);
     }
 
-    await onSubmit({
-      type,
-      title: title.trim(),
-      startAt,
-      endAt,
-      allDay,
-      status,
-    });
+    await onSubmit({ type, title: title.trim(), startAt, endAt, allDay, status });
     reset();
     onOpenChange(false);
   };
 
   return (
     <Dialog
+      key={syncKey}
       open={open}
       onOpenChange={(v) => {
         if (!v) reset();
@@ -239,11 +235,12 @@ function CalendarItemDialog({
         <DialogHeader>
           <DialogTitle>{isEditing ? 'Editar Item' : 'Novo Item na Agenda'}</DialogTitle>
           <DialogDescription>
-            {isEditing ? 'Atualize os dados do item.' : 'Crie um novo evento, tarefa, lembrete ou visita.'}
+            {isEditing
+              ? 'Atualize os dados do item.'
+              : 'Crie um novo evento, tarefa, lembrete ou visita.'}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          {/* Título */}
           <div className="space-y-2">
             <Label>Título *</Label>
             <Input
@@ -252,8 +249,6 @@ function CalendarItemDialog({
               placeholder="Ex: Reunião com cliente"
             />
           </div>
-
-          {/* Tipo + Status */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Tipo</Label>
@@ -272,7 +267,10 @@ function CalendarItemDialog({
             </div>
             <div className="space-y-2">
               <Label>Status</Label>
-              <Select value={status} onValueChange={(v) => setStatus(v as CalendarItemStatus)}>
+              <Select
+                value={status}
+                onValueChange={(v) => setStatus(v as CalendarItemStatus)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -286,20 +284,16 @@ function CalendarItemDialog({
               </Select>
             </div>
           </div>
-
-          {/* Dia inteiro */}
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
-              id="allDay"
+              id="calItemAllDay"
               checked={allDay}
               onChange={(e) => setAllDay(e.target.checked)}
               className="h-4 w-4 rounded border-gray-300"
             />
-            <Label htmlFor="allDay">Dia inteiro</Label>
+            <Label htmlFor="calItemAllDay">Dia inteiro</Label>
           </div>
-
-          {/* Data/Hora início */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Data Início *</Label>
@@ -320,8 +314,6 @@ function CalendarItemDialog({
               </div>
             )}
           </div>
-
-          {/* Data/Hora fim */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Data Fim</Label>
@@ -353,7 +345,10 @@ function CalendarItemDialog({
           >
             Cancelar
           </Button>
-          <Button onClick={handleSubmit} disabled={!title.trim() || !startDate || isPending}>
+          <Button
+            onClick={handleSubmit}
+            disabled={!title.trim() || !startDate || isPending}
+          >
             {isPending ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
@@ -375,6 +370,7 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
   const {
     calendarItems,
     loadingCalendar,
+    calendarError,
     upcomingItems,
     todayItems,
     createCalendarItem,
@@ -385,63 +381,139 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
     isDeletingCalendarItem,
   } = useCalendarItems(franchiseId, storeId);
 
-  // ── Estado local ────────────────────────────────────────────────────────
-  const [searchTerm, setSearchTerm] = useState('');
-  const [typeFilter, setTypeFilter] = useState<CalendarItemType | 'all'>('all');
-  const [statusFilter, setStatusFilter] = useState<CalendarItemStatus | 'all'>('all');
+  const { events: commercialEvents, loadingEvents } = useCommercialEvents(
+    franchiseId,
+    storeId,
+  );
+  const { deals, loadingDeals } = useDeals(franchiseId, storeId);
+
+  // ── Local State ─────────────────────────────────────────────────────────
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingItem, setEditingItem] = useState<CalendarItem | null>(null);
   const [deletingItem, setDeletingItem] = useState<CalendarItem | null>(null);
+  const [prefillDate, setPrefillDate] = useState<{
+    start: Date;
+    end?: Date;
+    allDay?: boolean;
+  } | null>(null);
 
-  // ── Filtragem ───────────────────────────────────────────────────────────
-  const filteredItems = useMemo(() => {
-    let result = calendarItems;
-    if (typeFilter !== 'all') {
-      result = result.filter((i) => i.type === typeFilter);
+  // ── Convert all data sources to FullCalendar events ─────────────────────
+  const fcEvents = useMemo<EventInput[]>(() => {
+    const result: EventInput[] = [];
+
+    // 1) CalendarItems — main editable source
+    for (const item of calendarItems) {
+      if (item.status === 'canceled') continue;
+      const start = toDateSafe(item.startAt);
+      const end = item.endAt ? toDateSafe(item.endAt) : undefined;
+      result.push({
+        id: `ci-${item.id}`,
+        title: item.title,
+        start,
+        end,
+        allDay: item.allDay,
+        backgroundColor: TYPE_COLORS[item.type] || TYPE_COLORS.task,
+        borderColor: TYPE_COLORS[item.type] || TYPE_COLORS.task,
+        extendedProps: {
+          source: 'calendarItem' as const,
+          originalId: item.id,
+          type: item.type,
+          status: item.status,
+        },
+      });
     }
-    if (statusFilter !== 'all') {
-      result = result.filter((i) => i.status === statusFilter);
+
+    // 2) CommercialEvents — read-only overlay
+    for (const ev of commercialEvents) {
+      if (ev.status === 'canceled') continue;
+      const start = toDateSafe(ev.startAt);
+      const end = ev.endAt ? toDateSafe(ev.endAt) : undefined;
+      result.push({
+        id: `ce-${ev.id}`,
+        title: `🎉 ${ev.title}`,
+        start,
+        end,
+        allDay: false,
+        backgroundColor: TYPE_COLORS.commercialEvent,
+        borderColor: TYPE_COLORS.commercialEvent,
+        extendedProps: {
+          source: 'commercialEvent' as const,
+          originalId: ev.id,
+          status: ev.status,
+        },
+      });
     }
-    if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      result = result.filter((i) => i.title.toLowerCase().includes(term));
+
+    // 3) Deals — expected close date and event dates
+    for (const deal of deals) {
+      if (deal.stage === 'lost') continue;
+      if (deal.expectedCloseAt) {
+        result.push({
+          id: `deal-close-${deal.id}`,
+          title: `🎯 ${deal.title} (fechamento)`,
+          start: toDateSafe(deal.expectedCloseAt),
+          allDay: true,
+          backgroundColor: TYPE_COLORS.deal,
+          borderColor: TYPE_COLORS.deal,
+          extendedProps: {
+            source: 'deal' as const,
+            originalId: deal.id,
+            subtype: 'close',
+          },
+        });
+      }
+      if (deal.eventStartAt) {
+        result.push({
+          id: `deal-event-${deal.id}`,
+          title: `📅 ${deal.title} (evento)`,
+          start: toDateSafe(deal.eventStartAt),
+          end: deal.eventEndAt ? toDateSafe(deal.eventEndAt) : undefined,
+          allDay: false,
+          backgroundColor: '#9333ea',
+          borderColor: '#9333ea',
+          extendedProps: {
+            source: 'deal' as const,
+            originalId: deal.id,
+            subtype: 'event',
+          },
+        });
+      }
     }
+
     return result;
-  }, [calendarItems, typeFilter, statusFilter, searchTerm]);
+  }, [calendarItems, commercialEvents, deals]);
 
-  // ── Agrupar por data ────────────────────────────────────────────────────
-  const groupedByDate = useMemo(() => {
-    const groups = new Map<string, CalendarItem[]>();
-    for (const item of filteredItems) {
-      const date = toDateSafe(item.startAt);
-      const key = toDateKey(date);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(item);
-    }
-    // Sort keys
-    return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [filteredItems]);
+  // ── Calendar interactions ───────────────────────────────────────────────
+  const handleDateSelect = useCallback((selectInfo: DateSelectArg) => {
+    setPrefillDate({
+      start: selectInfo.start,
+      end: selectInfo.end,
+      allDay: selectInfo.allDay,
+    });
+    setShowCreateDialog(true);
+  }, []);
 
-  // ── Loading ─────────────────────────────────────────────────────────────
-  if (loadingCalendar) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const handleEventClick = useCallback(
+    (clickInfo: EventClickArg) => {
+      const props = clickInfo.event.extendedProps;
+      if (props.source === 'calendarItem') {
+        const item = calendarItems.find((i) => i.id === props.originalId);
+        if (item) setEditingItem(item);
+      }
+      // commercialEvents and deals are read-only here — they have dedicated UIs
+    },
+    [calendarItems],
+  );
 
-  // ── Handlers ────────────────────────────────────────────────────────────
+  // ── CRUD handlers ───────────────────────────────────────────────────────
   const handleCreate = async (data: CreateCalendarInput) => {
     await createCalendarItem(data);
+    setPrefillDate(null);
   };
 
   const handleEdit = async (data: CreateCalendarInput) => {
     if (!editingItem?.id) return;
-    const input: UpdateCalendarInput = {
-      itemId: editingItem.id,
-      ...data,
-    };
+    const input: UpdateCalendarInput = { itemId: editingItem.id, ...data };
     await updateCalendarItem(input);
     setEditingItem(null);
   };
@@ -452,14 +524,37 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
     setDeletingItem(null);
   };
 
-  const handleToggleStatus = async (item: CalendarItem, newStatus: CalendarItemStatus) => {
-    if (!item.id) return;
-    await updateCalendarItem({ itemId: item.id, status: newStatus });
-  };
+  // ── Loading ─────────────────────────────────────────────────────────────
+  const isLoading = loadingCalendar || loadingEvents || loadingDeals;
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (calendarError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+        <h4 className="text-lg font-medium mb-2">Erro ao carregar agenda</h4>
+        <p className="text-sm text-muted-foreground">
+          {calendarError instanceof Error
+            ? calendarError.message
+            : 'Verifique permissões e conexão.'}
+        </p>
+      </div>
+    );
+  }
+
+  // ── Stats ───────────────────────────────────────────────────────────────
+  const canceledCount = calendarItems.filter((i) => i.status === 'canceled').length;
 
   return (
     <div className="space-y-6">
-      {/* ── Summary Cards ──────────────────────────────────────────────── */}
+      {/* ── Summary Cards ──────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -497,11 +592,9 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-2">
-              <XCircle className="h-5 w-5 text-red-400" />
+              <AlertTriangle className="h-5 w-5 text-red-500" />
               <div>
-                <p className="text-2xl font-bold">
-                  {calendarItems.filter((i) => i.status === 'canceled').length}
-                </p>
+                <p className="text-2xl font-bold">{canceledCount}</p>
                 <p className="text-xs text-muted-foreground">Cancelados</p>
               </div>
             </div>
@@ -509,212 +602,114 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
         </Card>
       </div>
 
-      {/* ── Main List ──────────────────────────────────────────────────── */}
+      {/* ── Legend ──────────────────────────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Legenda:</span>
+        {[
+          { label: 'Evento', color: TYPE_COLORS.event },
+          { label: 'Tarefa', color: TYPE_COLORS.task },
+          { label: 'Visita', color: TYPE_COLORS.visit },
+          { label: 'Lembrete', color: TYPE_COLORS.reminder },
+          { label: 'Evento CRM', color: TYPE_COLORS.commercialEvent },
+          { label: 'Deal', color: TYPE_COLORS.deal },
+        ].map((l) => (
+          <span key={l.label} className="flex items-center gap-1">
+            <span
+              className="inline-block w-3 h-3 rounded-sm"
+              style={{ backgroundColor: l.color }}
+            />
+            {l.label}
+          </span>
+        ))}
+      </div>
+
+      {/* ── Calendar ───────────────────────────────────────────────── */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Agenda</CardTitle>
+              <CardTitle className="text-lg">Agenda</CardTitle>
               <CardDescription>
-                Eventos, tarefas, lembretes e visitas
+                Clique em um horário vazio para criar. Clique em um evento para
+                editar.
               </CardDescription>
             </div>
-            <Button onClick={() => setShowCreateDialog(true)}>
+            <Button
+              onClick={() => {
+                setPrefillDate(null);
+                setShowCreateDialog(true);
+              }}
+            >
               <Plus className="h-4 w-4 mr-2" />
               Novo Item
             </Button>
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {/* ── Filtros ──────────────────────────────────────────────── */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Buscar por título..."
-                className="pl-9"
-              />
-            </div>
-            <Select
-              value={typeFilter}
-              onValueChange={(v) => setTypeFilter(v as CalendarItemType | 'all')}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Tipo" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os Tipos</SelectItem>
-                {Object.entries(TYPE_LABELS).map(([k, l]) => (
-                  <SelectItem key={k} value={k}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={statusFilter}
-              onValueChange={(v) => setStatusFilter(v as CalendarItemStatus | 'all')}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os Status</SelectItem>
-                {Object.entries(STATUS_LABELS).map(([k, l]) => (
-                  <SelectItem key={k} value={k}>
-                    {l}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSearchTerm('');
-                setTypeFilter('all');
-                setStatusFilter('all');
+        <CardContent>
+          <div className="fc-wrapper">
+            <FullCalendar
+              plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
+              initialView="dayGridMonth"
+              headerToolbar={{
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek,timeGridDay,listWeek',
               }}
-            >
-              Limpar Filtros
-            </Button>
+              buttonText={{
+                today: 'Hoje',
+                month: 'Mês',
+                week: 'Semana',
+                day: 'Dia',
+                list: 'Lista',
+              }}
+              locale="pt-br"
+              firstDay={0}
+              height="auto"
+              contentHeight={650}
+              selectable
+              selectMirror
+              dayMaxEvents={4}
+              moreLinkText={(n) => `+${n} mais`}
+              events={fcEvents}
+              select={handleDateSelect}
+              eventClick={handleEventClick}
+              eventTimeFormat={{
+                hour: '2-digit',
+                minute: '2-digit',
+                meridiem: false,
+                hour12: false,
+              }}
+              slotLabelFormat={{
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              }}
+              slotMinTime="06:00:00"
+              slotMaxTime="23:00:00"
+              allDayText="Dia todo"
+              noEventsText="Nenhum evento neste período"
+              nowIndicator
+              expandRows
+            />
           </div>
-
-          {/* ── Items agrupados por data ──────────────────────────────── */}
-          {groupedByDate.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-              <CalendarDays className="h-12 w-12 mb-4" />
-              <p className="text-lg font-medium">Nenhum item na agenda</p>
-              <p className="text-sm">
-                {calendarItems.length === 0
-                  ? 'Crie seu primeiro evento ou tarefa.'
-                  : 'Tente ajustar os filtros.'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {groupedByDate.map(([dateKey, items]) => {
-                const dateObj = new Date(dateKey + 'T12:00:00');
-                const today = new Date();
-                const isToday = dateObj.toDateString() === today.toDateString();
-                return (
-                  <div key={dateKey}>
-                    <div className="flex items-center gap-2 mb-3">
-                      <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-                        {formatDate(dateObj)}
-                      </h3>
-                      {isToday && (
-                        <Badge variant="default" className="text-xs">
-                          Hoje
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="space-y-2">
-                      {items.map((item) => {
-                        const TypeIcon = TYPE_ICONS[item.type];
-                        const itemDate = toDateSafe(item.startAt);
-                        return (
-                          <Card key={item.id} className="hover:bg-muted/30 transition-colors">
-                            <CardContent className="p-4">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <TypeIcon className="h-5 w-5 text-muted-foreground shrink-0" />
-                                  <div>
-                                    <p className="font-medium text-sm">{item.title}</p>
-                                    <div className="flex items-center gap-2 mt-1">
-                                      {!item.allDay && (
-                                        <span className="text-xs text-muted-foreground">
-                                          {formatTime(itemDate)}
-                                        </span>
-                                      )}
-                                      {item.allDay && (
-                                        <span className="text-xs text-muted-foreground">
-                                          Dia inteiro
-                                        </span>
-                                      )}
-                                      <Badge variant="outline" className="text-xs">
-                                        {TYPE_LABELS[item.type]}
-                                      </Badge>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span
-                                    className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${STATUS_COLORS[item.status]}`}
-                                  >
-                                    {STATUS_LABELS[item.status]}
-                                  </span>
-                                  <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                                        <MoreVertical className="h-4 w-4" />
-                                      </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align="end">
-                                      <DropdownMenuItem onClick={() => setEditingItem(item)}>
-                                        <Edit className="h-4 w-4 mr-2" />
-                                        Editar
-                                      </DropdownMenuItem>
-                                      <DropdownMenuSeparator />
-                                      {item.status !== 'done' && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleToggleStatus(item, 'done')}
-                                        >
-                                          <CheckCircle2 className="h-4 w-4 mr-2" />
-                                          Marcar como concluído
-                                        </DropdownMenuItem>
-                                      )}
-                                      {item.status !== 'confirmed' && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleToggleStatus(item, 'confirmed')}
-                                        >
-                                          <CalendarCheck className="h-4 w-4 mr-2" />
-                                          Confirmar
-                                        </DropdownMenuItem>
-                                      )}
-                                      {item.status !== 'canceled' && (
-                                        <DropdownMenuItem
-                                          onClick={() => handleToggleStatus(item, 'canceled')}
-                                        >
-                                          <XCircle className="h-4 w-4 mr-2" />
-                                          Cancelar
-                                        </DropdownMenuItem>
-                                      )}
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem
-                                        onClick={() => setDeletingItem(item)}
-                                        className="text-destructive focus:text-destructive"
-                                      >
-                                        <Trash2 className="h-4 w-4 mr-2" />
-                                        Excluir
-                                      </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                  </DropdownMenu>
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </CardContent>
       </Card>
 
-      {/* ── Create Dialog ──────────────────────────────────────────────── */}
+      {/* ── Create Dialog ──────────────────────────────────────────── */}
       <CalendarItemDialog
         open={showCreateDialog}
-        onOpenChange={setShowCreateDialog}
+        onOpenChange={(v) => {
+          if (!v) {
+            setShowCreateDialog(false);
+            setPrefillDate(null);
+          }
+        }}
         onSubmit={handleCreate}
         isPending={isCreatingCalendarItem}
+        prefillDate={prefillDate}
       />
 
-      {/* ── Edit Dialog ────────────────────────────────────────────────── */}
+      {/* ── Edit Dialog ────────────────────────────────────────────── */}
       <CalendarItemDialog
         open={!!editingItem}
         onOpenChange={(v) => {
@@ -725,7 +720,7 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
         initialData={editingItem}
       />
 
-      {/* ── Delete Confirmation ────────────────────────────────────────── */}
+      {/* ── Delete Confirm ─────────────────────────────────────────── */}
       <AlertDialog
         open={!!deletingItem}
         onOpenChange={(v) => {
@@ -734,21 +729,22 @@ export function CommercialCalendarTab({ franchiseId, storeId }: Props) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir item da agenda?</AlertDialogTitle>
+            <AlertDialogTitle>Excluir Item</AlertDialogTitle>
             <AlertDialogDescription>
-              Tem certeza que deseja excluir{' '}
-              <strong>{deletingItem?.title}</strong>? Esta ação não pode ser
-              desfeita.
+              Tem certeza que deseja excluir &quot;{deletingItem?.title}&quot;?
+              Esta ação não pode ser desfeita.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={handleDelete}
               disabled={isDeletingCalendarItem}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {isDeletingCalendarItem && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              {isDeletingCalendarItem && (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              )}
               Excluir
             </AlertDialogAction>
           </AlertDialogFooter>

@@ -58,8 +58,6 @@ export const onWastageEventCreated = onDocumentCreated(
     }
 
     const storePath = `franchises/${franchiseId}/stores/${storeId}`;
-    const batch = db.batch();
-    let needsBatch = false;
 
     // ── 1. Debit Keg.remainingMl (via transaction para prevent race condition) ──
     if (wastage.kegId) {
@@ -86,15 +84,16 @@ export const onWastageEventCreated = onDocumentCreated(
           const newRemaining = currentRemaining - wastage.mlLost;
 
           if (newRemaining <= 0) {
+            // [FIX Bug-7] Ao depletar keg, zerar processedEvents
             txn.update(kegRef, {
               remainingMl: 0,
               status: 'depleted',
               depletedAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
               updatedBy: 'system',
-              processedEvents: arrayUnion(eventId),
+              processedEvents: [],
             });
-            console.log(`[ERP:Wastage] Keg ${wastage.kegId} marked depleted`);
+            console.log(`[ERP:Wastage] Keg ${wastage.kegId} marked depleted (processedEvents cleared)`);
           } else {
             txn.update(kegRef, {
               remainingMl: newRemaining,
@@ -133,33 +132,32 @@ export const onWastageEventCreated = onDocumentCreated(
     }
 
     // ── 3. Increment active TapAssignment.totalWastageMl ──────────────────
+    // [FIX Bug-4 CF] Moved into a transaction for OCC safety.
+    // Admin SDK supports txn.get(query), so we use that instead of db.collection().get().
     if (wastage.tapId) {
       try {
-        const assignmentsSnap = await db
-          .collection(`${storePath}/tapAssignments`)
-          .where('tapId', '==', wastage.tapId)
-          .where('status', '==', 'active')
-          .limit(1)
-          .get();
+        await db.runTransaction(async (txn) => {
+          const assignmentsQuery = db
+            .collection(`${storePath}/tapAssignments`)
+            .where('tapId', '==', wastage.tapId)
+            .where('status', '==', 'active')
+            .limit(1);
+          const assignmentsSnap = await txn.get(assignmentsQuery);
 
-        if (!assignmentsSnap.empty) {
-          const assignmentRef = assignmentsSnap.docs[0].ref;
-          batch.update(assignmentRef, {
-            totalWastageMl: increment(wastage.mlLost),
-            updatedAt: serverTimestamp(),
-            updatedBy: 'system',
-          });
-        }
+          if (!assignmentsSnap.empty) {
+            const assignmentRef = assignmentsSnap.docs[0].ref;
+            txn.update(assignmentRef, {
+              totalWastageMl: increment(wastage.mlLost),
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+            });
+          }
+        });
       } catch (err) {
         console.warn('[ERP:Wastage] Could not update TapAssignment:', err);
       }
     }
 
-    // ── 4. Commit batch ───────────────────────────────────────────────────
-    if (needsBatch) {
-      await batch.commit();
-      console.log(`[ERP:Wastage] Batch committed for ${eventId}`);
-    }
 
     console.log(`[ERP:Wastage] Done processing ${eventId}`);
   });

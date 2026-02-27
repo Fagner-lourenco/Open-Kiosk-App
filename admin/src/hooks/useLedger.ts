@@ -21,6 +21,7 @@ import {
   deleteDoc,
   orderBy,
   query,
+  limit as firestoreLimit,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
@@ -138,7 +139,8 @@ export function useLedger(franchiseId: string, storeId: string) {
     queryKey: qKey,
     queryFn: async () => {
       const ref = ledgerRef(franchiseId, storeId);
-      const q = query(ref, orderBy('competenceDate', 'desc'));
+      // [FIX F05] Limitar documentos carregados para evitar carregar 15k+ docs
+      const q = query(ref, orderBy('competenceDate', 'desc'), firestoreLimit(500));
       const snap = await getDocs(q);
       return snap.docs.map((d) => normalizeEntry(d.id, d.data()));
     },
@@ -147,6 +149,12 @@ export function useLedger(franchiseId: string, storeId: string) {
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateLedgerEntryInput) => {
+      // [FIX BUG-F14] Validações de campos obrigatórios
+      if (!input.amount || input.amount <= 0) throw new Error('Valor deve ser maior que zero');
+      if (!input.description?.trim()) throw new Error('Descrição é obrigatória');
+      if (!input.accountId) throw new Error('Conta é obrigatória');
+      if (!['in', 'out'].includes(input.direction)) throw new Error('Direção inválida');
+
       const ref = doc(ledgerRef(franchiseId, storeId));
       const data: Record<string, unknown> = {
         direction: input.direction,

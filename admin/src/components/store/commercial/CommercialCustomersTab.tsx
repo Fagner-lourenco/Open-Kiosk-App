@@ -10,7 +10,8 @@
  * @version 1.0.0
  */
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Card,
   CardContent,
@@ -75,6 +76,8 @@ import {
   RotateCcw,
   Building2,
   User,
+  AlertTriangle,
+  Eye,
 } from 'lucide-react';
 import { useCustomers, type CreateCustomerInput, type UpdateCustomerInput } from '@/hooks/useCustomers';
 import type { Customer, CustomerType, CustomerSource, CustomerStatus } from '@/types/commercial';
@@ -139,6 +142,17 @@ function CustomerDialog({
   const [email, setEmail] = useState(initialData?.emails?.[0] || '');
   const [source, setSource] = useState<CustomerSource | ''>(initialData?.source || '');
   const [tags, setTags] = useState(initialData?.tags?.join(', ') || '');
+
+  // [FIX COM-09] Sincronizar state quando initialData mudar
+  useEffect(() => {
+    setName(initialData?.name || '');
+    setType(initialData?.type || 'person');
+    setDocField(initialData?.doc || '');
+    setPhone(initialData?.phones?.[0] || '');
+    setEmail(initialData?.emails?.[0] || '');
+    setSource(initialData?.source || '');
+    setTags(initialData?.tags?.join(', ') || '');
+  }, [initialData]);
 
   const isEditing = !!initialData;
 
@@ -302,6 +316,7 @@ export function CommercialCustomersTab({ franchiseId, storeId }: Props) {
   const {
     customers,
     loadingCustomers,
+    customersError,
     activeCustomers,
     archivedCustomers,
     createCustomer,
@@ -311,6 +326,8 @@ export function CommercialCustomersTab({ franchiseId, storeId }: Props) {
     deleteCustomer,
     isDeletingCustomer,
   } = useCustomers(franchiseId, storeId);
+
+  const navigate = useNavigate();
 
   // ── Estado local ────────────────────────────────────────────────────────
   const [searchTerm, setSearchTerm] = useState('');
@@ -348,6 +365,17 @@ export function CommercialCustomersTab({ franchiseId, storeId }: Props) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // [FIX COM-06] Exibir erro quando query falha
+  if (customersError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+        <h4 className="text-lg font-medium mb-2">Erro ao carregar clientes</h4>
+        <p className="text-sm text-muted-foreground">{customersError instanceof Error ? customersError.message : 'Verifique permissões e conexão.'}</p>
       </div>
     );
   }
@@ -527,7 +555,12 @@ export function CommercialCustomersTab({ franchiseId, storeId }: Props) {
                   <TableRow key={customer.id}>
                     <TableCell className="font-medium">
                       <div>
-                        <p>{customer.name}</p>
+                        <p
+                          className="cursor-pointer hover:underline text-primary"
+                          onClick={() => customer.id && navigate(`/stores/${storeId}/commercial/customers/${customer.id}`)}
+                        >
+                          {customer.name}
+                        </p>
                         {customer.doc && (
                           <p className="text-xs text-muted-foreground">{customer.doc}</p>
                         )}
@@ -584,6 +617,10 @@ export function CommercialCustomersTab({ franchiseId, storeId }: Props) {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => customer.id && navigate(`/stores/${storeId}/commercial/customers/${customer.id}`)}>
+                            <Eye className="h-4 w-4 mr-2" />
+                            Ver Detalhes
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => setEditingCustomer(customer)}>
                             <Edit className="h-4 w-4 mr-2" />
                             Editar

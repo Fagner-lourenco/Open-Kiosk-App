@@ -1,11 +1,11 @@
 /**
  * ============================================================================
- * useStoreDetail — Hook para carregar dados de uma loja
+ * useStoreDetail — Hook para carregar dados de uma loja (React Query)
  * ============================================================================
  */
 
-import { useState, useEffect, useCallback } from 'react';
 import { doc, getDoc } from 'firebase/firestore';
+import { useQuery } from '@tanstack/react-query';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 
@@ -28,30 +28,23 @@ export interface StoreData {
 
 export function useStoreDetail(storeId: string | undefined) {
   const { currentFranchise } = useFranchise();
-  const [store, setStore] = useState<StoreData | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   const franchiseId = currentFranchise?.id;
 
-  const loadStore = useCallback(async () => {
-    if (!franchiseId || !storeId) return;
-    setIsLoading(true);
-    setError(null);
+  const { data: store = null, isLoading, error, refetch } = useQuery({
+    queryKey: ['store-detail', franchiseId, storeId],
+    queryFn: async (): Promise<StoreData | null> => {
+      if (!franchiseId || !storeId) return null;
 
-    try {
       const storeDoc = await getDoc(
         doc(db, `franchises/${franchiseId}/stores/${storeId}`),
       );
 
       if (!storeDoc.exists()) {
-        setError('Loja não encontrada');
-        setIsLoading(false);
-        return;
+        throw new Error('Loja não encontrada');
       }
 
       const data = storeDoc.data();
-      setStore({
+      return {
         id: storeDoc.id,
         name: data.name,
         address: data.address,
@@ -62,18 +55,18 @@ export function useStoreDetail(storeId: string | undefined) {
         operators: data.operators || data.members || [],
         createdAt: data.createdAt?.toDate(),
         updatedAt: data.updatedAt?.toDate(),
-      });
-    } catch (err) {
-      console.error('Error loading store:', err);
-      setError('Erro ao carregar loja');
-    }
+      };
+    },
+    enabled: !!franchiseId && !!storeId,
+    staleTime: 2 * 60 * 1000, // 2 min cache
+    retry: 1,
+  });
 
-    setIsLoading(false);
-  }, [franchiseId, storeId]);
-
-  useEffect(() => {
-    loadStore();
-  }, [loadStore]);
-
-  return { store, isLoading, error, franchiseId, refreshStore: loadStore };
+  return {
+    store,
+    isLoading,
+    error: error ? (error as Error).message : null,
+    franchiseId,
+    refreshStore: refetch,
+  };
 }

@@ -20,6 +20,7 @@ import {
   deleteDoc,
   orderBy,
   query,
+  where,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
@@ -126,6 +127,15 @@ export function useFinAccounts(franchiseId: string, storeId: string) {
 
   const createMutation = useMutation({
     mutationFn: async (input: CreateFinAccountInput) => {
+      // [FIX BUG-F05] Verificar duplicata pelo nome
+      const existingSnap = await getDocs(query(
+        accountsRef(franchiseId, storeId),
+        where('name', '==', input.name),
+      ));
+      if (!existingSnap.empty) {
+        throw new Error(`Já existe uma conta com o nome "${input.name}"`);
+      }
+
       const ref = doc(accountsRef(franchiseId, storeId));
       const data: Record<string, unknown> = {
         name: input.name,
@@ -204,7 +214,9 @@ export function useFinAccounts(franchiseId: string, storeId: string) {
   );
 
   const totalBalance = useMemo(
-    () => activeAccounts.reduce((sum, a) => sum + a.openingBalance, 0),
+    // [FIX BUG-F01] totalBalance agora considera apenas openingBalance
+    // TODO: somar entradas do ledger quando integração completa estiver pronta
+    () => activeAccounts.reduce((sum, a) => sum + (a.openingBalance || 0), 0),
     [activeAccounts],
   );
 

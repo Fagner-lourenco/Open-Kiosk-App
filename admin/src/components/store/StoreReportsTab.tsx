@@ -15,7 +15,8 @@ import { ordersPath, storeSubPath } from '@/lib/pathResolver';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
+import type { DateRange } from 'react-day-picker';
 import {
   Table,
   TableBody,
@@ -86,42 +87,51 @@ interface StoreReportsTabProps {
   storeId: string;
 }
 
-// Period options
-type PeriodOption = '7' | '14' | '30' | '60' | '90';
-const PERIOD_OPTIONS: { value: PeriodOption; label: string }[] = [
-  { value: '7', label: 'Últimos 7 dias' },
-  { value: '14', label: 'Últimos 14 dias' },
-  { value: '30', label: 'Últimos 30 dias' },
-  { value: '60', label: 'Últimos 60 dias' },
-  { value: '90', label: 'Últimos 90 dias' },
-];
-
 export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) {
-  const [period, setPeriod] = useState<PeriodOption>('30');
+  // Default: last 30 days
+  const [dateRange, setDateRange] = useState<DateRange | undefined>(() => {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+    return { from, to };
+  });
   
-  // Calculate date range
+  // Calculate date range boundaries
   const startDate = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - parseInt(period));
-    return date;
-  }, [period]);
+    if (!dateRange?.from) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      return d;
+    }
+    return dateRange.from;
+  }, [dateRange]);
+
+  const endDate = useMemo(() => {
+    if (!dateRange?.to) return new Date();
+    return dateRange.to;
+  }, [dateRange]);
+
+  // Period length in days for previous period comparison
+  const periodDays = useMemo(() => {
+    return Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
+  }, [startDate, endDate]);
   
-  // Previous period for comparison
+  // Previous period for comparison (same length, immediately before)
   const previousPeriodStart = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - (parseInt(period) * 2));
+    const date = new Date(startDate);
+    date.setDate(date.getDate() - periodDays);
     return date;
-  }, [period]);
+  }, [startDate, periodDays]);
   
   const previousPeriodEnd = useMemo(() => {
-    const date = new Date();
-    date.setDate(date.getDate() - parseInt(period));
-    return date;
-  }, [period]);
+    return startDate;
+  }, [startDate]);
 
   // Current period orders
-  const { data: orders = [], isLoading: loadingOrders } = useQuery({
-    queryKey: ['store-orders-reports', franchiseId, storeId, period],
+  const { data: orders = [], isLoading: loadingOrders, isError: isOrdersError, error: ordersError } = useQuery({
+    queryKey: ['store-orders-reports', franchiseId, storeId, startDate.getTime(), endDate.getTime()],
     queryFn: async (): Promise<Order[]> => {
       const path = ordersPath(franchiseId, storeId);
       const pathSegments = path.split('/') as [string, ...string[]];
@@ -142,7 +152,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
 
   // Previous period orders (for comparison)
   const { data: previousOrders = [] } = useQuery({
-    queryKey: ['store-orders-reports-prev', franchiseId, storeId, period],
+    queryKey: ['store-orders-reports-prev', franchiseId, storeId, previousPeriodStart.getTime(), previousPeriodEnd.getTime()],
     queryFn: async (): Promise<Order[]> => {
       const path = ordersPath(franchiseId, storeId);
       const pathSegments = path.split('/') as [string, ...string[]];
@@ -265,6 +275,19 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
 
   const isLoading = loadingOrders || loadingProducts;
 
+  // [FIX GES-08] Exibir estado de erro quando queries falham
+  if (isOrdersError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+        <h4 className="text-lg font-medium text-foreground mb-2">Erro ao carregar relatórios</h4>
+        <p className="text-sm text-muted-foreground mb-4">
+          {ordersError instanceof Error ? ordersError.message : 'Não foi possível buscar os dados. Verifique permissões e conexão.'}
+        </p>
+      </div>
+    );
+  }
+
   // Export to CSV handler
   const handleExportCSV = () => {
     const csvContent = [
@@ -293,16 +316,11 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           <Calendar className="h-5 w-5 text-muted-foreground" />
-          <Select value={period} onValueChange={(v) => setPeriod(v as PeriodOption)}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Selecione o período" />
-            </SelectTrigger>
-            <SelectContent>
-              {PERIOD_OPTIONS.map(opt => (
-                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <DateRangePicker
+            value={dateRange}
+            onChange={setDateRange}
+            placeholder="Selecione o período"
+          />
         </div>
         <Button variant="outline" onClick={handleExportCSV}>
           <Download className="h-4 w-4 mr-2" />
@@ -373,7 +391,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
               Receita por Dia
             </CardTitle>
             <CardDescription>
-              {PERIOD_OPTIONS.find(p => p.value === period)?.label}
+              {periodDays === 1 ? '1 dia selecionado' : `Últimos ${periodDays} dias`}
             </CardDescription>
           </CardHeader>
           <CardContent>

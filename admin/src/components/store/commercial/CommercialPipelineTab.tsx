@@ -4,13 +4,25 @@
  * ============================================================================
  *
  * Board com colunas por estágio: Lead → Qualificação → Proposta → Negociação → Ganho/Perdido
- * Move-se o deal entre colunas via dropdown (sem drag-and-drop externo).
+ * Drag-and-drop entre colunas via @dnd-kit + menu dropdown como fallback.
  *
  * @author Open Kiosk Project
- * @version 1.0.0
+ * @version 2.0.0
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragStartEvent,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { useDraggable, useDroppable } from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
 import {
   Card,
   CardContent,
@@ -66,11 +78,22 @@ import {
   TrendingUp,
   Target,
   User,
+  AlertTriangle,
+  Eye,
+  Phone,
+  MessageCircle,
+  Mail,
+  MapPin,
+  CheckSquare,
+  CheckCircle,
 } from 'lucide-react';
 import { useDeals, type CreateDealInput, type UpdateDealInput } from '@/hooks/useDeals';
 import { useCustomers } from '@/hooks/useCustomers';
 import type { Deal, DealStage } from '@/types/commercial';
+import type { Activity, ActivityType } from '@/types/commercial';
 import { DEAL_STAGES, DEAL_STAGE_LABELS } from '@/types/commercial';
+import { useActivities, type CreateActivityInput } from '@/hooks/useActivities';
+import { Timestamp } from 'firebase/firestore';
 
 // ============================================================================
 // CONSTANTS
@@ -105,6 +128,179 @@ function formatCurrency(value: number): string {
 interface Props {
   franchiseId: string;
   storeId: string;
+}
+
+// ============================================================================
+// DEAL DETAIL DIALOG — View Deal + Activities
+// ============================================================================
+
+const ACTIVITY_TYPE_CONFIG: Record<ActivityType, { label: string; icon: React.ElementType }> = {
+  call: { label: 'Ligação', icon: Phone },
+  whatsapp: { label: 'WhatsApp', icon: MessageCircle },
+  email: { label: 'E-mail', icon: Mail },
+  visit: { label: 'Visita', icon: MapPin },
+  task: { label: 'Tarefa', icon: CheckSquare },
+};
+
+function DealDetailDialog({
+  open,
+  onOpenChange,
+  deal,
+  customerName,
+  franchiseId,
+  storeId,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  deal: Deal;
+  customerName: string;
+  franchiseId: string;
+  storeId: string;
+}) {
+  const {
+    activities,
+    loadingActivities,
+    openActivities,
+    createActivity,
+    updateActivity,
+    isCreatingActivity,
+  } = useActivities(franchiseId, storeId, deal.id);
+
+  const [newType, setNewType] = useState<ActivityType>('call');
+  const [newSummary, setNewSummary] = useState('');
+  const [newDate, setNewDate] = useState('');
+
+  const handleCreate = useCallback(async () => {
+    if (!newSummary.trim() || !deal.id) return;
+    const input: CreateActivityInput = {
+      dealId: deal.id,
+      type: newType,
+      summary: newSummary.trim(),
+      dueAt: newDate ? new Date(newDate + 'T12:00:00') : new Date(),
+    };
+    await createActivity(input);
+    setNewSummary('');
+    setNewDate('');
+  }, [newType, newSummary, newDate, createActivity, deal.id]);
+
+  const toggleDone = useCallback(
+    (act: Activity & { dealId?: string }) => {
+      if (!act.id || !deal.id) return;
+      const nextStatus = act.status === 'done' ? 'open' : 'done';
+      updateActivity({ activityId: act.id, dealId: act.dealId || deal.id, status: nextStatus });
+    },
+    [updateActivity, deal.id],
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{deal.title}</DialogTitle>
+          <DialogDescription className="sr-only">Detalhes da negociação</DialogDescription>
+        </DialogHeader>
+
+        {/* Deal Info */}
+        <div className="grid grid-cols-2 gap-2 text-sm border-b pb-3 mb-3">
+          <div><span className="text-muted-foreground">Cliente:</span> {customerName}</div>
+          <div><span className="text-muted-foreground">Etapa:</span> {DEAL_STAGE_LABELS[deal.stage]}</div>
+          {deal.valueEstimate != null && (
+            <div><span className="text-muted-foreground">Valor:</span> R$ {deal.valueEstimate.toLocaleString('pt-BR')}</div>
+          )}
+          {deal.probability != null && (
+            <div><span className="text-muted-foreground">Probabilidade:</span> {deal.probability}%</div>
+          )}
+        </div>
+
+        {/* Activities Section */}
+        <div className="space-y-3">
+          <h4 className="font-semibold text-sm flex items-center gap-2">
+            <CheckSquare className="h-4 w-4" /> Atividades ({openActivities.length} abertas)
+          </h4>
+
+          {/* Quick Create */}
+          <div className="flex gap-2 flex-wrap">
+            <Select value={newType} onValueChange={(v) => setNewType(v as ActivityType)}>
+              <SelectTrigger className="w-[130px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.entries(ACTIVITY_TYPE_CONFIG) as [ActivityType, { label: string }][]).map(
+                  ([k, v]) => (
+                    <SelectItem key={k} value={k}>
+                      {v.label}
+                    </SelectItem>
+                  ),
+                )}
+              </SelectContent>
+            </Select>
+            <Input
+              className="flex-1 h-8 text-xs min-w-[120px]"
+              placeholder="Resumo..."
+              value={newSummary}
+              onChange={(e) => setNewSummary(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); }}
+            />
+            <Input
+              type="date"
+              className="w-[130px] h-8 text-xs"
+              value={newDate}
+              onChange={(e) => setNewDate(e.target.value)}
+            />
+            <Button size="sm" className="h-8 text-xs" onClick={handleCreate} disabled={isCreatingActivity || !newSummary.trim()}>
+              {isCreatingActivity ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+            </Button>
+          </div>
+
+          {/* Activities List */}
+          {loadingActivities ? (
+            <div className="flex justify-center py-4">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : activities.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-3">
+              Nenhuma atividade registrada.
+            </p>
+          ) : (
+            <div className="space-y-1 max-h-[300px] overflow-y-auto">
+              {activities.map((act) => {
+                const cfg = ACTIVITY_TYPE_CONFIG[act.type] || ACTIVITY_TYPE_CONFIG.task;
+                const Icon = cfg.icon;
+                const dueDateStr = act.dueAt
+                  ? (act.dueAt as Timestamp).toDate().toLocaleDateString('pt-BR')
+                  : null;
+                return (
+                  <div
+                    key={act.id}
+                    className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-xs border ${
+                      act.status === 'done' ? 'bg-muted/50 line-through text-muted-foreground' : ''
+                    }`}
+                  >
+                    <button
+                      onClick={() => toggleDone(act)}
+                      className="shrink-0"
+                      title={act.status === 'done' ? 'Reabrir' : 'Concluir'}
+                    >
+                      {act.status === 'done' ? (
+                        <CheckCircle className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/40" />
+                      )}
+                    </button>
+                    <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <span className="flex-1 truncate">{act.summary}</span>
+                    {dueDateStr && (
+                      <span className="text-[10px] text-muted-foreground shrink-0">{dueDateStr}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // ============================================================================
@@ -286,33 +482,87 @@ function DealDialog({
 // DEAL CARD — individual card in the kanban column
 // ============================================================================
 
+// ============================================================================
+// DROPPABLE COLUMN wrapper
+// ============================================================================
+
+function DroppableColumn({
+  stage,
+  children,
+}: {
+  stage: DealStage;
+  children: React.ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: `col-${stage}`, data: { stage } });
+  return (
+    <div
+      ref={setNodeRef}
+      className={`space-y-2 min-h-[100px] transition-colors rounded-lg ${
+        isOver ? 'bg-primary/5 ring-2 ring-primary/30' : ''
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ============================================================================
+// DRAGGABLE DEAL CARD
+// ============================================================================
+
 function DealCard({
   deal,
   customerName,
   onEdit,
   onDelete,
+  onView,
   onMoveStage,
+  isDragOverlay,
 }: {
   deal: Deal;
   customerName: string;
   onEdit: () => void;
   onDelete: () => void;
+  onView: () => void;
   onMoveStage: (stage: DealStage) => void;
+  isDragOverlay?: boolean;
 }) {
   const otherStages = DEAL_STAGES.filter((s) => s !== deal.stage);
 
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: deal.id || `deal-${deal.title}`,
+    data: { deal },
+    disabled: isDragOverlay,
+  });
+
+  const style = transform
+    ? { transform: CSS.Translate.toString(transform) }
+    : undefined;
+
   return (
-    <Card className={`border-t-4 ${STAGE_COLORS[deal.stage]}`}>
+    <Card
+      ref={setNodeRef}
+      style={style}
+      className={`border-t-4 ${STAGE_COLORS[deal.stage]} ${
+        isDragging ? 'opacity-40 shadow-lg' : ''
+      } ${isDragOverlay ? 'shadow-2xl rotate-2 scale-105' : ''}`}
+      {...attributes}
+      {...listeners}
+    >
       <CardContent className="p-3 space-y-2">
         <div className="flex items-start justify-between">
-          <p className="font-medium text-sm leading-snug">{deal.title}</p>
+          <p className="font-medium text-sm leading-snug cursor-pointer hover:underline" onClick={onView}>{deal.title}</p>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0">
+              <Button variant="ghost" size="icon" aria-label="Ações do deal" className="h-6 w-6 shrink-0">
                 <MoreVertical className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={onView}>
+                <Eye className="h-4 w-4 mr-2" />
+                Ver Detalhes
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={onEdit}>
                 <Edit className="h-4 w-4 mr-2" />
                 Editar
@@ -359,6 +609,7 @@ export function CommercialPipelineTab({ franchiseId, storeId }: Props) {
   const {
     deals,
     loadingDeals,
+    dealsError,
     activeDeals,
     dealsByStage,
     totalPipelineValue,
@@ -387,12 +638,54 @@ export function CommercialPipelineTab({ franchiseId, storeId }: Props) {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [editingDeal, setEditingDeal] = useState<Deal | null>(null);
   const [deletingDeal, setDeletingDeal] = useState<Deal | null>(null);
+  const [viewingDeal, setViewingDeal] = useState<Deal | null>(null);
+  const [activeDragDeal, setActiveDragDeal] = useState<Deal | null>(null);
+
+  // ── DnD sensors ─────────────────────────────────────────────────────────
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    const deal = event.active.data.current?.deal as Deal | undefined;
+    if (deal) setActiveDragDeal(deal);
+  }, []);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setActiveDragDeal(null);
+      const { active, over } = event;
+      if (!over) return;
+
+      const deal = active.data.current?.deal as Deal | undefined;
+      if (!deal?.id) return;
+
+      // over.id is "col-<stage>"
+      const overIdStr = String(over.id);
+      const targetStage = (over.data.current?.stage || overIdStr.replace('col-', '')) as DealStage;
+      if (targetStage === deal.stage) return; // same column
+
+      moveDealStage({ dealId: deal.id, stage: targetStage });
+    },
+    [moveDealStage],
+  );
 
   // ── Loading ─────────────────────────────────────────────────────────────
   if (loadingDeals) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // [FIX COM-06] Exibir erro quando query falha
+  if (dealsError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <AlertTriangle className="h-12 w-12 text-red-500 mb-4" />
+        <h4 className="text-lg font-medium mb-2">Erro ao carregar pipeline</h4>
+        <p className="text-sm text-muted-foreground">{dealsError instanceof Error ? dealsError.message : 'Verifique permissões e conexão.'}</p>
       </div>
     );
   }
@@ -481,7 +774,7 @@ export function CommercialPipelineTab({ franchiseId, storeId }: Props) {
             <div>
               <CardTitle>Pipeline</CardTitle>
               <CardDescription>
-                Arraste entre estágios usando o menu de cada card
+                Arraste os cards entre colunas ou use o menu ⋮ de cada card
               </CardDescription>
             </div>
             <Button onClick={() => setShowCreateDialog(true)}>
@@ -492,54 +785,77 @@ export function CommercialPipelineTab({ franchiseId, storeId }: Props) {
         </CardHeader>
       </Card>
 
-      {/* ── Kanban Board ───────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-        {DEAL_STAGES.map((stage) => {
-          const stageDeals = dealsByStage(stage);
-          const stageValue = stageDeals.reduce((s, d) => s + d.valueEstimate, 0);
-          return (
-            <div key={stage} className="space-y-2">
-              {/* Column Header */}
-              <div className={`rounded-lg p-3 ${STAGE_BG[stage]}`}>
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold text-sm">
-                    {DEAL_STAGE_LABELS[stage]}
-                  </span>
-                  <Badge variant="secondary" className="text-xs">
-                    {stageDeals.length}
-                  </Badge>
-                </div>
-                {stageValue > 0 && (
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {formatCurrency(stageValue)}
-                  </p>
-                )}
-              </div>
-              {/* Column Cards */}
-              <div className="space-y-2 min-h-[100px]">
-                {stageDeals.length === 0 ? (
-                  <div className="flex items-center justify-center h-[100px] border-2 border-dashed rounded-lg">
-                    <p className="text-xs text-muted-foreground">Vazio</p>
+      {/* ── Kanban Board (DnD) ─────────────────────────────────────────── */}
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          {DEAL_STAGES.map((stage) => {
+            const stageDeals = dealsByStage(stage);
+            const stageValue = stageDeals.reduce((s, d) => s + d.valueEstimate, 0);
+            return (
+              <div key={stage} className="space-y-2">
+                {/* Column Header */}
+                <div className={`rounded-lg p-3 ${STAGE_BG[stage]}`}>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-sm">
+                      {DEAL_STAGE_LABELS[stage]}
+                    </span>
+                    <Badge variant="secondary" className="text-xs">
+                      {stageDeals.length}
+                    </Badge>
                   </div>
-                ) : (
-                  stageDeals.map((deal) => (
-                    <DealCard
-                      key={deal.id}
-                      deal={deal}
-                      customerName={customerMap.get(deal.customerId) || 'Cliente não encontrado'}
-                      onEdit={() => setEditingDeal(deal)}
-                      onDelete={() => setDeletingDeal(deal)}
-                      onMoveStage={(newStage) => {
-                        if (deal.id) moveDealStage({ dealId: deal.id, stage: newStage });
-                      }}
-                    />
-                  ))
-                )}
+                  {stageValue > 0 && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {formatCurrency(stageValue)}
+                    </p>
+                  )}
+                </div>
+                {/* Column Cards — droppable */}
+                <DroppableColumn stage={stage}>
+                  {stageDeals.length === 0 ? (
+                    <div className="flex items-center justify-center h-[100px] border-2 border-dashed rounded-lg">
+                      <p className="text-xs text-muted-foreground">Solte aqui</p>
+                    </div>
+                  ) : (
+                    stageDeals.map((deal) => (
+                      <DealCard
+                        key={deal.id}
+                        deal={deal}
+                        customerName={customerMap.get(deal.customerId) || 'Cliente não encontrado'}
+                        onEdit={() => setEditingDeal(deal)}
+                        onDelete={() => setDeletingDeal(deal)}
+                        onView={() => setViewingDeal(deal)}
+                        onMoveStage={(newStage) => {
+                          if (deal.id) moveDealStage({ dealId: deal.id, stage: newStage });
+                        }}
+                      />
+                    ))
+                  )}
+                </DroppableColumn>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+
+        {/* Drag Overlay — floating ghost */}
+        <DragOverlay dropAnimation={null}>
+          {activeDragDeal ? (
+            <DealCard
+              deal={activeDragDeal}
+              customerName={customerMap.get(activeDragDeal.customerId) || ''}
+              onEdit={() => {}}
+              onDelete={() => {}}
+              onView={() => {}}
+              onMoveStage={() => {}}
+              isDragOverlay
+            />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
       {/* ── Create Dialog ──────────────────────────────────────────────── */}
       <DealDialog
@@ -561,7 +877,17 @@ export function CommercialPipelineTab({ franchiseId, storeId }: Props) {
         initialData={editingDeal}
         customers={activeCustomers}
       />
-
+      {/* ── Deal Detail + Activities ─────────────────────────────────── */}
+      {viewingDeal && viewingDeal.id && (
+        <DealDetailDialog
+          open={!!viewingDeal}
+          onOpenChange={(v) => { if (!v) setViewingDeal(null); }}
+          deal={viewingDeal}
+          customerName={customerMap.get(viewingDeal.customerId) || 'N/A'}
+          franchiseId={franchiseId}
+          storeId={storeId}
+        />
+      )}
       {/* ── Delete Confirmation ────────────────────────────────────────── */}
       <AlertDialog
         open={!!deletingDeal}

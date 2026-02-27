@@ -139,6 +139,13 @@ export function useDeals(franchiseId: string, storeId: string) {
   // ── Create deal ─────────────────────────────────────────────────────────
   const createMutation = useMutation({
     mutationFn: async (input: CreateDealInput) => {
+      // [FIX BUG-COM-05] Validações de campos obrigatórios
+      if (!input.title?.trim()) throw new Error('Título é obrigatório');
+      if (!input.customerId?.trim()) throw new Error('Cliente é obrigatório');
+      if (input.valueEstimate != null && input.valueEstimate < 0) {
+        throw new Error('Valor estimado não pode ser negativo');
+      }
+
       const newRef = doc(dealsRef(franchiseId, storeId));
       const now = serverTimestamp();
       await setDoc(newRef, {
@@ -146,7 +153,7 @@ export function useDeals(franchiseId: string, storeId: string) {
         customerId: input.customerId,
         stage: input.stage || 'lead',
         valueEstimate: input.valueEstimate || 0,
-        probability: input.probability || 0,
+        probability: Math.max(0, Math.min(100, input.probability || 0)),
         expectedCloseAt: input.expectedCloseAt ? Timestamp.fromDate(input.expectedCloseAt) : null,
         eventStartAt: input.eventStartAt ? Timestamp.fromDate(input.eventStartAt) : null,
         eventEndAt: input.eventEndAt ? Timestamp.fromDate(input.eventEndAt) : null,

@@ -7,7 +7,7 @@
  * Substitui as antigas UsersPage e InvitationsPage.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -23,7 +23,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
-import { removeMember as removeMemberService } from '@/services/userService';
+import { removeMember as removeMemberService, resendInvitation as resendInvitationService, updateMemberRole } from '@/services/userService';
 import { generateInvitationToken } from '@/lib/invitationToken';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
@@ -63,6 +63,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { FilterBar } from '@/components/layout/FilterBar';
 import { Pagination } from '@/components/ui/pagination';
@@ -88,7 +89,8 @@ import {
   XCircle,
   Copy,
   Send,
-  UsersRound
+  UsersRound,
+  RefreshCw
 } from 'lucide-react';
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
@@ -118,7 +120,7 @@ interface Invitation {
 
 export function TeamPage() {
   const PAGE_SIZE = 20;
-  const { currentFranchise, refreshFranchises } = useFranchise();
+  const { currentFranchise, refreshFranchises, stores } = useFranchise();
   const { user } = useAuth();
   const { log: audit } = useAudit();
   const queryClient = useQueryClient();
@@ -138,7 +140,8 @@ export function TeamPage() {
   // Invitation states
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('employee');
+  const [inviteRole, setInviteRole] = useState('operator');
+  const [inviteStoreAccess, setInviteStoreAccess] = useState<string[]>(['*']);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
   // Fetch members from Firestore subcollection
@@ -148,7 +151,8 @@ export function TeamPage() {
       if (!currentFranchise) return [];
       
       const membersRef = collection(db, 'franchises', currentFranchise.id, 'members');
-      const snapshot = await getDocs(query(membersRef, orderBy('joinedAt', 'desc')));
+      // [FIX T3] Filtrar apenas membros ativos
+      const snapshot = await getDocs(query(membersRef, where('isActive', '!=', false), orderBy('isActive'), orderBy('joinedAt', 'desc')));
       
       const fetchedMembers: FranchiseMember[] = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -222,7 +226,6 @@ export function TeamPage() {
   const changeRoleMutation = useMutation({
     mutationFn: async ({ memberId, newRole }: { memberId: string; newRole: string }) => {
       if (!currentFranchise) throw new Error('No franchise selected');
-      const { updateMemberRole } = await import('../../services/userService');
       await updateMemberRole(currentFranchise.id, memberId, newRole);
     },
     onSuccess: (_data, { memberId, newRole }) => {
@@ -260,7 +263,24 @@ export function TeamPage() {
   const createInviteMutation = useMutation({
     mutationFn: async ({ email, role }: { email: string; role: string }) => {
       if (!currentFranchise || !user) throw new Error('Dados inválidos');
+
+      // [FIX BUG-T1] Verificar convites duplicados antes de criar
+      const existingSnap = await getDocs(query(
+        collection(db, 'invitations'),
+        where('franchiseId', '==', currentFranchise.id),
+        where('email', '==', email.toLowerCase()),
+        where('status', '==', 'pending')
+      ));
+      if (!existingSnap.empty) {
+        throw new Error('Já existe um convite pendente para este email');
+      }
       
+      // [FIX BUG-T5] Validar formato de email
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email)) {
+        throw new Error('Formato de email inválido');
+      }
+
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7);
       
@@ -269,7 +289,7 @@ export function TeamPage() {
         franchiseName: currentFranchise.name,
         email: email.toLowerCase(),
         role,
-        storeAccess: ['*'],
+        storeAccess: inviteStoreAccess,
         status: 'pending',
         invitedBy: user.uid,
         invitedByName: user.displayName || user.email,
@@ -286,10 +306,26 @@ export function TeamPage() {
       setShowInviteDialog(false);
       audit(AuditActions.USER_INVITE, { type: 'user', id: email, name: email }, { role, franchiseName: currentFranchise?.name });
       setInviteEmail('');
-      setInviteRole('employee');
+      setInviteRole('operator');
+      setInviteStoreAccess(['*']);
     },
     onError: (err: any) => {
       setError(err.message || 'Erro ao criar convite');
+    },
+  });
+
+  // Resend invitation mutation
+  const resendInviteMutation = useMutation({
+    mutationFn: async (inviteId: string) => {
+      return resendInvitationService(inviteId);
+    },
+    onSuccess: (_data, inviteId) => {
+      queryClient.invalidateQueries({ queryKey: ['invitations'] });
+      const invite = invitations.find(i => i.id === inviteId);
+      audit(AuditActions.USER_INVITE, { type: 'invitation', id: inviteId, name: invite?.email || inviteId }, { action: 'resend' });
+    },
+    onError: (err: any) => {
+      setError(err.message || 'Erro ao reenviar convite');
     },
   });
 
@@ -337,17 +373,17 @@ export function TeamPage() {
     setTimeout(() => setCopiedLink(null), 2000);
   };
 
-  const filteredMembers = members.filter(member =>
+  const filteredMembers = useMemo(() => members.filter(member =>
     member.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     member.displayName?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ), [members, searchQuery]);
 
   const [membersPage, setMembersPage] = useState(1);
   const [invitationsPage, setInvitationsPage] = useState(1);
-  const totalMemberPages = Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE));
-  const paginatedMembers = filteredMembers.slice((membersPage - 1) * PAGE_SIZE, membersPage * PAGE_SIZE);
-  const totalInvitationPages = Math.max(1, Math.ceil(invitations.length / PAGE_SIZE));
-  const paginatedInvitations = invitations.slice((invitationsPage - 1) * PAGE_SIZE, invitationsPage * PAGE_SIZE);
+  const totalMemberPages = useMemo(() => Math.max(1, Math.ceil(filteredMembers.length / PAGE_SIZE)), [filteredMembers.length]);
+  const paginatedMembers = useMemo(() => filteredMembers.slice((membersPage - 1) * PAGE_SIZE, membersPage * PAGE_SIZE), [filteredMembers, membersPage]);
+  const totalInvitationPages = useMemo(() => Math.max(1, Math.ceil(invitations.length / PAGE_SIZE)), [invitations.length]);
+  const paginatedInvitations = useMemo(() => invitations.slice((invitationsPage - 1) * PAGE_SIZE, invitationsPage * PAGE_SIZE), [invitations, invitationsPage]);
 
   useEffect(() => {
     setMembersPage(1);
@@ -544,7 +580,7 @@ export function TeamPage() {
                                           Gerente
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
-                                          onClick={() => handleChangeRole(member.id, 'employee')}
+                                          onClick={() => handleChangeRole(member.id, 'operator')}
                                           disabled={isOperatorRole(member.role)}
                                         >
                                           Operador
@@ -594,11 +630,11 @@ export function TeamPage() {
 
           {/* Stats */}
           {members.length > 0 && (
-            <div className="flex items-center justify-between text-sm text-muted-foreground pt-4 border-t">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-sm text-muted-foreground pt-4 border-t">
               <span>
                 {filteredMembers.length} de {members.length} membro(s)
               </span>
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 flex-wrap">
                 <span>{members.filter(m => m.role === 'owner').length} proprietário(s)</span>
                 <span>{members.filter(m => m.role === 'manager').length} gerente(s)</span>
                 <span>{members.filter(m => isOperatorRole(m.role)).length} operador(es)</span>
@@ -729,6 +765,20 @@ export function TeamPage() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              onClick={() => resendInviteMutation.mutate(invite.id)}
+                              disabled={resendInviteMutation.isPending}
+                              title="Reenviar convite"
+                              aria-label={`Reenviar convite para ${invite.email}`}
+                            >
+                              {resendInviteMutation.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <RefreshCw className="h-4 w-4 text-blue-500" />
+                              )}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => revokeInviteMutation.mutate(invite.id)}
                               disabled={revokeInviteMutation.isPending}
                               title="Revogar convite"
@@ -737,6 +787,25 @@ export function TeamPage() {
                               <XCircle className="h-4 w-4 text-red-500" />
                             </Button>
                           </>
+                        )}
+
+                        {/* Allow resend for expired invites */}
+                        {(invite.status === 'pending' && invite.expiresAt <= new Date()) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => resendInviteMutation.mutate(invite.id)}
+                            disabled={resendInviteMutation.isPending}
+                            title="Reenviar convite expirado"
+                            aria-label={`Reenviar convite expirado para ${invite.email}`}
+                          >
+                            {resendInviteMutation.isPending ? (
+                              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                            ) : (
+                              <RefreshCw className="mr-1 h-4 w-4" />
+                            )}
+                            Reenviar
+                          </Button>
                         )}
                       </div>
                     </div>
@@ -836,6 +905,46 @@ export function TeamPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Acesso às Lojas</Label>
+              <div className="rounded-md border p-3 space-y-2 max-h-40 overflow-y-auto">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <Checkbox
+                    checked={inviteStoreAccess.includes('*')}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setInviteStoreAccess(['*']);
+                      } else {
+                        setInviteStoreAccess([]);
+                      }
+                    }}
+                    disabled={createInviteMutation.isPending}
+                  />
+                  <span className="text-sm font-medium">Todas as lojas</span>
+                </label>
+                {stores.length > 0 && !inviteStoreAccess.includes('*') && (
+                  <div className="pl-2 space-y-1.5 border-t pt-2">
+                    {stores.map((store) => (
+                      <label key={store.id} className="flex items-center gap-2 cursor-pointer">
+                        <Checkbox
+                          checked={inviteStoreAccess.includes(store.id)}
+                          onCheckedChange={(checked) => {
+                            if (checked) {
+                              setInviteStoreAccess(prev => [...prev, store.id]);
+                            } else {
+                              setInviteStoreAccess(prev => prev.filter(id => id !== store.id));
+                            }
+                          }}
+                          disabled={createInviteMutation.isPending}
+                        />
+                        <span className="text-sm">{store.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 O convite expira em 7 dias
               </p>

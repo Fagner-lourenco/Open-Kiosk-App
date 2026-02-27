@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ============================================================================
  * Finance Types — Accounts, Categories, CostCenters, Parties, Ledger,
  *                 Invoices, Bills, Payments, Summary
@@ -97,6 +97,9 @@ export type LedgerSourceType =
   | 'commercial_event'
   | 'invoice'
   | 'bill'
+  | 'wastage'
+  | 'keg_event'
+  | 'recurring_bill'
   | 'manual';
 
 export interface LedgerEntry {

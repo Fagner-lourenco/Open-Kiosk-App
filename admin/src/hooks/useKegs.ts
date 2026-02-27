@@ -18,6 +18,7 @@ import {
   doc,
   setDoc,
   updateDoc,
+  deleteDoc,
   orderBy,
   serverTimestamp,
   Timestamp,
@@ -173,6 +174,8 @@ export function useKegs(franchiseId: string, storeId: string) {
         batchCode: input.batchCode || null,
         expiresAt: input.expiresAt ? Timestamp.fromDate(input.expiresAt) : null,
         cost: input.cost ?? null,
+        // [FIX BUG-OP-6] Calcular costPerMl automaticamente
+        costPerMl: (input.cost && input.volumeMl) ? input.cost / input.volumeMl : null,
         createdAt: now,
         createdBy: user?.uid || '',
         updatedAt: now,
@@ -219,6 +222,22 @@ export function useKegs(franchiseId: string, storeId: string) {
     },
   });
 
+  // ── Delete keg ──────────────────────────────────────────────────────────
+  const deleteKegMutation = useMutation({
+    mutationFn: async (kegId: string) => {
+      const ref = kegDocRef(franchiseId, storeId, kegId);
+      await deleteDoc(ref);
+    },
+    onSuccess: (_data, kegId) => {
+      queryClient.invalidateQueries({ queryKey: kegKeys.all(franchiseId, storeId) });
+      toast.success('Barril excluído');
+      audit(AuditActions.KEG_STATUS_UPDATE, { type: 'keg', id: kegId, name: kegId }, { action: 'delete', storeId });
+    },
+    onError: () => {
+      toast.error('Erro ao excluir barril');
+    },
+  });
+
   // ── Helpers ─────────────────────────────────────────────────────────────
 
   /** Only kegs that are currently tapped to a tap */
@@ -246,5 +265,7 @@ export function useKegs(franchiseId: string, storeId: string) {
     isCreatingKeg: createKegMutation.isPending,
     updateKegStatus: updateKegStatusMutation.mutate,
     isUpdatingKegStatus: updateKegStatusMutation.isPending,
+    deleteKeg: deleteKegMutation.mutateAsync,
+    isDeletingKeg: deleteKegMutation.isPending,
   };
 }

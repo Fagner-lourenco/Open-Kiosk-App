@@ -7,7 +7,8 @@
  * Mostra visão geral de todas as franquias.
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { getPlanBadge, getStatusBadge } from '@/utils/franchise-badges';
 import { collection, getDocs, query, orderBy, Timestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -53,69 +54,17 @@ interface FranchiseStats {
   createdAt?: Timestamp;
 }
 
-interface PlatformStats {
-  totalFranchises: number;
-  totalStores: number;
-  totalUsers: number;
-  activePlans: Record<string, number>;
-}
-
 export default function SuperAdminDashboard() {
   const { isSuperAdmin, isLoading: authLoading } = useAuth();
   const { selectFranchise, refreshFranchises } = useFranchise();
   const navigate = useNavigate();
-  const [franchises, setFranchises] = useState<FranchiseStats[]>([]);
-  const [stats, setStats] = useState<PlatformStats>({
-    totalFranchises: 0,
-    totalStores: 0,
-    totalUsers: 0,
-    activePlans: {},
-  });
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  // Handlers para os botões de ação com tratamento de erro
-  const handleViewFranchise = async (franchiseId: string) => {
-    try {
-      setActionLoading(franchiseId);
-      setError(null);
-      // Atualiza lista de franquias e recebe a lista atualizada
-      const updatedFranchises = await refreshFranchises();
-      // Passa a lista atualizada para evitar race condition
-      await selectFranchise(franchiseId, updatedFranchises);
-      navigate('/dashboard');
-    } catch (err) {
-      console.error('Erro ao visualizar franquia:', err);
-      setError('Erro ao acessar a franquia. Tente novamente.');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  const handleConfigureFranchise = async (franchiseId: string) => {
-    try {
-      setActionLoading(franchiseId);
-      setError(null);
-      // Atualiza lista de franquias e recebe a lista atualizada
-      const updatedFranchises = await refreshFranchises();
-      // Passa a lista atualizada para evitar race condition
-      await selectFranchise(franchiseId, updatedFranchises);
-      navigate('/settings');
-    } catch (err) {
-      console.error('Erro ao configurar franquia:', err);
-      setError('Erro ao acessar as configurações. Tente novamente.');
-    } finally {
-      setActionLoading(null);
-    }
-  };
-
-  // Carrega dados das franquias
-  const loadData = async () => {
-    setIsLoading(true);
-    setError(null);
-    
-    try {
+  // React Query — cache superadmin data
+  const { data, isLoading, error: loadError, refetch } = useQuery({
+    queryKey: ['superadmin-dashboard'],
+    queryFn: async () => {
       // Carrega todas as franquias
       const franchisesRef = collection(db, 'franchises');
       const franchisesQuery = query(franchisesRef, orderBy('createdAt', 'desc'));
@@ -126,22 +75,21 @@ export default function SuperAdminDashboard() {
       let totalUsers = 0;
       const planCounts: Record<string, number> = {};
       
-      for (const docSnap of franchisesSnapshot.docs) {
-        const data = docSnap.data();
-        
-        // Conta lojas
-        const storesRef = collection(db, `franchises/${docSnap.id}/stores`);
-        const storesSnapshot = await getDocs(storesRef);
-        const storeCount = storesSnapshot.size;
+      const enriched = await Promise.all(
+        franchisesSnapshot.docs.map(async (docSnap) => {
+          const data = docSnap.data();
+          const [storesSnap, membersSnap] = await Promise.all([
+            getDocs(collection(db, `franchises/${docSnap.id}/stores`)),
+            getDocs(collection(db, `franchises/${docSnap.id}/members`)),
+          ]);
+          return { docSnap, data, storeCount: storesSnap.size, memberCount: membersSnap.size };
+        })
+      );
+
+      for (const { docSnap, data, storeCount, memberCount } of enriched) {
         totalStores += storeCount;
-        
-        // Conta membros
-        const membersRef = collection(db, `franchises/${docSnap.id}/members`);
-        const membersSnapshot = await getDocs(membersRef);
-        const memberCount = membersSnapshot.size;
         totalUsers += memberCount;
         
-        // Conta planos
         const plan = data.plan || 'trial';
         planCounts[plan] = (planCounts[plan] || 0) + 1;
         
@@ -157,27 +105,57 @@ export default function SuperAdminDashboard() {
           createdAt: data.createdAt,
         });
       }
-      
-      setFranchises(franchiseData);
-      setStats({
-        totalFranchises: franchiseData.length,
-        totalStores,
-        totalUsers,
-        activePlans: planCounts,
-      });
+
+      return {
+        franchises: franchiseData,
+        stats: {
+          totalFranchises: franchiseData.length,
+          totalStores,
+          totalUsers,
+          activePlans: planCounts,
+        },
+      };
+    },
+    enabled: !!isSuperAdmin,
+    staleTime: 5 * 60 * 1000, // 5 min
+    retry: 2,
+  });
+
+  const franchises = data?.franchises ?? [];
+  const stats = data?.stats ?? { totalFranchises: 0, totalStores: 0, totalUsers: 0, activePlans: {} };
+  const error = loadError ? (loadError instanceof Error ? loadError.message : 'Erro ao carregar dados.') : actionError;
+
+  // Handlers para os botões de ação com tratamento de erro
+
+  const handleViewFranchise = async (franchiseId: string) => {
+    try {
+      setActionLoading(franchiseId);
+      setActionError(null);
+      const updatedFranchises = await refreshFranchises();
+      await selectFranchise(franchiseId, updatedFranchises);
+      navigate('/dashboard');
     } catch (err) {
-      console.error('Erro ao carregar dados:', err);
-      setError('Erro ao carregar dados. Verifique suas permissões.');
+      console.error('Erro ao visualizar franquia:', err);
+      setActionError('Erro ao acessar a franquia. Tente novamente.');
     } finally {
-      setIsLoading(false);
+      setActionLoading(null);
     }
   };
 
-  useEffect(() => {
-    if (isSuperAdmin) {
-      loadData();
+  const handleConfigureFranchise = async (franchiseId: string) => {
+    try {
+      setActionLoading(franchiseId);
+      setActionError(null);
+      const updatedFranchises = await refreshFranchises();
+      await selectFranchise(franchiseId, updatedFranchises);
+      navigate('/settings');
+    } catch (err) {
+      console.error('Erro ao configurar franquia:', err);
+      setActionError('Erro ao acessar as configurações. Tente novamente.');
+    } finally {
+      setActionLoading(null);
     }
-  }, [isSuperAdmin]);
+  };
 
   // Redireciona se não for super admin
   if (!authLoading && !isSuperAdmin) {
@@ -203,7 +181,7 @@ export default function SuperAdminDashboard() {
         }
         actions={
           <div className="flex items-center gap-2">
-            <Button onClick={loadData} disabled={isLoading} variant="outline">
+            <Button onClick={() => refetch()} disabled={isLoading} variant="outline">
               <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
               Atualizar
             </Button>
@@ -312,26 +290,33 @@ export default function SuperAdminDashboard() {
             </div>
           ) : (
             <div className="w-full overflow-x-auto">
-              <Table className="min-w-[900px]" aria-label="Lista de franquias">
+              <Table className="min-w-[700px]" aria-label="Lista de franquias">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Nome</TableHead>
-                    <TableHead>Owner</TableHead>
+                    <TableHead className="hidden md:table-cell">Owner</TableHead>
                     <TableHead>Plano</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Lojas</TableHead>
-                    <TableHead className="text-right">Membros</TableHead>
-                    <TableHead>Criado em</TableHead>
+                    <TableHead className="text-right hidden sm:table-cell">Membros</TableHead>
+                    <TableHead className="hidden lg:table-cell">Criado em</TableHead>
                     <TableHead className="text-right">Ações</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {franchises.length === 0 && !isLoading && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                        Nenhuma franquia cadastrada.
+                      </TableCell>
+                    </TableRow>
+                  )}
                   {franchises.map((franchise) => (
                     <TableRow key={franchise.id}>
                       <TableCell className="font-medium">
                         {franchise.name}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="text-muted-foreground hidden md:table-cell">
                         {franchise.ownerEmail || '-'}
                       </TableCell>
                       <TableCell>
@@ -347,10 +332,10 @@ export default function SuperAdminDashboard() {
                       <TableCell className="text-right">
                         {franchise.storeCount}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="text-right hidden sm:table-cell">
                         {franchise.memberCount}
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="text-muted-foreground hidden lg:table-cell">
                         {formatDate(franchise.createdAt)}
                       </TableCell>
                       <TableCell className="text-right">

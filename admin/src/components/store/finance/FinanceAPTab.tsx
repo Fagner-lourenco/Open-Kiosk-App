@@ -76,6 +76,9 @@ import { useBills, type CreateBillInput, type UpdateBillInput } from '@/hooks/us
 import { useParties } from '@/hooks/useParties';
 import { useFinCategories } from '@/hooks/useFinCategories';
 import { useCostCenters } from '@/hooks/useCostCenters';
+import { useLedger } from '@/hooks/useLedger';
+import { useFinAccounts } from '@/hooks/useFinAccounts';
+import { useAuth } from '@/context/AuthContext';
 import type { Bill, BillStatus } from '@/types/finance';
 import { Timestamp } from 'firebase/firestore';
 
@@ -288,6 +291,10 @@ export function FinanceAPTab({ franchiseId, storeId }: Props) {
   const { activeParties } = useParties(franchiseId, storeId);
   const { expenseCategories } = useFinCategories(franchiseId, storeId);
   const { activeCostCenters } = useCostCenters(franchiseId, storeId);
+  // [FIX BUG-F02] Hooks para criar ledger entry ao marcar como paga
+  const { createEntry } = useLedger(franchiseId, storeId);
+  const { activeAccounts } = useFinAccounts(franchiseId, storeId);
+  const { user } = useAuth();
 
   const partyMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -447,7 +454,7 @@ export function FinanceAPTab({ franchiseId, storeId }: Props) {
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" aria-label="Ações da conta" className="h-8 w-8"><MoreVertical className="h-4 w-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={() => setEditingBill(bill)}>
@@ -458,6 +465,30 @@ export function FinanceAPTab({ franchiseId, storeId }: Props) {
                               onClick={async () => {
                                 if (!bill.id) return;
                                 await updateBill({ billId: bill.id, status: 'paid', paidTotal: bill.total, remaining: 0 });
+                                // [FIX BUG-F02] Criar lançamento no ledger ao marcar como paga
+                                const defaultAccount = activeAccounts[0];
+                                if (defaultAccount?.id) {
+                                  try {
+                                    await createEntry({
+                                      direction: 'out',
+                                      status: 'paid',
+                                      competenceDate: new Date(),
+                                      cashDate: new Date(),
+                                      amount: bill.total,
+                                      accountId: defaultAccount.id,
+                                      categoryId: bill.categoryId || '',
+                                      costCenterId: bill.costCenterId || undefined,
+                                      partyId: bill.partyId || undefined,
+                                      method: 'transfer',
+                                      sourceType: 'bill',
+                                      sourceId: bill.id,
+                                      description: `Pgto conta a pagar #${bill.id.slice(0, 8)}`,
+                                      createdBy: user?.uid || 'system',
+                                    });
+                                  } catch (err) {
+                                    console.warn('[FinanceAPTab] Erro ao criar ledger entry:', err);
+                                  }
+                                }
                               }}
                             >
                               <CheckCircle2 className="h-4 w-4 mr-2" />Marcar como Paga

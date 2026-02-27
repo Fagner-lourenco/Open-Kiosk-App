@@ -24,14 +24,18 @@ import {
   CommercialEventsTab,
   CommercialCustomersTab,
   CommercialQuotesTab,
+  CommercialActivitiesTab,
+  CommercialCustomerDetailTab,
   // Finance
   FinanceOverviewTab,
   FinanceARTab,
   FinanceAPTab,
   FinanceCashTab,
+  FinancePaymentsTab,
   FinanceReportsTab,
   FinanceSettingsTab,
 } from '@/components/store';
+import { useParams } from 'react-router-dom';
 import { useStoreContext } from '@/components/store/StoreLayout';
 
 // ─── Operação ───────────────────────────────────────────────────────────────
@@ -117,6 +121,18 @@ export function CommercialQuotesPage() {
   return <CommercialQuotesTab franchiseId={franchiseId} storeId={storeId} />;
 }
 
+export function CommercialActivitiesPage() {
+  const { franchiseId, storeId } = useStoreContext();
+  return <CommercialActivitiesTab franchiseId={franchiseId} storeId={storeId} />;
+}
+
+export function CommercialCustomerDetailPage() {
+  const { franchiseId, storeId } = useStoreContext();
+  const { customerId } = useParams<{ customerId: string }>();
+  if (!customerId) return <div className="p-8 text-center text-muted-foreground">Cliente não especificado</div>;
+  return <CommercialCustomerDetailTab franchiseId={franchiseId} storeId={storeId} customerId={customerId} />;
+}
+
 // ─── Financeiro ─────────────────────────────────────────────────────────────
 
 export function FinanceOverviewPage() {
@@ -142,6 +158,11 @@ export function FinanceCashPage() {
 export function FinanceReportsPage() {
   const { franchiseId, storeId } = useStoreContext();
   return <FinanceReportsTab franchiseId={franchiseId} storeId={storeId} />;
+}
+
+export function FinancePaymentsPage() {
+  const { franchiseId, storeId } = useStoreContext();
+  return <FinancePaymentsTab franchiseId={franchiseId} storeId={storeId} />;
 }
 
 export function FinanceSettingsPage() {

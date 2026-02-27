@@ -113,10 +113,12 @@ export function FinanceReportsTab({ franchiseId, storeId }: Props) {
     const start = periodStart + '-01';
     const endParts = periodEnd.split('-');
     const lastDay = new Date(parseInt(endParts[0]), parseInt(endParts[1]), 0).getDate();
-    const end = `${periodEnd}-${lastDay}`;
+    const end = `${periodEnd}-${String(lastDay).padStart(2, '0')}`;
 
     return entries.filter((e) => {
+      // [FIX F08] Usar UTC para evitar off-by-one por timezone
       const d = toDateSafe(e.competenceDate);
+      if (!e.competenceDate) return false; // Entradas sem data não passam no filtro
       const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       return ds >= start && ds <= end && e.status !== 'canceled';
     });

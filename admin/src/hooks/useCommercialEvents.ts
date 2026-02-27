@@ -23,11 +23,13 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useToast } from '@/hooks/useToast';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
+import { roundCurrency } from '@/utils/currency';
 import type {
   CommercialEvent,
   CommercialEventStatus,
@@ -283,13 +285,23 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
   // ── Delete event ────────────────────────────────────────────────────────
   const deleteMutation = useMutation({
     mutationFn: async (eventId: string) => {
-      // Cascade: delete budgetLines subcollection first
-      const linesSnap = await getDocs(budgetLinesRef(franchiseId, storeId, eventId));
-      for (const lineDoc of linesSnap.docs) {
-        await deleteDoc(lineDoc.ref);
+      // [FIX BUG-COM-03] Verificar status antes de deletar
+      const { getDoc } = await import('firebase/firestore');
+      const eventRef = eventDocRef(franchiseId, storeId, eventId);
+      const eventSnap = await getDoc(eventRef);
+      if (eventSnap.exists()) {
+        const eventData = eventSnap.data();
+        if (eventData.status === 'done' || eventData.status === 'confirmed') {
+          throw new Error(`Não é possível excluir um evento com status "${eventData.status}"`);
+        }
       }
-      const ref = eventDocRef(franchiseId, storeId, eventId);
-      await deleteDoc(ref);
+
+      // [FIX BUG-COM-01] Usar writeBatch para deleção atômica
+      const batch = writeBatch(db);
+      const linesSnap = await getDocs(budgetLinesRef(franchiseId, storeId, eventId));
+      linesSnap.docs.forEach((lineDoc) => batch.delete(lineDoc.ref));
+      batch.delete(eventDocRef(franchiseId, storeId, eventId));
+      await batch.commit();
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: commercialEventKeys.all(franchiseId, storeId) });
@@ -318,7 +330,7 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
         categoryId: input.categoryId || null,
         qty: input.qty,
         unitCost: input.unitCost,
-        totalCost: input.qty * input.unitCost,
+        totalCost: roundCurrency(input.qty * input.unitCost),
         supplierId: input.supplierId || null,
         paidBy: input.paidBy || 'store',
       });
@@ -358,7 +370,7 @@ export function useCommercialEvents(franchiseId: string, storeId: string) {
         }
         const qty = cleanFields.qty as number;
         const unitCost = cleanFields.unitCost as number;
-        cleanFields.totalCost = qty * unitCost;
+        cleanFields.totalCost = roundCurrency(qty * unitCost);
       }
       await updateDoc(ref, cleanFields);
     },

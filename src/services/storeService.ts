@@ -1,5 +1,5 @@
 ﻿import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, query, where, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { Store } from '@/types/store';
 import { storePath, storesPath } from '@/lib/pathResolver';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
@@ -181,7 +181,10 @@ class StoreService {
       }
 
       const sanitizedStore = sanitizeFirestoreData(store) as Store;
-      await setDoc(storeRef, {
+
+      // [FIX Bug-6] Atomic writeBatch — store + settings em uma única operação
+      const batch = writeBatch(db);
+      batch.set(storeRef, {
         ...sanitizedStore,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -189,11 +192,13 @@ class StoreService {
 
       // v4.1.5: usar 'config' (alinhado com Listener 2 em useStoreSettings.tsx)
       const settingsRef = doc(db, storePath(franchiseId, store.storeId), 'settings', 'config');
-      await setDoc(settingsRef, {
+      batch.set(settingsRef, {
         currency: store.currency,
         language: store.language || 'pt-BR',
         createdAt: serverTimestamp(),
       }, { merge: true });
+
+      await batch.commit();
 
       console.log('[StoreService] Store created:', store.storeId);
       return store.storeId;

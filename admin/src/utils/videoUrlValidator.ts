@@ -25,6 +25,29 @@ const MAX_SIZE_WARNING = 100 * 1024 * 1024;  // 100MB
 const MAX_SIZE_BLOCK = 500 * 1024 * 1024;    // 500MB
 
 /**
+ * Known external video hosting domains where HEAD requests always fail
+ * due to CORS. We skip the fetch and return a soft warning instead.
+ */
+const CORS_WHITELIST_DOMAINS = [
+  'pexels.com',
+  'pixabay.com',
+  'coverr.co',
+  'mixkit.co',
+  'videvo.net',
+  'vimeo.com',
+  'player.vimeo.com',
+  'cdn.videvo.net',
+  'videos.pexels.com',
+  'player.coverr.co',
+];
+
+function isWhitelistedDomain(hostname: string): boolean {
+  return CORS_WHITELIST_DOMAINS.some(
+    (d) => hostname === d || hostname.endsWith('.' + d),
+  );
+}
+
+/**
  * Validates a video URL by performing a HEAD request.
  *
  * @param url - The URL to validate
@@ -45,6 +68,14 @@ export async function validateVideoUrl(url: string): Promise<ValidationResult> {
 
   if (parsed.protocol !== 'https:') {
     return { status: 'invalid', message: 'URL deve usar HTTPS' };
+  }
+
+  // Skip HEAD for whitelisted external domains (always blocked by CORS)
+  if (isWhitelistedDomain(parsed.hostname)) {
+    return {
+      status: 'cors_warning',
+      message: `Domínio externo (${parsed.hostname}) — não é possível validar do navegador. O vídeo será carregado diretamente no Kiosk.`,
+    };
   }
 
   // HEAD request

@@ -428,7 +428,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
           {/* Filter */}
           <div className="flex gap-4">
             <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as typeof statusFilter)}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
               <SelectContent>

@@ -182,7 +182,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
             createdBy: 'system',
             updatedAt: serverTimestamp(),
             updatedBy: 'system',
-          });
+          }, { merge: true }); // [FIX BUG-OP-9] merge evita sobrescrever doc existente em race condition
           needsWrite = true;
         }
       }
@@ -233,21 +233,34 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
         const tapSnap = await txn.get(tapRef);
         const currentKegId = tapSnap.exists() ? (tapSnap.data()?.currentKegId as string | null) : null;
 
+        // [FIX BUG-OP-5] Verificar status do barril antes de conectar
+        const kegRef = kegDocRef(franchiseId, storeId, kegId);
+        const kegSnap = await txn.get(kegRef);
+        if (!kegSnap.exists()) throw new Error('Barril não encontrado');
+        const kegStatus = kegSnap.data()?.status;
+        if (kegStatus === 'depleted') throw new Error('Barril esgotado não pode ser conectado');
+        if (kegStatus === 'tapped') throw new Error('Barril já está conectado a outra torneira');
+
         // 2. If tap has an existing keg, find and remove the active assignment
         let existingAssignment: ReturnType<typeof normalizeAssignment> | null = null;
         if (currentKegId) {
-          // Query outside txn to find the assignment doc, then re-read inside txn
+          // [FIX Bug-4] Move query outside transaction scope to find assignment doc ID,
+          // then re-read inside txn for OCC safety. Client SDK doesn't support
+          // transactional queries, so this is the recommended pattern.
+          // The txn.get() below ensures consistency — if the doc changed since
+          // the getDocs lookup, the transaction will retry.
           const assSnap = await getDocs(query(
             assignmentsRef(franchiseId, storeId),
             where('tapId', '==', tapId),
             where('status', '==', 'active')
           ));
-          if (assSnap.docs.length > 0) {
+          for (const assDoc of assSnap.docs) {
             // Re-read inside transaction for OCC
-            const assDocRef = doc(assignmentsRef(franchiseId, storeId), assSnap.docs[0].id);
+            const assDocRef = doc(assignmentsRef(franchiseId, storeId), assDoc.id);
             const assTxnSnap = await txn.get(assDocRef);
             if (assTxnSnap.exists() && assTxnSnap.data()?.status === 'active') {
               existingAssignment = normalizeAssignment(assTxnSnap.id, assTxnSnap.data() as Record<string, unknown>);
+              break; // use the first valid active assignment
             }
           }
         }
@@ -297,8 +310,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
           updatedBy: uid,
         });
 
-        // 3. Update Keg status to tapped
-        const kegRef = kegDocRef(franchiseId, storeId, kegId);
+        // 3. Update Keg status to tapped (kegRef already read above for OP-5 check)
         txn.update(kegRef, {
           status: 'tapped',
           tapId,
@@ -375,8 +387,9 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
         });
 
         // 2. Update keg
+        // [FIX BUG-OP-4] Desconexão manual deve setar 'in_stock' (não 'returned')
         txn.update(kegRef, {
-          status: reason === 'depleted' ? 'depleted' : 'returned',
+          status: reason === 'depleted' ? 'depleted' : 'in_stock',
           tapId: null,
           ...(reason === 'depleted' ? { depletedAt: now } : {}),
           updatedAt: now,

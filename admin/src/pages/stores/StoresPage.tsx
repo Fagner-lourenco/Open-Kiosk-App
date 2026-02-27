@@ -6,12 +6,14 @@
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { doc, deleteDoc } from 'firebase/firestore';
+import { useQuery } from '@tanstack/react-query';
+import { collection, query, where, orderBy, getDocs, Timestamp, limit as firestoreLimit } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
+import { deleteStore } from '@/services/storeService';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,8 +39,107 @@ import {
   Eye,
   MapPin,
   Users,
+  TrendingUp,
+  TrendingDown,
 } from 'lucide-react';
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
+import { ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { ordersPath } from '@/lib/pathResolver';
+
+// ---------------------------------------------------------------------------
+// Mini sparkline + KPI for each store card
+// ---------------------------------------------------------------------------
+function StoreSparkline({ franchiseId, storeId }: { franchiseId: string; storeId: string }) {
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  sevenDaysAgo.setHours(0, 0, 0, 0);
+
+  const { data } = useQuery({
+    queryKey: ['store-sparkline', franchiseId, storeId],
+    queryFn: async () => {
+      const path = ordersPath(franchiseId, storeId);
+      const segments = path.split('/') as [string, ...string[]];
+      const ordersRef = collection(db, ...segments);
+      const q = query(
+        ordersRef,
+        where('timestamp', '>=', Timestamp.fromDate(sevenDaysAgo)),
+        where('paymentStatus', '==', 'paid'),
+        orderBy('timestamp', 'asc'),
+        firestoreLimit(500)
+      );
+      const snap = await getDocs(q);
+      
+      // Group by day
+      const byDay: Record<string, number> = {};
+      let total = 0;
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const ts: Date = data.timestamp?.toDate?.() || new Date();
+        const key = `${ts.getMonth() + 1}/${ts.getDate()}`;
+        byDay[key] = (byDay[key] || 0) + (data.total || 0);
+        total += data.total || 0;
+      });
+
+      // Fill the 7 days
+      const chartData: { d: string; v: number }[] = [];
+      for (let i = 6; i >= 0; i--) {
+        const dt = new Date();
+        dt.setDate(dt.getDate() - i);
+        const key = `${dt.getMonth() + 1}/${dt.getDate()}`;
+        chartData.push({ d: key, v: byDay[key] || 0 });
+      }
+
+      // Trend: compare last 3 days vs first 4 days
+      const first = chartData.slice(0, 4).reduce((s, c) => s + c.v, 0);
+      const last = chartData.slice(4).reduce((s, c) => s + c.v, 0);
+      const trend = first > 0 ? ((last - first * (3 / 4)) / (first * (3 / 4))) * 100 : 0;
+
+      return { chartData, total, trend, orderCount: snap.docs.length };
+    },
+    staleTime: 5 * 60 * 1000, // 5 min cache
+  });
+
+  if (!data || data.orderCount === 0) return null;
+
+  const isUp = data.trend >= 0;
+
+  return (
+    <div className="mt-3 space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">7 dias</span>
+        <span className="font-medium">
+          R$ {data.total.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-8">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data.chartData}>
+              <defs>
+                <linearGradient id={`spark-${storeId}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={isUp ? '#22c55e' : '#ef4444'} stopOpacity={0.3} />
+                  <stop offset="100%" stopColor={isUp ? '#22c55e' : '#ef4444'} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area
+                type="monotone"
+                dataKey="v"
+                stroke={isUp ? '#22c55e' : '#ef4444'}
+                strokeWidth={1.5}
+                fill={`url(#spark-${storeId})`}
+                dot={false}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div className={`flex items-center text-[10px] font-medium ${isUp ? 'text-green-600' : 'text-red-500'}`}>
+          {isUp ? <TrendingUp className="h-3 w-3 mr-0.5" /> : <TrendingDown className="h-3 w-3 mr-0.5" />}
+          {Math.abs(data.trend).toFixed(0)}%
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function StoresPage() {
   const PAGE_SIZE = 20;
@@ -56,7 +157,8 @@ export function StoresPage() {
     
     setIsDeleting(true);
     try {
-      await deleteDoc(doc(db, `franchises/${currentFranchise.id}/stores/${deleteStoreId}`));
+      // [FIX BUG-S1] Usar deleteStore com cascade delete de subcoleções
+      await deleteStore(currentFranchise.id, deleteStoreId);
       const store = stores.find(s => s.id === deleteStoreId);
       audit(AuditActions.STORE_DELETE, { type: 'store', id: deleteStoreId, name: store?.name || deleteStoreName }, { deletedFrom: 'stores_list' });
       await refreshStores();
@@ -239,6 +341,7 @@ export function StoresPage() {
                     <span>{store.operators?.length || 1} membro(s)</span>
                   </div>
                 </div>
+                <StoreSparkline franchiseId={currentFranchise!.id} storeId={store.id} />
                 <Link to={`/stores/${store.id}`}>
                   <Button variant="outline" className="w-full mt-4">
                     Gerenciar

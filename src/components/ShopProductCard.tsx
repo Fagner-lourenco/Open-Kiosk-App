@@ -36,9 +36,11 @@ export default function ShopProductCard({
   const sizeMl = defaultSize?.ml;
 
   // Dynamic Pricing: calcula preço efetivo (hook reativo a config + tempo)
+  // [FIX BUG-CAT-01] passa kegLevelPercent para regras de barril progressivo
   const dp = useDynamicPrice(
     product.isDrink ? basePrice : undefined,
     product.isDrink ? sizeMl : undefined,
+    product.isDrink ? product.kegLevelPercent : undefined,
   );
 
   const displayPrice = product.isDrink ? (dp.effectivePrice ?? basePrice) : product.price;

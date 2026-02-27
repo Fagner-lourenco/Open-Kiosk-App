@@ -16,6 +16,7 @@ import { useNavigate } from 'react-router-dom';
 import { collection, getDocs, query, orderBy, Timestamp, doc, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
+import { deleteStore } from '@/services/storeService';
 import {
   Building2,
   Plus,
@@ -154,12 +155,18 @@ export default function FranchisesPage() {
 
     setIsDeleting(true);
     try {
-      // 🔒 FIX Bug-20: Use writeBatch for atomic cascade deletion.
-      // Previous code deleted docs one-by-one in a loop — if one failed midway,
-      // some subcollection docs would be deleted and others wouldn't (inconsistent state).
-      // WriteBatch ensures all-or-nothing (up to 500 ops per batch).
-      // 🔧 FIX Audit-R2: incluir todas as subcoleções de franquia conhecidas
-      const subcollections = ['stores', 'members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary'];
+      // [FIX BUG-S1] Cascade delete stores first (each with their own subcollections)
+      const storesSnap = await getDocs(collection(db, `franchises/${deleteTarget.id}/stores`));
+      for (const storeDoc of storesSnap.docs) {
+        try {
+          await deleteStore(deleteTarget.id, storeDoc.id);
+        } catch (err) {
+          console.warn(`[FranchisesPage] Failed to cascade-delete store ${storeDoc.id}:`, err);
+        }
+      }
+
+      // Delete franchise-level subcollections in batches
+      const subcollections = ['members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary', 'invitations'];
       const batch = writeBatch(db);
       let opsCount = 0;
 
@@ -170,6 +177,11 @@ export default function FranchisesPage() {
           for (const docSnap of snapshot.docs) {
             batch.delete(doc(db, `franchises/${deleteTarget.id}/${subcol}`, docSnap.id));
             opsCount++;
+            // Commit batch at 450 to stay under Firestore's 500 limit
+            if (opsCount >= 450) {
+              await batch.commit();
+              opsCount = 0;
+            }
           }
         } catch (err) {
           console.warn(`[FranchisesPage] Erro ao listar ${subcol}:`, err);
@@ -273,16 +285,16 @@ export default function FranchisesPage() {
             </div>
           ) : (
             <div className="w-full overflow-x-auto">
-              <Table className="min-w-[900px]" aria-label="Tabela de franquias">
+              <Table className="min-w-[700px]" aria-label="Tabela de franquias">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Franquia</TableHead>
-                    <TableHead>Proprietário</TableHead>
+                    <TableHead className="hidden md:table-cell">Proprietário</TableHead>
                     <TableHead className="text-center">Lojas</TableHead>
-                    <TableHead className="text-center">Membros</TableHead>
+                    <TableHead className="text-center hidden sm:table-cell">Membros</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Plano</TableHead>
-                    <TableHead>Criada em</TableHead>
+                    <TableHead className="hidden lg:table-cell">Plano</TableHead>
+                    <TableHead className="hidden lg:table-cell">Criada em</TableHead>
                     <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -304,7 +316,7 @@ export default function FranchisesPage() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden md:table-cell">
                         <span className="text-sm text-muted-foreground">
                           {franchise.ownerEmail || '-'}
                         </span>
@@ -315,7 +327,7 @@ export default function FranchisesPage() {
                           <span>{franchise.storeCount}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-center">
+                      <TableCell className="text-center hidden sm:table-cell">
                         <div className="flex items-center justify-center gap-1">
                           <Users className="h-4 w-4 text-muted-foreground" />
                           <span>{franchise.memberCount}</span>
@@ -326,12 +338,12 @@ export default function FranchisesPage() {
                           {franchise.status === 'active' ? 'Ativo' : 'Inativo'}
                         </Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden lg:table-cell">
                         <Badge className={getPlanBadge(franchise.plan)}>
                           {franchise.plan}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
+                      <TableCell className="text-sm text-muted-foreground hidden lg:table-cell">
                         {formatDate(franchise.createdAt)}
                       </TableCell>
                       <TableCell>

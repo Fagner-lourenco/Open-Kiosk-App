@@ -16,6 +16,7 @@ import {
   orderBy,
   serverTimestamp,
   runTransaction,
+  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { storesPath, storePath } from '@/lib/pathResolver';
@@ -161,10 +162,56 @@ export async function updateStore(
 }
 
 /**
- * Delete a store
+ * [FIX BUG-S1/S3] Cascade delete: remove todas as subcoleções conhecidas de um store.
+ * Usa batches de 500 operações (limite do Firestore).
+ */
+const STORE_SUBCOLLECTIONS = [
+  'products', 'orders', 'settings', 'dispensers', 'inventoryLogs', 'dailyStats', 'metrics',
+  'kegs', 'taps', 'tapAssignments', 'servingSessions', 'wastageEvents',
+  'rankingAgg', 'challenges', 'prizes',
+  'customers', 'deals', 'calendarItems', 'commercialEvents', 'quotes',
+  'finAccounts', 'finCategories', 'finCostCenters', 'finParties', 'finLedger', 'finInvoices', 'finBills', 'finPayments',
+  'systemLogs', 'tvConfig', 'eventStats',
+] as const;
+
+async function deleteSubcollection(parentPath: string, subcollection: string): Promise<number> {
+  const colRef = collection(db, parentPath, subcollection);
+  const snap = await getDocs(colRef);
+  if (snap.empty) return 0;
+
+  // Firestore batch limit is 500 operations
+  const chunks: typeof snap.docs[] = [];
+  for (let i = 0; i < snap.docs.length; i += 450) {
+    chunks.push(snap.docs.slice(i, i + 450));
+  }
+
+  let deleted = 0;
+  for (const chunk of chunks) {
+    const batch = writeBatch(db);
+    chunk.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    deleted += chunk.length;
+  }
+  return deleted;
+}
+
+/**
+ * Delete a store with cascade delete of all subcollections
  */
 export async function deleteStore(franchiseId: string, storeId: string): Promise<void> {
-  const docRef = doc(db, storePath(franchiseId, storeId));
+  const storePath_ = storePath(franchiseId, storeId);
+
+  // 1. Delete all subcollections
+  for (const sub of STORE_SUBCOLLECTIONS) {
+    try {
+      await deleteSubcollection(storePath_, sub);
+    } catch (err) {
+      console.warn(`[storeService] Failed to delete subcollection ${sub}:`, err);
+    }
+  }
+
+  // 2. Delete store document itself
+  const docRef = doc(db, storePath_);
   await deleteDoc(docRef);
 }
 

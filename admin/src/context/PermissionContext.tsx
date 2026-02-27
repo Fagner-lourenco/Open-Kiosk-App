@@ -4,13 +4,14 @@
  * ============================================================================
  * 
  * Contexto para verificação de permissões RBAC.
+ * Fonte de verdade única para permissões — usePermissions delega para cá.
  */
 
-import { createContext, useContext, ReactNode, useMemo } from 'react';
+import { createContext, useContext, useCallback, ReactNode, useMemo } from 'react';
 import { useFranchise } from './FranchiseContext';
 import { Permission, ROLE_PERMISSIONS, UserRole } from '@/types/franchise';
 
-interface PermissionContextType {
+export interface PermissionContextType {
   /** Verifica se o usuário tem uma permissão */
   can: (permission: Permission) => boolean;
   /** Verifica se o usuário tem todas as permissões */
@@ -51,37 +52,39 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
     return ROLE_PERMISSIONS[role] || [];
   }, [role]);
   
-  const can = (permission: Permission): boolean => {
+  const can = useCallback((permission: Permission): boolean => {
     if (!role) return false;
     if (role === 'owner') return true;
     return permissions.includes(permission);
-  };
+  }, [role, permissions]);
   
-  const canAll = (perms: Permission[]): boolean => {
+  const canAll = useCallback((perms: Permission[]): boolean => {
     return perms.every(p => can(p));
-  };
+  }, [can]);
   
-  const canAny = (perms: Permission[]): boolean => {
+  const canAny = useCallback((perms: Permission[]): boolean => {
     return perms.some(p => can(p));
-  };
+  }, [can]);
   
   // Verifica se o usuário tem acesso a uma loja específica
-  const hasStoreAccess = (storeId: string): boolean => {
+  // Suporta fallback 'allowedStores' para compatibilidade com dados legados
+  const hasStoreAccess = useCallback((storeId: string): boolean => {
     if (!membership) return false;
     
     // Owners e admins têm acesso a todas as lojas
     if (role === 'owner' || role === 'admin') return true;
     
-    // Se não tiver storeAccess definido, sem acesso
-    const accessList = membership.storeAccess;
-    if (!accessList || accessList.length === 0) return false;
+    // Tenta storeAccess (novo) e allowedStores (legado)
+    const membershipData = membership as unknown as Record<string, unknown>;
+    const accessList = (membershipData.storeAccess || membershipData.allowedStores) as string[] | undefined;
+    if (!accessList || !Array.isArray(accessList) || accessList.length === 0) return false;
     
     // Wildcard = todas as lojas
     if (accessList.includes('*')) return true;
     
     // Verifica se a loja está na lista
     return accessList.includes(storeId);
-  };
+  }, [membership, role]);
   
   const isAdminOrAbove = role === 'owner' || role === 'admin';
   const isOwner = role === 'owner';
@@ -95,7 +98,7 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
     isAdminOrAbove,
     isOwner,
     permissions,
-  }), [role, permissions, membership]);
+  }), [can, canAll, canAny, hasStoreAccess, role, isAdminOrAbove, isOwner, permissions]);
   
   return (
     <PermissionContext.Provider value={value}>

@@ -162,6 +162,7 @@ export default function CreateFranchisePage() {
         <Button
           variant="ghost"
           size="icon"
+          aria-label="Voltar para franquias"
           onClick={() => navigate('/superadmin/franchises')}
         >
           <ArrowLeft className="h-5 w-5" />

@@ -150,9 +150,10 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
       const logsRef = collection(db, 'franchises', franchiseId, 'stores', storeId, 'inventoryLogs');
 
       // Update product stock
+      // [FIX BUG-CAT-02] Incluir inStock e updatedAt no batch
       const updateData = product.isDrink 
-        ? { totalMlAvailable: newStock }
-        : { stock: newStock };
+        ? { totalMlAvailable: newStock, inStock: newStock > 0, updatedAt: Timestamp.now() }
+        : { stock: newStock, inStock: newStock > 0, updatedAt: Timestamp.now() };
       
       // Usa batch para garantir atomicidade
       const batch = writeBatch(db);
@@ -214,7 +215,8 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
         productId: product.id,
         productTitle: product.title,
         type: adjustmentType,
-        quantity,
+        // [FIX BUG-CAT-07] Registrar quantidade efetivamente removida, não a tentada
+        quantity: adjustmentType === 'REMOVE' ? Math.min(quantity, currentStock) : quantity,
         previousStock: currentStock,
         newStock,
         userId: user?.uid || '',

@@ -52,6 +52,7 @@ import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { FilterBar } from '@/components/layout/FilterBar';
+import { isOperatorRole } from '@/config/roles';
 
 interface FranchiseMember {
   id: string;
@@ -165,7 +166,8 @@ export function UsersPage() {
     const config: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' }> = {
       owner: { label: 'Proprietário', variant: 'default' },
       manager: { label: 'Gerente', variant: 'secondary' },
-      employee: { label: 'Funcionário', variant: 'outline' },
+      operator: { label: 'Operador', variant: 'outline' },
+      employee: { label: 'Operador', variant: 'outline' },
       viewer: { label: 'Visualizador', variant: 'outline' },
     };
     return config[role] || { label: role, variant: 'outline' };
@@ -316,10 +318,10 @@ export function UsersPage() {
                                       Gerente
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onClick={() => handleChangeRole(member.id, 'employee')}
-                                      disabled={member.role === 'employee'}
+                                      onClick={() => handleChangeRole(member.id, 'operator')}
+                                      disabled={member.role === 'operator' || member.role === 'employee'}
                                     >
-                                      Funcionário
+                                      Operador
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       onClick={() => handleChangeRole(member.id, 'viewer')}
@@ -362,7 +364,7 @@ export function UsersPage() {
           <div className="flex flex-wrap items-center gap-3">
             <span>{members.filter(m => m.role === 'owner').length} proprietário(s)</span>
             <span>{members.filter(m => m.role === 'manager').length} gerente(s)</span>
-            <span>{members.filter(m => m.role === 'employee').length} funcionário(s)</span>
+            <span>{members.filter(m => isOperatorRole(m.role)).length} operador(es)</span>
           </div>
         </div>
       )}

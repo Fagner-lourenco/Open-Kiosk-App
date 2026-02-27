@@ -24,6 +24,8 @@ export { CommercialCalendarTab } from './commercial/CommercialCalendarTab';
 export { CommercialEventsTab } from './commercial/CommercialEventsTab';
 export { CommercialCustomersTab } from './commercial/CommercialCustomersTab';
 export { CommercialQuotesTab } from './commercial/CommercialQuotesTab';
+export { CommercialActivitiesTab } from './commercial/CommercialActivitiesTab';
+export { CommercialCustomerDetailTab } from './commercial/CommercialCustomerDetailTab';
 
 // Finance
 export { FinanceOverviewTab } from './finance/FinanceOverviewTab';
@@ -31,4 +33,5 @@ export { FinanceARTab } from './finance/FinanceARTab';
 export { FinanceAPTab } from './finance/FinanceAPTab';
 export { FinanceCashTab } from './finance/FinanceCashTab';
 export { FinanceReportsTab } from './finance/FinanceReportsTab';
+export { FinancePaymentsTab } from './finance/FinancePaymentsTab';
 export { FinanceSettingsTab } from './finance/FinanceSettingsTab';

@@ -660,7 +660,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
         </CardHeader>
         <CardContent className="space-y-4">
           <Select value={partyTypeFilter} onValueChange={(v) => setPartyTypeFilter(v as PartyType | 'all')}>
-            <SelectTrigger className="w-[200px]">
+            <SelectTrigger className="w-full sm:w-[200px]">
               <SelectValue placeholder="Filtrar por tipo" />
             </SelectTrigger>
             <SelectContent>

@@ -20,6 +20,7 @@ import {
   updateDoc,
   deleteDoc,
   orderBy,
+  where,
   serverTimestamp,
   Timestamp,
 } from 'firebase/firestore';
@@ -203,8 +204,19 @@ export function useCustomers(franchiseId: string, storeId: string) {
 
   // ── Delete customer ─────────────────────────────────────────────────────
   const deleteMutation = useMutation({
-    mutationFn: async (customerId: string) => {
-      const ref = customerDocRef(franchiseId, storeId, customerId);
+    mutationFn: async (customerId: string) => {      // [FIX COM-05] Verificar referências antes de deletar
+      const basePath = `franchises/${franchiseId}/stores/${storeId}`;
+      const [dealsSnap, eventsSnap, quotesSnap] = await Promise.all([
+        getDocs(query(collection(db, basePath, 'deals'), where('customerId', '==', customerId))),
+        getDocs(query(collection(db, basePath, 'commercialEvents'), where('customerId', '==', customerId))),
+        getDocs(query(collection(db, basePath, 'quotes'), where('customerId', '==', customerId))),
+      ]);
+      const refs = dealsSnap.size + eventsSnap.size + quotesSnap.size;
+      if (refs > 0) {
+        throw new Error(
+          `Cliente vinculado a ${dealsSnap.size} negócio(s), ${eventsSnap.size} evento(s) e ${quotesSnap.size} proposta(s). Arquive o cliente em vez de excluir.`
+        );
+      }      const ref = customerDocRef(franchiseId, storeId, customerId);
       await deleteDoc(ref);
     },
     onSuccess: (_data, variables) => {

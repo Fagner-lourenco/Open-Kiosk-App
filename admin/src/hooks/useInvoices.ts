@@ -30,6 +30,7 @@ import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
+import { roundCurrency } from '@/utils/currency';
 import type { Invoice, InvoiceStatus, InvoiceSourceType, InvoiceLine } from '@/types/finance';
 
 // ─── Query Keys ─────────────────────────────────────────────────────────────
@@ -204,6 +205,17 @@ export function useInvoices(franchiseId: string, storeId: string) {
     mutationFn: async (input: UpdateInvoiceInput) => {
       const { invoiceId, ...rest } = input;
       const ref = invoiceDocRef(franchiseId, storeId, invoiceId);
+
+      // [FIX BUG-F10] Guard: impedir edição de faturas pagas ou canceladas
+      const currentDoc = await getDoc(ref);
+      const currentStatus = currentDoc.data()?.status;
+      if (currentStatus === 'paid' && rest.status !== 'paid') {
+        throw new Error('Fatura já está paga. Apenas o status pode ser revertido.');
+      }
+      if (currentStatus === 'canceled') {
+        throw new Error('Fatura cancelada não pode ser editada');
+      }
+
       const data: Record<string, unknown> = { updatedAt: serverTimestamp() };
       if (rest.partyId !== undefined) data.partyId = rest.partyId;
       if (rest.status !== undefined) data.status = rest.status;
@@ -239,7 +251,14 @@ export function useInvoices(franchiseId: string, storeId: string) {
 
   const deleteMutation = useMutation({
     mutationFn: async (invoiceId: string) => {
-      await deleteDoc(invoiceDocRef(franchiseId, storeId, invoiceId));
+      // [FIX BUG-F11] Guard: impedir exclusão de faturas pagas
+      const ref = invoiceDocRef(franchiseId, storeId, invoiceId);
+      const currentDoc = await getDoc(ref);
+      const currentStatus = currentDoc.data()?.status;
+      if (currentStatus === 'paid') {
+        throw new Error('Fatura paga não pode ser excluída');
+      }
+      await deleteDoc(ref);
     },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: qKey });
@@ -249,21 +268,27 @@ export function useInvoices(franchiseId: string, storeId: string) {
     onError: () => toast.error('Erro ao excluir fatura'),
   });
 
-  // ── Invoice Lines (on-demand) ───────────────────────────────────────────
+  // ── Invoice Lines (on-demand, cached via React Query) ────────────────
 
   const fetchInvoiceLines = useCallback(
     async (invoiceId: string): Promise<InvoiceLine[]> => {
-      const ref = invoiceLinesRef(franchiseId, storeId, invoiceId);
-      const snap = await getDocs(ref);
-      return snap.docs.map((d) => normalizeInvoiceLine(d.id, d.data()));
+      return queryClient.fetchQuery({
+        queryKey: ['invoiceLines', franchiseId, storeId, invoiceId],
+        queryFn: async () => {
+          const ref = invoiceLinesRef(franchiseId, storeId, invoiceId);
+          const snap = await getDocs(ref);
+          return snap.docs.map((d) => normalizeInvoiceLine(d.id, d.data()));
+        },
+        staleTime: 30_000, // 30 s cache
+      });
     },
-    [franchiseId, storeId],
+    [franchiseId, storeId, queryClient],
   );
 
   const createLineMutation = useMutation({
     mutationFn: async (input: CreateInvoiceLineInput) => {
       const ref = doc(invoiceLinesRef(franchiseId, storeId, input.invoiceId));
-      const total = input.qty * input.unitPrice;
+      const total = roundCurrency(input.qty * input.unitPrice);
       await setDoc(ref, {
         description: input.description,
         qty: input.qty,
@@ -273,7 +298,10 @@ export function useInvoices(franchiseId: string, storeId: string) {
       });
       return ref.id;
     },
-    onSuccess: () => toast.success('Item adicionado'),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['invoiceLines', franchiseId, storeId, variables.invoiceId] });
+      toast.success('Item adicionado');
+    },
     onError: () => toast.error('Erro ao adicionar item'),
   });
 
@@ -281,7 +309,10 @@ export function useInvoices(franchiseId: string, storeId: string) {
     mutationFn: async ({ invoiceId, lineId }: { invoiceId: string; lineId: string }) => {
       await deleteDoc(invoiceLineDocRef(franchiseId, storeId, invoiceId, lineId));
     },
-    onSuccess: () => toast.success('Item removido'),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['invoiceLines', franchiseId, storeId, variables.invoiceId] });
+      toast.success('Item removido');
+    },
     onError: () => toast.error('Erro ao remover item'),
   });
 
@@ -300,7 +331,10 @@ export function useInvoices(franchiseId: string, storeId: string) {
   );
 
   const totalReceived = useMemo(
-    () => invoices.reduce((s, i) => s + i.paidTotal, 0),
+    // [FIX BUG-F07] Excluir invoices canceladas do total recebido
+    () => invoices
+      .filter((i) => i.status !== 'canceled')
+      .reduce((s, i) => s + i.paidTotal, 0),
     [invoices],
   );
 

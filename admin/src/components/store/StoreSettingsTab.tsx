@@ -9,7 +9,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, onSnapshot, increment } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
@@ -22,6 +22,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -30,6 +40,7 @@ import {
 } from '@/components/ui/select';
 import { Settings, Loader2, Save, CreditCard, Bell, Cpu, Wifi, WifiOff, AlertTriangle, Trash2, Droplets, Printer, Plus, X, Activity, Video, CheckCircle, XCircle, Info } from 'lucide-react';
 import { useToast } from '@/hooks/useToast';
+import { usePermissions } from '@/hooks/usePermissions';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 import { validateVideoUrl, type ValidationResult } from '@/utils/videoUrlValidator';
 import { VideoUploader } from './VideoUploader';
@@ -656,6 +667,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { log: audit } = useAudit();
+  const { can } = usePermissions();
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   
@@ -785,6 +797,10 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         language: storeData.language || 'pt-BR',
         paymentGatewayConfig: normalizedConfig,
         taps: loadedTaps,
+        // Convert Firestore Timestamp → Date JS to avoid "Invalid Date"
+        tapsUpdatedAt: storeData.tapsUpdatedAt && typeof (storeData.tapsUpdatedAt as any).toDate === 'function'
+          ? (storeData.tapsUpdatedAt as any).toDate()
+          : storeData.tapsUpdatedAt,
       });
     }
   }, [storeData]);
@@ -835,14 +851,15 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             productId: t.productId,
             productName: t.productName,
           }));
-          tapsPayload.tapsVersion = (typeof storeData?.tapsVersion === 'number' ? storeData.tapsVersion : 0) + 1;
+          // [FIX BUG-GES-06] Usar increment atômico em vez de valor stale do cache
+          tapsPayload.tapsVersion = increment(1);
           tapsPayload.tapsUpdatedAt = new Date();
           // Backward compat: dual-write dispensers[] for old Kiosk versions
           tapsPayload.dispensers = convertTapsToDispensers(sanitizedSettings.taps);
         } else if (sanitizedSettings.taps && sanitizedSettings.taps.length === 0) {
           tapsPayload.taps = [];
           tapsPayload.dispensers = [];
-          tapsPayload.tapsVersion = (typeof storeData?.tapsVersion === 'number' ? storeData.tapsVersion : 0) + 1;
+          tapsPayload.tapsVersion = increment(1);
           tapsPayload.tapsUpdatedAt = new Date();
         }
 
@@ -858,7 +875,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
       queryClient.invalidateQueries({ queryKey: ['store-settings', franchiseId, storeId] });
       queryClient.invalidateQueries({ queryKey: ['stores'] });
       toast.success('Configurações salvas com sucesso');
-      audit(AuditActions.STORE_SETTINGS_UPDATE, { type: 'store', id: storeId, name: storeId }, { updatedFields: Object.keys(settings || {}) });
+      audit(AuditActions.STORE_SETTINGS_UPDATE, { type: 'store', id: storeId, name: settings?.name || storeId }, { updatedFields: Object.keys(settings || {}) });
       setHasChanges(false);
     },
     onError: () => {
@@ -916,6 +933,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
     handleChange('paymentGatewayConfig', next);
   };
 
+  const [showClearGatewayDialog, setShowClearGatewayDialog] = useState(false);
+
   const handleClearGatewayConfig = () => {
     if (!settings) return;
     handleChange('paymentGatewayConfig', {
@@ -923,6 +942,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
       environment: 'sandbox',
       enabledMethods: { ...DEFAULT_ENABLED_METHODS },
     } as PaymentGatewayConfig);
+    setShowClearGatewayDialog(false);
     toast.success('Configuração do gateway limpa');
   };
 
@@ -944,7 +964,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <p className="text-yellow-800 text-sm">
             Você tem alterações não salvas
           </p>
-          <Button onClick={handleSave} disabled={updateSettingsMutation.isPending}>
+          <Button onClick={handleSave} disabled={updateSettingsMutation.isPending || !can('settings:update')}>
             {updateSettingsMutation.isPending ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
@@ -1291,7 +1311,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                   type="button"
                   variant="outline"
                   className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                  onClick={handleClearGatewayConfig}
+                  onClick={() => setShowClearGatewayDialog(true)}
                 >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Limpar Configuração
@@ -1558,7 +1578,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
               }}
             />
             <Label htmlFor="gpio-advanced-mode" className="text-xs text-muted-foreground cursor-pointer">
-              Modo Avancado (habilita GPIO 43/44 UART)
+              Modo Avançado (habilita GPIO 43/44 — TX/RX UART)
             </Label>
           </div>
 
@@ -1777,9 +1797,15 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             );
           })()}
           <span>
-            Ultima atualização: {settings.tapsUpdatedAt
-              ? new Date(settings.tapsUpdatedAt as any).toLocaleString('pt-BR')
-              : 'Nunca'} {settings.tapsVersion && `(v${settings.tapsVersion})`}
+            Última atualização:{' '}
+            {settings.tapsUpdatedAt
+              ? (() => {
+                  const raw = settings.tapsUpdatedAt as any;
+                  const d = typeof raw?.toDate === 'function' ? raw.toDate() : new Date(raw);
+                  return isNaN(d.getTime()) ? 'Data indisponível' : d.toLocaleString('pt-BR');
+                })()
+              : 'Nunca'}
+            {settings.tapsVersion != null && ` (v${settings.tapsVersion})`}
           </span>
         </CardFooter>
       </Card>
@@ -1837,36 +1863,93 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Modo Kiosk</Label>
-              <p className="text-sm text-muted-foreground">Habilitar interface de autoatendimento</p>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Settings controls */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Modo Kiosk</Label>
+                  <p className="text-sm text-muted-foreground">Habilitar interface de autoatendimento</p>
+                </div>
+                <Switch
+                  checked={settings.kioskEnabled ?? false}
+                  onCheckedChange={(v) => handleChange('kioskEnabled', v)}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label>Tela de Atração</Label>
+                  <p className="text-sm text-muted-foreground">Mostrar vídeo/imagem quando ocioso</p>
+                </div>
+                <Switch
+                  checked={settings.attractScreenEnabled ?? true}
+                  onCheckedChange={(v) => handleChange('attractScreenEnabled', v)}
+                />
+              </div>
+              <div>
+                <Label>Tempo de Inatividade (segundos)</Label>
+                <Input
+                  type="number"
+                  min={10}
+                  max={300}
+                  value={settings.attractTimeoutSeconds ?? 60}
+                  onChange={(e) => handleChange('attractTimeoutSeconds', Number(e.target.value))}
+                  className="w-24"
+                />
+              </div>
             </div>
-            <Switch
-              checked={settings.kioskEnabled ?? false}
-              onCheckedChange={(v) => handleChange('kioskEnabled', v)}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Tela de Atração</Label>
-              <p className="text-sm text-muted-foreground">Mostrar vídeo/imagem quando ocioso</p>
+
+            {/* Live Preview */}
+            <div className="flex flex-col items-center gap-2">
+              <Label className="text-xs text-muted-foreground uppercase tracking-wider">Preview ao Vivo</Label>
+              <div
+                className="relative w-full max-w-[240px] aspect-[9/16] rounded-xl border-2 border-muted-foreground/20 bg-gray-900 overflow-hidden shadow-lg"
+              >
+                {/* Status bar mock */}
+                <div className="absolute top-0 inset-x-0 h-5 bg-black/40 flex items-center justify-between px-2 z-10">
+                  <span className="text-[8px] text-white/70 font-mono">12:00</span>
+                  <div className="flex gap-0.5">
+                    <div className="w-2 h-2 rounded-full bg-green-400" />
+                    <div className="w-2 h-2 rounded-full bg-white/50" />
+                  </div>
+                </div>
+
+                {!(settings.kioskEnabled ?? false) ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="text-center p-3">
+                      <XCircle className="h-8 w-8 mx-auto text-red-400/60 mb-1" />
+                      <p className="text-[10px] text-white/50 font-medium">Kiosk Desativado</p>
+                    </div>
+                  </div>
+                ) : (settings.attractScreenEnabled ?? true) ? (
+                  <div className="flex flex-col items-center justify-center h-full bg-gradient-to-b from-blue-900 to-blue-950">
+                    <div className="animate-pulse mb-2">
+                      <Activity className="h-10 w-10 text-blue-400/70" />
+                    </div>
+                    <p className="text-xs text-blue-200/80 font-semibold">Tela de Atração</p>
+                    <p className="text-[9px] text-blue-300/50 mt-0.5">
+                      Timeout: {settings.attractTimeoutSeconds ?? 60}s
+                    </p>
+                    {settings.attractVideoConfig?.isEnabled && (
+                      <Badge variant="outline" className="mt-2 text-[8px] border-blue-400/30 text-blue-300/70">
+                        <Video className="h-2.5 w-2.5 mr-0.5" /> Vídeo ativo
+                      </Badge>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full bg-gradient-to-b from-gray-800 to-gray-900">
+                    <CheckCircle className="h-8 w-8 text-green-400/70 mb-1" />
+                    <p className="text-xs text-white/80 font-semibold">Kiosk Ativo</p>
+                    <p className="text-[9px] text-white/40 mt-0.5">Sem tela de atração</p>
+                  </div>
+                )}
+
+                {/* Home indicator mock */}
+                <div className="absolute bottom-1 inset-x-0 flex justify-center">
+                  <div className="w-12 h-1 rounded-full bg-white/20" />
+                </div>
+              </div>
             </div>
-            <Switch
-              checked={settings.attractScreenEnabled ?? true}
-              onCheckedChange={(v) => handleChange('attractScreenEnabled', v)}
-            />
-          </div>
-          <div>
-            <Label>Tempo de Inatividade (segundos)</Label>
-            <Input
-              type="number"
-              min={10}
-              max={300}
-              value={settings.attractTimeoutSeconds ?? 60}
-              onChange={(e) => handleChange('attractTimeoutSeconds', Number(e.target.value))}
-              className="w-24"
-            />
           </div>
         </CardContent>
       </Card>
@@ -1886,7 +1969,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
       <div className="flex justify-end">
         <Button 
           onClick={handleSave} 
-          disabled={!hasChanges || updateSettingsMutation.isPending}
+          disabled={!hasChanges || updateSettingsMutation.isPending || !can('settings:update')}
           size="lg"
         >
           {updateSettingsMutation.isPending ? (
@@ -1897,6 +1980,25 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           Salvar Configurações
         </Button>
       </div>
+
+      {/* [FIX GES-15] AlertDialog para limpar gateway */}
+      <AlertDialog open={showClearGatewayDialog} onOpenChange={setShowClearGatewayDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Limpar configuração do gateway?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Isso irá resetar todas as configurações do gateway de pagamento.
+              Pagamentos via gateway não funcionarão até reconfigurar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700" onClick={handleClearGatewayConfig}>
+              Limpar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -10,71 +10,87 @@
  */
 
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { useContext } from 'react';
+import { lazy, Suspense, useContext } from 'react';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { FranchiseProvider } from '@/context/FranchiseContext';
 import { PermissionProvider, PermissionContext } from '@/context/PermissionContext';
 import type { Permission } from '@/types/franchise';
 
-// Layouts
+// Layouts (eager – sempre necessários)
 import { MainLayout } from '@/components/layout/MainLayout';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 
-// Public Pages
+// Public Pages (eager – primeiro carregamento)
 import { LoginPage } from '@/pages/public/LoginPage';
 import { RegisterPage } from '@/pages/public/RegisterPage';
 import { ForgotPasswordPage } from '@/pages/public/ForgotPasswordPage';
 import { InvitePage } from '@/pages/public/InvitePage';
 import { LandingPage } from '@/pages/public/LandingPage';
 
-// Protected Pages
-import { DashboardPage } from '@/pages/dashboard/DashboardPage';
-import { StoresPage } from '@/pages/stores/StoresPage';
-import { StoreCreatePage } from '@/pages/stores/StoreCreatePage';
-import { StoreLayout } from '@/components/store/StoreLayout';
-import { StoreOverviewPage } from '@/pages/stores/StoreOverviewPage';
-import {
-  StoreOrdersPage,
-  StoreOperationsPage,
-  StoreKegsPage,
-  StoreWastagePage,
-  StoreMaintenancePage,
-  StoreProductsPage,
-  StoreInventoryPage,
-  StoreMembersPage,
-  StoreReportsPage,
-  StoreSettingsPage,
-  // Commercial (CRM)
-  CommercialPipelinePage,
-  CommercialCalendarPage,
-  CommercialEventsPage,
-  CommercialCustomersPage,
-  CommercialQuotesPage,
-  // Finance
-  FinanceOverviewPage,
-  FinanceARPage,
-  FinanceAPPage,
-  FinanceCashPage,
-  FinanceReportsPage,
-  FinanceSettingsPage,
-} from '@/pages/stores/StoreSubPages';
-import { TeamPage } from '@/pages/team/TeamPage';
-import { UserDetailPage } from '@/pages/users/UserDetailPage';
-import { ReportsPage } from '@/pages/reports/ReportsPage';
-import { AuditPage } from '@/pages/audit/AuditPage';
-import { SettingsPage } from '@/pages/settings/SettingsPage';
-import { ProfilePage } from '@/pages/profile/ProfilePage';
-import BillingPage from '@/pages/billing/BillingPage';
-import { RankingPage } from '@/pages/ranking/RankingPage';
-import { TvDashboardPage } from '@/pages/ranking/TvDashboardPage';
+// ─── Lazy-loaded Protected Pages (code-split) ──────────────────────────────
+const lazyNamed = <T extends Record<string, unknown>>(
+  factory: () => Promise<T>,
+  name: keyof T,
+) => lazy(() => factory().then((m) => ({ default: m[name] as React.ComponentType })));
 
-// Super Admin Pages
-import { 
-  SuperAdminDashboard,
-  FranchisesPage,
-  CreateFranchisePage,
-  FranchiseDetailPage,
-} from '@/pages/superadmin';
+const DashboardPage = lazyNamed(() => import('@/pages/dashboard/DashboardPage'), 'DashboardPage');
+const StoresPage = lazyNamed(() => import('@/pages/stores/StoresPage'), 'StoresPage');
+const StoreCreatePage = lazyNamed(() => import('@/pages/stores/StoreCreatePage'), 'StoreCreatePage');
+const StoreOverviewPage = lazyNamed(() => import('@/pages/stores/StoreOverviewPage'), 'StoreOverviewPage');
+const TeamPage = lazyNamed(() => import('@/pages/team/TeamPage'), 'TeamPage');
+const UserDetailPage = lazyNamed(() => import('@/pages/users/UserDetailPage'), 'UserDetailPage');
+const ReportsPage = lazyNamed(() => import('@/pages/reports/ReportsPage'), 'ReportsPage');
+const AuditPage = lazyNamed(() => import('@/pages/audit/AuditPage'), 'AuditPage');
+const SettingsPage = lazyNamed(() => import('@/pages/settings/SettingsPage'), 'SettingsPage');
+const ProfilePage = lazyNamed(() => import('@/pages/profile/ProfilePage'), 'ProfilePage');
+const BillingPage = lazy(() => import('@/pages/billing/BillingPage'));
+const RankingPage = lazyNamed(() => import('@/pages/ranking/RankingPage'), 'RankingPage');
+const TvDashboardPage = lazyNamed(() => import('@/pages/ranking/TvDashboardPage'), 'TvDashboardPage');
+
+// Store sub-pages (lazy barrel)
+const StoreSubPages = () => import('@/pages/stores/StoreSubPages');
+const StoreOrdersPage = lazyNamed(StoreSubPages, 'StoreOrdersPage');
+const StoreOperationsPage = lazyNamed(StoreSubPages, 'StoreOperationsPage');
+const StoreKegsPage = lazyNamed(StoreSubPages, 'StoreKegsPage');
+const StoreWastagePage = lazyNamed(StoreSubPages, 'StoreWastagePage');
+const StoreMaintenancePage = lazyNamed(StoreSubPages, 'StoreMaintenancePage');
+const StoreProductsPage = lazyNamed(StoreSubPages, 'StoreProductsPage');
+const StoreInventoryPage = lazyNamed(StoreSubPages, 'StoreInventoryPage');
+const StoreMembersPage = lazyNamed(StoreSubPages, 'StoreMembersPage');
+const StoreReportsPage = lazyNamed(StoreSubPages, 'StoreReportsPage');
+const StoreSettingsPage = lazyNamed(StoreSubPages, 'StoreSettingsPage');
+const CommercialPipelinePage = lazyNamed(StoreSubPages, 'CommercialPipelinePage');
+const CommercialCalendarPage = lazyNamed(StoreSubPages, 'CommercialCalendarPage');
+const CommercialEventsPage = lazyNamed(StoreSubPages, 'CommercialEventsPage');
+const CommercialCustomersPage = lazyNamed(StoreSubPages, 'CommercialCustomersPage');
+const CommercialQuotesPage = lazyNamed(StoreSubPages, 'CommercialQuotesPage');
+const CommercialActivitiesPage = lazyNamed(StoreSubPages, 'CommercialActivitiesPage');
+const CommercialCustomerDetailPage = lazyNamed(StoreSubPages, 'CommercialCustomerDetailPage');
+const FinanceOverviewPage = lazyNamed(StoreSubPages, 'FinanceOverviewPage');
+const FinanceARPage = lazyNamed(StoreSubPages, 'FinanceARPage');
+const FinanceAPPage = lazyNamed(StoreSubPages, 'FinanceAPPage');
+const FinanceCashPage = lazyNamed(StoreSubPages, 'FinanceCashPage');
+const FinancePaymentsPage = lazyNamed(StoreSubPages, 'FinancePaymentsPage');
+const FinanceReportsPage = lazyNamed(StoreSubPages, 'FinanceReportsPage');
+const FinanceSettingsPage = lazyNamed(StoreSubPages, 'FinanceSettingsPage');
+
+// Super Admin (lazy – default exports via barrel)
+const SuperAdminDashboard = lazy(() => import('@/pages/superadmin/SuperAdminDashboard'));
+const FranchisesPage = lazy(() => import('@/pages/superadmin/FranchisesPage'));
+const CreateFranchisePage = lazy(() => import('@/pages/superadmin/CreateFranchisePage'));
+const FranchiseDetailPage = lazy(() => import('@/pages/superadmin/FranchiseDetailPage'));
+
+// StoreLayout permanece eager (layout de outlet)
+import { StoreLayout } from '@/components/store/StoreLayout';
+
+/** Suspense fallback spinner */
+function PageSpinner() {
+  return (
+    <div className="min-h-[300px] flex items-center justify-center">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+    </div>
+  );
+}
 
 /**
  * Componente de rota protegida - apenas verifica autenticação
@@ -260,7 +276,7 @@ export default function App() {
         </Route>
 
         {/* Ranking Display Público (TV / Projetor) — SEM autenticação */}
-        <Route path="/ranking/display/:storeId" element={<TvDashboardPage />} />
+        <Route path="/ranking/display/:storeId" element={<Suspense fallback={<PageSpinner />}><TvDashboardPage /></Suspense>} />
 
         {/* Rotas Protegidas */}
         <Route
@@ -296,12 +312,15 @@ export default function App() {
             <Route path="commercial/calendar" element={<CommercialCalendarPage />} />
             <Route path="commercial/events" element={<CommercialEventsPage />} />
             <Route path="commercial/customers" element={<CommercialCustomersPage />} />
+            <Route path="commercial/customers/:customerId" element={<CommercialCustomerDetailPage />} />
             <Route path="commercial/quotes" element={<CommercialQuotesPage />} />
+            <Route path="commercial/activities" element={<CommercialActivitiesPage />} />
             {/* Financeiro */}
             <Route path="finance/overview" element={<FinanceOverviewPage />} />
             <Route path="finance/ar" element={<FinanceARPage />} />
             <Route path="finance/ap" element={<FinanceAPPage />} />
             <Route path="finance/cash" element={<FinanceCashPage />} />
+            <Route path="finance/payments" element={<FinancePaymentsPage />} />
             <Route path="finance/reports" element={<FinanceReportsPage />} />
             <Route path="finance/settings" element={<FinanceSettingsPage />} />
           </Route>

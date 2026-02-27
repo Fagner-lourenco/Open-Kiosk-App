@@ -30,6 +30,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
@@ -184,6 +185,7 @@ export function Header() {
               </div>
               <span className="text-sm font-semibold">Open Kiosk Admin</span>
             </SheetTitle>
+            <SheetDescription className="sr-only">Menu de navegação principal</SheetDescription>
           </SheetHeader>
 
           {/* Franchise Info */}

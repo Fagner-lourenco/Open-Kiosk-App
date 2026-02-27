@@ -86,9 +86,9 @@ export function StoreLayout() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="-mx-6 -mt-6 mb-6 border-b border-border/40 bg-card/80 backdrop-blur-sm px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+      <div className="-mx-4 sm:-mx-6 -mt-4 sm:-mt-6 mb-4 sm:mb-6 border-b border-border/40 bg-card/80 backdrop-blur-sm px-4 sm:px-6 py-3 sm:py-4">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Link to="/stores">
               <Button variant="ghost" size="icon" className="h-8 w-8 rounded-lg text-muted-foreground hover:text-foreground" aria-label="Voltar para lojas">
                 <ArrowLeft className="h-4 w-4" />
@@ -120,8 +120,8 @@ export function StoreLayout() {
         </nav>
 
         {/* Mobile Nav (horizontal scroll) */}
-        <div className="md:hidden -mx-6 mb-2">
-          <div className="flex gap-1 overflow-x-auto px-6 pb-2">
+        <div className="md:hidden -mx-4 sm:-mx-6 mb-2">
+          <div className="flex gap-1 overflow-x-auto px-4 sm:px-6 pb-2">
             {STORE_NAV_ITEMS.map((item) => (
               <NavLink
                 key={item.href}

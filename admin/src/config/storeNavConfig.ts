@@ -28,6 +28,7 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   Wallet,
+  CreditCard,
   TrendingUp,
   SlidersHorizontal,
 } from 'lucide-react';
@@ -74,12 +75,14 @@ export const STORE_NAV_ITEMS: StoreNavItem[] = [
   { label: 'Eventos', href: 'commercial/events', icon: PartyPopper, group: 'comercial' },
   { label: 'Clientes', href: 'commercial/customers', icon: Contact, group: 'comercial' },
   { label: 'Propostas', href: 'commercial/quotes', icon: FileText, group: 'comercial' },
+  { label: 'Atividades', href: 'commercial/activities', icon: CalendarDays, group: 'comercial' },
 
   // Financeiro
   { label: 'Visão Geral', href: 'finance/overview', icon: PieChart, group: 'financeiro' },
   { label: 'Contas a Receber', href: 'finance/ar', icon: ArrowDownCircle, group: 'financeiro' },
   { label: 'Contas a Pagar', href: 'finance/ap', icon: ArrowUpCircle, group: 'financeiro' },
   { label: 'Caixa & Bancos', href: 'finance/cash', icon: Wallet, group: 'financeiro' },
+  { label: 'Pagamentos', href: 'finance/payments', icon: CreditCard, group: 'financeiro' },
   { label: 'Relatórios', href: 'finance/reports', icon: TrendingUp, group: 'financeiro' },
   { label: 'Configurações', href: 'finance/settings', icon: SlidersHorizontal, group: 'financeiro' },
 ];

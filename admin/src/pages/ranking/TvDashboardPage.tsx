@@ -100,7 +100,7 @@ const HERO_STYLES: Record<number, {
       boxShadow: '0 0 60px -12px rgba(234,179,8,0.25), 0 0 120px -30px rgba(234,179,8,0.10), inset 0 1px 0 rgba(255,255,255,0.06)',
     },
     badgeBg: 'bg-gradient-to-br from-yellow-400 to-amber-600', badgeText: 'text-black', badgeIcon: '👑',
-    volColor: 'text-yellow-400', nameSize: 'text-xl sm:text-2xl lg:text-4xl', volSize: 'text-3xl sm:text-5xl lg:text-6xl',
+    volColor: 'text-yellow-400', nameSize: 'text-xl sm:text-2xl lg:text-4xl xl:text-5xl', volSize: 'text-3xl sm:text-5xl lg:text-6xl xl:text-7xl',
     subColor: 'text-yellow-500/50',
   },
   2: {
@@ -110,7 +110,7 @@ const HERO_STYLES: Record<number, {
       boxShadow: '0 0 40px -10px rgba(148,163,184,0.15), inset 0 1px 0 rgba(255,255,255,0.04)',
     },
     badgeBg: 'bg-gradient-to-br from-slate-300 to-slate-500', badgeText: 'text-black', badgeIcon: '🥈',
-    volColor: 'text-slate-200', nameSize: 'text-base sm:text-lg lg:text-2xl', volSize: 'text-2xl sm:text-3xl lg:text-4xl',
+    volColor: 'text-slate-200', nameSize: 'text-base sm:text-lg lg:text-2xl xl:text-3xl', volSize: 'text-2xl sm:text-3xl lg:text-4xl xl:text-5xl',
     subColor: 'text-slate-400/40',
   },
   3: {
@@ -120,7 +120,7 @@ const HERO_STYLES: Record<number, {
       boxShadow: '0 0 40px -10px rgba(217,119,6,0.15), inset 0 1px 0 rgba(255,255,255,0.04)',
     },
     badgeBg: 'bg-gradient-to-br from-amber-500 to-amber-800', badgeText: 'text-black', badgeIcon: '🥉',
-    volColor: 'text-amber-400', nameSize: 'text-base sm:text-lg lg:text-2xl', volSize: 'text-2xl sm:text-3xl lg:text-4xl',
+    volColor: 'text-amber-400', nameSize: 'text-base sm:text-lg lg:text-2xl xl:text-3xl', volSize: 'text-2xl sm:text-3xl lg:text-4xl xl:text-5xl',
     subColor: 'text-amber-500/40',
   },
 };
@@ -167,8 +167,8 @@ function PageDots({
       {Array.from({ length: total }, (_, i) => (
         <span
           key={i}
-          className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${
-            i === current ? `${color} w-4` : 'bg-white/15'
+          className={`h-1.5 rounded-full transition-all duration-500 ease-out ${
+            i === current ? `${color} w-4 opacity-100` : 'bg-white/15 w-1.5 opacity-50'
           }`}
           aria-label={`Page ${i + 1}`}
         />
@@ -200,6 +200,40 @@ function AnimatedVolume({
   return <span className={className}>{formatted}</span>;
 }
 
+/** Animated number display (integer) using useCountUp */
+function AnimatedNumber({
+  value,
+  className,
+}: {
+  value: number;
+  className?: string;
+}) {
+  const animated = useCountUp(value, 800);
+  return <span className={className}>{Math.round(animated).toLocaleString('pt-BR')}</span>;
+}
+
+/** Event Mode badge with live countdown */
+function EventModeBadge({ eventMode }: { eventMode: NonNullable<EventStats['eventMode']> }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!eventMode.endsAt) return;
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [eventMode.endsAt]);
+
+  const remaining = eventMode.endsAt ? timeRemaining(eventMode.endsAt) : null;
+
+  return (
+    <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-gradient-to-r from-yellow-500 to-amber-500 text-black text-[10px] font-black animate-pulse leading-none shadow-lg shadow-yellow-500/20 inline-flex items-center gap-1">
+      ⚡ {eventMode.label || 'EVENTO'}
+      {remaining && (
+        <span className="opacity-80 font-mono tabular-nums">⏱️{remaining}</span>
+      )}
+    </span>
+  );
+}
+
 /** Header — premium glass bar */
 function TvHeader({
   eventLabel,
@@ -229,36 +263,34 @@ function TvHeader({
           <Trophy className="h-5 w-5 sm:h-6 sm:w-6 text-yellow-400 relative" />
         </div>
         <div className="min-w-0">
-          <h1 className="text-sm sm:text-xl font-bold tracking-tight text-white leading-tight truncate">
+          <h1 className="text-sm sm:text-xl lg:text-2xl font-bold tracking-tight text-white leading-tight truncate">
             {eventLabel || 'Ranking ao Vivo'}
           </h1>
           <div className="flex items-center gap-1.5 sm:gap-3 mt-0.5 flex-wrap">
             {/* Stats chips */}
             <div className="flex items-center gap-1 sm:gap-2">
-              <span className="text-[10px] sm:text-xs text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
-                🍺 {formatMlShort(totalMl || 0)} total
+              <span className="text-[10px] sm:text-xs lg:text-sm text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
+                🍺 <AnimatedVolume ml={totalMl || 0} className="" /> total
               </span>
-              <span className="text-[10px] sm:text-xs text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
-                ⚡ {totalServes}
+              <span className="text-[10px] sm:text-xs lg:text-sm text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
+                ⚡ <AnimatedNumber value={totalServes} />
               </span>
-              <span className="text-[10px] sm:text-xs text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
-                👥 {uniqueCustomers}
+              <span className="text-[10px] sm:text-xs lg:text-sm text-white/50 bg-white/[0.06] px-1.5 sm:px-2.5 py-0.5 rounded-full font-medium tabular-nums">
+                👥 <AnimatedNumber value={uniqueCustomers} />
               </span>
             </div>
             <span className="text-[10px] text-yellow-400/80 border border-yellow-500/25 bg-yellow-500/[0.06] px-2 sm:px-2.5 py-0.5 rounded-full font-semibold">
               {windowLabel}
             </span>
             {eventMode?.enabled && (
-              <span className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full bg-gradient-to-r from-yellow-500 to-amber-500 text-black text-[10px] font-black animate-pulse leading-none shadow-lg shadow-yellow-500/20">
-                ⚡ {eventMode.label || 'EVENTO'}
-              </span>
+              <EventModeBadge eventMode={eventMode} />
             )}
           </div>
         </div>
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-        <p className="text-lg sm:text-3xl font-mono font-bold text-white/80 tabular-nums tracking-wider">
+        <p className="text-lg sm:text-3xl lg:text-4xl font-mono font-bold text-white/80 tabular-nums tracking-wider">
           {clock.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
         </p>
         <div className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1 sm:py-1.5 rounded-full bg-red-500/15 border border-red-500/20">
@@ -293,7 +325,8 @@ function HeroCards({
     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-5">
       {/* #1 — Dominant hero with glow-pulse */}
       <div
-        className={`col-span-1 sm:col-span-2 lg:col-span-1 rounded-2xl p-4 sm:p-6 lg:p-8 ${HERO_STYLES[1].cardClass} relative overflow-hidden transition-all duration-500 animate-glow-pulse`}
+        key={first.customerId}
+        className={`${runners.length > 0 ? 'col-span-1 sm:col-span-2 lg:col-span-1' : 'col-span-1 sm:col-span-2'} rounded-2xl p-4 sm:p-6 lg:p-8 ${HERO_STYLES[1].cardClass} relative overflow-hidden transition-all duration-500 animate-glow-pulse`}
         style={{
           background: HERO_STYLES[1].glowStyle.background,
         }}
@@ -305,7 +338,7 @@ function HeroCards({
 
         <div className="relative z-10">
           <div className="flex items-start justify-between mb-3">
-            <span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${HERO_STYLES[1].badgeBg} ${HERO_STYLES[1].badgeText} text-lg font-black shadow-lg shadow-yellow-500/30`}>
+            <span className={`inline-flex items-center justify-center w-10 h-10 lg:w-12 lg:h-12 rounded-xl ${HERO_STYLES[1].badgeBg} ${HERO_STYLES[1].badgeText} text-lg lg:text-xl font-black shadow-lg shadow-yellow-500/30`}>
               {HERO_STYLES[1].badgeIcon}
             </span>
             {(first.positionChange ?? 0) !== 0 && (
@@ -322,7 +355,7 @@ function HeroCards({
             ml={getField(first)}
             className={`${HERO_STYLES[1].volSize} font-black ${HERO_STYLES[1].volColor} tabular-nums leading-none mt-2 drop-shadow-[0_0_20px_rgba(234,179,8,0.3)] block`}
           />
-          <p className={`text-sm ${HERO_STYLES[1].subColor} mt-3 font-medium`}>
+          <p className={`text-sm lg:text-base ${HERO_STYLES[1].subColor} mt-3 font-medium`}>
             {first.orderCount} pedidos{first.favoriteDrink ? ` · ${first.favoriteDrink}` : ''}
           </p>
         </div>
@@ -415,10 +448,10 @@ function RankingList({
               className="flex items-center gap-4 py-3 px-4 rounded-xl bg-white/[0.02] hover:bg-white/[0.04] border border-transparent hover:border-white/[0.04] transition-all duration-300 animate-fade-slide-up"
               style={{ animationDelay: `${i * 60}ms`, animationFillMode: 'both' }}
             >
-              <span className="w-8 text-center text-base font-bold text-white/20 tabular-nums">{pos}º</span>
+              <span className="w-8 text-center text-base lg:text-lg font-bold text-white/20 tabular-nums">{pos}º</span>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white/75 truncate">{entry.displayName}</p>
-                <p className="text-[10px] text-white/25 mt-0.5">{entry.orderCount} pedidos</p>
+                <p className="text-sm lg:text-base font-semibold text-white/75 truncate">{entry.displayName}</p>
+                <p className="text-[10px] lg:text-xs text-white/25 mt-0.5">{entry.orderCount} pedidos</p>
               </div>
               {change !== 0 && (
                 <div className={`flex items-center gap-0.5 text-[10px] font-bold shrink-0 px-1.5 py-0.5 rounded-full ${change > 0 ? 'text-green-400 bg-green-500/10' : 'text-red-400 bg-red-500/10'}`}>
@@ -426,7 +459,7 @@ function RankingList({
                   {Math.abs(change)}
                 </div>
               )}
-              <p className={`text-base font-bold tabular-nums w-20 text-right shrink-0 ${vol > 0 ? 'text-yellow-500/60' : 'text-white/15'}`}>
+              <p className={`text-base lg:text-lg font-bold tabular-nums w-20 lg:w-24 text-right shrink-0 ${vol > 0 ? 'text-yellow-500/60' : 'text-white/15'}`}>
                 {formatMl(vol)}
               </p>
             </div>
@@ -483,15 +516,15 @@ function GoalPanel({ stats }: { stats: EventStats }) {
 
   return (
     <div className="flex flex-col h-full">
-      <h2 className="text-sm font-bold text-white/80 flex items-center gap-2.5 mb-4">
+      <h2 className="text-sm lg:text-base font-bold text-white/80 flex items-center gap-2.5 mb-4">
         <div className="p-1.5 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-          <Target className="h-3.5 w-3.5 text-yellow-400" />
+          <Target className="h-3.5 w-3.5 lg:h-4 lg:w-4 text-yellow-400" />
         </div>
         {stats.goalLabel || 'Meta Coletiva'}
       </h2>
 
       <div className="relative mb-4">
-        <div className="h-6 bg-white/[0.04] rounded-full overflow-hidden border border-white/[0.04]">
+        <div className="h-6 lg:h-8 bg-white/[0.04] rounded-full overflow-hidden border border-white/[0.04]">
           <div
             className="h-full bg-gradient-to-r from-yellow-600 via-yellow-500 to-amber-400 rounded-full transition-all duration-2000 ease-out relative"
             style={{ width: `${progress}%` }}
@@ -499,7 +532,7 @@ function GoalPanel({ stats }: { stats: EventStats }) {
             {/* Animated shine */}
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-pulse rounded-full" />
             {progress > 12 && (
-              <span className="absolute inset-0 flex items-center justify-center text-xs font-black text-black drop-shadow-sm">
+              <span className="absolute inset-0 flex items-center justify-center text-xs lg:text-sm font-black text-black drop-shadow-sm">
                 {progress.toFixed(0)}%
               </span>
             )}
@@ -516,7 +549,7 @@ function GoalPanel({ stats }: { stats: EventStats }) {
           {stats.milestones.map((m, i) => (
             <div
               key={i}
-              className={`flex items-center gap-2.5 text-xs px-3 py-1.5 rounded-lg border transition-all ${
+              className={`flex items-center gap-2.5 text-xs lg:text-sm px-3 py-1.5 lg:py-2 rounded-lg border transition-all ${
                 m.reached
                   ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-300'
                   : 'bg-white/[0.02] border-white/[0.03] text-white/30'
@@ -530,22 +563,28 @@ function GoalPanel({ stats }: { stats: EventStats }) {
         </div>
       )}
 
-      {nextMilestone && (
+      {nextMilestone ? (
         <div className="mt-3 p-3 rounded-xl bg-gradient-to-br from-yellow-500/[0.08] to-amber-600/[0.04] border border-yellow-500/15 text-center">
-          <p className="text-[10px] text-white/35 uppercase tracking-widest font-semibold">Próximo desbloqueio</p>
-          <p className="text-sm font-bold text-yellow-300 mt-1">{nextMilestone.label}</p>
-          <p className="text-[10px] text-white/25 mt-0.5">
+          <p className="text-[10px] lg:text-xs text-white/35 uppercase tracking-widest font-semibold">Próximo desbloqueio</p>
+          <p className="text-sm lg:text-base font-bold text-yellow-300 mt-1">{nextMilestone.label}</p>
+          <p className="text-[10px] lg:text-xs text-white/25 mt-0.5">
             Faltam {formatMlShort(Math.max(0, nextMilestone.targetMl - (stats.totalMl || 0)))}
           </p>
         </div>
-      )}
+      ) : progress >= 100 && stats.milestones && stats.milestones.length > 0 && stats.milestones.every(m => m.reached) ? (
+        <div className="mt-3 p-3 rounded-xl bg-gradient-to-br from-yellow-500/20 to-amber-600/10 border border-yellow-500/30 text-center">
+          <p className="text-2xl mb-1">🎉</p>
+          <p className="text-sm font-bold text-yellow-300">Meta atingida!</p>
+          <p className="text-[10px] text-white/40 mt-1">Todos os marcos desbloqueados</p>
+        </div>
+      ) : null}
     </div>
   );
 }
 
 /** Challenge Panel — auto-rotating glass cards */
 function ChallengePanel({ challenges, rotationInterval }: { challenges: Challenge[]; rotationInterval: number }) {
-  const [, setTick] = useState(0);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     const timer = setInterval(() => setTick((t) => t + 1), 1000);
@@ -555,8 +594,7 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
   // Filter out expired challenges — memoize to avoid new array reference every tick
   const active = useMemo(
     () => challenges.filter((ch) => isStillActive(ch.endsAt)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [challenges, Math.floor(Date.now() / 5000)] // re-evaluate every ~5s
+    [challenges, Math.floor(tick / 5)] // re-evaluate every ~5 ticks (5s) using stable state
   );
 
   const { visibleItems, currentPage, totalPages } = useAutoRotation(active, 2, rotationInterval);
@@ -564,9 +602,9 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
   if (active.length === 0) {
     return (
       <div className="flex flex-col h-full">
-        <h2 className="text-sm font-bold text-white/80 flex items-center gap-2.5 mb-4">
+        <h2 className="text-sm lg:text-base font-bold text-white/80 flex items-center gap-2.5 mb-4">
           <div className="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20">
-            <Zap className="h-3.5 w-3.5 text-purple-400" />
+            <Zap className="h-3.5 w-3.5 lg:h-4 lg:w-4 text-purple-400" />
           </div>
           Desafios
         </h2>
@@ -574,7 +612,7 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
           <div className="p-3 rounded-xl bg-white/[0.02] border border-white/[0.04]">
             <Zap className="h-6 w-6 text-white/[0.07]" />
           </div>
-          <p className="text-xs text-white/20 font-medium mt-1">Sem desafios agora</p>
+          <p className="text-xs lg:text-sm text-white/20 font-medium mt-1">Sem desafios agora</p>
         </div>
       </div>
     );
@@ -582,9 +620,9 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
 
   return (
     <div className="flex flex-col h-full">
-      <h2 className="text-sm font-bold text-white/80 flex items-center gap-2.5 mb-4">
+      <h2 className="text-sm lg:text-base font-bold text-white/80 flex items-center gap-2.5 mb-4">
         <div className="p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20">
-          <Zap className="h-3.5 w-3.5 text-purple-400" />
+          <Zap className="h-3.5 w-3.5 lg:h-4 lg:w-4 text-purple-400" />
         </div>
         Desafios Ativos
         {active.length > 2 && (
@@ -603,14 +641,14 @@ function ChallengePanel({ challenges, rotationInterval }: { challenges: Challeng
               style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'both' }}
             >
               <div className="flex items-center justify-between mb-2">
-                <h3 className="font-bold text-white/85 text-sm truncate flex-1">{ch.title}</h3>
+                <h3 className="font-bold text-white/85 text-sm lg:text-base truncate flex-1">{ch.title}</h3>
                 {remaining && (
                   <span className="text-sm text-yellow-300 font-mono font-bold tabular-nums ml-2 bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-0.5 rounded-full">
                     {remaining}
                   </span>
                 )}
               </div>
-              <p className="text-xs sm:text-sm text-white/50 mb-2.5 line-clamp-2">{ch.description}</p>
+              <p className="text-xs sm:text-sm lg:text-base text-white/50 mb-2.5 line-clamp-2">{ch.description}</p>
               <div className="flex items-center justify-between text-[10px]">
                 <span className="text-white/30 bg-white/[0.03] px-2 py-0.5 rounded-full">
                   {ch.rewardType === 'bonus_multiplier' ? '🚀 Pontos 2×' :
@@ -640,15 +678,15 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
   if (winners.length === 0) {
     return (
       <div className="flex flex-col h-full">
-        <h2 className="text-sm font-bold text-white/80 flex items-center gap-2.5 mb-4">
+        <h2 className="text-sm lg:text-base font-bold text-white/80 flex items-center gap-2.5 mb-4">
           <div className="p-1.5 rounded-lg bg-pink-500/10 border border-pink-500/20">
-            <Gift className="h-3.5 w-3.5 text-pink-400" />
+            <Gift className="h-3.5 w-3.5 lg:h-4 lg:w-4 text-pink-400" />
           </div>
           Ganhadores
         </h2>
         <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center">
           <span className="text-3xl animate-bounce">🎁</span>
-          <p className="text-sm text-white/40 font-semibold mt-1">Seja o próximo a ganhar!</p>
+          <p className="text-sm lg:text-base text-white/40 font-semibold mt-1">Seja o próximo a ganhar!</p>
           <p className="text-xs text-white/25">Compre no Kiosk e concorra a prêmios</p>
         </div>
       </div>
@@ -657,9 +695,9 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
 
   return (
     <div className="flex flex-col h-full">
-      <h2 className="text-sm font-bold text-white/80 flex items-center gap-2.5 mb-4">
+      <h2 className="text-sm lg:text-base font-bold text-white/80 flex items-center gap-2.5 mb-4">
         <div className="p-1.5 rounded-lg bg-pink-500/10 border border-pink-500/20">
-          <Gift className="h-3.5 w-3.5 text-pink-400" />
+          <Gift className="h-3.5 w-3.5 lg:h-4 lg:w-4 text-pink-400" />
         </div>
         Ganhadores
         {winners.length > 3 && (
@@ -674,12 +712,12 @@ function WinnersPanel({ winners, rotationInterval }: { winners: Prize[]; rotatio
             className="flex items-center gap-3 px-3 py-2 rounded-xl bg-gradient-to-r from-white/[0.03] to-transparent border border-white/[0.04] transition-all animate-fade-slide-up"
             style={{ animationDelay: `${i * 80}ms`, animationFillMode: 'both' }}
           >
-            <span className="text-lg">{PRIZE_ICONS[w.type] || '🎁'}</span>
+            <span className="text-lg lg:text-xl">{PRIZE_ICONS[w.type] || '🎁'}</span>
             <div className="flex-1 min-w-0">
-              <p className="text-xs sm:text-sm font-semibold text-white/70 truncate">
+              <p className="text-xs sm:text-sm lg:text-base font-semibold text-white/70 truncate">
                 {w.winnerDisplayName || 'Anônimo'}
               </p>
-              <p className="text-[10px] sm:text-xs text-white/40 truncate">{w.description && w.description !== w.type ? w.description : PRIZE_LABELS[w.type] || w.type}</p>
+              <p className="text-[10px] sm:text-xs lg:text-sm text-white/40 truncate">{w.description && w.description !== w.type ? w.description : PRIZE_LABELS[w.type] || w.type}</p>
             </div>
             <span className="text-[10px] text-white/20 shrink-0 bg-white/[0.03] px-2 py-0.5 rounded-full">
               {w.wonAt ? timeAgo(w.wonAt) : ''}
@@ -699,7 +737,7 @@ function TvFooter({ disclaimers }: { disclaimers?: string[] }) {
     return (
       <footer className="fixed bottom-0 left-0 right-0 backdrop-blur-xl bg-black/60 border-t border-white/[0.06] h-10 sm:h-12 flex items-center justify-center gap-4 sm:gap-10 px-4 sm:px-6">
         {disclaimers.map((text, i) => (
-          <span key={i} className="text-[10px] sm:text-xs text-white/35 font-medium">
+          <span key={i} className="text-[10px] sm:text-xs text-white/35 font-medium truncate max-w-[240px] sm:max-w-xs" title={text}>
             {text}
           </span>
         ))}
@@ -801,11 +839,11 @@ function DynamicPricingTickerPanel({ config }: { config: DynamicPricingConfig })
       {/* Header */}
       <div className="flex items-center gap-2 mb-1">
         <div className={`w-2 h-2 rounded-full ${hasActivePromo ? 'bg-green-400 animate-pulse' : 'bg-white/20'}`} />
-        <h3 className="text-xs sm:text-sm font-semibold tracking-wider uppercase text-white/70">
+        <h3 className="text-xs sm:text-sm lg:text-base font-semibold tracking-wider uppercase text-white/70">
           Promoções de Preço
         </h3>
         {hasActivePromo && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium border border-green-500/20">
+          <span className="text-[10px] lg:text-xs px-1.5 py-0.5 rounded bg-green-500/20 text-green-400 font-medium border border-green-500/20">
             ATIVO
           </span>
         )}
@@ -939,7 +977,7 @@ export function TvDashboardPage() {
   // ── Loading / Error States ──
   if (!franchiseId || !storeId) {
     return (
-      <div className="min-h-screen bg-[#07080a] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--tv-bg,#07080a)] flex items-center justify-center">
         <p className="text-red-400 text-2xl">Parâmetros de loja inválidos</p>
       </div>
     );
@@ -947,7 +985,7 @@ export function TvDashboardPage() {
 
   if (authError) {
     return (
-      <div className="min-h-screen bg-[#07080a] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--tv-bg,#07080a)] flex items-center justify-center">
         <p className="text-red-400 text-2xl">{authError}</p>
       </div>
     );
@@ -955,7 +993,7 @@ export function TvDashboardPage() {
 
   if (!authReady || configLoading) {
     return (
-      <div className="min-h-screen bg-[#07080a] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--tv-bg,#07080a)] flex items-center justify-center">
         <div className="flex flex-col items-center gap-6">
           <div className="relative w-16 h-16">
             <div className="absolute inset-0 rounded-full border-4 border-white/[0.06]" />
@@ -969,7 +1007,7 @@ export function TvDashboardPage() {
 
   if (configError) {
     return (
-      <div className="min-h-screen bg-[#07080a] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--tv-bg,#07080a)] flex items-center justify-center">
         <p className="text-red-400 text-xl">{configError}</p>
       </div>
     );
@@ -978,7 +1016,7 @@ export function TvDashboardPage() {
   // ── Telão desabilitado pelo admin ──
   if (!tvConfig.enabled) {
     return (
-      <div className="min-h-screen bg-[#07080a] flex items-center justify-center">
+      <div className="min-h-screen bg-[var(--tv-bg,#07080a)] flex items-center justify-center">
         <div className="text-center space-y-3">
           <Beer className="h-16 w-16 text-white/10 mx-auto" />
           <p className="text-white/30 text-xl font-medium">Telão desativado</p>
@@ -998,7 +1036,7 @@ export function TvDashboardPage() {
   const rotationInterval = (tvConfig.rotationIntervalSec || 10) * 1000;
 
   return (
-    <div className="min-h-screen bg-[#07080a] text-white overflow-hidden select-none">
+    <div className="min-h-screen text-white overflow-hidden select-none" style={{ backgroundColor: 'var(--tv-bg, #07080a)' }}>
       {/* Rich ambient background — multi-color mesh */}
       <div className="fixed inset-0 pointer-events-none">
         {/* Warm gold glow top-left */}
@@ -1027,14 +1065,14 @@ export function TvDashboardPage() {
       />
 
       {/* ── Main Grid ── */}
-      <main className="relative px-3 sm:px-5 py-3 sm:py-4 h-[calc(100vh-52px-40px)] sm:h-[calc(100vh-60px-48px)]">
+      <main className="relative px-3 sm:px-5 lg:px-6 py-3 sm:py-4 h-[calc(100vh-52px-40px)] sm:h-[calc(100vh-60px-48px)] lg:h-[calc(100vh-60px-56px)]">
         <div className={`grid gap-3 sm:gap-4 h-full ${
           hasSidebar
-            ? 'grid-cols-1 lg:grid-cols-[1fr_300px] xl:grid-cols-[1fr_340px]'
+            ? 'grid-cols-1 lg:grid-cols-[5fr_2fr]'
             : 'grid-cols-1'
         }`}>
           {/* Column 1: Leaderboard */}
-          <div className={`${GLASS_PANEL} rounded-xl sm:rounded-2xl p-3 sm:p-6 overflow-hidden`}>
+          <div className={`${GLASS_PANEL} rounded-xl sm:rounded-2xl p-3 sm:p-6 overflow-hidden`} aria-live="polite" aria-label="Leaderboard">
             <LeaderboardPanel
               ranking={ranking}
               rankingWindow={effectiveRankingWindow}
@@ -1044,7 +1082,7 @@ export function TvDashboardPage() {
 
           {/* Column 2: Sidebar */}
           {hasSidebar && (
-            <div className="flex flex-col gap-3 sm:gap-4 overflow-hidden">
+            <div className="flex flex-col gap-3 sm:gap-4 overflow-hidden" aria-live="polite" aria-label="Painéis laterais">
               {showGoal && (
                 <div className={`${GLASS_PANEL} rounded-xl sm:rounded-2xl p-3 sm:p-5 flex-1 min-h-0 overflow-hidden`}>
                   <GoalPanel stats={eventStats} />
@@ -1072,6 +1110,13 @@ export function TvDashboardPage() {
 
       {/* ── Footer ── */}
       <TvFooter disclaimers={tvConfig.disclaimers} />
+
+      {/* Debug overlay — visível apenas com ?debug=true */}
+      {searchParams.get('debug') === 'true' && (
+        <div className="fixed bottom-14 right-2 text-[9px] text-white/20 bg-black/50 px-2 py-1 rounded font-mono z-50">
+          🔄 {clock.toLocaleTimeString('pt-BR')} | 🏆 {ranking.length} | ⚡ {challenges.length} | 🎁 {winners.length}
+        </div>
+      )}
     </div>
   );
 }

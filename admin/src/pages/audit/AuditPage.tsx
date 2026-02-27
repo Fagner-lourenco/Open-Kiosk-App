@@ -4,7 +4,7 @@
  * ============================================================================
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   collection,
   query,
@@ -12,10 +12,14 @@ import {
   orderBy,
   limit,
   onSnapshot,
+  getDocs,
+  startAfter,
+  type DocumentSnapshot,
   type FirestoreError,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { auditLogsPath } from '@/lib/pathResolver';
+import { downloadCSV } from '@/utils/csvExport';
 import { useFranchise } from '@/context/FranchiseContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -225,7 +229,6 @@ export function AuditPage() {
   const { currentFranchise } = useFranchise();
   const [searchQuery, setSearchQuery] = useState('');
   const [actionFilter, setActionFilter] = useState<string>('all');
-  const [page, setPage] = useState(1);
   const [isExporting, setIsExporting] = useState(false);
   const [exportSuccess, setExportSuccess] = useState(false);
   const pageSize = 20;
@@ -235,7 +238,6 @@ export function AuditPage() {
     
     setIsExporting(true);
     
-    // Create CSV content
     const headers = ['Data/Hora', 'Ação', 'Usuário', 'Email', 'Alvo', 'IP'];
     const rows = filteredLogs.map(log => [
       log.timestamp.toLocaleString('pt-BR'),
@@ -246,38 +248,43 @@ export function AuditPage() {
       log.ip || '-'
     ]);
     
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-    
-    // Create and download file
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `auditoria-${currentFranchise.name}-${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV(
+      `auditoria-${currentFranchise.name}-${new Date().toISOString().split('T')[0]}.csv`,
+      headers,
+      rows,
+    );
     
     setIsExporting(false);
     setExportSuccess(true);
     setTimeout(() => setExportSuccess(false), 3000);
   };
 
-  // Real-time audit logs subscription
+  // Real-time audit logs subscription (first page) + cursor-based load more
   const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [extraLogs, setExtraLogs] = useState<AuditLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
   const [queryError, setQueryError] = useState<string | null>(null);
+  const lastDocRef = useRef<DocumentSnapshot | null>(null);
 
+  // Reset extra logs when filter changes
+  useEffect(() => {
+    setExtraLogs([]);
+    lastDocRef.current = null;
+    setHasMore(true);
+  }, [currentFranchise?.id, actionFilter]);
+
+  // Real-time subscription for first page only
   useEffect(() => {
     if (!currentFranchise) {
       setLogs([]);
       setIsLoading(false);
       return;
     }
+
+    // Flag para ignorar resultados stale de subscriptions substituídas (race condition fix)
+    let cancelled = false;
 
     setIsLoading(true);
     setQueryError(null);
@@ -286,7 +293,7 @@ export function AuditPage() {
     let q = query(
       collection(db, logsCollectionPath),
       orderBy('timestamp', 'desc'),
-      limit(pageSize * page)
+      limit(pageSize)
     );
     
     if (actionFilter !== 'all') {
@@ -294,7 +301,7 @@ export function AuditPage() {
         collection(db, logsCollectionPath),
         where('action', '==', actionFilter),
         orderBy('timestamp', 'desc'),
-        limit(pageSize * page)
+        limit(pageSize)
       );
     }
     
@@ -308,24 +315,32 @@ export function AuditPage() {
     };
 
     const subscribeRawFranchiseLogs = () => {
-      if (rawUnsubscribe) return;
+      if (rawUnsubscribe || cancelled) return;
 
       const rawQuery = query(
         collection(db, logsCollectionPath),
-        limit(pageSize * page)
+        limit(pageSize)
       );
 
       rawUnsubscribe = onSnapshot(
         rawQuery,
         (rawSnapshot) => {
+          if (cancelled) return;
+
           const rawLogs = rawSnapshot.docs
             .map((doc) => normalizeAuditLog(doc.data(), doc.id))
             .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
 
+          // Store last doc for cursor pagination
+          if (rawSnapshot.docs.length > 0) {
+            lastDocRef.current = rawSnapshot.docs[rawSnapshot.docs.length - 1];
+          }
+          setHasMore(rawSnapshot.docs.length >= pageSize);
           setLogs(rawLogs);
           setIsLoading(false);
         },
         (rawError) => {
+          if (cancelled) return;
           console.error('Error fetching fallback franchise audit logs:', rawError);
           setLogs([]);
           setQueryError(getAuditErrorMessage(rawError));
@@ -335,10 +350,17 @@ export function AuditPage() {
     };
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (cancelled) return;
+
       const auditLogs = snapshot.docs.map(doc => normalizeAuditLog(doc.data(), doc.id));
 
       if (auditLogs.length > 0) {
         cleanupRaw();
+        // Store last doc for cursor pagination
+        if (snapshot.docs.length > 0) {
+          lastDocRef.current = snapshot.docs[snapshot.docs.length - 1];
+        }
+        setHasMore(snapshot.docs.length >= pageSize);
         setLogs(auditLogs);
         setIsLoading(false);
         return;
@@ -346,6 +368,7 @@ export function AuditPage() {
 
       subscribeRawFranchiseLogs();
     }, (error) => {
+      if (cancelled) return;
       console.error('Error fetching audit logs:', error);
       cleanupRaw();
       setLogs([]);
@@ -353,14 +376,58 @@ export function AuditPage() {
       setIsLoading(false);
     });
 
-    // Cleanup subscription on unmount
+    // Cleanup subscription on unmount — marca cancelled ANTES de unsubscribe
     return () => {
+      cancelled = true;
       unsubscribe();
       cleanupRaw();
     };
-  }, [currentFranchise?.id, actionFilter, page]);
+  }, [currentFranchise?.id, actionFilter]);
 
-  const filteredLogs = logs.filter(log =>
+  // Load more using cursor-based pagination (getDocs, not real-time)
+  const loadMore = useCallback(async () => {
+    if (!currentFranchise || !lastDocRef.current || isLoadingMore) return;
+
+    setIsLoadingMore(true);
+    try {
+      const logsCollectionPath = auditLogsPath(currentFranchise.id);
+
+      let q = query(
+        collection(db, logsCollectionPath),
+        orderBy('timestamp', 'desc'),
+        startAfter(lastDocRef.current),
+        limit(pageSize)
+      );
+
+      if (actionFilter !== 'all') {
+        q = query(
+          collection(db, logsCollectionPath),
+          where('action', '==', actionFilter),
+          orderBy('timestamp', 'desc'),
+          startAfter(lastDocRef.current),
+          limit(pageSize)
+        );
+      }
+
+      const snapshot = await getDocs(q);
+      const newLogs = snapshot.docs.map(doc => normalizeAuditLog(doc.data(), doc.id));
+
+      if (snapshot.docs.length > 0) {
+        lastDocRef.current = snapshot.docs[snapshot.docs.length - 1];
+      }
+      setHasMore(snapshot.docs.length >= pageSize);
+      setExtraLogs(prev => [...prev, ...newLogs]);
+    } catch (err) {
+      console.error('Error loading more audit logs:', err);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [currentFranchise, actionFilter, isLoadingMore]);
+
+  // Combined logs: real-time first page + cursor-loaded extras
+  const allLogs = [...logs, ...extraLogs];
+
+  const filteredLogs = allLogs.filter(log =>
     (actionFilter === 'all' || log.action === actionFilter) &&
     (
       (log.actor.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -575,14 +642,21 @@ export function AuditPage() {
             </div>
           )}
           
-          {filteredLogs.length >= pageSize && (
+          {hasMore && filteredLogs.length >= pageSize && (
             <div className="p-4 border-t text-center">
               <Button 
                 variant="outline" 
-                onClick={() => setPage(p => p + 1)}
-                disabled={isLoading}
+                onClick={loadMore}
+                disabled={isLoadingMore}
               >
-                Carregar mais
+                {isLoadingMore ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Carregando...
+                  </>
+                ) : (
+                  'Carregar mais'
+                )}
               </Button>
             </div>
           )}

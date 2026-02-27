@@ -13,6 +13,7 @@
  */
 
 import { useState } from 'react';
+import { formatVolumeCompact } from '@/utils/formatVolume';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -80,9 +81,9 @@ function WastageTypeBadge({ type }: { type: WastageType }) {
   return <Badge variant={config.variant}>{config.label}</Badge>;
 }
 
+// formatMl delegado ao utilitário centralizado formatVolume
 function formatMl(ml: number): string {
-  if (ml >= 1000) return `${(ml / 1000).toFixed(1)}L`;
-  return `${Math.round(ml)}ml`;
+  return formatVolumeCompact(ml);
 }
 
 // ============================================================================
@@ -322,7 +323,7 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
           {/* Filter */}
           <div className="flex gap-4">
             <Select value={typeFilter} onValueChange={(v) => setTypeFilter(v as typeof typeFilter)}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="Tipo" />
               </SelectTrigger>
               <SelectContent>

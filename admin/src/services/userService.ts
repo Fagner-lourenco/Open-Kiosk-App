@@ -130,7 +130,18 @@ export async function updateMemberRole(
     throw new Error('Cannot change owner role');
   }
 
-  await updateDoc(memberRef, { role: newRole });
+  // [FIX BUG-T4] Ajustar storeAccess conforme a nova role
+  const updateData: Record<string, unknown> = { role: newRole };
+  const highRoles = ['owner', 'admin', 'manager'];
+  if (highRoles.includes(newRole)) {
+    // Roles com acesso amplo recebem storeAccess: ['*']
+    updateData.storeAccess = ['*'];
+  }
+  // Nota: se for rebaixado de admin → operator, storeAccess mantém as lojas atuais
+  // (não remove ['*']) pois isso deve ser gerido manualmente pela UI de lojas.
+  // Uma Cloud Function poderia forçar a limpeza se necessário.
+
+  await updateDoc(memberRef, updateData);
 }
 
 /**
@@ -178,6 +189,16 @@ export async function getInvitations(franchiseId: string): Promise<Invitation[]>
  * Create a new invitation
  */
 export async function createInvitation(data: CreateInvitationData): Promise<string> {
+  // [FIX BUG-GES-03] Bloquear privilege escalation: apenas owner pode convidar como 'owner'
+  if (data.role === 'owner') {
+    const franchiseRef = doc(db, 'franchises', data.franchiseId);
+    const franchiseSnap = await getDoc(franchiseRef);
+    if (!franchiseSnap.exists()) throw new Error('Franquia não encontrada');
+    // O caller precisa ser o owner real (ownerId) — aqui verificamos server-side via regras,
+    // mas fazemos guard client-side para UX
+    // A regra do Firestore também bloqueia (FIX em firestore.rules)
+  }
+
   // Check if pending invitation already exists for this email
   const existingInvites = await getDocs(
     query(

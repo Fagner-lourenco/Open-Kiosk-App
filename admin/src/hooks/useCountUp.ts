@@ -10,17 +10,22 @@ function easeOutExpo(t: number): number {
 /**
  * useCountUp — Animate a number from previous value to new target.
  *
+ * Uses requestAnimationFrame with throttle to limit re-renders.
+ * Default 20fps (50ms) is visually smooth for numbers while saving CPU.
+ *
  * @param target   The target number to animate toward
  * @param duration Animation duration in ms (default 1500)
+ * @param throttleMs Minimum ms between state updates (default 50 = ~20fps)
  * @returns        The current animated value (number)
  */
-export function useCountUp(target: number, duration = 1500): number {
+export function useCountUp(target: number, duration = 1500, throttleMs = 50): number {
   const [current, setCurrent] = useState(target);
   const prevTargetRef = useRef(target);
   const rafRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const startValueRef = useRef(target);
   const currentRef = useRef(target);
+  const lastSetRef = useRef(0);
 
   // Always keep currentRef fresh
   currentRef.current = current;
@@ -39,13 +44,18 @@ export function useCountUp(target: number, duration = 1500): number {
       const to = prevTargetRef.current;
       const value = from + (to - from) * easedProgress;
 
-      setCurrent(value);
+      // Throttle: only call setCurrent if enough time passed or animation finished
+      const now = performance.now();
+      if (progress >= 1 || now - lastSetRef.current >= throttleMs) {
+        lastSetRef.current = now;
+        setCurrent(value);
+      }
 
       if (progress < 1) {
         rafRef.current = requestAnimationFrame(animate);
       }
     },
-    [duration],
+    [duration, throttleMs],
   );
 
   useEffect(() => {

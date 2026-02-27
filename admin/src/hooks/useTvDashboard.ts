@@ -128,7 +128,9 @@ export function useTvDashboard(
     return cleanup;
   }, [franchiseId, storeId, cleanup]);
 
-  const isDynamicPricingEnabled = dynamicPricingConfig.enabled && dynamicPricingConfig.rules.length > 0;
+  // DP está ativo se habilitado na config OU se o event mode ativou DP
+  const eventDpOverride = eventStats.eventMode?.enabled && eventStats.eventMode?.activateDynamicPricing;
+  const isDynamicPricingEnabled = (dynamicPricingConfig.enabled || !!eventDpOverride) && dynamicPricingConfig.rules.length > 0;
 
   return { tvConfig, eventStats, dynamicPricingConfig, isDynamicPricingEnabled, isLoading, error };
 }

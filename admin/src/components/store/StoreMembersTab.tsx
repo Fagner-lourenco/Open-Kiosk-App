@@ -8,10 +8,11 @@
 
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { collection, query, getDocs, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
+import { collection, query, getDocs, doc, arrayUnion, arrayRemove, getDoc, writeBatch } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
 import { useAudit } from '@/hooks/useAudit';
+import { usePermissions } from '@/hooks/usePermissions';
 import { AuditActions } from '@/services/auditService';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -82,6 +83,7 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { log: audit } = useAudit();
+  const { can } = usePermissions();
   const { user: currentUser } = useAuth();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -145,7 +147,12 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
         throw new Error('Membro já adicionado a esta loja');
       }
 
-      await updateDoc(storeRef, {
+      // [FIX BUG-GES-01] Atualizar AMBOS: store.operators E members/{uid}.storeAccess
+      const batch = writeBatch(db);
+      const memberRef = doc(db, 'franchises', franchiseId, 'members', userId);
+
+      // 1. Adicionar ao array operators da store
+      batch.update(storeRef, {
         operators: arrayUnion({
           id: userId,
           email: member.email,
@@ -155,6 +162,13 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
           addedAt: new Date(),
         }),
       });
+
+      // 2. Sincronizar storeAccess no doc de membership
+      batch.update(memberRef, {
+        storeAccess: arrayUnion(storeId),
+      });
+
+      await batch.commit();
     },
     onSuccess: (_data, { userId, role }) => {
       queryClient.invalidateQueries({ queryKey: ['store', franchiseId, storeId] });
@@ -165,8 +179,8 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
       setSelectedUserId('');
       setSelectedRole('operator');
     },
-    onError: () => {
-      toast.error('Não foi possível adicionar o membro');
+    onError: (error: Error) => {
+      toast.error(error.message || 'Não foi possível adicionar o membro');
     },
   });
 
@@ -180,9 +194,24 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
       const currentOperators: Array<{ id: string }> = storeSnap.data()?.operators || [];
       const updatedOperators = currentOperators.filter(op => op.id !== member.id);
       
-      await updateDoc(storeRef, {
+      // [FIX BUG-GES-01] Atualizar AMBOS: store.operators E members/{uid}.storeAccess
+      const batch = writeBatch(db);
+      const memberRef = doc(db, 'franchises', franchiseId, 'members', member.id);
+
+      batch.update(storeRef, {
         operators: updatedOperators,
       });
+
+      batch.update(memberRef, {
+        storeAccess: arrayRemove(storeId),
+      });
+
+      await batch.commit();
+
+      // [TODO BUG-GES-05] Revogar custom claims do Firebase Auth requer Cloud Function.
+      // O token do usuário removido mantém storeAccess nas claims até expirar (~1h).
+      // Implementar callable function `revokeStoreAccess` que use
+      // admin.auth().setCustomUserClaims() para remover o storeId dos claims.
     },
     onSuccess: (_data, member) => {
       queryClient.invalidateQueries({ queryKey: ['store', franchiseId, storeId] });
@@ -223,10 +252,13 @@ export function StoreMembersTab({ franchiseId, storeId }: StoreMembersTabProps) 
             Gerencie quem tem acesso a esta loja
           </p>
         </div>
-        <Button onClick={() => setIsAddDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Adicionar Membro
-        </Button>
+        {/* [FIX GES-04] Só mostrar botão se tem permissão */}
+        {can('users:invite') && (
+          <Button onClick={() => setIsAddDialogOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" />
+            Adicionar Membro
+          </Button>
+        )}
       </div>
 
       {/* Members List */}

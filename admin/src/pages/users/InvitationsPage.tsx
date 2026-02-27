@@ -76,7 +76,7 @@ export function InvitationsPage() {
   
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('employee');
+  const [inviteRole, setInviteRole] = useState('operator');
   const [error, setError] = useState<string | null>(null);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
 
@@ -138,7 +138,7 @@ export function InvitationsPage() {
       queryClient.invalidateQueries({ queryKey: ['invitations'] });
       setShowInviteDialog(false);
       setInviteEmail('');
-      setInviteRole('employee');
+      setInviteRole('operator');
     },
     onError: (err: any) => {
       setError(err.message || 'Erro ao criar convite');
@@ -180,7 +180,8 @@ export function InvitationsPage() {
     const labels: Record<string, string> = {
       owner: 'Proprietário',
       manager: 'Gerente',
-      employee: 'Funcionário',
+      operator: 'Operador',
+      employee: 'Operador',
       viewer: 'Visualizador',
     };
     return labels[role] || role;
@@ -379,7 +380,7 @@ export function InvitationsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="manager">Gerente</SelectItem>
-                  <SelectItem value="employee">Funcionário</SelectItem>
+                  <SelectItem value="operator">Operador</SelectItem>
                   <SelectItem value="viewer">Visualizador</SelectItem>
                 </SelectContent>
               </Select>

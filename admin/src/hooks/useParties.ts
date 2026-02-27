@@ -188,6 +188,21 @@ export function useParties(franchiseId: string, storeId: string) {
     [activeParties],
   );
 
+  // [FIX F15] Computed: parties do tipo 'customer'
+  const customers = useMemo(
+    () => activeParties.filter((p) => p.type === 'customer'),
+    [activeParties],
+  );
+
+  // [FIX F15] Lookup: party by customerId (CRM link)
+  const partyByCustomerId = useMemo(() => {
+    const map = new Map<string, Party>();
+    for (const p of activeParties) {
+      if (p.customerId) map.set(p.customerId, p);
+    }
+    return map;
+  }, [activeParties]);
+
   return {
     parties,
     loadingParties,
@@ -196,6 +211,8 @@ export function useParties(franchiseId: string, storeId: string) {
     activeParties,
     suppliers,
     employees,
+    customers,
+    partyByCustomerId,
     createParty: createMutation.mutateAsync,
     isCreatingParty: createMutation.isPending,
     updateParty: updateMutation.mutateAsync,

@@ -83,13 +83,16 @@ export function StoreNavAccordion({ storeId }: StoreNavAccordionProps) {
     }
   }, [location.pathname, storeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persistir no sessionStorage
+  // Persistir no sessionStorage (debounced 150ms)
   useEffect(() => {
-    try {
-      sessionStorage.setItem(storageKey, JSON.stringify([...openGroups]));
-    } catch {
-      // ignore
-    }
+    const timer = setTimeout(() => {
+      try {
+        sessionStorage.setItem(storageKey, JSON.stringify([...openGroups]));
+      } catch {
+        // ignore
+      }
+    }, 150);
+    return () => clearTimeout(timer);
   }, [openGroups, storageKey]);
 
   const toggleGroup = useCallback((groupKey: string) => {

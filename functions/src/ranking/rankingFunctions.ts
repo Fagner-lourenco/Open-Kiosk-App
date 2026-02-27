@@ -1,13 +1,13 @@
-/**
+﻿/**
  * ============================================================================
- * Ranking Cloud Functions — Agregação server-side para TV Dashboard
+ * Ranking Cloud Functions â€” AgregaÃ§Ã£o server-side para TV Dashboard
  * ============================================================================
  *
- * 1. onOrderUpdatedRanking: Atualiza ranking quando customerName é adicionado
+ * 1. onOrderUpdatedRanking: Atualiza ranking quando customerName Ã© adicionado
  * 2. recalculateRanking30min: Scheduled (cada 3 min) recalcula janela 30 min
- * 3. checkChallengeCompletion: Verifica desafios após order
- * 4. goldenServe: Premiação 1-em-N determinística
- * 5. expirePrizes: Scheduled para expirar prêmios não resgatados
+ * 3. checkChallengeCompletion: Verifica desafios apÃ³s order
+ * 4. goldenServe: PremiaÃ§Ã£o 1-em-N determinÃ­stica
+ * 5. expirePrizes: Scheduled para expirar prÃªmios nÃ£o resgatados
  * 6. expireEventMode: Scheduled para desativar modo evento expirado
  *
  * @author Open Kiosk Project
@@ -15,6 +15,7 @@
 
 import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { logger } from 'firebase-functions/v2';
 import { db, admin, increment, serverTimestamp } from '../lib';
 import {
   maskName,
@@ -33,7 +34,7 @@ const REGION = 'southamerica-east1';
 // ============================================================================
 
 /**
- * Quando um order é atualizado com customerName (via enrichOrderWithCustomerData),
+ * Quando um order Ã© atualizado com customerName (via enrichOrderWithCustomerData),
  * incrementa os docs de ranking agregado e eventStats.
  */
 export const onOrderUpdatedRanking = onDocumentUpdated(
@@ -46,31 +47,31 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId } = context.params;
 
-    // Só agrega quando customerName aparece (vindo de enrichOrder)
+    // SÃ³ agrega quando customerName aparece (vindo de enrichOrder)
     const nameAppeared = !before.customerName && !!after.customerName;
-    // Ou quando status muda para completed/dispensing com nome já presente
+    // Ou quando status muda para completed/dispensing com nome jÃ¡ presente
     const statusChanged =
       after.customerName &&
       before.status !== after.status &&
       ['completed', 'paid_pending_dispense', 'dispensing'].includes(after.status);
 
     if (!nameAppeared && !statusChanged) return;
-    // Evitar dupla contagem: só processa se nameAppeared OU se foi apenas mudança de status
+    // Evitar dupla contagem: sÃ³ processa se nameAppeared OU se foi apenas mudanÃ§a de status
     if (!nameAppeared && statusChanged && before.customerName) {
-      // Status changed mas nome já existia — não recontar
+      // Status changed mas nome jÃ¡ existia â€” nÃ£o recontar
       return;
     }
 
-    // Guard: só agrega pedidos em status elegível
+    // Guard: sÃ³ agrega pedidos em status elegÃ­vel
     if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(after.status)) return;
 
-    // Guard: só agrega pedidos com customerName real (evita entradas fantasma)
+    // Guard: sÃ³ agrega pedidos com customerName real (evita entradas fantasma)
     if (!after.customerName) return;
 
     // P1-24: Rejeitar pedidos com paymentStatus fora do esperado
     const invalidPaymentStatuses = ['failed', 'canceled', 'cancelled', 'refunded', 'expired'];
     if (after.paymentStatus && invalidPaymentStatuses.includes(after.paymentStatus)) {
-      console.log(`[ranking] Skipping order with invalid paymentStatus: ${after.paymentStatus}`);
+      logger.info(`[ranking] Skipping order with invalid paymentStatus: ${after.paymentStatus}`);
       return;
     }
 
@@ -80,7 +81,7 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
 
     const storePath = `franchises/${franchiseId}/stores/${storeId}`;
 
-    // 🚀 bonus_multiplier: Verificar se o cliente tem prêmio ativo de multiplicador
+    // ðŸš€ bonus_multiplier: Verificar se o cliente tem prÃªmio ativo de multiplicador
     // Se sim, dobra os mL para o ranking (efeito real do "Happy Boost")
     let multiplier = 1;
     try {
@@ -92,7 +93,7 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
         .get();
 
       if (!bonusSnap.empty) {
-        // Verificar se pelo menos um não expirou
+        // Verificar se pelo menos um nÃ£o expirou
         const now = Date.now();
         const hasActive = bonusSnap.docs.some((d) => {
           const expiresAt = d.data().expiresAt;
@@ -102,16 +103,16 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
         });
         if (hasActive) {
           multiplier = 2;
-          console.log(`[ranking] 🚀 bonus_multiplier ativo para ${customerId} → 2× pontos!`);
+          logger.info(`[ranking] ðŸš€ bonus_multiplier ativo para ${customerId} â†’ 2Ã— pontos!`);
         }
       }
     } catch (err) {
-      console.warn(`[ranking] Erro ao verificar bonus_multiplier para ${customerId}:`, err);
+      logger.warn(`[ranking] Erro ao verificar bonus_multiplier para ${customerId}:`, err);
     }
 
     const totalMl = baseMl * multiplier;
 
-    console.log(`[ranking] Aggregating for ${customerId}: +${totalMl}mL (base=${baseMl}, ×${multiplier}), store=${storeId}`);
+    logger.info(`[ranking] Aggregating for ${customerId}: +${totalMl}mL (base=${baseMl}, Ã—${multiplier}), store=${storeId}`);
 
     const rankingRef = db.doc(`${storePath}/rankingAgg/${customerId}`);
     const eventStatsRef = db.doc(`${storePath}/eventStats/current`);
@@ -123,10 +124,10 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
         const existingDoc = await tx.get(rankingRef);
         const statsDoc = await tx.get(eventStatsRef);
         const isNewCustomer = !existingDoc.exists;
-        // 🔧 FIX: Detectar troca de dia — doc existe mas é de ontem
+        // ðŸ”§ FIX: Detectar troca de dia â€” doc existe mas Ã© de ontem
         const existingDate = existingDoc.exists ? existingDoc.data()?.date : null;
         const isDayChange = existingDoc.exists && existingDate !== date;
-        // Para uniqueCustomers: considerar "novo para hoje" se é novo OU mudou de dia
+        // Para uniqueCustomers: considerar "novo para hoje" se Ã© novo OU mudou de dia
         const isNewForToday = isNewCustomer || isDayChange;
 
         // Upsert ranking doc
@@ -141,10 +142,10 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
             date,
           });
         } else if (isDayChange) {
-          // 🔧 FIX: Dia mudou — resetar contadores ao invés de acumular
+          // ðŸ”§ FIX: Dia mudou â€” resetar contadores ao invÃ©s de acumular
           tx.set(rankingRef, {
             customerId,
-            displayName: maskName(after.customerName || 'Anônimo'),
+            displayName: maskName(after.customerName || 'AnÃ´nimo'),
             totalMl,
             totalMl30min: totalMl,
             totalSpent: after.total || 0,
@@ -156,7 +157,7 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
         } else {
           const newDoc: RankingAggDoc = {
             customerId,
-            displayName: maskName(after.customerName || 'Anônimo'),
+            displayName: maskName(after.customerName || 'AnÃ´nimo'),
             totalMl,
             totalMl30min: totalMl,
             totalSpent: after.total || 0,
@@ -173,10 +174,10 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
           const currentData = statsDoc.data();
           // Reset if it's a new day
           if (currentData?.date !== date) {
-            // 🔒 FIX #2: Resetar milestones.reached na virada de dia
+            // ðŸ”’ FIX #2: Resetar milestones.reached na virada de dia
             const prevMilestones = (currentData?.milestones || []) as Array<{ targetMl: number; label: string; reached: boolean }>;
             const resetMilestones = prevMilestones.map((m) => ({ ...m, reached: false, reachedAt: null }));
-            // 🔒 FIX #9: Preservar eventMode se ainda não expirou
+            // ðŸ”’ FIX #9: Preservar eventMode se ainda nÃ£o expirou
             const prevEvent = currentData?.eventMode;
             const eventStillActive = prevEvent?.enabled && prevEvent?.endsAt &&
               (typeof prevEvent.endsAt.toMillis === 'function' ? prevEvent.endsAt.toMillis() : (prevEvent.endsAt.seconds || 0) * 1000) > Date.now();
@@ -193,14 +194,14 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
               updatedAt: serverTimestamp(),
             }, { merge: false });
           } else {
-            // Same day — increment counters, only increment uniqueCustomers for new customers
+            // Same day â€” increment counters, only increment uniqueCustomers for new customers
             const updateData: Record<string, unknown> = {
               totalMl: increment(totalMl),
               totalServes: increment(1),
               updatedAt: serverTimestamp(),
             };
             if (isNewForToday) {
-              // 🔧 FIX: Contar clientes que retornam de dia anterior como novos para hoje
+              // ðŸ”§ FIX: Contar clientes que retornam de dia anterior como novos para hoje
               updateData.uniqueCustomers = increment(1);
             }
             tx.update(eventStatsRef, updateData);
@@ -221,12 +222,12 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
         }
       });
 
-      // Check milestones (outside transaction — reads fresh data)
+      // Check milestones (outside transaction â€” reads fresh data)
       await checkMilestones(franchiseId, storeId);
 
-      console.log(`[ranking] ✅ Aggregated for ${customerId}`);
+      logger.info(`[ranking] âœ… Aggregated for ${customerId}`);
     } catch (error) {
-      console.error(`[ranking] ❌ Error aggregating for ${customerId}:`, error);
+      logger.error(`[ranking] âŒ Error aggregating for ${customerId}:`, error);
     }
   });
 
@@ -236,11 +237,11 @@ export const onOrderUpdatedRanking = onDocumentUpdated(
 
 /**
  * A cada 10 minutos, recalcula totalMl30min para todos os clientes.
- * Query: orders dos últimos 30 min com customerName.
- * ⚡ COST-OPT: Reduzido de 3→10 min — a CF onOrderUpdatedRanking já faz
- *   incremento real-time; esta CF só recalcula janela deslizante de 30min.
+ * Query: orders dos Ãºltimos 30 min com customerName.
+ * âš¡ COST-OPT: Reduzido de 3â†’10 min â€” a CF onOrderUpdatedRanking jÃ¡ faz
+ *   incremento real-time; esta CF sÃ³ recalcula janela deslizante de 30min.
  */
-// 🔒 FIX BUG-32: Add memory/timeout for store-wide iteration
+// ðŸ”’ FIX BUG-32: Add memory/timeout for store-wide iteration
 export const recalculateRanking30min = onSchedule(
   { schedule: 'every 10 minutes', region: REGION, memory: '512MiB', timeoutSeconds: 300 },
   async () => {
@@ -249,7 +250,7 @@ export const recalculateRanking30min = onSchedule(
     const thirtyMinTimestamp = admin.firestore.Timestamp.fromDate(thirtyMinAgo);
     const today = todayYMD();
 
-    console.log('[ranking30m] Recalculating 30-min window...');
+    logger.info('[ranking30m] Recalculating 30-min window...');
 
     // Single collectionGroup query to get all active stores (avoids N+1 franchise iteration)
     const storesSnap = await db
@@ -272,11 +273,11 @@ export const recalculateRanking30min = onSchedule(
           today
         );
       } catch (err) {
-        console.error(`[ranking30m] Error for store ${storeDoc.id}:`, err);
+        logger.error(`[ranking30m] Error for store ${storeDoc.id}:`, err);
       }
     }
 
-    console.log('[ranking30m] ✅ Done');
+    logger.info('[ranking30m] âœ… Done');
   });
 
 async function recalculate30minForStore(
@@ -287,14 +288,14 @@ async function recalculate30minForStore(
 ): Promise<void> {
   const storePath = `franchises/${franchiseId}/stores/${storeId}`;
 
-  // Buscar orders dos últimos 30 min
+  // Buscar orders dos Ãºltimos 30 min
   const ordersSnap = await db
     .collection(`${storePath}/orders`)
     .where('timestamp', '>=', since)
     .where('date', '==', today)
     .get();
 
-  // ⚡ COST-OPT: Early-exit quando não há orders recentes — evita reads desnecessários de ranking/prizes
+  // âš¡ COST-OPT: Early-exit quando nÃ£o hÃ¡ orders recentes â€” evita reads desnecessÃ¡rios de ranking/prizes
   if (ordersSnap.empty) {
     // Mesmo sem orders, precisamos zerar totalMl30min de docs antigos
     const rankingSnap = await db
@@ -308,7 +309,7 @@ async function recalculate30minForStore(
         batch.update(rankDoc.ref, { totalMl30min: 0 });
       }
       await batch.commit();
-      console.log(`[ranking30m] Zeroed ${rankingSnap.size} stale 30min docs for ${storeId}`);
+      logger.info(`[ranking30m] Zeroed ${rankingSnap.size} stale 30min docs for ${storeId}`);
     }
     return;
   }
@@ -326,7 +327,7 @@ async function recalculate30minForStore(
     ml30m.set(id, (ml30m.get(id) || 0) + ml);
   }
 
-  // 🚀 FIX #8: Aplicar bonus_multiplier no cálculo de 30min (consistência com ranking diário)
+  // ðŸš€ FIX #8: Aplicar bonus_multiplier no cÃ¡lculo de 30min (consistÃªncia com ranking diÃ¡rio)
   const bonusCandidates = [...ml30m.keys()];
   if (bonusCandidates.length > 0) {
     const now = Date.now();
@@ -350,7 +351,7 @@ async function recalculate30minForStore(
           }
         }
       } catch (err) {
-        console.warn(`[ranking30m] Erro ao verificar bonus_multiplier para ${custId}:`, err);
+        logger.warn(`[ranking30m] Erro ao verificar bonus_multiplier para ${custId}:`, err);
       }
     }
   }
@@ -361,7 +362,7 @@ async function recalculate30minForStore(
     .where('date', '==', today)
     .get();
 
-  // Batch update — 🔧 FIX: Chunking para respeitar limite de 500 ops por batch
+  // Batch update â€” ðŸ”§ FIX: Chunking para respeitar limite de 500 ops por batch
   const BATCH_LIMIT = 499;
   const updates: Array<{ ref: FirebaseFirestore.DocumentReference; data: Record<string, unknown> }> = [];
 
@@ -383,7 +384,7 @@ async function recalculate30minForStore(
       }
       await batch.commit();
     }
-    console.log(`[ranking30m] Updated ${updates.length} ranking docs for ${storeId}`);
+    logger.info(`[ranking30m] Updated ${updates.length} ranking docs for ${storeId}`);
   }
 }
 
@@ -393,7 +394,7 @@ async function recalculate30minForStore(
 
 /**
  * Verifica se o pedido do cliente completa algum desafio ativo.
- * Chamado internamente após ranking update.
+ * Chamado internamente apÃ³s ranking update.
  */
 export const onOrderUpdatedChallenge = onDocumentUpdated(
   { document: 'franchises/{franchiseId}/stores/{storeId}/orders/{orderId}', region: REGION },
@@ -405,7 +406,7 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId } = context.params;
 
-    // Só processa quando customerName aparece
+    // SÃ³ processa quando customerName aparece
     if (!(!before.customerName && after.customerName)) return;
     if (!after.customerName) return;
 
@@ -423,16 +424,16 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
     for (const challengeDoc of challengesSnap.docs) {
       const challenge = challengeDoc.data() as ChallengeDoc;
 
-      // 🔒 FIX: Verificar endsAt (belt-and-suspenders — não confiar apenas em status)
+      // ðŸ”’ FIX: Verificar endsAt (belt-and-suspenders â€” nÃ£o confiar apenas em status)
       if (challenge.endsAt && challenge.endsAt.toMillis() < Date.now()) {
-        console.log(`[challenge] "${challenge.title}" expirou (endsAt passed) — skip`);
+        logger.info(`[challenge] "${challenge.title}" expirou (endsAt passed) â€” skip`);
         continue;
       }
 
-      // 🔒 FIX: Dedup per-client — cada cliente ganha no máximo 1 vez por desafio
+      // ðŸ”’ FIX: Dedup per-client â€” cada cliente ganha no mÃ¡ximo 1 vez por desafio
       const alreadyCompleted = (challenge.completedCustomers || []).includes(customerId);
       if (alreadyCompleted) {
-        console.log(`[challenge] ${customerId} já completou "${challenge.title}" — skip`);
+        logger.info(`[challenge] ${customerId} jÃ¡ completou "${challenge.title}" â€” skip`);
         continue;
       }
 
@@ -444,7 +445,7 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
       try {
         let completed = false;
 
-        // 🔒 FIX #1: Helper para validar se order é elegível (mesma lógica do ranking)
+        // ðŸ”’ FIX #1: Helper para validar se order Ã© elegÃ­vel (mesma lÃ³gica do ranking)
         const isEligibleOrder = (o: OrderData): boolean => {
           if (!['completed', 'paid_pending_dispense', 'dispensing'].includes(o.status)) return false;
           const badPayment = ['failed', 'canceled', 'cancelled', 'refunded', 'expired'];
@@ -495,10 +496,15 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
               .filter((o) => o.customerName && getCustomerId(o) === customerId && isEligibleOrder(o));
 
             if (customerOrders.length >= 2) {
-              const lastTs = customerOrders[customerOrders.length - 1].timestamp?.toMillis() || 0;
-              const prevTs = customerOrders[customerOrders.length - 2].timestamp?.toMillis() || 0;
-              const gapMinutes = (lastTs - prevTs) / 60000;
-              completed = gapMinutes >= challenge.rule.threshold;
+              // Encontrar o maior gap entre quaisquer orders consecutivas
+              let maxGap = 0;
+              for (let g = 1; g < customerOrders.length; g++) {
+                const ts = customerOrders[g].timestamp?.toMillis() || 0;
+                const prevTs = customerOrders[g - 1].timestamp?.toMillis() || 0;
+                const gap = (ts - prevTs) / 60000;
+                if (gap > maxGap) maxGap = gap;
+              }
+              completed = maxGap >= challenge.rule.threshold;
             }
             break;
           }
@@ -517,9 +523,9 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
         }
 
         if (completed) {
-          // 🔒 FIX: Transaction com dedup por orderId E por cliente.
+          // ðŸ”’ FIX: Transaction com dedup por orderId E por cliente.
           // - processedOrders: evita replay do mesmo orderId (at-least-once)
-          // - completedCustomers: evita mesmo cliente ganhar múltiplas vezes
+          // - completedCustomers: evita mesmo cliente ganhar mÃºltiplas vezes
           const orderId = context.params.orderId;
           let shouldGeneratePrize = false;
 
@@ -530,11 +536,11 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
             const completedCusts: string[] = data?.completedCustomers || [];
 
             if (processed.includes(orderId)) {
-              console.log(`[challenge] orderId ${orderId} already processed for "${challenge.title}" — skip`);
+              logger.info(`[challenge] orderId ${orderId} already processed for "${challenge.title}" â€” skip`);
               return;
             }
             if (completedCusts.includes(customerId)) {
-              console.log(`[challenge] ${customerId} already won "${challenge.title}" — skip (race)`);
+              logger.info(`[challenge] ${customerId} already won "${challenge.title}" â€” skip (race)`);
               return;
             }
 
@@ -547,9 +553,9 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
           });
 
           if (shouldGeneratePrize) {
-            console.log(`[challenge] ${customerId} completed "${challenge.title}"`);
+            logger.info(`[challenge] ${customerId} completed "${challenge.title}"`);
 
-            // Gerar prêmio — doc ID: prize_{challengeId}_{customerId}
+            // Gerar prÃªmio â€” doc ID: prize_{challengeId}_{customerId}
             // (idempotente: mesmo cliente + mesmo desafio = mesmo doc)
             await generatePrize(
               franchiseId,
@@ -564,7 +570,7 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
           }
         }
       } catch (err) {
-        console.error(`[challenge] Error checking ${challenge.title}:`, err);
+        logger.error(`[challenge] Error checking ${challenge.title}:`, err);
       }
     }
   });
@@ -574,7 +580,7 @@ export const onOrderUpdatedChallenge = onDocumentUpdated(
 // ============================================================================
 
 /**
- * Verifica se o serve é um "serve dourado" (1 em N determinístico).
+ * Verifica se o serve Ã© um "serve dourado" (1 em N determinÃ­stico).
  * Usa hash do orderId para determinismo e auditabilidade.
  */
 export const onOrderUpdatedGoldenServe = onDocumentUpdated(
@@ -587,7 +593,7 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
     const after = change.after.data() as OrderData;
     const { franchiseId, storeId, orderId } = context.params;
 
-    // Só processa quando customerName aparece (primeiro enrich)
+    // SÃ³ processa quando customerName aparece (primeiro enrich)
     if (!(!before.customerName && after.customerName)) return;
     if (!after.customerName) return;
 
@@ -600,7 +606,7 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
 
     if (!goldenConfig?.enabled || !goldenConfig?.frequency) return;
 
-    // Hash determinístico: simples mas auditável
+    // Hash determinÃ­stico: simples mas auditÃ¡vel
     let hash = 0;
     for (let i = 0; i < orderId.length; i++) {
       const char = orderId.charCodeAt(i);
@@ -611,9 +617,9 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
 
     if (!isGolden) return;
 
-    console.log(`[goldenServe] 🎉 Order ${orderId} is a golden serve!`);
+    logger.info(`[goldenServe] ðŸŽ‰ Order ${orderId} is a golden serve!`);
 
-    // Determinar tipo de prêmio (weighted random)
+    // Determinar tipo de prÃªmio (weighted random)
     const weights = goldenConfig.prizeWeights || { coupon: 60, free_drink: 30, pix: 8, custom: 2 };
     const totalWeight = Object.values(weights).reduce((a: number, b: unknown) => a + (b as number), 0);
     let rand = Math.random() * totalWeight;
@@ -627,7 +633,7 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
     }
 
     // Verificar limite de Pix por pessoa
-    // 🔒 NOTE Bug-19: This query-then-decide pattern has a theoretical TOCTOU race
+    // ðŸ”’ NOTE Bug-19: This query-then-decide pattern has a theoretical TOCTOU race
     // if two different golden-serve orders for the same customer fire concurrently.
     // However, golden serves are rare (1-in-N) and the deterministic orderId-based
     // prize doc ID (see generatePrize) prevents replay duplication. The residual
@@ -644,15 +650,15 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
 
       if (pixPrizes.size >= maxPix) {
         prizeType = 'coupon'; // Fallback
-        console.log(`[goldenServe] Pix limit reached for ${customerId}, falling back to coupon`);
+        logger.info(`[goldenServe] Pix limit reached for ${customerId}, falling back to coupon`);
       }
     }
 
     const descriptions = goldenConfig.prizeDescriptions || {
       coupon: 'Cupom de desconto',
-      free_drink: 'Chope grátis',
+      free_drink: 'Chope grÃ¡tis',
       pix: 'Pix premiado',
-      custom: 'Prêmio especial',
+      custom: 'PrÃªmio especial',
     };
 
     await generatePrize(
@@ -661,23 +667,23 @@ export const onOrderUpdatedGoldenServe = onDocumentUpdated(
       getCustomerId(after),
       maskName(after.customerName),
       prizeType,
-      descriptions[prizeType] || 'Prêmio',
+      descriptions[prizeType] || 'PrÃªmio',
       orderId
     );
   });
 
 // ============================================================================
-// HELPER: Gerar prêmio
+// HELPER: Gerar prÃªmio
 // ============================================================================
 
 /**
- * Gera prêmio no Firestore.
+ * Gera prÃªmio no Firestore.
  *
- * Doc ID é determinístico para idempotência:
- * - Desafios: `prize_{challengeId}_{customerId}` (1 prêmio por cliente por desafio)
- * - Golden Serve: `prize_{orderId}` (1 prêmio por pedido premiado)
+ * Doc ID Ã© determinÃ­stico para idempotÃªncia:
+ * - Desafios: `prize_{challengeId}_{customerId}` (1 prÃªmio por cliente por desafio)
+ * - Golden Serve: `prize_{orderId}` (1 prÃªmio por pedido premiado)
  *
- * @param challengeId - Se presente, indica que o prêmio veio de um desafio
+ * @param challengeId - Se presente, indica que o prÃªmio veio de um desafio
  */
 async function generatePrize(
   franchiseId: string,
@@ -713,24 +719,24 @@ async function generatePrize(
     prize.challengeId = challengeId;
   }
 
-  // Doc ID determinístico:
-  // - Desafio: prize_{challengeId}_{customerId} → 1 prêmio/cliente/desafio (idempotente)
-  // - Golden Serve: prize_{orderId} → 1 prêmio/pedido (idempotente)
+  // Doc ID determinÃ­stico:
+  // - Desafio: prize_{challengeId}_{customerId} â†’ 1 prÃªmio/cliente/desafio (idempotente)
+  // - Golden Serve: prize_{orderId} â†’ 1 prÃªmio/pedido (idempotente)
   const prizeDocId = challengeId
     ? `prize_${challengeId}_${customerId}`
     : `prize_${orderId}`;
 
-  // 🔒 FIX #3: Transaction para não sobrescrever code existente em retry
+  // ðŸ”’ FIX #3: Transaction para nÃ£o sobrescrever code existente em retry
   const prizeRef = db.doc(`${storePath}/prizes/${prizeDocId}`);
   await db.runTransaction(async (tx) => {
     const existing = await tx.get(prizeRef);
     if (existing.exists) {
-      console.log(`[prize] Doc ${prizeDocId} already exists — skip (idempotent)`);
+      logger.info(`[prize] Doc ${prizeDocId} already exists â€” skip (idempotent)`);
       return;
     }
     tx.set(prizeRef, prize);
   });
-  console.log(`[prize] Created ${type} prize for ${displayName}: ${code} (doc: ${prizeDocId})`);
+  logger.info(`[prize] Created ${type} prize for ${displayName}: ${code.slice(0, 2)}****${code.slice(-2)} (doc: ${prizeDocId})`);
 }
 
 // ============================================================================
@@ -738,14 +744,14 @@ async function generatePrize(
 // ============================================================================
 
 /**
- * A cada 5 minutos, expira prêmios não resgatados (30 min após wonAt).
- * Usa collectionGroup para evitar N+1 queries (franchise → store iteration).
+ * A cada 5 minutos, expira prÃªmios nÃ£o resgatados (30 min apÃ³s wonAt).
+ * Usa collectionGroup para evitar N+1 queries (franchise â†’ store iteration).
  */
 export const expirePrizes = onSchedule(
   { schedule: 'every 5 minutes', region: REGION },
   async () => {
     const now = admin.firestore.Timestamp.now();
-    console.log('[prizes] Checking for expired prizes...');
+    logger.info('[prizes] Checking for expired prizes...');
 
     try {
       const expiredSnap = await db
@@ -755,7 +761,7 @@ export const expirePrizes = onSchedule(
         .get();
 
       if (expiredSnap.empty) {
-        console.log('[prizes] No expired prizes found');
+        logger.info('[prizes] No expired prizes found');
         return;
       }
 
@@ -771,9 +777,9 @@ export const expirePrizes = onSchedule(
         await batch.commit();
       }
 
-      console.log(`[prizes] Expired ${expiredSnap.size} prizes total`);
+      logger.info(`[prizes] Expired ${expiredSnap.size} prizes total`);
     } catch (err) {
-      console.error('[prizes] Error expiring prizes:', err);
+      logger.error('[prizes] Error expiring prizes:', err);
     }
   });
 
@@ -784,7 +790,7 @@ export const expirePrizes = onSchedule(
 /**
  * A cada 5 minutos, desativa Modo Evento se expirado.
  * Usa collectionGroup para evitar N+1 queries.
- * ⚡ COST-OPT: Reduzido de 1→5 min — atraso imperceptível na expiração.
+ * âš¡ COST-OPT: Reduzido de 1â†’5 min â€” atraso imperceptÃ­vel na expiraÃ§Ã£o.
  */
 export const expireEventMode = onSchedule(
   { schedule: 'every 5 minutes', region: REGION },
@@ -812,32 +818,32 @@ export const expireEventMode = onSchedule(
             updatedAt: serverTimestamp(),
           });
           expired++;
-          console.log(`[eventMode] Expired for doc ${doc.ref.path}`);
+          logger.info(`[eventMode] Expired for doc ${doc.ref.path}`);
         }
       }
 
       if (expired > 0) {
-        console.log(`[eventMode] Expired ${expired} event(s)`);
+        logger.info(`[eventMode] Expired ${expired} event(s)`);
       }
     } catch (err) {
-      console.error('[eventMode] Error expiring event modes:', err);
+      logger.error('[eventMode] Error expiring event modes:', err);
     }
   });
 
 // ============================================================================
-// 7. expireChallenges (Scheduled) — FIX #10
+// 7. expireChallenges (Scheduled) â€” FIX #10
 // ============================================================================
 
 /**
- * A cada 5 minutos, marca desafios ativos cujo endsAt já passou como 'expired'.
+ * A cada 5 minutos, marca desafios ativos cujo endsAt jÃ¡ passou como 'expired'.
  * Sem isso, o status fica 'active' eternamente no Firestore (client faz check visual,
- * mas o dado fica sujo e Cloud Functions continuam tentando processá-los).
+ * mas o dado fica sujo e Cloud Functions continuam tentando processÃ¡-los).
  */
 export const expireChallenges = onSchedule(
   { schedule: 'every 5 minutes', region: REGION },
   async () => {
     const now = admin.firestore.Timestamp.now();
-    console.log('[challenges] Checking for expired challenges...');
+    logger.info('[challenges] Checking for expired challenges...');
 
     try {
       const activeSnap = await db
@@ -857,17 +863,17 @@ export const expireChallenges = onSchedule(
             updatedAt: serverTimestamp(),
           });
           expired++;
-          console.log(`[challenges] Expired "${data.title}" (${doc.ref.path})`);
+          logger.info(`[challenges] Expired "${data.title}" (${doc.ref.path})`);
         }
       }
 
       if (expired > 0) {
-        console.log(`[challenges] Expired ${expired} challenge(s)`);
+        logger.info(`[challenges] Expired ${expired} challenge(s)`);
       } else {
-        console.log('[challenges] No expired challenges found');
+        logger.info('[challenges] No expired challenges found');
       }
     } catch (err) {
-      console.error('[challenges] Error expiring challenges:', err);
+      logger.error('[challenges] Error expiring challenges:', err);
     }
   });
 
@@ -895,6 +901,8 @@ async function checkMilestones(
       targetMl: number;
       label: string;
       reached: boolean;
+      activatesEventMode?: boolean;
+      eventMinutes?: number;
     }>;
 
     let milestonesUpdated = false;
@@ -907,8 +915,13 @@ async function checkMilestones(
         milestone.reached = true;
         milestonesUpdated = true;
 
-        // Se o milestone ativa modo evento (label contém "Modo Evento")
-        if (milestone.label.toLowerCase().includes('modo evento')) {
+        // Usa campo booleano (fallback: regex no label para retrocompatibilidade)
+        if (milestone.activatesEventMode) {
+          eventMinutes = milestone.eventMinutes || 10;
+          activateEventMode = true;
+          eventLabel = milestone.label;
+        } else if (milestone.label.toLowerCase().includes('modo evento')) {
+          // Retrocompatibilidade: labels antigos sem o campo booleano
           const match = milestone.label.match(/(\d+)\s*min/i);
           eventMinutes = match ? parseInt(match[1], 10) : 10;
           activateEventMode = true;
@@ -933,7 +946,7 @@ async function checkMilestones(
       updatePayload['eventMode.label'] = eventLabel;
       updatePayload['eventMode.endsAt'] = endsAt;
       updatePayload['eventMode.activateDynamicPricing'] = false;
-      console.log(`[milestone] 🔥 Event mode activated: ${eventLabel}`);
+      logger.info(`[milestone] ðŸ”¥ Event mode activated: ${eventLabel}`);
     }
 
     tx.update(statsRef, updatePayload);

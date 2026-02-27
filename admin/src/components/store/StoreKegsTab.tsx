@@ -50,6 +50,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   Loader2,
   Plus,
   Search,
@@ -61,6 +71,8 @@ import {
   Package,
   AlertTriangle,
   Beer,
+  RotateCcw,
+  Trash2,
 } from 'lucide-react';
 import { useKegs, type CreateKegInput } from '@/hooks/useKegs';
 import { useTapAssignments } from '@/hooks/useTapAssignments';
@@ -331,6 +343,8 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
     createKeg,
     isCreatingKeg,
     updateKegStatus,
+    deleteKeg,
+    isDeletingKeg,
   } = useKegs(franchiseId, storeId);
 
   // Real-time taps — shared source of truth for tap status
@@ -352,6 +366,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
   const [connectKeg, setConnectKeg] = useState<{ kegId: string; productId: string; label: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | KegStatus>('all');
+  const [deletingKegId, setDeletingKegId] = useState<string | null>(null);
 
   // Derived
   const depletedKegs = kegs.filter((k) => k.status === 'depleted');
@@ -672,6 +687,28 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                                 </DropdownMenuItem>
                               </>
                             )}
+                            {keg.status === 'returned' && (
+                              <>
+                                <DropdownMenuItem onClick={() => updateKegStatus({ kegId: keg.kegId, status: 'in_stock' })}>
+                                  <RotateCcw className="h-4 w-4 mr-2" />
+                                  Voltar ao Estoque
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setDeletingKegId(keg.kegId)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Excluir Barril
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {keg.status === 'depleted' && (
+                              <DropdownMenuItem onClick={() => updateKegStatus({ kegId: keg.kegId, status: 'in_stock' })}>
+                                <RotateCcw className="h-4 w-4 mr-2" />
+                                Voltar ao Estoque
+                              </DropdownMenuItem>
+                            )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -693,6 +730,34 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
         onSubmit={createKeg}
         isPending={isCreatingKeg}
       />
+
+      {/* ── Delete Confirmation Dialog ──────────────────────────── */}
+      <AlertDialog open={!!deletingKegId} onOpenChange={(v) => { if (!v) setDeletingKegId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir Barril</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir este barril? O registro será removido permanentemente, incluindo todo o histórico de dispensação vinculado.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async () => {
+                if (deletingKegId) {
+                  await deleteKeg(deletingKegId);
+                  setDeletingKegId(null);
+                }
+              }}
+              disabled={isDeletingKeg}
+            >
+              {isDeletingKeg ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {connectKeg && (
         <ConnectTapDialog
