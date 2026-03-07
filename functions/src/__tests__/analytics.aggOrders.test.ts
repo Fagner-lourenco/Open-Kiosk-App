@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => {
   // Dedup subcollection mock (for processedEvents subcollection)
   const dedupGet = vi.fn().mockResolvedValue({ exists: false });
   const dedupSet = vi.fn().mockResolvedValue(undefined);
-  const dedupDoc = vi.fn(() => ({ get: dedupGet, set: dedupSet }));
+  const dedupCreate = vi.fn().mockResolvedValue(undefined);
+  const dedupDoc = vi.fn(() => ({ get: dedupGet, set: dedupSet, create: dedupCreate }));
   const dedupCollection = vi.fn(() => ({ doc: dedupDoc }));
   const doc = vi.fn(() => ({ set, get, collection: dedupCollection }));
   return {
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => {
     doc,
     dedupGet,
     dedupSet,
+    dedupCreate,
     dedupDoc,
     increment: vi.fn((n: number) => ({ _increment: n })),
     serverTimestamp: vi.fn(() => 'SERVER_TS'),
@@ -82,10 +84,10 @@ describe('aggOrders', () => {
 
       // 4 doc refs: daily, hourly, store metrics, franchise metrics
       expect(mocks.doc).toHaveBeenCalledTimes(4);
-      // 4 set calls: 4 metrics (dedup set is on subcollection mock)
+      // 4 set calls: 4 metrics
       expect(mocks.set).toHaveBeenCalledTimes(4);
-      // Dedup subcollection: 1 get + 1 set
-      expect(mocks.dedupGet).toHaveBeenCalledTimes(1);
+      // Dedup subcollection: 1 create (atomic idempotency)
+      expect(mocks.dedupCreate).toHaveBeenCalledTimes(1);
 
       // Verify daily doc path
       expect(mocks.doc).toHaveBeenCalledWith('analytics/daily/2026-01-15');

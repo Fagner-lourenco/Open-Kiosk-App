@@ -29,7 +29,6 @@ import br.com.uol.pagseguro.plugpag.PlugPagInitializationResult;
 import br.com.uol.pagseguro.plugpag.PlugPagPaymentData;
 import br.com.uol.pagseguro.plugpag.PlugPagTransactionResult;
 import br.com.uol.pagseguro.plugpag.PlugPagVoidData;
-import br.com.uol.pagseguro.plugpag.IPlugPag;
 
 /**
  * PlugPagTerminalPlugin — Full integration with PagBank PlugPag SDK 4.11.0
@@ -87,8 +86,11 @@ public class PlugPagTerminalPlugin extends Plugin {
         Log.i(TAG, "initialize: app=" + appName + "/" + appVersion);
 
         try {
-            PlugPagAppIdentification appId = new PlugPagAppIdentification(appName, appVersion);
+            // SDK 4.11.0: construtor aceita apenas Context
             plugPag = new PlugPag(getContext());
+
+            // Registrar identificação do app via setVersionName (doc: max 25 + 10 chars)
+            plugPag.setVersionName(appName, appVersion);
 
             // Set event listener for SDK state changes
             plugPag.setEventListener(new PlugPagEventListener() {
@@ -98,7 +100,7 @@ public class PlugPagTerminalPlugin extends Plugin {
                     evt.put("eventCode", eventData.getEventCode());
                     evt.put("message", eventData.getCustomMessage());
                     notifyListeners("plugpagEvent", evt);
-                    return 0;
+                    return PlugPag.RET_OK;
                 }
             });
 
@@ -187,10 +189,12 @@ public class PlugPagTerminalPlugin extends Plugin {
 
         executor.execute(() -> {
             try {
-                PlugPagDevice device = new PlugPagDevice(deviceId);
+                // 4-param constructor: (identification, null, null, isCless)
+                // isCless=false para BT Classic (chip/tarja)
+                PlugPagDevice device = new PlugPagDevice(deviceId, null, null, false);
                 int result = plugPag.initBTConnection(device);
 
-                if (result == IPlugPag.RET_OK) {
+                if (result == PlugPag.RET_OK) {
                     btConnected = true;
                     connectedDeviceId = deviceId;
                     Log.i(TAG, "BT connected successfully");
@@ -224,20 +228,31 @@ public class PlugPagTerminalPlugin extends Plugin {
 
     /**
      * Disconnect from the terminal.
+     * Calls the real SDK disconnect to release BT resources.
      */
     @PluginMethod()
     public void disconnect(PluginCall call) {
         Log.i(TAG, "disconnect");
-        btConnected = false;
-        connectedDeviceId = null;
 
-        JSObject ret = new JSObject();
-        ret.put("disconnected", true);
-        call.resolve(ret);
+        executor.execute(() -> {
+            // PlugPag 4.11.0 não expõe disconnect() — SDK gerencia ciclo de vida BT internamente.
+            // Ref: demo oficial pagseguro/plugpag não chama disconnect().
+            // Basta limpar flags locais; próximo pagamento reconecta via initBTConnection().
+            if (plugPag != null) {
+                Log.i(TAG, "Clearing local BT state (SDK manages connection lifecycle)");
+            }
 
-        JSObject connEvt = new JSObject();
-        connEvt.put("status", "disconnected");
-        notifyListeners("plugpagConnection", connEvt);
+            btConnected = false;
+            connectedDeviceId = null;
+
+            JSObject ret = new JSObject();
+            ret.put("disconnected", true);
+            call.resolve(ret);
+
+            JSObject connEvt = new JSObject();
+            connEvt.put("status", "disconnected");
+            notifyListeners("plugpagConnection", connEvt);
+        });
     }
 
     // =========================================================================
@@ -286,7 +301,7 @@ public class PlugPagTerminalPlugin extends Plugin {
                 PlugPagActivationData activationData = new PlugPagActivationData(activationCode);
                 PlugPagInitializationResult result = plugPag.initializeAndActivatePinpad(activationData);
 
-                if (result.getResult() == IPlugPag.RET_OK) {
+                if (result.getResult() == PlugPag.RET_OK) {
                     Log.i(TAG, "Authentication successful");
                     JSObject ret = new JSObject();
                     ret.put("authenticated", true);
@@ -321,9 +336,10 @@ public class PlugPagTerminalPlugin extends Plugin {
 
         executor.execute(() -> {
             try {
-                int result = plugPag.invalidateAuthentication();
+                // Doc oficial: invalidateAuthentication() retorna void
+                plugPag.invalidateAuthentication();
                 JSObject ret = new JSObject();
-                ret.put("invalidated", result == IPlugPag.RET_OK);
+                ret.put("invalidated", true);
                 call.resolve(ret);
             } catch (Exception e) {
                 Log.e(TAG, "invalidateAuthentication exception", e);
@@ -363,29 +379,46 @@ public class PlugPagTerminalPlugin extends Plugin {
 
         int paymentType;
         if ("CREDIT".equalsIgnoreCase(type)) {
-            paymentType = IPlugPag.TYPE_CREDITO;
+            paymentType = PlugPag.TYPE_CREDITO;
         } else if ("DEBIT".equalsIgnoreCase(type)) {
-            paymentType = IPlugPag.TYPE_DEBITO;
+            paymentType = PlugPag.TYPE_DEBITO;
+        } else if ("VOUCHER".equalsIgnoreCase(type)) {
+            paymentType = PlugPag.TYPE_VOUCHER;
+        } else if ("PIX".equalsIgnoreCase(type)) {
+            paymentType = PlugPag.TYPE_PIX;
         } else {
-            call.reject("type deve ser CREDIT ou DEBIT", "INVALID_TYPE");
+            call.reject("type deve ser CREDIT, DEBIT, VOUCHER ou PIX", "INVALID_TYPE");
             return;
         }
 
+        // isCless deve ser final para uso dentro da lambda do executor
+        final boolean isCless = (paymentType == PlugPag.TYPE_PIX);
+
         int installmentType = (installments != null && installments > 1)
-            ? IPlugPag.INSTALLMENT_TYPE_PARC_VENDEDOR
-            : IPlugPag.INSTALLMENT_TYPE_A_VISTA;
+            ? PlugPag.INSTALLMENT_TYPE_PARC_VENDEDOR
+            : PlugPag.INSTALLMENT_TYPE_A_VISTA;
 
         Log.i(TAG, "startPayment: amountCents=" + amountCents + " type=" + type);
 
         executor.execute(() -> {
             try {
+                // Reconectar BT antes de cada transação (padrão do demo oficial)
+                // Isso garante resiliência caso o BT tenha desconectado entre transações
+                if (connectedDeviceId != null) {
+                    // isCless: true para PIX/QRCode (contactless), false para cartão chip/tarja
+                    PlugPagDevice device = new PlugPagDevice(connectedDeviceId, null, null, isCless);
+                    int btResult = plugPag.initBTConnection(device);
+                    Log.i(TAG, "startPayment: re-initBTConnection result=" + btResult + " isCless=" + isCless);
+                }
+
+                // Doc oficial Builder: setType, setAmount, setInstallmentType,
+                // setInstallments, setUserReference — sem setPaymentReceipt
                 PlugPagPaymentData paymentData = new PlugPagPaymentData.Builder()
                     .setType(paymentType)
                     .setAmount(amountCents)
                     .setInstallmentType(installmentType)
                     .setInstallments(installments != null ? installments : 1)
                     .setUserReference(userReference != null ? userReference : "")
-                    .setPaymentReceipt(printReceipt != null && printReceipt)
                     .build();
 
                 PlugPagTransactionResult result = plugPag.doPayment(paymentData);
@@ -407,17 +440,23 @@ public class PlugPagTerminalPlugin extends Plugin {
 
     /**
      * Abort the current in-progress payment on the terminal.
+     *
+     * CRITICAL: Runs on a NEW thread, NOT on the executor.
+     * The executor is single-threaded and doPayment() blocks it.
+     * PlugPag SDK allows calling abort() from a different thread
+     * to interrupt the blocking doPayment() call.
      */
     @PluginMethod()
     public void abortPayment(PluginCall call) {
         if (!assertInitialized(call)) return;
 
-        Log.i(TAG, "abortPayment requested");
+        Log.i(TAG, "abortPayment requested — running on separate thread");
 
-        executor.execute(() -> {
+        new Thread(() -> {
             try {
                 PlugPagAbortResult result = plugPag.abort();
-                boolean aborted = (result != null && result.getResult() == IPlugPag.RET_OK);
+                boolean aborted = (result != null && result.getResult() == PlugPag.RET_OK);
+                Log.i(TAG, "abortPayment result: aborted=" + aborted);
                 JSObject ret = new JSObject();
                 ret.put("aborted", aborted);
                 call.resolve(ret);
@@ -425,7 +464,7 @@ public class PlugPagTerminalPlugin extends Plugin {
                 Log.e(TAG, "abortPayment exception", e);
                 call.reject("Exceção no cancelamento: " + e.getMessage(), "ABORT_EXCEPTION");
             }
-        });
+        }, "PlugPag-Abort").start();
     }
 
     // =========================================================================
@@ -456,11 +495,18 @@ public class PlugPagTerminalPlugin extends Plugin {
             try {
                 PlugPagTransactionResult result;
 
+                // Reconectar BT antes do estorno (padrão do demo oficial)
+                if (connectedDeviceId != null) {
+                    PlugPagDevice device = new PlugPagDevice(connectedDeviceId, null, null, false);
+                    int btResult = plugPag.initBTConnection(device);
+                    Log.i(TAG, "voidPayment: re-initBTConnection result=" + btResult);
+                }
+
                 if (transactionCode != null && transactionId != null) {
+                    // Doc oficial VoidData.Builder: setTransactionCode, setTransactionId
                     PlugPagVoidData voidData = new PlugPagVoidData.Builder()
                         .setTransactionCode(transactionCode)
                         .setTransactionId(transactionId)
-                        .setVoidReceipt(printReceipt != null && printReceipt)
                         .build();
                     result = plugPag.voidPayment(voidData);
                 } else {
@@ -597,26 +643,24 @@ public class PlugPagTerminalPlugin extends Plugin {
             return ret;
         }
 
-        boolean approved = result.getResult() == IPlugPag.RET_OK;
+        boolean approved = result.getResult() == PlugPag.RET_OK;
         ret.put("approved", approved);
         ret.put("resultCode", result.getResult());
         ret.put("message", safeString(result.getMessage()));
         ret.put("errorCode", safeString(result.getErrorCode()));
 
-        // Transaction identifiers (safe for reconciliation)
+        // Transaction identifiers — doc: getTransactionCode, getTransactionId, getHostNsu, getUserReference
         ret.put("transactionCode", safeString(result.getTransactionCode()));
         ret.put("transactionId", safeString(result.getTransactionId()));
         ret.put("hostNsu", safeString(result.getHostNsu()));
-        ret.put("nsu", safeString(result.getNsu()));
-        ret.put("autoCode", safeString(result.getAutoCode()));
         ret.put("userReference", safeString(result.getUserReference()));
 
-        // Terminal info
+        // Terminal info — doc: getTerminalSerialNumber, getDate, getTime
         ret.put("terminalSerialNumber", safeString(result.getTerminalSerialNumber()));
         ret.put("date", safeString(result.getDate()));
         ret.put("time", safeString(result.getTime()));
 
-        // Card info (safe — only brand + last4, no PAN)
+        // Card info (safe) — doc: getCardBrand, getBin (últimos 4), getHolder (últimos 4)
         ret.put("cardBrand", safeString(result.getCardBrand()));
         String bin = safeString(result.getBin());
         if (bin != null && bin.length() > 4) {
@@ -624,11 +668,17 @@ public class PlugPagTerminalPlugin extends Plugin {
         }
         ret.put("cardLast4", bin);
 
-        // Payment type
-        ret.put("paymentType", result.getPaymentType());
+        // Amount — doc: getAmount
         ret.put("amount", safeString(result.getAmount()));
 
-        // holderName — PII, included but callers must mask before persist/log
+        // paymentType — existe no SDK (confirmado via demo oficial SharedPrefDataStorage)
+        try {
+            ret.put("paymentType", result.getPaymentType());
+        } catch (Exception e) {
+            // Campo pode não existir em versões futuras
+        }
+
+        // holderName — doc: getHolderName (PII, callers must mask before persist/log)
         ret.put("holderName", safeString(result.getHolderName()));
 
         return ret;

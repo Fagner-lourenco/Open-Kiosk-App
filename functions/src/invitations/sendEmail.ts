@@ -21,7 +21,7 @@ interface SendInvitationData {
   invitationId?: string;
 }
 
-export const sendInvitationEmail = onCall(async (request) => {
+export const sendInvitationEmail = onCall({ region: 'southamerica-east1' }, async (request) => {
   const data = request.data as SendInvitationData;
   // 🔧 v4.0.7: Usando helpers centralizados
   requireAuth(request);

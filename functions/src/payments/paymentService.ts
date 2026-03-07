@@ -1,6 +1,23 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import type { CallableRequest } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
+
+/**
+ * Customer anônimo para pagamentos PIX no kiosk quando o cliente não
+ * fornece dados pessoais.
+ *
+ * CPF 529.982.247-25: CPF fictício, matematicamente válido (dígitos
+ * verificadores corretos), usado em documentações técnicas brasileiras.
+ * NÃO pertence a nenhuma pessoa física real.
+ *
+ * A API REST PagBank (sandbox e produção) exige `customer` com name +
+ * tax_id + email mesmo para ordens PIX anônimas.
+ */
+const KIOSK_ANONYMOUS_CUSTOMER = {
+  name: 'Cliente Kiosk',
+  taxId: '52998224725',
+  email: 'kiosk@openkiosk.app',
+} as const;
 import crypto from 'crypto';
 import { db, admin, requireAuth, requireFranchiseAccess, sanitizeForLog } from '../lib';
 import { createPagBankProvider, type PagBankProviderConfig } from './providers/pagbank';
@@ -131,7 +148,16 @@ export const createPaymentIntent = async (
   if (!Array.isArray(data.items) || data.items.length === 0) {
     throw new HttpsError('invalid-argument', 'Itens do pedido sao obrigatorios.');
   }
-  if (!data.customer?.name || !data.customer?.taxId) {
+  if (method === 'pix') {
+    // PIX no kiosk: PagBank exige customer com name + tax_id + email mesmo para
+    // pagamentos anônimos. Aplica fallbacks independentemente de o frontend já ter
+    // fornecido name/taxId — o email em especial costuma vir ausente.
+    data.customer = {
+      name: data.customer?.name || KIOSK_ANONYMOUS_CUSTOMER.name,
+      taxId: data.customer?.taxId || KIOSK_ANONYMOUS_CUSTOMER.taxId,
+      email: data.customer?.email || KIOSK_ANONYMOUS_CUSTOMER.email,
+    };
+  } else if (!data.customer?.name || !data.customer?.taxId) {
     throw new HttpsError('invalid-argument', 'Dados do cliente obrigatorios.');
   }
   if ((method === 'credit' || method === 'debit') && !data.card) {
@@ -146,7 +172,7 @@ export const createPaymentIntent = async (
     }
   }
 
-  requireFranchiseAccess(context, franchiseId);
+  await requireFranchiseAccess(context, franchiseId);
   await assertStoreAccess(context, franchiseId, storeId);
 
   const storeRef = db.doc(`franchises/${franchiseId}/stores/${storeId}`);
@@ -166,7 +192,7 @@ export const createPaymentIntent = async (
     0,
   );
   if (itemsTotal > 0 && amount !== itemsTotal) {
-    console.warn(`[createPayment] Amount ${amount} != itemsTotal ${itemsTotal}`);
+    logger.warn('[createPayment] Amount mismatch', { amount, itemsTotal });
     throw new HttpsError(
       'invalid-argument',
       'Valor do pagamento nao corresponde ao total dos itens.',
@@ -196,7 +222,7 @@ export const createPaymentIntent = async (
       const maxAllowed = itemsTotal * (1 + maxVar) + taxMargin;
       const minAllowed = Math.max(0, itemsTotal * (1 - maxVar) - taxMargin);
       if (amount > maxAllowed || amount < minAllowed) {
-        console.warn(`[createPayment] Amount ${amount} fora dos limites DP [${minAllowed.toFixed(2)}, ${maxAllowed.toFixed(2)}] para items total ${itemsTotal.toFixed(2)}`);
+        logger.warn('[createPayment] Amount fora dos limites DP', { amount, minAllowed, maxAllowed, itemsTotal });
         throw new HttpsError(
           'invalid-argument',
           'Valor do pagamento fora dos limites permitidos pelo preco dinamico.',
@@ -216,13 +242,13 @@ export const createPaymentIntent = async (
     throw new HttpsError('failed-precondition', 'Metodo de pagamento desativado.');
   }
 
-  const pagbankClientId = gatewayConfig.providers?.pagbank?.clientId;
   const pagbankPublicKey = gatewayConfig.providers?.pagbank?.publicKey;
-  if (!pagbankClientId) {
-    throw new HttpsError('failed-precondition', 'PagBank clientId nao configurado.');
-  }
+  // clientId is NOT required for PagBank direct Bearer-token auth (PIX, etc.).
+  // The PagBank provider only uses authToken from functions/.env.
+  // publicKey is only needed for online card tokenization (PagBank.js SDK),
+  // NOT for PlugPag terminal payments which are processed locally.
   if ((method === 'credit' || method === 'debit') && !pagbankPublicKey) {
-    throw new HttpsError('failed-precondition', 'PagBank publicKey nao configurado.');
+    logger.warn('[payments] PagBank publicKey vazio — cartão online não funcionará (PlugPag OK).');
   }
 
   // ====================================================================
@@ -399,7 +425,7 @@ export const syncPendingPaymentsForPagBank = async (): Promise<void> => {
         if (statusResult.status !== payment.status) {
           // KIO-03/KIO-04: If cancel was requested but provider says paid,
           // mark as paid_after_cancel for admin reconciliation (requires manual refund).
-          const isCancelRequested = !!(payment as any).cancelRequested;
+          const isCancelRequested = !!payment.cancelRequested;
           const newStatus = (isCancelRequested && statusResult.status === 'paid')
             ? 'paid' as PaymentStatus  // still mark as paid — but flag for refund
             : statusResult.status;

@@ -209,6 +209,8 @@ interface TapConfigLocal {
   };
   productId?: string;
   productName?: string;
+  /** MAC Bluetooth do terminal PlugPag vinculado (ex: "90:97:D5:F1:74:B5") */
+  plugpagDeviceId?: string;
 }
 
 // ============================================================================
@@ -402,9 +404,10 @@ const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
  * @returns Canonical PaymentProvider
  */
 const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
-  if (!provider) return 'none';
+  if (!provider) return 'mercado_pago';
   if (provider === 'mercadopago') return 'mercado_pago';
-  return provider as PaymentProvider;
+  if (provider === 'none' || provider === 'mercado_pago' || provider === 'pagbank') return provider;
+  return 'none';
 };
 
 const normalizePaymentGatewayConfig = (data?: Partial<StoreSettings> | null): PaymentGatewayConfig => {
@@ -431,8 +434,7 @@ const normalizePaymentGatewayConfig = (data?: Partial<StoreSettings> | null): Pa
     providers: {
       pagbank: {
         ...(current?.providers?.pagbank || {}),
-        clientId: current?.providers?.pagbank?.clientId || legacyGateway?.clientId,
-        merchantId: current?.providers?.pagbank?.merchantId || legacyGateway?.merchantId,
+        // clientId and merchantId removed — dead fields never used by PagBank API
         publicKey: current?.providers?.pagbank?.publicKey || legacyGateway?.publicKey,
       },
       mercadopago: {
@@ -458,6 +460,11 @@ const sanitizePaymentGatewayConfigForSave = (config: PaymentGatewayConfig): Paym
   delete (sanitized as any).storeId;
   delete (sanitized as any).externalPosId;
   delete (sanitized as any).terminalId;
+  // Clean dead PagBank fields
+  if (sanitized.providers?.pagbank) {
+    delete (sanitized.providers.pagbank as any).clientId;
+    delete (sanitized.providers.pagbank as any).merchantId;
+  }
   return sanitized;
 };
 
@@ -465,17 +472,17 @@ const validatePaymentGatewayConfig = (config: PaymentGatewayConfig): string[] =>
   const errors: string[] = [];
 
   if (config.provider === 'pagbank') {
-    const clientId = config.providers?.pagbank?.clientId;
     const publicKey = config.providers?.pagbank?.publicKey;
-    const needsPix = config.enabledMethods?.pix;
+    const plugpagEnabled = (config.providers?.pagbank as any)?.plugpag?.enabled;
     const needsCard = config.enabledMethods?.credit || config.enabledMethods?.debit;
 
-    if ((needsPix || needsCard) && !clientId) {
-      errors.push('PagBank: Client ID é obrigatório.');
+    // publicKey is only needed for online card payments (PagBank.js SDK).
+    // PlugPag terminal payments are processed locally and don't need it.
+    if (needsCard && !publicKey && !plugpagEnabled) {
+      errors.push('PagBank: Public Key é obrigatório para cartão online (não necessário com maquininha).');
     }
-    if (needsCard && !publicKey) {
-      errors.push('PagBank: Public Key é obrigatório para cartão.');
-    }
+    // clientId is NOT required — PagBank API uses Bearer token auth (authToken in functions/.env)
+    // merchantId is informational only — never sent to PagBank API
   }
 
   return errors;
@@ -784,6 +791,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           },
           productId: t.productId,
           productName: t.productName,
+          plugpagDeviceId: t.plugpagDeviceId,
         }));
       } else if (Array.isArray(storeData.dispensers) && storeData.dispensers.length > 0) {
         loadedTaps = convertDispensersToTaps(storeData.dispensers);
@@ -850,6 +858,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             } : undefined,
             productId: t.productId,
             productName: t.productName,
+            plugpagDeviceId: t.plugpagDeviceId,
           }));
           // [FIX BUG-GES-06] Usar increment atômico em vez de valor stale do cache
           tapsPayload.tapsVersion = increment(1);
@@ -911,13 +920,25 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
     if (!settings) return;
     const current = settings.paymentGatewayConfig || normalizePaymentGatewayConfig(settings);
 
-    // Deep-merge dinâmico de providers (suporta qualquer gateway do registry)
+    // Deep-merge recursivo para suportar chaves aninhadas (ex: plugpag.enabled + plugpag.activationCode)
+    const deepMerge = (target: Record<string, any>, source: Record<string, any>): Record<string, any> => {
+      const result = { ...target };
+      for (const [key, value] of Object.entries(source)) {
+        if (value && typeof value === 'object' && !Array.isArray(value) && target[key] && typeof target[key] === 'object') {
+          result[key] = deepMerge(target[key], value);
+        } else {
+          result[key] = value;
+        }
+      }
+      return result;
+    };
+
     const mergedProviders: Record<string, Record<string, unknown>> = {
       ...(current.providers as Record<string, Record<string, unknown>> || {}),
     };
     if (partial.providers) {
       for (const [key, value] of Object.entries(partial.providers)) {
-        mergedProviders[key] = { ...(mergedProviders[key] || {}), ...value };
+        mergedProviders[key] = deepMerge((mergedProviders[key] || {}) as Record<string, any>, value as Record<string, any>);
       }
     }
 
@@ -1265,33 +1286,93 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                 const gwDef = getGatewayById(gatewayConfig.provider);
                 if (!gwDef) return null;
                 const fsKey = gwDef.firestoreKey as keyof NonNullable<PaymentGatewayConfig['providers']>;
-                const providerData = (gatewayConfig.providers as Record<string, Record<string, string> | undefined>)?.[fsKey] || {};
+                const providerData = (gatewayConfig.providers as Record<string, Record<string, any> | undefined>)?.[fsKey] || {};
+
+                // Helper to get nested value (e.g. 'plugpag.enabled' → providerData.plugpag?.enabled)
+                const getNestedValue = (key: string): any => {
+                  const parts = key.split('.');
+                  let val: any = providerData;
+                  for (const p of parts) { val = val?.[p]; }
+                  return val;
+                };
+
+                // Helper to build nested update object (e.g. 'plugpag.enabled', true → { plugpag: { enabled: true } })
+                const buildNestedUpdate = (key: string, value: any): Record<string, any> => {
+                  const parts = key.split('.');
+                  if (parts.length === 1) return { [key]: value };
+                  const result: Record<string, any> = {};
+                  let current = result;
+                  for (let i = 0; i < parts.length - 1; i++) {
+                    current[parts[i]] = {};
+                    current = current[parts[i]];
+                  }
+                  current[parts[parts.length - 1]] = value;
+                  return result;
+                };
 
                 return (
-                  <div className="space-y-3">
-                    <Label className="text-base font-medium">{gwDef.displayName}</Label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {gwDef.configFields.map((field) => (
-                        <div key={field.key}>
-                          <Label>{field.label}{field.required ? ' *' : ''}</Label>
+                  <div className="space-y-4">
+                    {gwDef.configFields.map((field) => {
+                      // Conditional visibility: skip if dependsOn key is falsy
+                      if (field.dependsOn && !getNestedValue(field.dependsOn)) {
+                        return null;
+                      }
+
+                      // Section header
+                      if (field.type === 'section') {
+                        return (
+                          <div key={field.key} className="pt-2 pb-1 border-b">
+                            <Label className="text-sm font-semibold">{field.label}</Label>
+                            {field.helpText && (
+                              <p className="text-xs text-muted-foreground mt-0.5">{field.helpText}</p>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // Toggle
+                      if (field.type === 'toggle') {
+                        return (
+                          <div key={field.key} className="flex items-center justify-between p-3 border rounded-lg bg-muted/30">
+                            <div>
+                              <Label className="text-sm font-medium">{field.label}</Label>
+                              {field.helpText && (
+                                <p className="text-xs text-muted-foreground mt-0.5 max-w-lg">{field.helpText}</p>
+                              )}
+                            </div>
+                            <Switch
+                              checked={!!getNestedValue(field.key)}
+                              onCheckedChange={(checked) => updatePaymentGatewayConfig({
+                                providers: { [fsKey]: buildNestedUpdate(field.key, checked) },
+                              })}
+                            />
+                          </div>
+                        );
+                      }
+
+                      // Text / Password / Select
+                      return (
+                        <div key={field.key} className="max-w-md">
+                          <Label className="text-sm">{field.label}{field.required ? ' *' : ''}</Label>
                           <Input
                             type={field.type === 'password' ? 'password' : 'text'}
-                            value={providerData[field.key] || ''}
+                            value={getNestedValue(field.key) || ''}
                             onChange={(e) => updatePaymentGatewayConfig({
-                              providers: { [fsKey]: { [field.key]: e.target.value } },
+                              providers: { [fsKey]: buildNestedUpdate(field.key, e.target.value) },
                             })}
                             placeholder={field.placeholder}
+                            className="mt-1"
                           />
                           {field.helpText && (
                             <p className="text-xs text-muted-foreground mt-1">{field.helpText}</p>
                           )}
                         </div>
-                      ))}
-                    </div>
+                      );
+                    })}
 
                     {/* Notas informativas do gateway */}
                     {gwDef.adminNotes && gwDef.adminNotes.length > 0 && (
-                      <Alert className="border-blue-200 bg-blue-50">
+                      <Alert className="border-blue-200 bg-blue-50 mt-4">
                         <Info className="h-4 w-4 text-blue-600" />
                         <AlertDescription className="text-blue-800 text-xs space-y-1">
                           {gwDef.adminNotes.map((note, i) => (
@@ -1772,6 +1853,34 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                         />
                         <p className="text-xs text-muted-foreground mt-0.5">Valor tipico: 30-40 mL/s</p>
                       </div>
+                    </div>
+
+                    {/* Terminal PlugPag (Maquininha) */}
+                    <div>
+                      <Label className="text-xs font-medium">Maquininha PagBank (MAC Bluetooth)</Label>
+                      <Input
+                        value={tap.plugpagDeviceId ?? ''}
+                        onChange={(e) => {
+                          const updated = [...settings.taps!];
+                          const val = e.target.value.trim().toUpperCase();
+                          
+                          // Validar formato MAC: XX:XX:XX:XX:XX:XX (hexadecimal)
+                          const macRegex = /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/;
+                          if (val && !macRegex.test(val)) {
+                            // Formato inválido: não salvar (apenas se preenchido)
+                            return;
+                          }
+                          
+                          updated[index] = { ...updated[index], plugpagDeviceId: val || undefined };
+                          handleChange('taps', updated);
+                        }}
+                        placeholder="90:97:D5:F1:74:B5"
+                        className="w-56 font-mono"
+                        maxLength={17}
+                      />
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        MAC da maquininha. Para descobrir: na maquininha vá em Menu → ID do Equipamento → End. Físico.
+                      </p>
                     </div>
                   </div>
                 );

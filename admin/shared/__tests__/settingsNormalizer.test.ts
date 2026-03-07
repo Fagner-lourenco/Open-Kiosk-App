@@ -60,16 +60,16 @@ describe('shared/utils/settingsNormalizer', () => {
   });
 
   describe('toDualWritePayload', () => {
-    it('escreve apenas campos canônicos', () => {
+    it('escreve campos canônicos e legacy mirror', () => {
       const payload = toDualWritePayload({
         kioskEnabled: true,
         attractTimeoutSeconds: 90,
       });
       expect(payload.kioskEnabled).toBe(true);
       expect(payload.attractTimeoutSeconds).toBe(90);
-      // Legacy fields no longer written
-      expect(payload.kioskMode).toBeUndefined();
-      expect(payload.idleTimeout).toBeUndefined();
+      // Dual-write: legacy mirror fields also written
+      expect(payload.kioskMode).toBe(true);
+      expect(payload.idleTimeout).toBe(90);
     });
 
     it('preserva language e attractScreenEnabled', () => {

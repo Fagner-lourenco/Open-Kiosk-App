@@ -16,9 +16,11 @@ describe('Audit Admin - franchise delete contracts', () => {
       (match) => match[1],
     );
 
+    expect(source).toContain('franchises/${currentFranchise.id}/stores');
     expect(subcollections).toEqual(
-      expect.arrayContaining(['stores', 'members', 'auditLogs']),
+      expect.arrayContaining(['members', 'auditLogs']),
     );
     expect(subcollections).not.toContain('invitations');
+    expect(source).toContain("collection(db, 'invitations')");
   });
 });

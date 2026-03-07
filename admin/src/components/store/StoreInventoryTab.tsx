@@ -384,7 +384,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent className="w-[400px]" align="start">
+                <DropdownMenuContent className="w-[min(400px,calc(100vw-2rem))]" align="start">
                   <div className="p-2">
                     <div className="relative">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -561,6 +561,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
               Nenhuma movimentação registrada
             </p>
           ) : (
+            <div className="overflow-x-auto -mx-4 px-4 sm:-mx-6 sm:px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -596,6 +597,7 @@ export function StoreInventoryTab({ franchiseId, storeId }: StoreInventoryTabPro
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

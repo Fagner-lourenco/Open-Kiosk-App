@@ -6,7 +6,7 @@
  * Serviço para gerenciamento de billing via Stripe.
  */
 
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
 import {
   collection,
   doc,
@@ -17,7 +17,7 @@ import {
   limit,
   Timestamp
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, functions } from '../lib/firebase';
 import { franchisePath, billingEventsPath } from '../lib/pathResolver';
 import {
   BillingPlan,
@@ -28,8 +28,6 @@ import {
   PLAN_DETAILS,
   PlanDetails
 } from '../types/billing';
-
-const functions = getFunctions();
 
 /**
  * Obtém informações de billing da franquia

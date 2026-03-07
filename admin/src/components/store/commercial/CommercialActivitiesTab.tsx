@@ -440,7 +440,7 @@ export function CommercialActivitiesTab({ franchiseId, storeId }: Props) {
               <p>Nenhuma atividade encontrada</p>
             </div>
           ) : (
-            <div className="rounded-md border">
+            <div className="rounded-md border overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>

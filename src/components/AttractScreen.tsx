@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Hand } from 'lucide-react';
 import { useTranslation } from '@/i18n';
-import { AttractVideoSettings } from '@/types/store';
 import type { AttractVideoConfig } from '../../shared/types/store';
 import { useCachedVideo } from '@/hooks/useCachedVideo';
 import { unlockAudio } from '@/hooks/useAudioVoice';
@@ -30,16 +29,7 @@ const AttractScreen = ({
   const [isExiting, setIsExiting] = useState(false);
   const startTriggeredRef = useRef(false);
 
-  const videoSettings: AttractVideoSettings | null = attractVideoConfig
-    ? {
-        isEnabled: attractVideoConfig.isEnabled,
-        videoUrl: attractVideoConfig.videoUrl,
-        displayTitle: attractVideoConfig.displayTitle,
-        displaySubtitle: attractVideoConfig.displaySubtitle,
-        videoOpacity: attractVideoConfig.videoOpacity,
-        videoCoverMode: attractVideoConfig.videoCoverMode,
-      }
-    : null;
+  const videoSettings: AttractVideoConfig | null = attractVideoConfig ?? null;
 
   const {
     videoUrl: cachedVideoUrl,
@@ -56,16 +46,6 @@ const AttractScreen = ({
 
   // Whether video is actively playing (controls conditional rendering of heavy decorations)
   const hasVideo = !!(cachedVideoUrl && videoSettings?.isEnabled);
-
-  // 🔍 DIAG: rastrear toda a cadeia de vídeo quando tela visível
-  useEffect(() => {
-    if (visible) {
-      console.warn('[AttractScreen] attractVideoConfig:', JSON.stringify(attractVideoConfig ?? 'UNDEFINED'));
-      console.warn('[AttractScreen] videoSettings:', JSON.stringify(videoSettings));
-      console.warn('[AttractScreen] cachedVideoUrl:', cachedVideoUrl ?? 'NULL');
-      console.warn('[AttractScreen] hasVideo:', hasVideo);
-    }
-  }, [visible, attractVideoConfig, videoSettings, cachedVideoUrl, hasVideo]);
 
   // Swap video src via ref instead of remounting with key={url}
   const prevVideoUrlRef = useRef<string | null>(null);

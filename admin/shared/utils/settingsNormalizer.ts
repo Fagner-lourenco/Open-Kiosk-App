@@ -84,14 +84,18 @@ export interface NormalizedStoreSettings {
 export function normalizeStoreSettings(data: RawStoreData): NormalizedStoreSettings {
   const result: NormalizedStoreSettings = {};
 
-  // kioskEnabled: direct read
+  // kioskEnabled: canonical wins, fallback to legacy kioskMode
   if (data.kioskEnabled !== undefined) {
     result.kioskEnabled = data.kioskEnabled;
+  } else if ((data as Record<string, unknown>).kioskMode !== undefined) {
+    result.kioskEnabled = (data as Record<string, unknown>).kioskMode as boolean;
   }
 
-  // attractTimeoutSeconds: direct read
+  // attractTimeoutSeconds: canonical wins, fallback to legacy idleTimeout
   if (data.attractTimeoutSeconds !== undefined) {
     result.attractTimeoutSeconds = data.attractTimeoutSeconds;
+  } else if ((data as Record<string, unknown>).idleTimeout !== undefined) {
+    result.attractTimeoutSeconds = (data as Record<string, unknown>).idleTimeout as number;
   }
 
   // attractScreenEnabled: no legacy alias, pass-through
@@ -130,10 +134,12 @@ export function toDualWritePayload(settings: NormalizedStoreSettings): Record<st
 
   if (settings.kioskEnabled !== undefined) {
     payload.kioskEnabled = settings.kioskEnabled;
+    payload.kioskMode = settings.kioskEnabled;  // legacy mirror
   }
 
   if (settings.attractTimeoutSeconds !== undefined) {
     payload.attractTimeoutSeconds = settings.attractTimeoutSeconds;
+    payload.idleTimeout = settings.attractTimeoutSeconds;  // legacy mirror
   }
 
   if (settings.attractScreenEnabled !== undefined) {

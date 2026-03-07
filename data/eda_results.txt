@@ -1,0 +1,73 @@
+=== A01: BEER CONSUMPTION SP ===
+Rows: 365
+Consumption: mean=25.40L std=4.40
+Temperature: mean=21.2C range=10.6-36.5C
+Regression: cons = 8.53 + 0.7949 * temp
+  +1C => +0.795L (+3.13%)
+  R=0.5746 R2=0.3302
+Weekend: weekday=24.0L weekend=28.9L boost=+20.5%
+Rain: dry=25.9L rainy=24.6L penalty=-5.1%
+
+Temp bins:
+  (10, 15]: 19.8L (n=9)
+  (15, 20]: 22.9L (n=112)
+  (20, 25]: 26.4L (n=204)
+  (25, 30]: 28.9L (n=40)
+
+Correlations with consumption:
+  Temperatura Media (C): r=0.5746
+  Temperatura Minima (C): r=0.3925
+  Temperatura Maxima (C): r=0.6427
+  Precipitacao (mm): r=-0.1938
+  Final de Semana: r=0.5060
+
+=== A02: CRAFT BEER BAR ===
+Transactions: 50084
+Date range: 2020-01-01 23:00:00 to 2022-09-18 15:00:00 (990 days)
+Peak hour: 16:00 (9122 txns)
+Peak/trough ratio: 112.6x
+Busiest day: Tuesday (9504 txns)
+
+Hourly distribution:
+   0:00   1965 ( 3.9%) #######
+   1:00   1078 ( 2.2%) ####
+   2:00    416 ( 0.8%) #
+   3:00    412 ( 0.8%) #
+   4:00    112 ( 0.2%) 
+  11:00    100 ( 0.2%) 
+  12:00     81 ( 0.2%) 
+  13:00    593 ( 1.2%) ##
+  14:00   1306 ( 2.6%) #####
+  15:00   8466 (16.9%) #################################
+  16:00   9122 (18.2%) ####################################
+  17:00   8506 (17.0%) #################################
+  18:00   7110 (14.2%) ############################
+  19:00   4510 ( 9.0%) ##################
+  20:00   1713 ( 3.4%) ######
+  21:00   1660 ( 3.3%) ######
+  22:00   1144 ( 2.3%) ####
+  23:00   1790 ( 3.6%) #######
+
+Day of week:
+  Tuesday: 9504
+  Sunday: 8067
+  Wednesday: 7280
+  Friday: 6501
+  Saturday: 6372
+  Monday: 6332
+  Thursday: 6028
+
+Columns: ['Date_and_time_of_unloading', 'Product_code', 'Amount', 'Sale_amount', 'Discount_amount', 'Profit', 'Percentage_markup', 'Discount_percentage', 'dt', 'hour', 'dow']
+
+Products: 5314
+Columns: ['Product_code', 'Vendor_code', 'Name', 'Retail_price', 'Base_unit', 'Country_of_Origin', 'Size', 'ABV']
+
+=== CALIBRATION CONSTANTS ===
+BETA_TEMP = 0.7949  // L per 1C
+BETA_TEMP_PCT = 3.13  // % per 1C
+R_SQUARED = 0.3302
+WEEKEND_BOOST = 0.2052  // +20.5%
+RAIN_PENALTY = -0.0506  // -5.1%
+MEAN_DAILY_L = 25.40
+PEAK_HOUR = 16
+PEAK_TROUGH_RATIO = 112.6

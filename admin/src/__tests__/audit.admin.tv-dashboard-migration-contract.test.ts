@@ -11,7 +11,7 @@ describe('Audit Admin - tv dashboard migration contracts', () => {
     const appSource = read('../App.tsx');
 
     expect(appSource).toContain('path="/ranking/display/:storeId"');
-    expect(appSource).toContain('element={<TvDashboardPage />}');
+    expect(appSource).toContain('<TvDashboardPage />');
   });
 
   it('TvDashboardPage usa hooks agregados e não consulta orders diretamente', () => {

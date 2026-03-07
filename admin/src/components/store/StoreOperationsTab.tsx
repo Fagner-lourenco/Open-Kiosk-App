@@ -490,6 +490,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
               <p>Nenhuma sessao registrada</p>
             </div>
           ) : (
+            <div className="overflow-x-auto -mx-4 px-4 sm:-mx-6 sm:px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -546,6 +547,7 @@ export function StoreOperationsTab({ franchiseId, storeId }: StoreOperationsTabP
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

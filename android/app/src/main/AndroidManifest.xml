@@ -45,6 +45,9 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- PlugPag SDK: Activity obrigatória para transações de pagamento -->
+        <activity android:name="br.com.uol.pagseguro.plugpag.PlugPagActivity" />
     </application>
 
     <!-- Permissions -->
@@ -79,5 +82,12 @@
     <!-- Foreground Service para manter conexão BLE estável -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+
+    <!-- PlugPag SDK: necessário para identificação do dispositivo -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
+    <!-- PlugPag SDK: obrigatório para transações (docs PlugPag §Permissões) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     
 </manifest>

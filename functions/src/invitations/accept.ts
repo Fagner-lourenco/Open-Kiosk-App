@@ -17,7 +17,7 @@ interface AcceptInvitationData {
   invitationId?: string;
 }
 
-export const acceptInvitation = onCall(async (request) => {
+export const acceptInvitation = onCall({ region: 'southamerica-east1' }, async (request) => {
   const data = request.data as AcceptInvitationData;
   // 🔧 v4.0.7: Usando helper centralizado
   requireAuth(request);
@@ -94,6 +94,42 @@ export const acceptInvitation = onCall(async (request) => {
       );
     }
 
+    const invitationFranchiseId = typeof invitation.franchiseId === 'string'
+      ? invitation.franchiseId.trim()
+      : '';
+
+    if (!invitationFranchiseId) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Convite inválido: franchiseId ausente'
+      );
+    }
+
+    // Garantir integridade: convite não pode criar membership para franquia inexistente/inativa
+    const franchiseSnap = await db.collection('franchises').doc(invitationFranchiseId).get();
+    if (!franchiseSnap.exists) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Franquia do convite não existe'
+      );
+    }
+
+    const franchiseData = franchiseSnap.data() as { status?: string; isActive?: boolean } | undefined;
+    const franchiseStatus = typeof franchiseData?.status === 'string'
+      ? franchiseData.status.toLowerCase()
+      : 'active';
+    const franchiseIsActive = franchiseData?.isActive !== false
+      && franchiseStatus !== 'inactive'
+      && franchiseStatus !== 'disabled'
+      && franchiseStatus !== 'deleted';
+
+    if (!franchiseIsActive) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Franquia do convite está inativa'
+      );
+    }
+
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     // Resolve storeAccess e storeId de forma canonica
@@ -108,12 +144,34 @@ export const acceptInvitation = onCall(async (request) => {
     );
 
 
+    // 🔒 FIX P0-4: Fetch Auth user BEFORE entering the Firestore transaction.
+    // Auth API calls are external network calls that can cause transaction timeout
+    // and redundant retries. Pre-fetch once and reuse inside the transaction.
+    const authUser = await admin.auth().getUser(uid);
+
     // 🔒 FIX BUG-A5: Use transaction instead of batch to prevent double-accept race
     await db.runTransaction(async (txn) => {
       // Re-read invitation inside transaction to guard against concurrent accept
       const freshInviteSnap = await txn.get(inviteDoc.ref);
       if (!freshInviteSnap.exists || freshInviteSnap.data()?.status !== 'pending') {
-        throw new HttpsError('failed-precondition', 'Convite já foi utilizado ou não está pendente');
+        throw new HttpsError('failed-precondition', 'Convite j� foi utilizado ou n�o est� pendente');
+      }
+
+      const franchiseRef = db.collection('franchises').doc(invitationFranchiseId);
+      const freshFranchiseSnap = await txn.get(franchiseRef);
+      if (!freshFranchiseSnap.exists) {
+        throw new HttpsError('failed-precondition', 'Franquia do convite n�o existe');
+      }
+      const freshFranchise = freshFranchiseSnap.data() as { status?: string; isActive?: boolean } | undefined;
+      const freshFranchiseStatus = typeof freshFranchise?.status === 'string'
+        ? freshFranchise.status.toLowerCase()
+        : 'active';
+      const freshFranchiseIsActive = freshFranchise?.isActive !== false
+        && freshFranchiseStatus !== 'inactive'
+        && freshFranchiseStatus !== 'disabled'
+        && freshFranchiseStatus !== 'deleted';
+      if (!freshFranchiseIsActive) {
+        throw new HttpsError('failed-precondition', 'Franquia do convite est� inativa');
       }
 
       // Atualiza o convite
@@ -130,19 +188,18 @@ export const acceptInvitation = onCall(async (request) => {
       if (userDoc.exists) {
         txn.update(userRef, {
           role: invitation.role,
-          franchiseId: invitation.franchiseId,
+          franchiseId: invitationFranchiseId,
           storeId: resolvedStoreId,
           storeAccess: resolvedStoreAccess,
           updatedAt: now,
         });
       } else {
-        const authUser = await admin.auth().getUser(uid);
         txn.set(userRef, {
           email: authUser.email,
           displayName: authUser.displayName || null,
           photoURL: authUser.photoURL || null,
           role: invitation.role,
-          franchiseId: invitation.franchiseId,
+          franchiseId: invitationFranchiseId,
           storeId: resolvedStoreId,
           storeAccess: resolvedStoreAccess,
           createdAt: now,
@@ -153,11 +210,10 @@ export const acceptInvitation = onCall(async (request) => {
       }
 
       // CRÍTICO: Criar membership na subcollection da franquia
-      const memberRef = db.collection('franchises').doc(invitation.franchiseId).collection('members').doc(uid);
+      const memberRef = db.collection('franchises').doc(invitationFranchiseId).collection('members').doc(uid);
       const memberDoc = await txn.get(memberRef);
 
       if (!memberDoc.exists) {
-        const authUser = await admin.auth().getUser(uid);
         txn.set(memberRef, {
           userId: uid,
           email: authUser.email || userEmail,
@@ -187,7 +243,7 @@ export const acceptInvitation = onCall(async (request) => {
     const newClaims: Record<string, unknown> = {
       ...currentClaims,
       role: invitation.role,
-      franchiseId: invitation.franchiseId,
+      franchiseId: invitationFranchiseId,
       storeId: resolvedStoreId,
       storeAccess: resolvedStoreAccess,
     };
@@ -199,11 +255,11 @@ export const acceptInvitation = onCall(async (request) => {
 
     await admin.auth().setCustomUserClaims(uid, newClaims);
 
-    logger.info(`Convite aceito por ${userEmail} para franquia ${invitation.franchiseId}`);
+    logger.info(`Convite aceito por ${userEmail} para franquia ${invitationFranchiseId}`);
 
     return {
       success: true,
-      franchiseId: invitation.franchiseId,
+      franchiseId: invitationFranchiseId,
       role: invitation.role,
       storeId: resolvedStoreId,
     };
@@ -223,7 +279,7 @@ export const acceptInvitation = onCall(async (request) => {
 /**
  * HTTP endpoint para validar token (público)
  */
-export const validateInvitationToken = onRequest(async (req, res) => {
+export const validateInvitationToken = onRequest({ region: 'southamerica-east1' }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');

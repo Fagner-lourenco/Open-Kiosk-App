@@ -354,6 +354,9 @@ export interface TapConfig {
 
   /** Nome do produto pré-selecionado (opcional) */
   productName?: string;
+
+  /** MAC Bluetooth do terminal PlugPag vinculado a esta torneira (ex: "90:97:D5:F1:74:B5") */
+  plugpagDeviceId?: string;
 }
 
 // ============================================================================

@@ -11,11 +11,11 @@ export { onUserCreated } from './auth/onCreate';
 export { setCustomClaims } from './auth/setCustomClaims';
 
 // Claims management functions
-export { 
-  setAdminClaims, 
-  syncMembershipClaims, 
+export {
+  setAdminClaims,
+  syncMembershipClaims,
   getClaimsForUser,
-  refreshUserToken 
+  refreshUserToken
 } from './auth/claims';
 
 // Invitation functions
@@ -35,10 +35,13 @@ export { aggregateDailySales, aggregateDailySalesHTTP } from './analytics/aggreg
 export { getMetricsAdmin } from './analytics/getMetricsAdmin';
 
 // Order aggregation triggers (real-time metrics)
-export { 
-  onOrderCreated, 
-  onOrderUpdated 
+export {
+  onOrderCreated,
+  onOrderUpdated
 } from './analytics/aggOrders';
+
+// Dedup collection cleanup (scheduled)
+export { cleanupDedupCollections } from './analytics/cleanupDedupCollections';
 
 // Payments (PagBank + generic)
 export { createPayment, pagbankWebhook, cancelPagBankPayment, syncPendingPayments } from './payments';
@@ -62,10 +65,10 @@ export { cleanupOldNotifications } from './erp/cleanupOldNotifications';
 export { cleanupKegProcessedEvents } from './erp/cleanupKegProcessedEvents';
 export { checkFinanceOverdue } from './erp/checkFinanceOverdue';
 
-// Migrations
-export { consolidatePaymentGatewayConfig, rollbackPaymentGatewayConfig } from './migrations/consolidatePaymentGatewayConfig';
-export { unifyStoreSettings } from './migrations/unifyStoreSettings';
-export { migrateDispensersToTaps } from './migrations/migrateDispensersToTaps';
+// Migrations (DISABLED — one-time scripts already executed, kept as source reference only)
+// export { consolidatePaymentGatewayConfig, rollbackPaymentGatewayConfig } from './migrations/consolidatePaymentGatewayConfig';
+// export { unifyStoreSettings } from './migrations/unifyStoreSettings';
+// export { migrateDispensersToTaps } from './migrations/migrateDispensersToTaps';
 
 // Cleanup triggers (ADM-03/ADM-05)
 export { onDeleteStore } from './cleanup/onDeleteStore';
@@ -87,3 +90,6 @@ export { recalculateRanking30minNow } from './ranking/recalculate30minNow';
 
 // Push Notifications (FCM)
 export { sendPushNotification } from './notifications/sendPushNotification';
+
+// Forecast — Demand prediction engine
+export { calculateDemandForecast, fetchClimate } from './forecast';

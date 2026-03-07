@@ -23,6 +23,7 @@ import { authService } from '@/services/authService';
 
 
 import { doc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 
 
 
@@ -101,6 +102,25 @@ const useStoreSettingsCore = () => {
   // Permission-denied guard: evita retry infinito quando listeners falham
   const permissionDeniedRef = useRef({ store: false, kioskConfig: false, eventStats: false });
 
+  // Auth UID state: trigger para re-executar listeners quando auth resolve
+  const [authUid, setAuthUid] = useState<string | null>(null);
+
+  // Escuta mudanças de auth para trigger dos Firestore listeners
+  useEffect(() => {
+    if (!isFirebaseInitialized()) return;
+    const auth = getFirebaseAuth();
+    if (!auth) return;
+    setAuthUid(auth.currentUser?.uid ?? null);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      const uid = user?.uid ?? null;
+      setAuthUid(uid);
+      if (uid) {
+        console.log('[useStoreSettings] Auth resolved, uid:', uid);
+      }
+    });
+    return unsub;
+  }, []);
+
 
 
 
@@ -138,8 +158,13 @@ const useStoreSettingsCore = () => {
         const parsed = JSON.parse(savedSettings);
         // Garantir language default ao carregar de cache antigo
         if (!parsed.language) parsed.language = 'pt-BR';
-        // 🔍 DIAG: verificar se localStorage contém attractVideoConfig
-        console.warn('[useStoreSettings] localStorage attractVideoConfig:', JSON.stringify(parsed.attractVideoConfig ?? 'UNDEFINED'));
+        // Normalizar paymentGatewayConfig do cache (proteção contra dados stale)
+        if (parsed.paymentGatewayConfig) {
+          const cachedProvider = parsed.paymentGatewayConfig.provider;
+          console.log('[useStoreSettings] localStorage cache provider:', cachedProvider);
+        } else {
+          console.log('[useStoreSettings] localStorage cache: sem paymentGatewayConfig');
+        }
         return parsed;
 
 
@@ -1240,7 +1265,7 @@ const useStoreSettingsCore = () => {
 
 
 
-      console.log('[useStoreSettings] Sem autenticacao - aguardando login para criar listeners');
+      console.log('[useStoreSettings] Sem autenticacao (uid=%s) - aguardando login para criar listeners', authUid ?? 'null');
 
 
 
@@ -1370,7 +1395,9 @@ const useStoreSettingsCore = () => {
 
 
 
-            console.log('[useStoreSettings] Store data updated from Admin Web');
+            console.log('[useStoreSettings] ✅ Firestore snapshot received');
+            console.log('[useStoreSettings] Firestore paymentGatewayConfig.provider:', storeData.paymentGatewayConfig?.provider ?? 'UNDEFINED');
+            console.log('[useStoreSettings] Firestore paymentGatewayConfig:', JSON.stringify(storeData.paymentGatewayConfig ?? null));
 
 
 
@@ -1485,10 +1512,6 @@ const useStoreSettingsCore = () => {
                 // ✅ Reconciliação via settingsNormalizer (campos canônicos)
                 ...(() => {
                   const normalized = normalizeStoreSettings(storeData);
-                  // 🔍 DIAG: rastrear attractVideoConfig no fluxo Firestore
-                  console.warn('[useStoreSettings] Firestore storeData.attractVideoConfig:', JSON.stringify(storeData.attractVideoConfig ?? 'UNDEFINED'));
-                  console.warn('[useStoreSettings] normalized.attractVideoConfig:', JSON.stringify(normalized.attractVideoConfig ?? 'UNDEFINED'));
-                  console.warn('[useStoreSettings] prev.attractVideoConfig:', JSON.stringify(prev.attractVideoConfig ?? 'UNDEFINED'));
                   return {
                     kioskEnabled: normalized.kioskEnabled ?? prev.kioskEnabled,
                     attractTimeoutSeconds: normalized.attractTimeoutSeconds ?? prev.attractTimeoutSeconds,
@@ -1547,7 +1570,8 @@ const useStoreSettingsCore = () => {
           // permission-denied: operador sem acesso — manter dados em cache, não limpar state
           if ((error as { code?: string })?.code === 'permission-denied') {
             permissionDeniedRef.current.store = true;
-            console.warn('[useStoreSettings] Store listener: permission-denied. Keeping cached data. Retry bloqueado.');
+            console.warn('[useStoreSettings] ⚠️ PERMISSION-DENIED no store listener.');
+            console.warn('[useStoreSettings] paymentGatewayConfig será SOMENTE do cache local! Provider atual:', settings?.paymentGatewayConfig?.provider ?? 'N/A');
           }
         });
 
@@ -1756,7 +1780,7 @@ const useStoreSettingsCore = () => {
 
 
 
-  }, [isInitialized, settings?.storeId, settings?.franchiseId, firebaseConfigKey]);
+  }, [isInitialized, settings?.storeId, settings?.franchiseId, firebaseConfigKey, authUid]);
 
   // Reset permission-denied flags quando store/franchise mudar (novas credentials podem aplicar)
   useEffect(() => {

@@ -389,7 +389,7 @@ function InvoiceDetailDialog({
               ) : lines.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">Nenhum item.</p>
               ) : (
-                <>
+                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -429,7 +429,7 @@ function InvoiceDetailDialog({
                   <div className="flex justify-end mt-3 font-bold text-sm">
                     Total: {formatCurrency(linesTotal)}
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -596,6 +596,7 @@ export function FinanceARTab({ franchiseId, storeId }: Props) {
               <p className="text-lg font-medium">Nenhuma fatura encontrada</p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -644,6 +645,7 @@ export function FinanceARTab({ franchiseId, storeId }: Props) {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

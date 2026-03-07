@@ -21,7 +21,7 @@ interface SetClaimsData {
   storeId?: string | null;
 }
 
-export const setCustomClaims = onCall(async (request) => {
+export const setCustomClaims = onCall({ region: 'southamerica-east1' }, async (request) => {
   const data = request.data as SetClaimsData;
   // 🔧 v4.0.7: Usando helpers centralizados
   requireAuth(request);

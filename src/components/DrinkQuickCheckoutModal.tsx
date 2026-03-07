@@ -32,6 +32,9 @@ import { encryptCard } from "@/utils/pagbankEncrypt";
 import { evaluateDynamicPrice, toPricingSnapshot } from "../../shared/utils/dynamicPricingEngine";
 import type { DynamicPricingResult, PricingSnapshot } from "../../shared/types/dynamicPricing";
 import { useAudioVoice } from "@/hooks/useAudioVoice";
+import { plugpagPaymentService, MAX_PLUGPAG_RETRIES, type PlugPagTerminalState } from "@/services/plugpagPaymentService";
+import { PlugPagTerminalStatus } from "@/components/PlugPagTerminalStatus";
+import { getPlugPagMac } from "@/components/TapSettingsSync";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -114,12 +117,46 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const provider = gatewayConfig?.provider || resolvedConfig.provider || 'none';
   const isPagBank = provider === 'pagbank';
 
+  // PlugPag: card-present via terminal Bluetooth (Moderninha Pro 2, etc)
+  const isPlugPagEnabled = useMemo(() => {
+    if (!isPagBank) return false;
+    const plugpagConfig = gatewayConfig?.providers?.pagbank?.plugpag;
+    if (!plugpagConfig?.enabled) return false;
+    const mac = getPlugPagMac();
+    return !!mac;
+  }, [isPagBank, gatewayConfig]);
+
+  // Quando PlugPag está ativo e o método é cartão, usamos o terminal físico
+  // PIX fica via API REST (QR na tela do kiosk) — melhor UX para o cliente
+  const usePlugPagForCard = isPlugPagEnabled && (selectedPayment === 'credit_card' || selectedPayment === 'debit_card');
+
+  // 🔍 DIAG: Log decisão de pagamento para debug de sync Admin→Kiosk
+  useEffect(() => {
+    const mac = getPlugPagMac();
+    console.log('[DrinkQuickCheckout] Payment decision:', {
+      'gatewayConfig.provider': gatewayConfig?.provider ?? '(null)',
+      'resolvedConfig.provider': resolvedConfig.provider,
+      provider,
+      isPagBank,
+      isPlugPagEnabled,
+      usePlugPagForCard,
+      plugpagMac: mac || '(empty)',
+      plugpagEnabled: gatewayConfig?.providers?.pagbank?.plugpag?.enabled ?? false,
+      isConfigured,
+    });
+  }, [provider, isPagBank, isPlugPagEnabled, usePlugPagForCard, gatewayConfig, resolvedConfig, isConfigured]);
+
   // PagBank (estado local)
   const [pagbankPaymentId, setPagbankPaymentId] = useState<string | null>(null);
   const [pagbankStatus, setPagbankStatus] = useState<GatewayPaymentStatus | null>(null);
   const [pagbankQrCodeText, setPagbankQrCodeText] = useState<string | null>(null);
   const [pagbankError, setPagbankError] = useState<string | null>(null);
   const pagbankUnsubscribeRef = useRef<(() => void) | null>(null);
+
+  // PlugPag: retry state for card-present payment failures
+  const plugpagRetryCountRef = useRef(0);
+  const plugpagLastOrderRef = useRef<string | null>(null);
+  const plugpagLastAmountRef = useRef<number>(0);
 
   // PagBank (dados do pagador e cartão)
   const [payerName, setPayerName] = useState('');
@@ -564,6 +601,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       lastEnrichDataRef.current = null;
       // Reset dispense retry count para próximo cliente
       dispenseRetryCountRef.current = 0;
+      // Reset PlugPag retry state
+      plugpagRetryCountRef.current = 0;
+      plugpagLastOrderRef.current = null;
+      plugpagLastAmountRef.current = 0;
       orderNumberRef.current = '';
       // Reset verificação de idade
       setAgeVerified(false);
@@ -638,6 +679,28 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     // (ex: emergencyTimeout dispara logo após pagamento aprovado), o reconcileOnStartup
     // marcaria o pedido como failed_dispense mesmo sem pagamento confirmado.
     localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
+
+    // PlugPag: abortar pagamento no terminal físico
+    if (usePlugPagForCard) {
+      const aborted = await plugpagPaymentService.abortPayment();
+      // Reset retry counter
+      plugpagRetryCountRef.current = 0;
+      plugpagLastOrderRef.current = null;
+      plugpagLastAmountRef.current = 0;
+      setPagbankError(null);
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      setMaxInactivityTime(60);
+      resetInactivityTimer();
+      moveToStep(2);
+      toast({
+        title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
+        description: aborted
+          ? 'Pagamento cancelado no terminal.'
+          : 'Cancelamento enviado — aguarde o terminal.',
+      });
+      return;
+    }
 
     if (isPagBank) {
       // KIO-03 fix: Cancel PagBank remotely via Cloud Function (not local-only)
@@ -1062,6 +1125,138 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
   };
 
+  // ── PlugPag: Pagamento card-present via terminal Bluetooth ────────────
+  const handleStartPlugPagPayment = async (orderNumber: string, totalAmount: number) => {
+    orderNumberRef.current = orderNumber;
+    // Salvar referência para retry (o pedido já foi criado — não precisa recriar)
+    plugpagLastOrderRef.current = orderNumber;
+    plugpagLastAmountRef.current = totalAmount;
+
+    try {
+      const paymentType = selectedPayment === 'credit_card' ? 'credit' : 'debit';
+
+      const response = await plugpagPaymentService.startPayment({
+        amountCents: Math.round(totalAmount * 100),
+        type: paymentType as 'credit' | 'debit',
+        installments: 1,
+        orderId: orderNumber,
+      });
+
+      if (response.success && response.result) {
+        // Sucesso — resetar contador de retry
+        plugpagRetryCountRef.current = 0;
+        updateProcessingStage("payment_approved");
+
+        // Enriquecer order com dados do terminal
+        const plugpagEnrichData: OrderCustomerData = {
+          gatewayProvider: 'pagbank',
+          gatewayPaymentId: response.result.transactionCode || undefined,
+          cardBrand: response.result.cardBrand || undefined,
+          cardLastDigits: response.result.cardLast4 || undefined,
+          customerName: response.result.holderName
+            ? response.result.holderName.substring(0, 3) + '***'
+            : undefined,
+        };
+        lastEnrichDataRef.current = plugpagEnrichData;
+
+        const storeId = getCurrentStoreId();
+        if (storeId) {
+          salesService.enrichOrderWithCustomerData(orderNumber, plugpagEnrichData, storeId)
+            .catch(e => console.warn('[DrinkPlugPag] Enrich failed (non-blocking):', e));
+        }
+
+        toast({
+          title: t('checkout.paymentApprovedToast') || 'Pagamento aprovado!',
+          description: `${response.result.cardBrand || ''} ****${response.result.cardLast4 || ''}`,
+        });
+
+        try {
+          await finishPaymentFlow(orderNumber);
+        } catch (error) {
+          console.error('[DrinkPlugPag] finishPaymentFlow failed:', error);
+          systemLogService.error('payment', `PlugPag pós-pagamento falhou: ${(error as Error)?.message}`, { orderNumber });
+          await persistFailedDispense(orderNumber, 'post_payment_flow_error').catch(() => {});
+          toast({
+            title: t('common.error'),
+            description: t('checkout.processOrderError'),
+            variant: 'destructive',
+          });
+        }
+      } else {
+        // Pagamento negado ou erro — NÃO voltar ao step 2, manter na tela de pagamento.
+        // O botão "Tentar Novamente" no UI re-invoca handleRetryPlugPagPayment.
+        const errorMsg = response.error || 'Pagamento não aprovado no terminal';
+        plugpagRetryCountRef.current += 1;
+        const retryInfo = plugpagRetryCountRef.current < MAX_PLUGPAG_RETRIES
+          ? ` (tentativa ${plugpagRetryCountRef.current}/${MAX_PLUGPAG_RETRIES})`
+          : '';
+        systemLogService.warn('payment', `PlugPag negado: ${errorMsg}${retryInfo}`, { orderNumber, retry: plugpagRetryCountRef.current });
+        setPagbankError(errorMsg);
+        setIsProcessing(false);
+        updateProcessingStage("idle");
+
+        // Se esgotou retries, voltar ao step 2 (forçar recomeço)
+        if (plugpagRetryCountRef.current >= MAX_PLUGPAG_RETRIES) {
+          plugpagRetryCountRef.current = 0;
+          toast({
+            title: 'Pagamento falhou',
+            description: `${MAX_PLUGPAG_RETRIES} tentativas esgotadas. Selecione o método de pagamento novamente.`,
+            variant: 'destructive',
+          });
+          moveToStep(2);
+        } else {
+          toast({
+            title: 'Pagamento não aprovado',
+            description: errorMsg,
+            variant: 'destructive',
+          });
+          // Ficar no step 3 — UI mostra erro com botão "Tentar Novamente"
+        }
+      }
+    } catch (error: any) {
+      console.error('[DrinkPlugPag] Erro no pagamento:', error);
+      plugpagRetryCountRef.current += 1;
+      systemLogService.error('payment', `PlugPag erro: ${error?.message}`, { orderNumber, retry: plugpagRetryCountRef.current });
+      setPagbankError(error?.message || 'Erro no terminal');
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+
+      if (plugpagRetryCountRef.current >= MAX_PLUGPAG_RETRIES) {
+        plugpagRetryCountRef.current = 0;
+        toast({
+          title: t('checkout.paymentError') || 'Erro no Pagamento',
+          description: `${MAX_PLUGPAG_RETRIES} tentativas esgotadas.`,
+          variant: 'destructive',
+        });
+        moveToStep(2);
+      } else {
+        toast({
+          title: t('checkout.paymentError') || 'Erro no Pagamento',
+          description: error?.message || 'Erro ao processar no terminal',
+          variant: 'destructive',
+        });
+      }
+    }
+  };
+
+  /**
+   * Retry PlugPag payment — re-invoca startPayment com o mesmo orderNumber/amount.
+   * Não cria novo pedido — usa o existente. Terminal já está conectado.
+   */
+  const handleRetryPlugPagPayment = async () => {
+    const orderNumber = plugpagLastOrderRef.current;
+    const totalAmount = plugpagLastAmountRef.current;
+    if (!orderNumber || !totalAmount) {
+      console.error('[DrinkPlugPag] Retry impossível — sem orderNumber/totalAmount');
+      moveToStep(2);
+      return;
+    }
+    setPagbankError(null);
+    setIsProcessing(true);
+    updateProcessingStage("awaiting_payment");
+    await handleStartPlugPagPayment(orderNumber, totalAmount);
+  };
+
   const handleStartPagBankPayment = async (orderNumber: string, totalAmount: number) => {
     setPagbankError(null);
 
@@ -1084,7 +1279,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const customerTaxId = payerTaxId.trim();
     const customerEmail = payerEmail.trim();
 
-    if (!customerName || !customerTaxId) {
+    // PIX no kiosk: dados do pagador são opcionais — usar anônimo se vazio
+    const isPixPayment = selectedPayment === 'pix_qr';
+
+    if (!isPixPayment && (!customerName || !customerTaxId)) {
       toast({
         title: 'Dados obrigatórios',
         description: 'Informe nome e CPF/CNPJ do pagador.',
@@ -1096,11 +1294,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       return;
     }
 
-    const customer = {
-      name: customerName,
-      taxId: customerTaxId,
-      email: customerEmail || undefined,
-    };
+    // PIX no kiosk: PagBank exige customer mesmo sem identificação do cliente.
+    // CPF 529.982.247-25: fictício, matematicamente válido (dígitos verificadores
+    // corretos). NÃO é CPF de nenhuma pessoa real — padrão de documentações técnicas BR.
+    const customer = isPixPayment
+      ? { name: 'Cliente Kiosk', taxId: '52998224725' }
+      : {
+          name: customerName,
+          taxId: customerTaxId,
+          email: customerEmail || undefined,
+        };
 
     let card: CreatePaymentInput['card'] | undefined;
     if (selectedPayment !== "pix_qr") {
@@ -1181,6 +1384,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setPagbankStatus(response.status);
       setPagbankQrCodeText(response.pix?.qrCodeText || null);
 
+      // PlugPag PIX dual-display: exibir QR na tela do terminal também
+      if (response.pix?.qrCodeText && isPlugPagEnabled) {
+        plugpagPaymentService.displayPixQR(response.pix.qrCodeText).catch(e =>
+          console.warn('[DrinkPagBank] Falha ao exibir QR no terminal PlugPag:', e)
+        );
+      }
+
       orderNumberRef.current = orderNumber;
 
       if (response.status === 'paid') {
@@ -1219,6 +1429,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           setPagbankStatus(payment.status);
           if (payment.pix?.qrCodeText) {
             setPagbankQrCodeText(payment.pix.qrCodeText);
+            // PlugPag PIX dual-display
+            if (isPlugPagEnabled) {
+              plugpagPaymentService.displayPixQR(payment.pix.qrCodeText).catch(() => {});
+            }
           }
 
           if (payment.status === 'paid') {
@@ -1377,8 +1591,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
       // STEP 1: Processar pagamento
       if (isPagBank) {
+        // PlugPag: cartão via terminal físico Bluetooth
+        if (usePlugPagForCard) {
+          await handleStartPlugPagPayment(newOrderNumber, totalAmount);
+          return;
+        }
+        // PagBank online (PIX ou cartão via API REST)
         await handleStartPagBankPayment(newOrderNumber, totalAmount);
         return;
+      }
+
+      // Guard: se provider é 'none' sem env vars de MercadoPago, log warning
+      if (provider === 'none') {
+        console.warn('[DrinkCheckout] ⚠️ provider=none — usando MercadoPago via env vars como fallback');
       }
 
       if (selectedPayment === "pix_qr") {
@@ -1876,7 +2101,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 )}
               </div>
 
-              {isPagBank && (
+              {/* PlugPag hint: pagamento será feito no terminal */}
+              {usePlugPagForCard && (
+                <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Smartphone className="h-8 w-8 text-blue-600 flex-shrink-0" />
+                  <div>
+                    <p className="font-medium text-blue-900">Pagamento na maquininha</p>
+                    <p className="text-sm text-blue-700">
+                      Insira ou aproxime o cartão no terminal ao clicar em pagar.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {isPagBank && !usePlugPagForCard && selectedPayment !== 'pix_qr' && (
                 <Card className="border border-gray-200">
                   <div className="p-4 space-y-4">
                     <h3 className="font-medium">Dados do pagador</h3>
@@ -2088,7 +2326,38 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                   )}
 
                   {(selectedPayment === "credit_card" || selectedPayment === "debit_card") && (
-                    isPagBank ? (
+                    usePlugPagForCard ? (
+                      /* PlugPag: Terminal físico Bluetooth */
+                      <div className="text-center space-y-4">
+                        {pagbankError && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                            <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+                            <p className="text-red-700 font-medium">Erro no terminal</p>
+                            <p className="text-red-600 text-sm mt-1">{pagbankError}</p>
+                            <div className="flex gap-2 justify-center mt-4">
+                              {plugpagRetryCountRef.current < MAX_PLUGPAG_RETRIES && (
+                                <Button
+                                  variant="default"
+                                  onClick={handleRetryPlugPagPayment}
+                                >
+                                  Tentar novamente ({MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current} restante{MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current !== 1 ? 's' : ''})
+                                </Button>
+                              )}
+                              <Button
+                                variant="outline"
+                                onClick={handleCancelPayment}
+                              >
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        {!pagbankError && (
+                          <PlugPagTerminalStatus />
+                        )}
+                      </div>
+                    ) : isPagBank ? (
                       <div className="text-center space-y-4">
                         {pagbankError && (
                           <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">

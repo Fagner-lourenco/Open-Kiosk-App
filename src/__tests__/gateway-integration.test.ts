@@ -75,8 +75,9 @@ describe('C1: Admin → Firestore → Kiosk config round-trip', () => {
 
     const readBack = firestorePayload.providers?.pagbank;
     expect(readBack).toBeDefined();
-    expect(readBack?.clientId).toBe('test_clientId');
-    expect(readBack?.merchantId).toBe('test_merchantId');
+    // clientId and merchantId have been REMOVED from PagBank configFields
+    expect(readBack?.clientId).toBeUndefined();
+    expect(readBack?.merchantId).toBeUndefined();
     expect(readBack?.publicKey).toBe('test_publicKey');
   });
 
@@ -102,7 +103,7 @@ describe('C1: Admin → Firestore → Kiosk config round-trip', () => {
       enabledMethods: { cash: true, pix: true, credit: true, debit: true },
       providers: {
         mercadopago: { userId: '123', externalPosId: 'POS001', storeId: 'S1', terminalId: 'T1' },
-        pagbank: { clientId: 'abc' },
+        pagbank: { publicKey: 'pk123' },
       },
     };
 
@@ -117,7 +118,7 @@ describe('C1: Admin → Firestore → Kiosk config round-trip', () => {
 
     // Os dados do Mercado Pago NÃO devem sumir
     expect(merged.providers?.mercadopago?.userId).toBe('123');
-    expect(merged.providers?.pagbank?.clientId).toBe('abc');
+    expect(merged.providers?.pagbank?.publicKey).toBe('pk123');
   });
 });
 
@@ -228,7 +229,7 @@ describe('C3: Mercado Pago Point flow validation', () => {
 // C4: PagBank / Stone no checkout (sem crash)
 // ============================================================================
 describe('C4: PagBank/Stone checkout safety', () => {
-  it('PagBank validatePaymentConfig exige clientId para Pix', async () => {
+  it('PagBank validatePaymentConfig does NOT require clientId for pix-only', async () => {
     const { validatePaymentConfig } = await import('@/config/paymentGateway');
 
     const result = validatePaymentConfig({
@@ -237,8 +238,9 @@ describe('C4: PagBank/Stone checkout safety', () => {
       enabledMethods: { cash: false, pix: true, credit: false, debit: false },
     });
 
-    expect(result.valid).toBe(false);
-    expect(result.errors.some((e) => e.includes('Client ID'))).toBe(true);
+    // PIX only — no client-side credentials needed (Bearer auth token is in functions/.env)
+    expect(result.valid).toBe(true);
+    expect(result.errors.some((e) => e.includes('Client ID'))).toBe(false);
   });
 
   it('Stone (ou qualquer provider desconhecido) é normalizado para none', async () => {
@@ -336,11 +338,11 @@ describe('Gateway Registry integrity', () => {
     expect(GATEWAY_REGISTRY['stone']).toBeDefined();
   });
 
-  it('adminNotes do PagBank mencionam firebase functions:config', () => {
+  it('adminNotes do PagBank mencionam Auth Token e functions/.env', () => {
     const pb = getGatewayById('pagbank')!;
     const notesText = pb.adminNotes?.join(' ') || '';
-    expect(notesText).toContain('firebase functions:config:set');
-    expect(notesText).toContain('auth_token');
+    expect(notesText).toContain('Auth Token');
+    expect(notesText).toContain('functions/.env');
   });
 
   it('adminNotes do Mercado Pago mencionam env var', () => {

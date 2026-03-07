@@ -31,9 +31,13 @@ describe('audit - functions entrypoint exports', () => {
     expect(entry.expirePrizes).toBeTruthy();
     expect(entry.expireEventMode).toBeTruthy();
 
-    expect(entry.consolidatePaymentGatewayConfig).toBeTruthy();
-    expect(entry.rollbackPaymentGatewayConfig).toBeTruthy();
-    expect(entry.unifyStoreSettings).toBeTruthy();
-    expect(entry.migrateDispensersToTaps).toBeTruthy();
+    // Migrations are disabled (commented out in index.ts) — one-time scripts already executed
+    // expect(entry.consolidatePaymentGatewayConfig).toBeTruthy();
+    // expect(entry.rollbackPaymentGatewayConfig).toBeTruthy();
+    // expect(entry.unifyStoreSettings).toBeTruthy();
+    // expect(entry.migrateDispensersToTaps).toBeTruthy();
+
+    // Dedup cleanup (new)
+    expect(entry.cleanupDedupCollections).toBeTruthy();
   }, 30000);
 });

@@ -187,17 +187,21 @@ export const onOrderCreated = onDocumentCreated(
     try {
       const dailyRef = db.doc(`analytics/daily/${dateKey}`);
 
-      // 🔒 FIX BUG-A1: Idempotency via subcollection (prevents unbounded array growth)
+      // 🔒 FIX BUG-5 (P0): Atomic dedup using create() — fails if doc already exists,
+      // preventing race condition where two concurrent triggers pass a get() check.
       const dedupRef = dailyRef.collection('processedEvents').doc(eventId);
-      const dedupSnap = await dedupRef.get();
-      if (dedupSnap.exists) {
-        console.log(`[aggOrders] Event ${eventId} already processed — skip (replay)`);
-        return;
+      try {
+        await dedupRef.create({ ts: admin.firestore.FieldValue.serverTimestamp() });
+      } catch (err: unknown) {
+        const code = (err as { code?: number | string }).code;
+        if (code === 6 || code === 'already-exists') {
+          console.log(`[aggOrders] Event ${eventId} already processed — skip (replay)`);
+          return;
+        }
+        throw err;
       }
 
       await updateMetrics(dailyRef, order, true);
-      // Mark event as processed in subcollection (scalable dedup)
-      await dedupRef.set({ ts: admin.firestore.FieldValue.serverTimestamp() });
 
       const hourlyRef = db.doc(`analytics/hourly/${hourKey}`);
       await updateMetrics(hourlyRef, order, true);
@@ -247,17 +251,22 @@ export const onOrderUpdated = onDocumentUpdated(
     try {
       const dailyRef = db.doc(`analytics/daily/${dateKey}`);
 
-      // 🔒 FIX BUG-A1: Idempotency via subcollection (prevents unbounded array growth)
-      const updateEventId = event.id || `update_${orderId}`;
+      // 🔒 FIX BUG-5 (P0): Atomic dedup using create()
+      // 🔒 FIX BUG-8 (P1): Fallback uses timestamp to avoid blocking legitimate subsequent updates
+      const updateEventId = event.id || `update_${orderId}_${Date.now()}`;
       const dedupRef = dailyRef.collection('processedEvents').doc(updateEventId);
-      const dedupSnap = await dedupRef.get();
-      if (dedupSnap.exists) {
-        console.log(`[aggOrders] Update event ${updateEventId} already processed — skip (replay)`);
-        return;
+      try {
+        await dedupRef.create({ ts: admin.firestore.FieldValue.serverTimestamp() });
+      } catch (err: unknown) {
+        const code = (err as { code?: number | string }).code;
+        if (code === 6 || code === 'already-exists') {
+          console.log(`[aggOrders] Update event ${updateEventId} already processed — skip (replay)`);
+          return;
+        }
+        throw err;
       }
 
       await updateMetrics(dailyRef, after, false, before);
-      await dedupRef.set({ ts: admin.firestore.FieldValue.serverTimestamp() });
 
       const hourlyRef = db.doc(`analytics/hourly/${hourKey}`);
       await updateMetrics(hourlyRef, after, false, before);

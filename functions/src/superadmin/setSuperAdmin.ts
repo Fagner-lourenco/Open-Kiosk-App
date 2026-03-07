@@ -21,6 +21,7 @@ interface SetSuperAdminData {
  * Só pode ser chamada por outro super admin
  */
 export const setSuperAdmin = onCall(
+  { region: 'southamerica-east1' },
   async (request) => {
     const data = request.data as SetSuperAdminData;
     // Verificar autenticação
@@ -124,8 +125,12 @@ export const setSuperAdmin = onCall(
         }
       });
 
-      // Atualizar custom claims (fora da transaction - Auth não suporta transactions)
+      // 🔒 FIX P0-3: Merge with existing claims instead of overwriting
+      // (preserves storeAccess, franchiseId context, etc.)
+      const existingUser = await auth.getUser(uid);
+      const existingClaims = existingUser.customClaims || {};
       await auth.setCustomUserClaims(uid, {
+        ...existingClaims,
         role: 'superadmin',
         franchiseId: null,
         storeId: null,
@@ -163,6 +168,7 @@ export const setSuperAdmin = onCall(
  * Remove role de super admin de um usuário
  */
 export const removeSuperAdmin = onCall(
+  { region: 'southamerica-east1' },
   async (request) => {
     const data = request.data as { uid: string };
     // Verificar autenticação
@@ -217,8 +223,11 @@ export const removeSuperAdmin = onCall(
 
       await batch.commit();
 
-      // Remover custom claims (Auth não suporta batch — executa após Firestore confirmar)
+      // 🔒 FIX P0-3: Merge with existing claims instead of overwriting
+      const existingUser = await auth.getUser(uid);
+      const existingClaims = existingUser.customClaims || {};
       await auth.setCustomUserClaims(uid, {
+        ...existingClaims,
         role: 'viewer',
         franchiseId: null,
         storeId: null,
@@ -244,6 +253,7 @@ export const removeSuperAdmin = onCall(
  * Lista todos os super admins
  */
 export const listSuperAdmins = onCall(
+  { region: 'southamerica-east1' },
   async (request) => {
     // Verificar autenticação
     if (!request.auth) {

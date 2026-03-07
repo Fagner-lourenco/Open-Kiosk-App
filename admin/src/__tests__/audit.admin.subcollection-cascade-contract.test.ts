@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { waitFor } from '@testing-library/react';
-import { deleteDoc } from 'firebase/firestore';
+import { writeBatch } from 'firebase/firestore';
 import {
   renderHookWithProviders,
   mockGetDocsEmpty,
@@ -26,13 +26,14 @@ describe('Audit Admin - subcollection cascade contracts', () => {
 
     await result.current.deleteEvent('ev-1');
 
-    const deletedPaths = (deleteDoc as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
-      (call) => ((call[0] as { path?: string })?.path || ''),
-    );
+    const batch = (writeBatch as any).mock.results.at(-1)?.value;
+    const deletedPaths = batch?.delete.mock.calls.map((call: unknown[]) => ((call[0] as { path?: string })?.path || '')) ?? [];
 
     expect(
-      deletedPaths.some((path) => path.includes('/commercialEvents/ev-1/budgetLines/')),
+      deletedPaths.some((path: string) => path.includes('/commercialEvents/ev-1/budgetLines/')),
     ).toBe(true);
+    expect(deletedPaths.some((path: string) => path.endsWith('/commercialEvents/ev-1'))).toBe(true);
+    expect(batch?.commit).toHaveBeenCalledTimes(1);
   });
 
   it('deleteQuote deve limpar lines antes de remover a proposta pai (RED)', async () => {
@@ -45,12 +46,13 @@ describe('Audit Admin - subcollection cascade contracts', () => {
 
     await result.current.deleteQuote('q-1');
 
-    const deletedPaths = (deleteDoc as unknown as { mock: { calls: unknown[][] } }).mock.calls.map(
-      (call) => ((call[0] as { path?: string })?.path || ''),
-    );
+    const batch = (writeBatch as any).mock.results.at(-1)?.value;
+    const deletedPaths = batch?.delete.mock.calls.map((call: unknown[]) => ((call[0] as { path?: string })?.path || '')) ?? [];
 
     expect(
-      deletedPaths.some((path) => path.includes('/quotes/q-1/lines/')),
+      deletedPaths.some((path: string) => path.includes('/quotes/q-1/lines/')),
     ).toBe(true);
+    expect(deletedPaths.some((path: string) => path.endsWith('/quotes/q-1'))).toBe(true);
+    expect(batch?.commit).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,21 +1,51 @@
 // Firebase Storage Security Rules
-// Regras de segurança para arquivos (vídeos de atração, etc.)
+// Security rules for store media files
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
 
-    // Vídeos de atração das lojas
-    // - Leitura: pública (exibido no Kiosk sem auth)
-    // - Escrita: apenas usuários autenticados (upload via Admin)
+    function isSuperAdmin() {
+      return isAuthenticated() && request.auth.token.role == 'superadmin';
+    }
+
+    function isFranchiseOwner(franchiseId) {
+      return isAuthenticated() &&
+             firestore.get(/databases/(default)/documents/franchises/$(franchiseId)).data.ownerId == request.auth.uid;
+    }
+
+    function isFranchiseMember(franchiseId) {
+      return isAuthenticated() &&
+             firestore.exists(/databases/(default)/documents/franchises/$(franchiseId)/members/$(request.auth.uid));
+    }
+
+    function getMembership(franchiseId) {
+      return firestore.get(/databases/(default)/documents/franchises/$(franchiseId)/members/$(request.auth.uid)).data;
+    }
+
+    function hasStoreAccess(franchiseId, storeId) {
+      let membership = getMembership(franchiseId);
+      return isFranchiseOwner(franchiseId) ||
+             (isFranchiseMember(franchiseId) &&
+              ('storeAccess' in membership) &&
+              ('*' in membership.storeAccess || storeId in membership.storeAccess));
+    }
+
+    // Store attract media
+    // - Read: public (kiosk display)
+    // - Write: only superadmin or tenant user with explicit store access
     match /franchises/{franchiseId}/stores/{storeId}/media/{fileName} {
       allow read: if true;
-      allow write: if request.auth != null
-                   && request.resource.size < 50 * 1024 * 1024  // max 50MB
+      allow write: if (isSuperAdmin() || hasStoreAccess(franchiseId, storeId))
+                   && request.resource != null
+                   && request.resource.size < 50 * 1024 * 1024
                    && (request.resource.contentType.matches('video/.*')
                        || request.resource.contentType.matches('image/.*'));
     }
 
-    // Bloqueia tudo que não for explicitamente permitido
+    // Deny everything else by default
     match /{allPaths=**} {
       allow read, write: if false;
     }

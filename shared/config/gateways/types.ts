@@ -32,7 +32,7 @@ export interface GatewayConfigField {
   label: string;
 
   /** Tipo do input */
-  type: 'text' | 'password' | 'select';
+  type: 'text' | 'password' | 'select' | 'toggle' | 'section';
 
   /** Campo obrigatório? */
   required: boolean;
@@ -45,6 +45,9 @@ export interface GatewayConfigField {
 
   /** Opções para type='select' */
   options?: { value: string; label: string }[];
+
+  /** Só exibir quando esta chave tiver valor truthy (ex: 'plugpag.enabled') */
+  dependsOn?: string;
 }
 
 // ============================================================================

@@ -80,7 +80,7 @@ export interface PlugPagInvalidateResult {
 // Types — Payment
 // ---------------------------------------------------------------------------
 
-export type PlugPagPaymentType = 'CREDIT' | 'DEBIT';
+export type PlugPagPaymentType = 'CREDIT' | 'DEBIT' | 'VOUCHER' | 'PIX';
 
 export interface PlugPagPaymentOptions {
   /** Total amount in cents (e.g. 1500 = R$15,00) */
@@ -89,10 +89,8 @@ export interface PlugPagPaymentOptions {
   type: PlugPagPaymentType;
   /** Number of installments (1 = à vista) */
   installments?: number;
-  /** Order reference for reconciliation */
+  /** Order reference for reconciliation (max 10 chars for Moderninhas) */
   userReference?: string;
-  /** Whether the terminal should print a receipt */
-  printReceipt?: boolean;
 }
 
 /**
@@ -102,6 +100,8 @@ export interface PlugPagPaymentOptions {
  *   - PAN/CVV/track data are NEVER present here.
  *   - Only safe, allowlisted fields cross the native bridge.
  *   - holderName is PII — callers must mask before persisting.
+ *
+ * Fields aligned with PlugPagTransactionResult from official doc.
  */
 export interface PlugPagPaymentResult {
   approved: boolean;
@@ -109,28 +109,25 @@ export interface PlugPagPaymentResult {
   message: string | null;
   errorCode: string | null;
 
-  // Transaction identifiers (safe for reconciliation)
+  // Transaction identifiers — doc: getTransactionCode, getTransactionId, getHostNsu, getUserReference
   transactionCode: string | null;
   transactionId: string | null;
   hostNsu: string | null;
-  nsu: string | null;
-  autoCode: string | null;
   userReference: string | null;
 
-  // Terminal info
+  // Terminal info — doc: getTerminalSerialNumber, getDate, getTime
   terminalSerialNumber: string | null;
   date: string | null;
   time: string | null;
 
-  // Card info (safe — only brand + last4, no PAN)
+  // Card info (safe — only brand + last4) — doc: getCardBrand, getBin
   cardBrand: string | null;
   cardLast4: string | null;
 
-  // Payment details
-  paymentType: number;
+  // Payment details — doc: getAmount
   amount: string | null;
 
-  // PII — mask before persist/log
+  // PII — doc: getHolderName — mask before persist/log
   holderName: string | null;
 }
 
@@ -147,8 +144,6 @@ export interface PlugPagVoidOptions {
   transactionCode?: string;
   /** transactionId from original payment result */
   transactionId?: string;
-  /** Whether to print void receipt */
-  printReceipt?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,15 +196,32 @@ export interface PlugPagAuthEvent {
   message?: string;
 }
 
-/** SDK event codes for UI feedback */
+/**
+ * SDK event codes for UI feedback — mapped from PlugPagEventData constants.
+ * Source: Manual de Integração PlugPag Android (oficial PagSeguro)
+ *
+ *   EVENT_CODE_DEFAULT          = -1 (nenhum evento enviado)
+ *   EVENT_CODE_WAITING_CARD     = 0  (aguardando inserir cartão)
+ *   EVENT_CODE_INSERTED_CARD    = 1  (cartão inserido)
+ *   EVENT_CODE_PIN_REQUESTED    = 2  (aguardando senha)
+ *   EVENT_CODE_PIN_OK           = 3  (senha validada)
+ *   EVENT_CODE_SALE_END         = 4  (fim da transação)
+ *   EVENT_CODE_AUTHORIZING      = 5  (aguardando autorização)
+ *   EVENT_CODE_INSERTED_KEY     = 6  (senha digitada)
+ *   EVENT_CODE_WAITING_REMOVE_CARD = 7 (aguardando remover cartão)
+ *   EVENT_CODE_REMOVED_CARD     = 8  (cartão removido)
+ */
 export const PlugPagEventCodes = {
-  WAITING_CARD: 0,
-  INSERTED_CARD: 1,
-  PIN_REQUESTED: 2,
-  AUTHORIZING: 3,
-  SALE_APPROVED: 4,
-  SALE_NOT_APPROVED: 5,
-  // Add more as needed from PlugPagEventData constants
+  DEFAULT: -1,
+  WAITING_CARD: 0,           // Aguardando inserção do cartão
+  INSERTED_CARD: 1,          // Cartão inserido
+  PIN_REQUESTED: 2,          // Aguardando digitação de senha
+  PIN_OK: 3,                 // Senha validada com sucesso
+  SALE_END: 4,               // Fim da transação
+  AUTHORIZING: 5,            // Aguardando autorização do servidor
+  INSERTED_KEY: 6,           // Senha foi digitada
+  WAITING_REMOVE_CARD: 7,    // Aguardando remoção do cartão
+  REMOVED_CARD: 8,           // Cartão removido do leitor
 } as const;
 
 // ---------------------------------------------------------------------------

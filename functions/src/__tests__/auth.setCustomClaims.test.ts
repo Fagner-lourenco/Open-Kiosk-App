@@ -43,7 +43,8 @@ vi.mock('firebase-functions/v2/https', () => ({
     code: string;
     constructor(code: string, msg: string) { super(msg); this.code = code; }
   },
-  onCall: (handler: any) => {
+  onCall: (...args: any[]) => {
+    const handler = args.length === 2 ? args[1] : args[0];
     const fn: any = {};
     fn.run = handler;
     return fn;

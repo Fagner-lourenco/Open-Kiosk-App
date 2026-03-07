@@ -14,7 +14,7 @@
  * 3. firebase deploy --only functions:promoteSuperAdminHTTP
  * 
  * Uso:
- * curl -X POST https://us-central1-open-kiosk-22b2b.cloudfunctions.net/promoteSuperAdminHTTP \
+ * curl -X POST https://southamerica-east1-open-kiosk-22b2b.cloudfunctions.net/promoteSuperAdminHTTP \
  *   -H "Content-Type: application/json" \
  *   -d '{"email":"SEU_EMAIL","secret":"SUA_SENHA"}'
  */
@@ -40,7 +40,7 @@ const isEnabled = (): boolean => {
   }
 };
 
-export const promoteSuperAdminHTTP = onRequest(async (req, res) => {
+export const promoteSuperAdminHTTP = onRequest({ region: 'southamerica-east1' }, async (req, res) => {
   // CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -90,15 +90,13 @@ export const promoteSuperAdminHTTP = onRequest(async (req, res) => {
     
     logger.info(`Promovendo ${email} (${uid}) a super admin via HTTP`);
     
-    // Atualizar custom claims
-    await auth.setCustomUserClaims(uid, {
-      role: 'superadmin',
-      franchiseId: null,
-      storeId: null,
-    });
-    
-    // Criar documento na coleção superadmins
-    await db.collection('superadmins').doc(uid).set({
+    // 🔒 FIX BUG-7 (P1): Firestore writes are atomic via batch, then Auth claims last.
+    // If Firestore succeeds but Auth fails → user docs say superadmin but no claims (safe: can't access).
+    // On retry, Firestore batch is idempotent (set overwrites) and claims get set.
+    const userDocRef = db.collection('users').doc(uid);
+    const batch = db.batch();
+
+    batch.set(db.collection('superadmins').doc(uid), {
       email,
       displayName: userRecord.displayName || null,
       photoURL: userRecord.photoURL || null,
@@ -106,30 +104,28 @@ export const promoteSuperAdminHTTP = onRequest(async (req, res) => {
       createdBy: 'http-endpoint',
       status: 'active',
     });
-    
-    // Atualizar documento do usuário
-    const userDoc = db.collection('users').doc(uid);
-    const userSnapshot = await userDoc.get();
-    
-    if (userSnapshot.exists) {
-      await userDoc.update({
-        role: 'superadmin',
-        franchiseId: null,
-        storeId: null,
-        updatedAt: serverTimestamp(),
-      });
-    } else {
-      await userDoc.set({
-        email,
-        displayName: userRecord.displayName || null,
-        photoURL: userRecord.photoURL || null,
-        role: 'superadmin',
-        franchiseId: null,
-        storeId: null,
-        createdAt: serverTimestamp(),
-        status: 'active',
-      });
-    }
+
+    batch.set(userDocRef, {
+      email,
+      displayName: userRecord.displayName || null,
+      photoURL: userRecord.photoURL || null,
+      role: 'superadmin',
+      franchiseId: null,
+      storeId: null,
+      updatedAt: serverTimestamp(),
+      status: 'active',
+    }, { merge: true });
+
+    await batch.commit();
+
+    // Auth claims set AFTER Firestore writes succeed (cannot be in batch)
+    const existingClaims = (await auth.getUser(uid)).customClaims || {};
+    await auth.setCustomUserClaims(uid, {
+      ...existingClaims,
+      role: 'superadmin',
+      franchiseId: null,
+      storeId: null,
+    });
     
     res.status(200).send(`
       <html>

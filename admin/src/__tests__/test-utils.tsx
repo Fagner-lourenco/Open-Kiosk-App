@@ -8,7 +8,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, type RenderHookOptions } from '@testing-library/react';
 import { vi } from 'vitest';
-import { addDoc, getDocs, setDoc, updateDoc, deleteDoc, Timestamp } from 'firebase/firestore';
+import { addDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, Timestamp } from 'firebase/firestore';
 
 vi.mock('@/context/FranchiseContext', () => ({
   useFranchise: vi.fn(() => ({
@@ -37,16 +37,19 @@ export function makeTimestamp(dateStr = '2026-01-15T10:00:00Z') {
 
 export function mockGetDocsReturn(docs: Array<{ id: string; data: Record<string, unknown> }>) {
   (getDocs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    empty: docs.length === 0,
+    size: docs.length,
     docs: docs.map((d) => ({
       id: d.id,
       data: () => d.data,
       exists: () => true,
+      ref: { path: d.id, type: 'doc' },
     })),
   });
 }
 
 export function mockGetDocsEmpty() {
-  (getDocs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ docs: [] });
+  (getDocs as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ empty: true, size: 0, docs: [] });
 }
 
 export function resetFirestoreMocks() {
@@ -55,6 +58,8 @@ export function resetFirestoreMocks() {
     // Subcollection cascade: return a dummy doc so cascade-delete loops execute
     if (/\/(budgetLines|lines)$/.test(path)) {
       return Promise.resolve({
+        empty: false,
+        size: 1,
         docs: [{
           id: 'cascade-line-1',
           data: () => ({}),
@@ -63,12 +68,18 @@ export function resetFirestoreMocks() {
         }],
       });
     }
-    return Promise.resolve({ docs: [] });
+    return Promise.resolve({ empty: true, size: 0, docs: [] });
   });
   (addDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue({ id: 'mock-id' });
   (setDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (updateDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
   (deleteDoc as ReturnType<typeof vi.fn>).mockReset().mockResolvedValue(undefined);
+  (writeBatch as ReturnType<typeof vi.fn>).mockReset().mockImplementation(() => ({
+    delete: vi.fn(),
+    set: vi.fn(),
+    update: vi.fn(),
+    commit: vi.fn(() => Promise.resolve()),
+  }));
 }
 
 // ─── QueryClient wrapper ───────────────────────────────────────────────────

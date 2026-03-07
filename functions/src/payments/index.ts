@@ -145,7 +145,7 @@ export const cancelPagBankPayment = onCall(
     }
 
     // P0-07: Require tenant access (franchise membership)
-    requireFranchiseAccess(request, franchiseId);
+    await requireFranchiseAccess(request, franchiseId);
 
     // 🔒 FIX BUG-A3: Require store-level access (not just franchise)
     await requireStoreAccess(request, franchiseId, storeId);

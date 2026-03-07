@@ -111,23 +111,23 @@ describe('lib/auth', () => {
   });
 
   describe('requireFranchiseAccess', () => {
-    it('superadmin acessa qualquer franquia', () => {
-      expect(() => requireFranchiseAccess(
+    it('superadmin acessa qualquer franquia', async () => {
+      await expect(requireFranchiseAccess(
         { auth: { uid: 'u1', token: { role: 'superadmin', franchiseId: 'f-other' } } } as any,
         'f1',
-      )).not.toThrow();
+      )).resolves.toBeUndefined();
     });
-    it('aceita mesmo franchiseId', () => {
-      expect(() => requireFranchiseAccess(
+    it('aceita mesmo franchiseId', async () => {
+      await expect(requireFranchiseAccess(
         { auth: { uid: 'u1', token: { role: 'admin', franchiseId: 'f1' } } } as any,
         'f1',
-      )).not.toThrow();
+      )).resolves.toBeUndefined();
     });
-    it('rejeita franchiseId diferente', () => {
-      expect(() => requireFranchiseAccess(
+    it('rejeita franchiseId diferente', async () => {
+      await expect(requireFranchiseAccess(
         { auth: { uid: 'u1', token: { role: 'admin', franchiseId: 'f2' } } } as any,
         'f1',
-      )).toThrow(/franquia/i);
+      )).rejects.toThrow(/franquia/i);
     });
   });
 

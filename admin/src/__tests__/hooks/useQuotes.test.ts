@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { waitFor } from '@testing-library/react';
-import { getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { getDocs, setDoc, writeBatch } from 'firebase/firestore';
 import {
   renderHookWithProviders,
   mockGetDocsReturn,
@@ -123,17 +123,22 @@ describe('useQuotes', () => {
     expect(setDoc).toHaveBeenCalledTimes(1);
   });
 
-  it('deve chamar deleteDoc ao excluir quote', async () => {
+  it('deve usar writeBatch ao excluir quote', async () => {
     mockGetDocsReturn(mockQuotes);
     const { result } = renderHookWithProviders(() =>
       useQuotes(TEST_FRANCHISE_ID, TEST_STORE_ID),
     );
 
     await waitFor(() => expect(result.current.loadingQuotes).toBe(false));
-    mockGetDocsEmpty();
     await result.current.deleteQuote('q-1');
 
-    expect(deleteDoc).toHaveBeenCalledTimes(1);
+    const batch = (writeBatch as any).mock.results.at(-1)?.value;
+    const deletedPaths = batch?.delete.mock.calls.map((call: unknown[]) => ((call[0] as { path?: string })?.path || '')) ?? [];
+
+    expect(writeBatch).toHaveBeenCalledTimes(1);
+    expect(deletedPaths.some((path: string) => path.includes('/quotes/q-1/lines/'))).toBe(true);
+    expect(deletedPaths.some((path: string) => path.endsWith('/quotes/q-1'))).toBe(true);
+    expect(batch?.commit).toHaveBeenCalledTimes(1);
   });
 
   it('deve expor funções de quote lines', async () => {

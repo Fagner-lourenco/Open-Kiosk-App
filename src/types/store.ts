@@ -72,6 +72,9 @@ export interface TapConfig {
   // Produto (opcional)
   productId?: string;
   productName?: string;
+
+  // Terminal PlugPag vinculado (MAC Bluetooth)
+  plugpagDeviceId?: string;
 }
 
 export interface StoreSettings {

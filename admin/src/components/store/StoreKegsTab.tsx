@@ -580,6 +580,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
               <p>{kegs.length === 0 ? 'Nenhum barril cadastrado' : 'Nenhum barril encontrado'}</p>
             </div>
           ) : (
+            <div className="overflow-x-auto -mx-4 px-4 sm:-mx-6 sm:px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -717,6 +718,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                 })}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

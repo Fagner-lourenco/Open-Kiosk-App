@@ -110,38 +110,38 @@ export function StoreLayout() {
         </div>
       </div>
 
+      {/* Mobile Nav (horizontal scroll) — OUTSIDE flex to avoid row clash */}
+      <div className="md:hidden -mx-4 sm:-mx-6 mb-2">
+        <div className="flex gap-1 overflow-x-auto px-4 sm:px-6 pb-2 scrollbar-hide">
+          {STORE_NAV_ITEMS.map((item) => (
+            <NavLink
+              key={item.href}
+              to={`/stores/${storeId}/${item.href}`}
+              end={item.href === ''}
+              className={({ isActive }) =>
+                cn(
+                  'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                  isActive
+                    ? 'border-primary/30 bg-primary/10 text-primary'
+                    : 'border-border text-muted-foreground hover:bg-accent',
+                )
+              }
+            >
+              <item.icon className="h-3.5 w-3.5" />
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+      </div>
+
       {/* Layout: Side nav + Content */}
       <div className="flex gap-6">
-        {/* Side Navigation — Accordion */}
+        {/* Side Navigation — Accordion (desktop only) */}
         <nav className="hidden w-56 shrink-0 md:block" aria-label="Navegação da loja">
           <div className="sticky top-20">
             <StoreNavAccordion storeId={storeId} />
           </div>
         </nav>
-
-        {/* Mobile Nav (horizontal scroll) */}
-        <div className="md:hidden -mx-4 sm:-mx-6 mb-2">
-          <div className="flex gap-1 overflow-x-auto px-4 sm:px-6 pb-2">
-            {STORE_NAV_ITEMS.map((item) => (
-              <NavLink
-                key={item.href}
-                to={`/stores/${storeId}/${item.href}`}
-                end={item.href === ''}
-                className={({ isActive }) =>
-                  cn(
-                    'flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
-                    isActive
-                      ? 'border-primary/30 bg-primary/10 text-primary'
-                      : 'border-border text-muted-foreground hover:bg-accent',
-                  )
-                }
-              >
-                <item.icon className="h-3.5 w-3.5" />
-                {item.label}
-              </NavLink>
-            ))}
-          </div>
-        </div>
 
         {/* Content */}
         <div className="min-w-0 flex-1">

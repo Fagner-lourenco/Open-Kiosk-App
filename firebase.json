@@ -7,9 +7,6 @@
       ".git",
       "firebase-debug.log",
       "firebase-debug.*.log"
-    ],
-    "predeploy": [
-      "npm --prefix \"$RESOURCE_DIR\" run build"
     ]
   },
   "firestore": {
@@ -17,7 +14,8 @@
     "indexes": "firestore.indexes.json"
   },
   "storage": {
-    "rules": "storage.rules"
+    "rules": "storage.rules",
+    "cors": "cors.json"
   },
   "hosting": {
     "public": "dist",

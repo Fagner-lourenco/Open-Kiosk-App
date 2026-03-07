@@ -433,7 +433,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
 
       {/* Create Product Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Novo Produto</DialogTitle>
             <DialogDescription>Preencha as informações abaixo para cadastrar um produto. Campos com * são obrigatórios.</DialogDescription>
@@ -447,7 +447,7 @@ export function StoreProductsTab({ franchiseId, storeId }: StoreProductsTabProps
 
       {/* Edit Product Dialog */}
       <Dialog open={!!editingProduct} onOpenChange={(open) => !open && setEditingProduct(null)}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Editar Produto</DialogTitle>
             <DialogDescription>Altere os campos necessários e clique em "Atualizar Produto" para salvar.</DialogDescription>

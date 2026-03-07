@@ -442,6 +442,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
         </CardHeader>
         <CardContent>
           {metrics.topProducts.length > 0 ? (
+            <div className="overflow-x-auto -mx-4 px-4 sm:-mx-6 sm:px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -468,6 +469,7 @@ export function StoreReportsTab({ franchiseId, storeId }: StoreReportsTabProps) 
                 ))}
               </TableBody>
             </Table>
+            </div>
           ) : (
             <div className="py-8 text-center text-muted-foreground">
               Nenhuma venda registrada no período

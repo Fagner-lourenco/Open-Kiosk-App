@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => {
     uid: 'u1', email: 'a@b.com', displayName: 'Test', photoURL: null,
   });
   const setCustomUserClaims = vi.fn().mockResolvedValue(undefined);
+  const getUser = vi.fn().mockResolvedValue({ customClaims: {} });
   const runTransaction = vi.fn(async (cb: any) => {
     const tx = {
       get: vi.fn().mockResolvedValue({ exists: false, data: () => ({}) }),
@@ -27,7 +28,7 @@ const mocks = vi.hoisted(() => {
     return cb(tx);
   });
 
-  return { docSet, docGet, docFn, collectionFn, colGet, getUserByEmail, setCustomUserClaims, runTransaction, docDelete, docUpdate };
+  return { docSet, docGet, docFn, collectionFn, colGet, getUserByEmail, setCustomUserClaims, getUser, runTransaction, docDelete, docUpdate };
 });
 
 vi.mock('../lib', () => ({
@@ -39,6 +40,7 @@ vi.mock('../lib', () => ({
   auth: {
     getUserByEmail: mocks.getUserByEmail,
     setCustomUserClaims: mocks.setCustomUserClaims,
+    getUser: mocks.getUser,
   },
   serverTimestamp: vi.fn(() => 'SERVER_TS'),
 }));
@@ -48,7 +50,8 @@ vi.mock('firebase-functions/v2/https', () => ({
     code: string;
     constructor(code: string, msg: string) { super(msg); this.code = code; }
   },
-  onCall: (handler: any) => {
+  onCall: (...args: any[]) => {
+    const handler = args.length === 2 ? args[1] : args[0];
     const fn: any = {};
     fn.run = handler;
     return fn;

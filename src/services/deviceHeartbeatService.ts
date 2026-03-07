@@ -29,6 +29,7 @@
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
 import { Device } from '@capacitor/device';
+import { getDefaultTapId, getPlugPagMac } from '@/components/TapSettingsSync';
 
 // ============================================================================
 // TIPOS
@@ -172,7 +173,10 @@ class DeviceHeartbeatService {
           lastSync: serverTimestamp(),
           uptime: this.getUptime(),
           appVersion: import.meta.env.VITE_APP_VERSION || '1.0.0',
+          selectedTapId: getDefaultTapId(),
         };
+        const plugpagMac = getPlugPagMac();
+        if (plugpagMac) heartbeatData.plugpagMac = plugpagMac;
         if (franchiseId) heartbeatData.franchiseId = franchiseId;
 
       // Adicionar campos opcionais

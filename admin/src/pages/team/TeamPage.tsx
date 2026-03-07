@@ -513,12 +513,12 @@ export function TeamPage() {
                 </div>
               ) : (
                 <div className="divide-y">
-                  {paginatedMembers.map((member) => {
+                  {paginatedMembers.map((member, idx) => {
                     const roleBadge = getRoleBadge(member.role);
                     
                     return (
                       <div 
-                        key={member.id}
+                        key={member.id || `member-${idx}`}
                         className="flex flex-col gap-3 p-4 hover:bg-muted sm:flex-row sm:items-center sm:justify-between"
                       >
                         <div className="flex flex-wrap items-center gap-3 sm:gap-4">

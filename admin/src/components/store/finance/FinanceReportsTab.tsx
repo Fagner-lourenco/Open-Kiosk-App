@@ -277,6 +277,7 @@ export function FinanceReportsTab({ franchiseId, storeId }: Props) {
               <CardDescription>Resultado por categoria no período selecionado</CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -317,6 +318,7 @@ export function FinanceReportsTab({ franchiseId, storeId }: Props) {
                   </TableRow>
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         </>
@@ -336,7 +338,7 @@ export function FinanceReportsTab({ franchiseId, storeId }: Props) {
             {cashFlowData.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">Sem dados para o período.</p>
             ) : (
-              <>
+              <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -394,7 +396,7 @@ export function FinanceReportsTab({ franchiseId, storeId }: Props) {
                     <span className="flex items-center gap-1"><span className="w-3 h-3 bg-red-400 rounded-sm" /> Despesas</span>
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </CardContent>
         </Card>

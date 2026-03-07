@@ -27,6 +27,7 @@ import AcceptInvitePage from "./pages/AcceptInvitePage";
 import StoreSelectPage from "./pages/StoreSelectPage";
 import { FranchiseGuard } from "@/components/FranchiseGuard";
 import { TapSettingsSync } from "@/components/TapSettingsSync";
+import { usePlugPagAutoConnect } from "@/hooks/usePlugPagAutoConnect";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
@@ -91,6 +92,15 @@ const KioskGuard: React.FC<{ children: React.ReactNode; kioskEnabled?: boolean; 
 };
 
 const queryClient = new QueryClient();
+
+/**
+ * PlugPagBootstrap — Componente invisível que inicializa auto-conexão do terminal PlugPag.
+ * Deve estar dentro de PaymentGatewayProvider para acessar gatewayConfig.
+ */
+const PlugPagBootstrap: React.FC = () => {
+  usePlugPagAutoConnect();
+  return null;
+};
 
 const AppContent = () => {
   const { loading, settings } = useStoreSettings();
@@ -204,6 +214,7 @@ const AppContent = () => {
             <PaymentGatewayProvider>
               <ESP32Provider>
                 <TapSettingsSync>
+                  <PlugPagBootstrap />
                   <FranchiseProvider>
                     <PermissionProvider>
                       <HashRouter>

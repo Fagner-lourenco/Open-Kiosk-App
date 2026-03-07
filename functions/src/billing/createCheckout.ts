@@ -21,7 +21,7 @@ interface CreateCheckoutData {
   cancelUrl?: string;
 }
 
-export const createCheckoutSession = onCall(async (request) => {
+export const createCheckoutSession = onCall({ region: 'southamerica-east1' }, async (request) => {
   const data = request.data as CreateCheckoutData;
   // Verifica autenticação
   if (!request.auth) {
@@ -176,7 +176,7 @@ export const createCheckoutSession = onCall(async (request) => {
 /**
  * Callable function para criar portal de gerenciamento do Stripe
  */
-export const createBillingPortalSession = onCall(async (request) => {
+export const createBillingPortalSession = onCall({ region: 'southamerica-east1' }, async (request) => {
   if (!request.auth) {
     throw new HttpsError('unauthenticated', 'Usuário não autenticado');
   }

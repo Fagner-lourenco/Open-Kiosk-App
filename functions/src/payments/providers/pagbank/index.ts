@@ -1,3 +1,4 @@
+import * as logger from 'firebase-functions/logger';
 import type {
   PaymentProvider,
   ProviderCreatePaymentInput,
@@ -86,8 +87,21 @@ const pagbankRequest = async <T>(
   }
 
   if (!response.ok) {
-    const message = payload?.error_description || payload?.message || `PagBank HTTP ${response.status}`;
-    throw new Error(message);
+    logger.error('[PagBank] API error', {
+      status: response.status,
+      errorCodes: payload?.error_messages?.map((e: any) => e.code),
+      errorFields: payload?.error_messages?.map((e: any) => e.parameter_name),
+    });
+    const messages =
+      Array.isArray(payload?.error_messages) && payload.error_messages.length > 0
+        ? payload.error_messages
+            .map(
+              (e: any) =>
+                `${e.description}${e.parameter_name ? ` (field: ${e.parameter_name})` : ''}`,
+            )
+            .join('; ')
+        : payload?.error_description || payload?.message || `PagBank HTTP ${response.status}`;
+    throw new Error(messages);
   }
 
   return payload as T;
@@ -116,7 +130,7 @@ export const createPagBankProvider = (config: PagBankProviderConfig): PaymentPro
         payload.customer = {
           name: input.customer.name,
           tax_id: input.customer.taxId,
-          email: input.customer.email,
+          ...(input.customer.email ? { email: input.customer.email } : {}),
         };
       }
 

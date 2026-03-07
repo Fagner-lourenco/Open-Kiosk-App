@@ -497,7 +497,7 @@ function QuoteDetailDialog({
                   Nenhum item adicionado.
                 </p>
               ) : (
-                <>
+                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -555,7 +555,7 @@ function QuoteDetailDialog({
                       Total: {formatCurrency(linesTotal - (quote.discounts || 0) + (quote.fees || 0))}
                     </span>
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -776,6 +776,7 @@ export function CommercialQuotesTab({ franchiseId, storeId }: Props) {
               </p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -851,6 +852,7 @@ export function CommercialQuotesTab({ franchiseId, storeId }: Props) {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -170,7 +170,6 @@ export default function WhatsAppGroupModal({
       document.removeEventListener('keydown', onKeyDown);
       lastFocusedRef.current?.focus?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const handleClose = () => {

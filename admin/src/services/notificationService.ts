@@ -414,24 +414,26 @@ export const notificationService = new NotificationService();
 
 // Helpers para criar notificaÃ§Ãµes comuns
 export const NotificationTemplates = {
-  newOrder: (storeName: string, orderId: string, total: number) => ({
+  newOrder: (storeName: string, orderId: string, total: number, storeId?: string) => ({
     type: 'order' as NotificationType,
     priority: 'normal' as NotificationPriority,
     title: 'Novo Pedido',
     message: `Novo pedido #${orderId.slice(-6)} de R$ ${total.toFixed(2)} em ${storeName}`,
     orderId,
     storeName,
-    actionUrl: `/orders/${orderId}`,
+    storeId,
+    actionUrl: storeId ? `/stores/${storeId}/orders` : '/stores',
     actionLabel: 'Ver Pedido',
   }),
 
-  lowStock: (productName: string, storeName: string, currentStock: number, threshold: number) => ({
+  lowStock: (productName: string, storeName: string, currentStock: number, threshold: number, storeId?: string) => ({
     type: 'stock' as NotificationType,
     priority: 'high' as NotificationPriority,
     title: 'Estoque Baixo',
-    message: `${productName} estÃ¡ com estoque baixo (${currentStock}/${threshold}) em ${storeName}`,
+    message: `${productName} está com estoque baixo (${currentStock}/${threshold}) em ${storeName}`,
     storeName,
-    actionUrl: '/inventory',
+    storeId,
+    actionUrl: storeId ? `/stores/${storeId}/inventory` : '/stores',
     actionLabel: 'Ver Estoque',
   }),
 
@@ -439,10 +441,10 @@ export const NotificationTemplates = {
     type: 'hardware' as NotificationType,
     priority: 'critical' as NotificationPriority,
     title: 'ESP32 Desconectado',
-    message: `O dispositivo ESP32 em ${storeName} perdeu conexÃ£o`,
+    message: `O dispositivo ESP32 em ${storeName} perdeu conexão`,
     storeId,
     storeName,
-    actionUrl: `/stores/${storeId}?tab=settings`,
+    actionUrl: `/stores/${storeId}/settings`,
     actionLabel: 'Ver Loja',
   }),
 
@@ -450,19 +452,20 @@ export const NotificationTemplates = {
     type: 'hardware' as NotificationType,
     priority: 'normal' as NotificationPriority,
     title: 'ESP32 Reconectado',
-    message: `O dispositivo ESP32 em ${storeName} estÃ¡ online novamente`,
+    message: `O dispositivo ESP32 em ${storeName} está online novamente`,
     storeId,
     storeName,
   }),
 
-  paymentError: (storeName: string, orderId: string, errorMessage: string) => ({
+  paymentError: (storeName: string, orderId: string, errorMessage: string, storeId?: string) => ({
     type: 'payment' as NotificationType,
     priority: 'critical' as NotificationPriority,
     title: 'Erro de Pagamento',
     message: `Falha no pagamento do pedido #${orderId.slice(-6)} em ${storeName}: ${errorMessage}`,
     orderId,
     storeName,
-    actionUrl: `/orders/${orderId}`,
+    storeId,
+    actionUrl: storeId ? `/stores/${storeId}/orders` : '/stores',
     actionLabel: 'Ver Pedido',
   }),
 
@@ -473,8 +476,8 @@ export const NotificationTemplates = {
     message: `Problema com impressora em ${storeName}: ${errorMessage}`,
     storeId,
     storeName,
-    actionUrl: `/stores/${storeId}?tab=settings`,
-    actionLabel: 'Ver ConfiguraÃ§Ãµes',
+    actionUrl: `/stores/${storeId}/settings`,
+    actionLabel: 'Ver Configurações',
   }),
 
   systemUpdate: (title: string, message: string) => ({

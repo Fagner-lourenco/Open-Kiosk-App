@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { doc, updateDoc, deleteDoc, collection, getDocs, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAuth } from '@/context/AuthContext';
@@ -220,7 +220,7 @@ export function SettingsPage() {
 
       // Delete all subcollections first
       // [FIX BUG-S1] Cascade delete stores e suas subcoleções
-      const subcollections = ['members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary', 'invitations'];
+      const subcollections = ['members', 'auditLogs', 'notifications', 'billingEvents', 'metrics', 'financeSummary'];
 
       // 1. Cascade delete every store (with their own subcollections)
       const storesSnap = await getDocs(collection(db, `franchises/${currentFranchise.id}/stores`));
@@ -238,6 +238,16 @@ export function SettingsPage() {
         for (const docSnap of snapshot.docs) {
           await deleteDoc(doc(db, `franchises/${currentFranchise.id}/${subcol}`, docSnap.id));
         }
+      }
+
+      // 3. Cleanup global invitations linked to this franchise
+      const invitationsQuery = query(
+        collection(db, 'invitations'),
+        where('franchiseId', '==', currentFranchise.id),
+      );
+      const invitationsSnap = await getDocs(invitationsQuery);
+      for (const invitationDoc of invitationsSnap.docs) {
+        await deleteDoc(doc(db, 'invitations', invitationDoc.id));
       }
 
       // Delete the franchise document

@@ -1,0 +1,111 @@
+═══════════════════════════════════════════════════════
+    D1: Iowa Liquor Sales (Government Open Data)
+═══════════════════════════════════════════════════════
+Colunas: Invoice/Item Number, Date, Store Number, Store Name, Address, City, Zip Code, Store Location, County Number, County, Category, Category Name, Vendor Number, Vendor Name, Item Number, Item Description, Pack, Bottle Volume (ml), State Bottle Cost, State Bottle Retail, Bottles Sold, Sale (Dollars), Volume Sold (Liters), Volume Sold (Gallons)
+Total linhas: 267883
+Date col: 1, VolL col: 22, VolGal col: 23, Cat col: 11, Bottles col: 20
+
+Amostras válidas: 5000
+Volume total: 49076.8 L
+Venda total: $877279.02
+Volume médio/transação: 9.82 L
+Preço médio/L: $17.88
+
+--- Sazonalidade Mensal (volume L) ---
+  Jan: 1095 L (2.2%) [índice: 0.27]
+  Fev: 603 L (1.2%) [índice: 0.15]
+  Mar: 16 L (0.0%) [índice: 0.00]
+  Abr: 647 L (1.3%) [índice: 0.16]
+  Mai: 39 L (0.1%) [índice: 0.01]
+  Jun: 12 L (0.0%) [índice: 0.00]
+  Jul: 12 L (0.0%) [índice: 0.00]
+  Ago: 0 L (0.0%) [índice: 0.00]
+  Set: 0 L (0.0%) [índice: 0.00]
+  Out: 0 L (0.0%) [índice: 0.00]
+  Nov: 46623 L (95.0%) [índice: 11.40]
+  Dez: 30 L (0.1%) [índice: 0.01]
+
+--- Padrão por Dia da Semana ---
+  Dom: 0 L [índice: 0.00]
+  Seg: 195 L [índice: 0.03]
+  Ter: 5025 L [índice: 0.72]
+  Qua: 7111 L [índice: 1.01]
+  Qui: 23278 L [índice: 3.32]
+  Sex: 13468 L [índice: 1.92]
+  Sáb: 0 L [índice: 0.00]
+
+--- Volume por Categoria ---
+  vodka: 18144 L (37.0%)
+  rum: 7451 L (15.2%)
+  whiskey: 4193 L (8.5%)
+  tequila: 1988 L (4.1%)
+
+═══════════════════════════════════════════════════════
+    D2: São Paulo Climate 2023 (Open-Meteo Archive)
+═══════════════════════════════════════════════════════
+Período: 2023-01-01 a 2023-12-31
+Dias: 365
+
+Temperatura Máxima: média=25.4°C, max=36.5°C
+Temperatura Mínima: média=15.6°C, min=6.9°C
+
+--- Temperatura Máx Mensal Média (SP 2023) ---
+  Mês  | T_max média | Dias chuva | Precip(mm)
+  -----+-------------+------------+-----------
+     1 |        25.6°C |         26 |       208
+     2 |        26.5°C |         25 |       244
+     3 |        26.9°C |         17 |       182
+     4 |        23.6°C |         14 |       113
+     5 |        23.1°C |          4 |        49
+     6 |        21.4°C |          4 |        29
+     7 |        22.2°C |          4 |        20
+     8 |        24.3°C |          4 |        35
+     9 |        28.4°C |          8 |        50
+    10 |        25.7°C |         19 |       188
+    11 |        28.1°C |         18 |       137
+    12 |        29.1°C |         13 |        82
+
+--- Frequência de Faixas de Temperatura (T_max) ---
+  <15   : 2 dias (0.5%)
+  15-20 : 33 dias (9.0%)
+  20-25 : 120 dias (32.9%)
+  25-30 : 165 dias (45.2%)
+  30-35 : 41 dias (11.2%)
+  >35   : 4 dias (1.1%)
+
+--- Fator Climático Sazonal (w_clima estimado por mês) ---
+  Usando β_temp = +3.13%/°C com baseline = 21.2°C
+ERRO D2: monthNames is not defined
+
+═══════════════════════════════════════════════════════
+    D3: Daily Min Temperature AU (10 years)
+═══════════════════════════════════════════════════════
+Header: "Date","Temp"
+Total dias: 3650
+Dias válidos: 3650
+
+--- Temperatura Mínima Mensal Média (Melbourne, AU) ---
+ERRO D3: monthNames is not defined
+
+═══════════════════════════════════════════════════════
+    SÍNTESE: Novos Priors de Calibração
+═══════════════════════════════════════════════════════
+
+CONSTANTES EXTRAÍDAS DE NOVOS DATASETS:
+
+1) SEASONAL_MULTIPLIER (mensal) — de SP Climate 2023
+   → Permite prever w_clima sazonal quando o evento é em mês futuro
+   → Ex: Dez/Jan (verão SP) → w_clima ≈ 1.15-1.20
+   → Ex: Jun/Jul (inverno SP) → w_clima ≈ 0.93-0.97
+
+2) DAY_OF_WEEK_INDEX — de Iowa Liquor Sales
+   → Complementa o Weekend Boost com distribuição completa por dia
+   → Permite ajuste fino para eventos em dias específicos
+
+3) MONTHLY_RAIN_PROBABILITY — de SP Climate 2023
+   → Probabilidade de chuva por mês (para previsões futuras)
+   → Out-Mar: 40-60% dias com chuva | Abr-Set: 10-20%
+
+4) TEMPERATURE_DISTRIBUTION_SP — de SP Climate 2023
+   → Distribuição real de temperaturas em SP por mês
+   → Usado para gerar faixas p10/p90 quando clima futuro é incerto

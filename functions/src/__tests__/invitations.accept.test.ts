@@ -18,10 +18,15 @@ const mocks = vi.hoisted(() => {
   const batchUpdate = vi.fn();
   const batchSet = vi.fn();
   const batch = vi.fn(() => ({ commit: batchCommit, update: batchUpdate, set: batchSet }));
+  const runTransaction = vi.fn().mockImplementation(async (cb: any) => cb({
+    get: vi.fn(),
+    update: vi.fn(),
+    set: vi.fn(),
+  }));
   const setCustomUserClaims = vi.fn().mockResolvedValue(undefined);
   const getUser = vi.fn().mockResolvedValue({ uid: 'u1', email: 'test@example.com', displayName: 'Test' });
 
-  return { docGet, docFn, collectionFn, colGet, where, batch, batchCommit, setCustomUserClaims, getUser };
+  return { docGet, docFn, collectionFn, colGet, where, batch, batchCommit, runTransaction, setCustomUserClaims, getUser };
 });
 
 vi.mock('../lib', () => ({
@@ -29,6 +34,7 @@ vi.mock('../lib', () => ({
     doc: mocks.docFn,
     collection: mocks.collectionFn,
     batch: mocks.batch,
+    runTransaction: mocks.runTransaction,
   },
   admin: {
     auth: () => ({
@@ -40,7 +46,7 @@ vi.mock('../lib', () => ({
     },
   },
   requireAuth: vi.fn((ctx: any) => {
-    if (!ctx.auth) throw new Error('Usuário não autenticado');
+    if (!ctx.auth) throw new Error('Usuario nao autenticado');
   }),
 }));
 
@@ -49,12 +55,14 @@ vi.mock('firebase-functions/v2/https', () => ({
     code: string;
     constructor(code: string, msg: string) { super(msg); this.code = code; }
   },
-  onCall: (handler: any) => {
+  onCall: (...args: any[]) => {
+    const handler = args.length === 2 ? args[1] : args[0];
     const fn: any = {};
     fn.run = handler;
     return fn;
   },
-  onRequest: (handler: any) => {
+  onRequest: (...args: any[]) => {
+    const handler = args.length === 2 ? args[1] : args[0];
     const fn: any = {};
     fn.run = handler;
     return fn;
@@ -75,7 +83,7 @@ describe('invitations/accept', () => {
   describe('acceptInvitation', () => {
     const run = (acceptInvitation as any).run;
 
-    it('rejeita não autenticado', async () => {
+    it('rejeita nao autenticado', async () => {
       await expect(run({ data: { token: 'abc' } })).rejects.toThrow(/autenticad/i);
     });
 
@@ -83,15 +91,41 @@ describe('invitations/accept', () => {
       await expect(run({
         data: {},
         auth: { uid: 'u1', token: { email: 'test@example.com' } },
-      })).rejects.toThrow(/token|obrigatório/i);
+      })).rejects.toThrow(/token|obrigatorio/i);
     });
 
-    it('rejeita convite não encontrado', async () => {
+    it('rejeita convite nao encontrado', async () => {
       mocks.colGet.mockResolvedValueOnce({ empty: true, docs: [] });
       await expect(run({
         data: { token: 'bad-token' },
         auth: { uid: 'u1', token: { email: 'test@example.com' } },
-      })).rejects.toThrow(/não encontrado|utilizado/i);
+      })).rejects.toThrow(/nao encontrado|utilizado|n�o encontrado/i);
+    });
+
+    it('rejeita convite com franquia inexistente', async () => {
+      const future = new Date(Date.now() + 60_000);
+      mocks.colGet.mockResolvedValueOnce({
+        empty: false,
+        docs: [
+          {
+            data: () => ({
+              email: 'test@example.com',
+              status: 'pending',
+              token: 'valid-token',
+              role: 'operator',
+              franchiseId: 'missing-franchise',
+              storeAccess: ['s1'],
+              expiresAt: { toDate: () => future },
+            }),
+            ref: { update: vi.fn() },
+          },
+        ],
+      });
+
+      await expect(run({
+        data: { token: 'valid-token' },
+        auth: { uid: 'u1', token: { email: 'test@example.com' } },
+      })).rejects.toThrow(/franquia/i);
     });
   });
 
@@ -104,7 +138,7 @@ describe('invitations/accept', () => {
       expect(res.status).toHaveBeenCalledWith(204);
     });
 
-    it('rejeita método não-GET', async () => {
+    it('rejeita metodo nao-GET', async () => {
       const res = { status: vi.fn().mockReturnThis(), send: vi.fn(), json: vi.fn(), set: vi.fn() };
       await run({ method: 'POST', query: {} }, res);
       expect(res.status).toHaveBeenCalledWith(405);

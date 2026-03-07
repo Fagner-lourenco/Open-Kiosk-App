@@ -344,6 +344,7 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
               <p>{events.length === 0 ? 'Nenhuma perda registrada' : 'Nenhuma perda encontrada'}</p>
             </div>
           ) : (
+            <div className="overflow-x-auto -mx-4 px-4 sm:-mx-6 sm:px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -385,6 +386,7 @@ export function StoreWastageTab({ franchiseId, storeId }: StoreWastageTabProps) 
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -76,7 +76,6 @@ export function useCountUp(target: number, duration = 1500, throttleMs = 50): nu
         cancelAnimationFrame(rafRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target, animate]);
 
   return current;

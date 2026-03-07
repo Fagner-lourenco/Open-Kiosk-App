@@ -81,7 +81,7 @@ export function StoreNavAccordion({ storeId }: StoreNavAccordionProps) {
         return next;
       });
     }
-  }, [location.pathname, storeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [location.pathname, storeId]);
 
   // Persistir no sessionStorage (debounced 150ms)
   useEffect(() => {

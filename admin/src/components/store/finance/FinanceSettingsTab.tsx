@@ -492,6 +492,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
               Nenhuma categoria cadastrada.
             </p>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -557,6 +558,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -581,6 +583,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
               Nenhum centro de custo cadastrado.
             </p>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -640,6 +643,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -676,6 +680,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
               Nenhuma parte cadastrada.
             </p>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -747,6 +752,7 @@ export function FinanceSettingsTab({ franchiseId, storeId }: Props) {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

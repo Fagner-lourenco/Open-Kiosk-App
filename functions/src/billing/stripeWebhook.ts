@@ -14,7 +14,7 @@ import Stripe from 'stripe';
 import { db, admin, serverTimestamp } from '../lib';
 import { verifyWebhookSignature, getPlanFromPriceId } from '../lib/stripe';
 
-export const stripeWebhook = onRequest(async (req, res) => {
+export const stripeWebhook = onRequest({ region: 'southamerica-east1' }, async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).send('Método não permitido');
     return;
@@ -75,11 +75,13 @@ export const stripeWebhook = onRequest(async (req, res) => {
       default:
         logger.info(`Evento não tratado: ${event.type}`);
     }
+
+    // 🔒 FIX P0-1: Mark event as processed BEFORE sending response.
+    // After res.json() the runtime may terminate the function, so the
+    // dedup marker must be persisted first to prevent replay double-processing.
+    await dedupRef.set({ type: event.type, processedAt: admin.firestore.FieldValue.serverTimestamp() });
     
     res.json({ received: true });
-
-    // Mark event as processed (after successful handling)
-    await dedupRef.set({ type: event.type, processedAt: admin.firestore.FieldValue.serverTimestamp() });
     
   } catch (error) {
     logger.error('Erro ao processar webhook:', error);
@@ -131,8 +133,7 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
     return;
   }
   
-  const franchiseDoc = franchiseQuery.docs[0];
-  const now = serverTimestamp();
+  const franchiseRef = franchiseQuery.docs[0].ref;
   
   // Determina o plano pela price
   const priceId = subscription.items.data[0]?.price.id;
@@ -150,21 +151,26 @@ async function handleSubscriptionUpdate(subscription: Stripe.Subscription) {
     paused: 'paused',
   };
   
-  await franchiseDoc.ref.update({
-    stripeSubscriptionId: subscription.id,
-    plan,
-    planStatus: statusMap[subscription.status] || subscription.status,
-    billingStatus: statusMap[subscription.status] || subscription.status,
-    planExpiresAt: subscription.current_period_end 
-      ? admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000)
-      : null,
-    trialEndsAt: subscription.trial_end 
-      ? admin.firestore.Timestamp.fromMillis(subscription.trial_end * 1000)
-      : null,
-    updatedAt: now,
+  // 🔒 FIX P0-2: Transaction to prevent concurrent webhook race conditions
+  await db.runTransaction(async (txn) => {
+    const snap = await txn.get(franchiseRef);
+    if (!snap.exists) return;
+    txn.update(franchiseRef, {
+      stripeSubscriptionId: subscription.id,
+      plan,
+      planStatus: statusMap[subscription.status] || subscription.status,
+      billingStatus: statusMap[subscription.status] || subscription.status,
+      planExpiresAt: subscription.current_period_end 
+        ? admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000)
+        : null,
+      trialEndsAt: subscription.trial_end 
+        ? admin.firestore.Timestamp.fromMillis(subscription.trial_end * 1000)
+        : null,
+      updatedAt: serverTimestamp(),
+    });
   });
   
-  logger.info(`Subscription atualizada para franquia ${franchiseDoc.id}`);
+  logger.info(`Subscription atualizada para franquia ${franchiseRef.id}`);
 }
 
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
@@ -178,25 +184,29 @@ async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
     return;
   }
   
-  const franchiseDoc = franchiseQuery.docs[0];
-  const now = serverTimestamp();
+  const franchiseRef = franchiseQuery.docs[0].ref;
   
-  await franchiseDoc.ref.update({
-    plan: 'free',
-    planStatus: 'canceled',
-    billingStatus: 'canceled',
-    stripeSubscriptionId: null,
-    updatedAt: now,
+  // 🔒 FIX P0-2: Transaction to prevent concurrent webhook race conditions
+  await db.runTransaction(async (txn) => {
+    const snap = await txn.get(franchiseRef);
+    if (!snap.exists) return;
+    txn.update(franchiseRef, {
+      plan: 'free',
+      planStatus: 'canceled',
+      billingStatus: 'canceled',
+      stripeSubscriptionId: null,
+      updatedAt: serverTimestamp(),
+    });
+    // Registra evento within transaction
+    const eventRef = franchiseRef.collection('billingEvents').doc();
+    txn.set(eventRef, {
+      type: 'subscription_canceled',
+      subscriptionId: subscription.id,
+      timestamp: serverTimestamp(),
+    });
   });
   
-  // Registra evento
-  await franchiseDoc.ref.collection('billingEvents').add({
-    type: 'subscription_canceled',
-    subscriptionId: subscription.id,
-    timestamp: now,
-  });
-  
-  logger.info(`Subscription cancelada para franquia ${franchiseDoc.id}`);
+  logger.info(`Subscription cancelada para franquia ${franchiseRef.id}`);
 }
 
 async function handleInvoicePaid(invoice: Stripe.Invoice) {
@@ -210,24 +220,26 @@ async function handleInvoicePaid(invoice: Stripe.Invoice) {
   
   if (franchiseQuery.empty) return;
   
-  const franchiseDoc = franchiseQuery.docs[0];
-  const now = serverTimestamp();
+  const franchiseRef = franchiseQuery.docs[0].ref;
   
-  // Registra pagamento
-  await franchiseDoc.ref.collection('billingEvents').add({
-    type: 'invoice_paid',
-    invoiceId: invoice.id,
-    amount: invoice.amount_paid,
-    currency: invoice.currency,
-    timestamp: now,
-  });
-  
-  // Atualiza status se necessário
-  await franchiseDoc.ref.update({
-    planStatus: 'active',
-    billingStatus: 'active',
-    lastPaymentAt: now,
-    updatedAt: now,
+  // 🔒 FIX P0-2: Transaction for atomic read-update + billing event
+  await db.runTransaction(async (txn) => {
+    const snap = await txn.get(franchiseRef);
+    if (!snap.exists) return;
+    txn.update(franchiseRef, {
+      planStatus: 'active',
+      billingStatus: 'active',
+      lastPaymentAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    const eventRef = franchiseRef.collection('billingEvents').doc();
+    txn.set(eventRef, {
+      type: 'invoice_paid',
+      invoiceId: invoice.id,
+      amount: invoice.amount_paid,
+      currency: invoice.currency,
+      timestamp: serverTimestamp(),
+    });
   });
 }
 
@@ -242,24 +254,26 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   
   if (franchiseQuery.empty) return;
   
-  const franchiseDoc = franchiseQuery.docs[0];
-  const now = serverTimestamp();
+  const franchiseRef = franchiseQuery.docs[0].ref;
   
-  // Registra falha
-  await franchiseDoc.ref.collection('billingEvents').add({
-    type: 'invoice_payment_failed',
-    invoiceId: invoice.id,
-    amount: invoice.amount_due,
-    currency: invoice.currency,
-    timestamp: now,
+  // 🔒 FIX P0-2: Transaction for atomic read-update + billing event
+  await db.runTransaction(async (txn) => {
+    const snap = await txn.get(franchiseRef);
+    if (!snap.exists) return;
+    txn.update(franchiseRef, {
+      planStatus: 'past_due',
+      billingStatus: 'past_due',
+      updatedAt: serverTimestamp(),
+    });
+    const eventRef = franchiseRef.collection('billingEvents').doc();
+    txn.set(eventRef, {
+      type: 'invoice_payment_failed',
+      invoiceId: invoice.id,
+      amount: invoice.amount_due,
+      currency: invoice.currency,
+      timestamp: serverTimestamp(),
+    });
   });
   
-  // Atualiza status
-  await franchiseDoc.ref.update({
-    planStatus: 'past_due',
-    billingStatus: 'past_due',
-    updatedAt: now,
-  });
-  
-  logger.warn(`Pagamento falhou para franquia ${franchiseDoc.id}`);
+  logger.warn(`Pagamento falhou para franquia ${franchiseRef.id}`);
 }

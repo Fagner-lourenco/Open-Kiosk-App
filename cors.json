@@ -1,0 +1,23 @@
+[
+  {
+    "origin": [
+      "https://admin-kappa-five-12.vercel.app",
+      "https://*.vercel.app",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:3000",
+      "http://localhost:4173",
+      "http://localhost:8080"
+    ],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Access-Control-Allow-Origin",
+      "Authorization",
+      "x-goog-resumable",
+      "x-goog-meta-*"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

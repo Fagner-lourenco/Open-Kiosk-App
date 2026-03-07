@@ -5,7 +5,7 @@
  * evitando prop drilling. Sincroniza automaticamente com StoreSettings.
  */
 
-import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, useEffect, type ReactNode } from 'react';
 import { useStoreSettings } from '@/hooks/useStoreSettings';
 import type { PaymentGatewayConfig, EnabledPaymentMethods } from '@/types/store';
 import { getPaymentConfig, type ResolvedPaymentConfig, isPaymentConfigured } from '@/config/paymentGateway';
@@ -32,7 +32,7 @@ interface PaymentGatewayContextValue {
   isConfigured: boolean;
   
   /** Fonte da configuração atual */
-  source: 'firestore' | 'env' | 'none';
+  source: 'firestore' | 'env';
   
   /** Se está carregando configurações */
   isLoading: boolean;
@@ -45,7 +45,7 @@ const PaymentGatewayContext = createContext<PaymentGatewayContextValue>({
   gatewayConfig: null,
   resolvedConfig: getPaymentConfig(null),
   isConfigured: false,
-  source: 'none',
+  source: 'env',
   isLoading: true,
   enabledMethods: DEFAULT_ENABLED_METHODS,
 });
@@ -64,18 +64,8 @@ export function PaymentGatewayProvider({ children }: PaymentGatewayProviderProps
     const gatewayConfig = settings?.paymentGatewayConfig || null;
     const resolvedConfig = getPaymentConfig(gatewayConfig);
     
-    // Determinar fonte e se está configurado
-    const hasFirestoreConfig = !!gatewayConfig?.provider;
-    const hasEnvConfig = !!import.meta.env.VITE_MP_ACCESS_TOKEN || 
-                         !!import.meta.env.VITE_MP_ACCESS_TOKEN_SANDBOX ||
-                         !!import.meta.env.VITE_MP_ACCESS_TOKEN_PRODUCTION;
-    
-    let source: 'firestore' | 'env' | 'none' = 'none';
-    if (hasFirestoreConfig) {
-      source = 'firestore';
-    } else if (hasEnvConfig) {
-      source = 'env';
-    }
+    // Keep source semantics aligned with getPaymentConfig().
+    const source = resolvedConfig.source;
     
     const isConfigured = isPaymentConfigured(gatewayConfig);
     
@@ -96,6 +86,18 @@ export function PaymentGatewayProvider({ children }: PaymentGatewayProviderProps
       enabledMethods,
     };
   }, [settings?.paymentGatewayConfig, loading]);
+
+  // 🔍 DIAG: Log payment gateway resolution para debug de sync
+  useEffect(() => {
+    if (!loading) {
+      console.log('[PaymentGateway] provider=%s source=%s gatewayConfig.provider=%s resolvedConfig.provider=%s',
+        value.gatewayConfig?.provider || '(null)',
+        value.source,
+        value.gatewayConfig?.provider || '(null)',
+        value.resolvedConfig.provider
+      );
+    }
+  }, [value.gatewayConfig?.provider, value.source, value.resolvedConfig.provider, loading]);
 
   return (
     <PaymentGatewayContext.Provider value={value}>

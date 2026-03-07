@@ -48,7 +48,8 @@ vi.mock('../lib/stripe', () => ({
 }));
 
 vi.mock('firebase-functions/v2/https', () => ({
-  onRequest: (handler: any) => {
+  onRequest: (...args: any[]) => {
+    const handler = args.length === 2 ? args[1] : args[0];
     const fn: any = {};
     fn.run = handler;
     return fn;

@@ -70,7 +70,6 @@ export default function ExitIntentModal({
     if (!canShow()) return;
     const t = setTimeout(() => setArmed(true), armAfterMs);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [armAfterMs]);
 
   // Exit-intent listener (mouse sai pelo topo)
@@ -128,7 +127,6 @@ export default function ExitIntentModal({
       document.removeEventListener('keydown', onKeyDown);
       lastFocusedRef.current?.focus?.();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   const handleClose = () => {

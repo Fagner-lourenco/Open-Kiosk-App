@@ -75,7 +75,7 @@ export const useCachedVideo = (
       setState((prev) => ({ ...prev, videoUrl: null, isCached: false }));
       return;
     }
-    console.warn('[useCachedVideo] Checking cache for URL:', url.substring(0, 100));
+    console.warn('[useCachedVideo] Checking cache for URL:', url.substring(0, 60) + '...');
 
     try {
       const cached = await isVideoCached(url);

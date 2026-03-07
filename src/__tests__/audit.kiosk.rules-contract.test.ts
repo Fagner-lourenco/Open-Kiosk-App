@@ -87,4 +87,25 @@ describe('Audit Kiosk - contrato app vs firestore.rules', () => {
     const missingInRules = fieldsUsedByEnrichment.filter((k) => !allowedKeys.includes(k));
     expect(missingInRules).toEqual([]);
   });
+
+  it('rules de hardware/devices exigem claim de franchise junto ao storeId', () => {
+    const rulesSource = fs.readFileSync(path.resolve(process.cwd(), 'firestore.rules'), 'utf8');
+
+    expect(rulesSource).toMatch(/function hasDeviceStoreClaim\(franchiseId, storeId\)/);
+    expect(rulesSource).toMatch(/request\.auth\.token\.storeId == storeId/);
+    expect(rulesSource).toMatch(/request\.auth\.token\.franchiseId == franchiseId/);
+
+    const hardwareBlock = rulesSource.match(/match \/hardware\/\{docId\}\s*\{([\s\S]*?)allow delete:/)?.[1] ?? '';
+    const devicesBlock = rulesSource.match(/match \/devices\/\{deviceId\}\s*\{([\s\S]*?)allow delete:/)?.[1] ?? '';
+    expect(hardwareBlock).toMatch(/hasDeviceStoreClaim\(franchiseId, storeId\)/);
+    expect(devicesBlock).toMatch(/hasDeviceStoreClaim\(franchiseId, storeId\)/);
+  });
+
+  it('storage.rules de media exige vinculo de tenant para escrita', () => {
+    const storageRules = fs.readFileSync(path.resolve(process.cwd(), 'storage.rules'), 'utf8');
+
+    expect(storageRules).toMatch(/function hasStoreAccess\(franchiseId, storeId\)/);
+    expect(storageRules).toMatch(/isSuperAdmin\(\) \|\| hasStoreAccess\(franchiseId, storeId\)/);
+    expect(storageRules).toMatch(/request\.resource != null/);
+  });
 });

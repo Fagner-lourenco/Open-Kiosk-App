@@ -36,6 +36,13 @@ vi.mock('firebase/firestore', () => {
             return new MockTimestamp(Math.floor(d.getTime() / 1000), 0);
         }
     }
+    const makeBatch = () => ({
+        delete: vi.fn(),
+        set: vi.fn(),
+        update: vi.fn(),
+        commit: vi.fn(() => Promise.resolve()),
+    });
+
     return {
         getFirestore: vi.fn(),
         initializeFirestore: vi.fn(),
@@ -48,9 +55,11 @@ vi.mock('firebase/firestore', () => {
         setDoc: vi.fn(() => Promise.resolve()),
         updateDoc: vi.fn(() => Promise.resolve()),
         deleteDoc: vi.fn(() => Promise.resolve()),
+        writeBatch: vi.fn(() => makeBatch()),
         query: vi.fn((...args: unknown[]) => args[0]),
         where: vi.fn(),
         orderBy: vi.fn(),
+        limit: vi.fn((_n: number) => ({ type: 'limit' })),
         serverTimestamp: vi.fn(() => MockTimestamp.now()),
         Timestamp: MockTimestamp,
         onSnapshot: vi.fn(),
@@ -63,11 +72,18 @@ vi.mock('firebase/storage', () => ({
     connectStorageEmulator: vi.fn(),
 }));
 
+vi.mock('firebase/functions', () => ({
+    getFunctions: vi.fn(() => ({})),
+    connectFunctionsEmulator: vi.fn(),
+    httpsCallable: vi.fn(() => vi.fn()),
+}));
+
 // ─── Mock Firebase lib (our wrapper) ────────────────────────────────────────
 vi.mock('@/lib/firebase', () => ({
     db: {},
     auth: {},
     storage: {},
+    functions: {},
     default: {},
 }));
 
@@ -142,6 +158,8 @@ vi.mock('@/lib/pathResolver', () => {
                 `franchises/${fId}/stores/${sId}/${FINANCE_MAP[sub] || sub}/${docId}`,
         ),
         financeSummaryPath: vi.fn((fId: string) => `franchises/${fId}/financeSummary`),
+        invitationsPath: vi.fn(() => 'invitations'),
+        auditLogsPath: vi.fn((fId: string) => `franchises/${fId}/auditLogs`),
         storeSubPath: vi.fn(
             (fId: string, sId: string, sub: string) => `franchises/${fId}/stores/${sId}/${sub}`,
         ),

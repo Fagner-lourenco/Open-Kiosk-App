@@ -127,13 +127,26 @@ describe('services/dynamicPricingService', () => {
 });
 
 describe('services/notificationService', () => {
-  it('notificationService é instância singleton', () => {
+  it('notificationService e instancia singleton', () => {
     expect(notificationService).toBeDefined();
   });
 
   it('NotificationTemplates tem templates', () => {
     expect(NotificationTemplates).toBeDefined();
     expect(typeof NotificationTemplates).toBe('object');
+  });
+
+  it('templates de pedido apontam para rota real de loja', () => {
+    const order = NotificationTemplates.newOrder('Loja A', 'order-123456', 12.5, 'store-1');
+    const payment = NotificationTemplates.paymentError('Loja A', 'order-123456', 'erro', 'store-1');
+
+    expect(order.actionUrl).toBe('/stores/store-1/orders');
+    expect(payment.actionUrl).toBe('/stores/store-1/orders');
+  });
+
+  it('template de estoque aponta para inventory da loja quando storeId existe', () => {
+    const lowStock = NotificationTemplates.lowStock('IPA', 'Loja A', 2, 10, 'store-1');
+    expect(lowStock.actionUrl).toBe('/stores/store-1/inventory');
   });
 });
 

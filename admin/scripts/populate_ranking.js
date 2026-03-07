@@ -2,16 +2,22 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, signInAnonymously } from 'firebase/auth';
 import { getFirestore, collection, getDocs, addDoc, Timestamp, query, where } from 'firebase/firestore';
 
-// Configuração do Firebase
-// Obs: Em produção isso viria de .env, mas para este script standalone usamos hardcoded
-// baseado no .env do projeto
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+// Configuração do Firebase (somente por variáveis de ambiente)
 const firebaseConfig = {
-  apiKey: "AIzaSyCaRS-fnWiUwNtPjlCmcIzlz4003lDdP8s",
-  authDomain: "open-kiosk-22b2b.firebaseapp.com",
-  projectId: "open-kiosk-22b2b",
-  storageBucket: "open-kiosk-22b2b.firebasestorage.app",
-  messagingSenderId: "66190112514",
-  appId: "1:66190112514:web:7971482f37a9af47ebb41b"
+  apiKey: requireEnv('VITE_FIREBASE_API_KEY'),
+  authDomain: requireEnv('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: requireEnv('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: requireEnv('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: requireEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: requireEnv('VITE_FIREBASE_APP_ID'),
 };
 
 const app = initializeApp(firebaseConfig);

@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { waitFor } from '@testing-library/react';
-import { getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { getDocs, setDoc, writeBatch } from 'firebase/firestore';
 import {
   renderHookWithProviders,
   mockGetDocsReturn,
@@ -138,17 +138,22 @@ describe('useCommercialEvents', () => {
     expect(setDoc).toHaveBeenCalledTimes(1);
   });
 
-  it('deve chamar deleteDoc ao excluir evento', async () => {
+  it('deve usar writeBatch ao excluir evento', async () => {
     mockGetDocsReturn(mockEvents);
     const { result } = renderHookWithProviders(() =>
       useCommercialEvents(TEST_FRANCHISE_ID, TEST_STORE_ID),
     );
 
     await waitFor(() => expect(result.current.loadingEvents).toBe(false));
-    mockGetDocsEmpty();
     await result.current.deleteEvent('ev-1');
 
-    expect(deleteDoc).toHaveBeenCalledTimes(1);
+    const batch = (writeBatch as any).mock.results.at(-1)?.value;
+    const deletedPaths = batch?.delete.mock.calls.map((call: unknown[]) => ((call[0] as { path?: string })?.path || '')) ?? [];
+
+    expect(writeBatch).toHaveBeenCalledTimes(1);
+    expect(deletedPaths.some((path: string) => path.includes('/commercialEvents/ev-1/budgetLines/'))).toBe(true);
+    expect(deletedPaths.some((path: string) => path.endsWith('/commercialEvents/ev-1'))).toBe(true);
+    expect(batch?.commit).toHaveBeenCalledTimes(1);
   });
 
   it('deve expor flags isPending', async () => {

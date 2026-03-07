@@ -108,8 +108,7 @@ export function normalizePaymentGatewayConfigFromStore(
     providers: {
       pagbank: {
         ...(current?.providers?.pagbank || {}),
-        clientId: current?.providers?.pagbank?.clientId || legacyGateway?.clientId,
-        merchantId: current?.providers?.pagbank?.merchantId || legacyGateway?.merchantId,
+        // clientId and merchantId removed — dead fields never used by PagBank API
         publicKey: current?.providers?.pagbank?.publicKey || legacyGateway?.publicKey,
       },
       mercadopago: {
@@ -142,7 +141,9 @@ export function getPaymentConfig(gatewayConfig?: PaymentGatewayConfig | null): R
   const environment = gatewayConfig?.environment || gatewayConfig?.mode || MERCADO_PAGO_CONFIG.MODE;
   const enabledMethods = resolveEnabledMethods(gatewayConfig);
 
-  const hasFirestoreToken = !!gatewayConfig?.accessToken;
+  const hasFirestoreConfig =
+    !!gatewayConfig?.accessToken ||
+    (!!gatewayConfig?.provider && provider !== 'none');
   const accessToken = gatewayConfig?.accessToken || MERCADO_PAGO_CONFIG.ACCESS_TOKEN;
 
   return {
@@ -160,7 +161,7 @@ export function getPaymentConfig(gatewayConfig?: PaymentGatewayConfig | null): R
     qrExpirationMinutes: gatewayConfig?.qrExpirationMinutes || MERCADO_PAGO_CONFIG.QR_EXPIRATION_MINUTES,
     pollingIntervalMs: gatewayConfig?.pollingIntervalMs || MERCADO_PAGO_CONFIG.POLLING_INTERVAL_MS,
     pollingMaxAttempts: gatewayConfig?.pollingMaxAttempts || MERCADO_PAGO_CONFIG.POLLING_MAX_ATTEMPTS,
-    source: hasFirestoreToken ? 'firestore' : 'env',
+    source: hasFirestoreConfig ? 'firestore' : 'env',
   };
 }
 
@@ -190,17 +191,15 @@ export function validatePaymentConfig(gatewayConfig?: PaymentGatewayConfig | nul
   }
 
   if (config.provider === 'pagbank') {
-    const clientId = gatewayConfig?.providers?.pagbank?.clientId;
     const publicKey = gatewayConfig?.providers?.pagbank?.publicKey;
-    const needsPix = config.enabledMethods.pix;
+    const plugpagEnabled = (gatewayConfig?.providers?.pagbank as any)?.plugpag?.enabled;
     const needsCard = config.enabledMethods.credit || config.enabledMethods.debit;
 
-    if ((needsPix || needsCard) && !clientId) {
-      errors.push('PagBank Client ID não configurado');
+    // publicKey only needed for online card (PagBank.js SDK), not for PlugPag terminal
+    if (needsCard && !publicKey && !plugpagEnabled) {
+      errors.push('PagBank Public Key não configurada (necessária para cartão online)');
     }
-    if (needsCard && !publicKey) {
-      errors.push('PagBank Public Key não configurada');
-    }
+    // clientId is NOT required — PagBank uses Bearer token auth (authToken)
   } else if (config.provider === 'mercado_pago') {
     if (!config.accessToken) {
       errors.push('Access Token não configurado');
@@ -245,20 +244,19 @@ export function validatePaymentConfig(gatewayConfig?: PaymentGatewayConfig | nul
 export function isPaymentConfigured(gatewayConfig?: PaymentGatewayConfig | null): boolean {
   const config = getPaymentConfig(gatewayConfig);
   if (config.provider === 'pagbank') {
-    const clientId = gatewayConfig?.providers?.pagbank?.clientId;
     const publicKey = gatewayConfig?.providers?.pagbank?.publicKey;
-    const needsPix = config.enabledMethods.pix;
+    const plugpagEnabled = (gatewayConfig?.providers?.pagbank as any)?.plugpag?.enabled;
     const needsCard = config.enabledMethods.credit || config.enabledMethods.debit;
 
-    if (!needsPix && !needsCard) {
-      return true;
+    // PagBank is configured if:
+    // - PIX: always ready (uses authToken from functions/.env, no client-side config needed)
+    // - Card online: needs publicKey (PagBank.js SDK)
+    // - Card PlugPag: always ready (local processing via Bluetooth terminal)
+    if (needsCard && !plugpagEnabled && !publicKey) {
+      return false;
     }
 
-    if (needsCard) {
-      return !!clientId && !!publicKey;
-    }
-
-    return !!clientId;
+    return true; // PIX or PlugPag — no client-side credentials needed
   }
   if (config.provider === 'none') {
     return false;

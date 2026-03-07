@@ -88,7 +88,7 @@ describe('payment gateway coverage', () => {
         environment: 'sandbox',
         enabledMethods: { cash: true, pix: true, credit: true, debit: true },
         providers: {
-          pagbank: { clientId: 'cid', merchantId: 'mid', publicKey: 'pk' },
+          pagbank: { publicKey: 'pk' },
           mercadopago: {
             userId: 'uid',
             storeId: 'sid',
@@ -99,8 +99,7 @@ describe('payment gateway coverage', () => {
       },
     });
 
-    expect(normalized?.providers?.pagbank?.clientId).toBe('cid');
-    expect(normalized?.providers?.pagbank?.merchantId).toBe('mid');
+    // clientId and merchantId are dead fields — no longer propagated
     expect(normalized?.providers?.pagbank?.publicKey).toBe('pk');
     expect(normalized?.providers?.mercadopago?.userId).toBe('uid');
   });
@@ -130,7 +129,7 @@ describe('payment gateway coverage', () => {
     expect(result.warnings.some((w) => w.includes('desativado'))).toBe(true);
   });
 
-  it('valida erros de PagBank para pix/card', async () => {
+  it('valida erros de PagBank para cartão online sem publicKey', async () => {
     const { validatePaymentConfig, isPaymentConfigured } = await import('@/config/paymentGateway');
 
     const missing = validatePaymentConfig({
@@ -140,15 +139,16 @@ describe('payment gateway coverage', () => {
       providers: { pagbank: {} },
     });
 
-    expect(missing.valid).toBe(false);
-    expect(missing.errors.some((e) => e.includes('Client ID'))).toBe(true);
+    // clientId is NOT required anymore (PagBank uses Bearer auth token)
+    expect(missing.errors.some((e) => e.includes('Client ID'))).toBe(false);
+    // publicKey IS required for online card (no PlugPag)
     expect(missing.errors.some((e) => e.includes('Public Key'))).toBe(true);
 
     const configured = isPaymentConfigured({
       provider: 'pagbank',
       environment: 'sandbox',
       enabledMethods: { cash: false, pix: false, credit: true, debit: false },
-      providers: { pagbank: { clientId: 'cid', publicKey: 'pk' } },
+      providers: { pagbank: { publicKey: 'pk' } },
     });
 
     expect(configured).toBe(true);
@@ -204,9 +204,9 @@ describe('payment gateway coverage', () => {
         provider: 'pagbank',
         environment: 'sandbox',
         enabledMethods: { cash: false, pix: true, credit: false, debit: false },
-        providers: { pagbank: { clientId: 'cid-only' } },
+        providers: { pagbank: {} },
       })
-    ).toBe(true);
+    ).toBe(true); // PIX only — no client-side credentials needed
 
     expect(
       isPaymentConfigured({

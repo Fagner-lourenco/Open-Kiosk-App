@@ -76,39 +76,54 @@ const pagbankGateway: GatewayDefinition = {
   firestoreKey: 'pagbank',
 
   configFields: [
+    // ── Maquininha (PlugPag) ──────────────────────────────
     {
-      key: 'clientId',
-      label: 'Client ID',
-      type: 'text',
-      required: true,
-      placeholder: 'Client ID da aplicação PagBank',
-      helpText: 'Obtido no painel de desenvolvedores do PagBank.',
+      key: '_section_plugpag',
+      label: '🔌 Terminal de Pagamento (Maquininha)',
+      type: 'section',
+      required: false,
+      helpText: 'Pagamentos por cartão de crédito/débito usando a maquininha PagBank conectada via Bluetooth.',
     },
     {
-      key: 'merchantId',
-      label: 'Merchant ID',
+      key: 'plugpag.enabled',
+      label: 'Usar Maquininha PagBank',
+      type: 'toggle',
+      required: false,
+      helpText: 'Ative para receber cartão na Moderninha Pro 2 via Bluetooth. Configure o MAC da maquininha na seção "Torneiras" abaixo.',
+    },
+    {
+      key: 'plugpag.activationCode',
+      label: 'Código de Ativação',
       type: 'text',
       required: false,
-      placeholder: 'ID do vendedor (opcional)',
-      helpText: 'Identificador do vendedor no PagBank.',
+      placeholder: 'Ex: 403938',
+      helpText: 'Código fornecido pelo PagBank para ativar a integração SDK. Deixe vazio se a maquininha já funciona normalmente.',
+      dependsOn: 'plugpag.enabled',
+    },
+    // ── API PagBank (PIX e cartão online) ────────────────
+    {
+      key: '_section_api',
+      label: '🌐 API PagBank (PIX)',
+      type: 'section',
+      required: false,
+      helpText: 'Para PIX via API, configure o Auth Token no backend (functions/.env). Não é necessário para pagamentos por cartão na maquininha.',
     },
     {
       key: 'publicKey',
       label: 'Public Key',
       type: 'text',
       required: false,
-      placeholder: 'Chave pública para tokenização de cartão',
-      helpText: 'Necessária para pagamentos com cartão. Obtida no painel PagBank.',
+      placeholder: 'Chave pública para tokenização',
+      helpText: 'Necessária apenas para cartão online (sem maquininha). Com PlugPag ativo, não é usada. É gerada automaticamente pela API.',
     },
   ],
 
   adminNotes: [
-    'O Auth Token (segredo) deve ser configurado no backend via Firebase CLI:',
-    '  firebase functions:config:set pagbank.auth_token_sandbox="SEU_TOKEN"',
-    '  firebase functions:config:set pagbank.auth_token_production="SEU_TOKEN"',
-    'O webhook token também deve ser configurado:',
-    '  firebase functions:config:set pagbank.webhook_token="SEU_TOKEN"',
-    'Esses segredos nunca são armazenados no Firestore.',
+    '📌 Para maquininha (PlugPag): Ative o toggle acima e configure o MAC na seção Torneiras. Basta isso!',
+    '📌 Para PIX via API: Configure o Auth Token no backend:',
+    '  PAGBANK_AUTH_TOKEN_PRODUCTION=seu_token (no arquivo functions/.env)',
+    '  PAGBANK_AUTH_TOKEN_SANDBOX=seu_token_sandbox (para testes)',
+    'Auth Token e Public Key são obtidos no painel PagBank. Segredos nunca são armazenados no Firestore.',
   ],
 };
 

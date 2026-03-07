@@ -448,6 +448,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
               <p>{logs.length === 0 ? 'Nenhuma manutencao registrada' : 'Nenhuma manutencao encontrada'}</p>
             </div>
           ) : (
+            <div className="overflow-x-auto -mx-4 px-4 sm:-mx-6 sm:px-6">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -520,6 +521,7 @@ export function StoreMaintenanceTab({ franchiseId, storeId }: StoreMaintenanceTa
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

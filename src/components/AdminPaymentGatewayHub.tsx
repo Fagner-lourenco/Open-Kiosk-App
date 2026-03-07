@@ -92,23 +92,19 @@ export default function AdminPaymentGatewayHub() {
 
           {provider === "pagbank" && (
             <div className="space-y-2">
-              <p className="text-sm font-medium">PagBank (dados públicos)</p>
+              <p className="text-sm font-medium">PagBank</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <p className="text-sm text-muted-foreground">Client ID</p>
-                  <p className="font-medium">{gatewayConfig?.providers?.pagbank?.clientId || "-"}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Merchant ID</p>
-                  <p className="font-medium">{gatewayConfig?.providers?.pagbank?.merchantId || "-"}</p>
-                </div>
-                <div>
                   <p className="text-sm text-muted-foreground">Public Key</p>
-                  <p className="font-medium">{gatewayConfig?.providers?.pagbank?.publicKey || "-"}</p>
+                  <p className="font-medium">{gatewayConfig?.providers?.pagbank?.publicKey ? "Configurada" : "-"}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">PlugPag (Maquininha)</p>
+                  <p className="font-medium">{gatewayConfig?.providers?.pagbank?.plugpag?.enabled ? "Ativo" : "Inativo"}</p>
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Segredos (client secret, tokens) são configurados apenas nas Cloud Functions.
+                Auth Token é configurado no backend (functions/.env). Nunca armazenado no Firestore.
               </p>
             </div>
           )}

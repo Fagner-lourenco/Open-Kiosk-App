@@ -32,9 +32,10 @@ export const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
  * @returns Canonical PaymentProvider
  */
 export const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
-  if (!provider) return 'none';
+  if (!provider) return 'mercado_pago';
   if (provider === 'mercadopago') return 'mercado_pago';
-  return provider as PaymentProvider;
+  if (provider === 'none' || provider === 'mercado_pago' || provider === 'pagbank') return provider;
+  return 'none';
 };
 
 /**
@@ -65,8 +66,7 @@ export const normalizePaymentGatewayConfig = (data?: Record<string, any> | null)
     providers: {
       pagbank: {
         ...(current?.providers?.pagbank || {}),
-        clientId: current?.providers?.pagbank?.clientId || legacyGateway?.clientId,
-        merchantId: current?.providers?.pagbank?.merchantId || legacyGateway?.merchantId,
+        // clientId and merchantId removed — dead fields never used by PagBank API
         publicKey: current?.providers?.pagbank?.publicKey || legacyGateway?.publicKey,
       },
       mercadopago: {
@@ -96,6 +96,11 @@ export const sanitizePaymentGatewayConfigForSave = (config: PaymentGatewayConfig
   delete (sanitized as any).storeId;
   delete (sanitized as any).externalPosId;
   delete (sanitized as any).terminalId;
+  // Clean dead PagBank fields
+  if (sanitized.providers?.pagbank) {
+    delete (sanitized.providers.pagbank as any).clientId;
+    delete (sanitized.providers.pagbank as any).merchantId;
+  }
   return sanitized;
 };
 
@@ -107,17 +112,16 @@ export const validatePaymentGatewayConfig = (config: PaymentGatewayConfig): stri
   const errors: string[] = [];
 
   if (config.provider === 'pagbank') {
-    const clientId = config.providers?.pagbank?.clientId;
     const publicKey = config.providers?.pagbank?.publicKey;
-    const needsPix = config.enabledMethods?.pix;
+    const plugpagEnabled = (config.providers?.pagbank as any)?.plugpag?.enabled;
     const needsCard = config.enabledMethods?.credit || config.enabledMethods?.debit;
 
-    if ((needsPix || needsCard) && !clientId) {
-      errors.push('PagBank: Client ID é obrigatório.');
+    // publicKey is only needed for online card payments (PagBank.js SDK).
+    // PlugPag terminal payments are processed locally and don't need it.
+    if (needsCard && !publicKey && !plugpagEnabled) {
+      errors.push('PagBank: Public Key é obrigatório para cartão online (não necessário com maquininha).');
     }
-    if (needsCard && !publicKey) {
-      errors.push('PagBank: Public Key é obrigatório para cartão.');
-    }
+    // clientId is NOT required — PagBank API uses Bearer token auth only
   }
 
   return errors;

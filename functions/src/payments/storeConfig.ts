@@ -59,8 +59,7 @@ export const normalizePaymentGatewayConfig = (
     providers: {
       pagbank: {
         ...(current?.providers?.pagbank || {}),
-        clientId: current?.providers?.pagbank?.clientId || legacyGateway?.clientId,
-        merchantId: current?.providers?.pagbank?.merchantId || legacyGateway?.merchantId,
+        // clientId and merchantId removed — dead fields never used by PagBank API
         publicKey: current?.providers?.pagbank?.publicKey || legacyGateway?.publicKey,
       },
       mercadopago: {

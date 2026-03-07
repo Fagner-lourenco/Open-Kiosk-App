@@ -45,6 +45,7 @@ const SettingsPage = lazyNamed(() => import('@/pages/settings/SettingsPage'), 'S
 const ProfilePage = lazyNamed(() => import('@/pages/profile/ProfilePage'), 'ProfilePage');
 const BillingPage = lazy(() => import('@/pages/billing/BillingPage'));
 const RankingPage = lazyNamed(() => import('@/pages/ranking/RankingPage'), 'RankingPage');
+const DemandForecastPage = lazyNamed(() => import('@/pages/forecast/DemandForecastPage'), 'DemandForecastPage');
 const TvDashboardPage = lazyNamed(() => import('@/pages/ranking/TvDashboardPage'), 'TvDashboardPage');
 
 // Store sub-pages (lazy barrel)
@@ -126,22 +127,22 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 /**
  * Guard de permissões (deve estar dentro de PermissionProvider)
  */
-function PermissionGuard({ 
-  children, 
+function PermissionGuard({
+  children,
   requiredPermission,
   requiredPermissions,
   anyPermission,
 }: ProtectedRouteProps) {
   const permissionContext = useContext(PermissionContext);
-  
+
   // ADM-01 fix: fail-closed — se contexto não disponível, bloqueia acesso
   if (!permissionContext) {
     console.warn('[PermissionGuard] PermissionContext not available, blocking access (fail-closed)');
     return null; // Renderiza nada enquanto contexto carrega
   }
-  
+
   const { can, canAll, canAny } = permissionContext;
-  
+
   // Verifica permissão única
   if (requiredPermission && !can(requiredPermission)) {
     if (import.meta.env.DEV) {
@@ -149,7 +150,7 @@ function PermissionGuard({
     }
     return <Navigate to="/dashboard" replace />;
   }
-  
+
   // Verifica múltiplas permissões (AND)
   if (requiredPermissions && !canAll(requiredPermissions)) {
     if (import.meta.env.DEV) {
@@ -157,7 +158,7 @@ function PermissionGuard({
     }
     return <Navigate to="/dashboard" replace />;
   }
-  
+
   // Verifica pelo menos uma permissão (OR)
   if (anyPermission && !canAny(anyPermission)) {
     if (import.meta.env.DEV) {
@@ -165,7 +166,7 @@ function PermissionGuard({
     }
     return <Navigate to="/dashboard" replace />;
   }
-  
+
   return <>{children}</>;
 }
 
@@ -244,7 +245,7 @@ export default function App() {
       <Routes>
         {/* Rota Raiz - Landing ou Dashboard */}
         <Route path="/" element={<RootRoute />} />
-        
+
         {/* Rotas Públicas */}
         <Route element={<AuthLayout />}>
           <Route
@@ -291,7 +292,7 @@ export default function App() {
           }
         >
           <Route path="dashboard" element={<DashboardPage />} />
-          
+
           {/* Lojas */}
           <Route path="stores" element={<StoresPage />} />
           <Route path="stores/new" element={<SuperAdminRoute><StoreCreatePage /></SuperAdminRoute>} />
@@ -324,7 +325,7 @@ export default function App() {
             <Route path="finance/reports" element={<FinanceReportsPage />} />
             <Route path="finance/settings" element={<FinanceSettingsPage />} />
           </Route>
-          
+
           {/* Equipe - requer permissão de gestão de usuários */}
           <Route path="team" element={
             <PermissionGuard requiredPermission="users:read">
@@ -336,52 +337,57 @@ export default function App() {
               <UserDetailPage />
             </PermissionGuard>
           } />
-          
+
           {/* Redirects para compatibilidade */}
           <Route path="users" element={<Navigate to="/team" replace />} />
           <Route path="users/:userId" element={<Navigate to="/team" replace />} />
           <Route path="invitations" element={<Navigate to="/team?tab=invitations" replace />} />
-          
+
           {/* Relatórios - requer permissão de relatórios */}
           <Route path="reports" element={
             <PermissionGuard requiredPermission="reports:read">
               <ReportsPage />
             </PermissionGuard>
           } />
-          
+
           {/* Ranking, TV Dashboard, Desafios & Prêmios — aceita reports:read OU settings:read */}
           <Route path="ranking" element={
             <PermissionGuard anyPermission={['reports:read', 'settings:read']}>
               <RankingPage />
             </PermissionGuard>
           } />
-          
 
-          
+          {/* Previsão de demanda — requer permissão de relatórios */}
+          <Route path="forecast" element={
+            <PermissionGuard requiredPermission="reports:read">
+              <DemandForecastPage />
+            </PermissionGuard>
+          } />
+
           {/* Auditoria - requer permissão de auditoria */}
           <Route path="audit" element={
             <PermissionGuard requiredPermission="audit:read">
               <AuditPage />
             </PermissionGuard>
           } />
-          
+
           {/* Configurações - requer permissão de configurações */}
           <Route path="settings" element={
             <PermissionGuard requiredPermission="settings:read">
               <SettingsPage />
             </PermissionGuard>
           } />
-          
+
           {/* Perfil / Minha Conta - todos podem ver seu próprio perfil */}
           <Route path="profile" element={<ProfilePage />} />
-          
+
           {/* Faturamento - requer permissão de billing */}
           <Route path="billing" element={
             <PermissionGuard requiredPermission="billing:read">
               <BillingPage />
             </PermissionGuard>
           } />
-          
+
           {/* Super Admin */}
           <Route path="superadmin" element={<SuperAdminRoute><SuperAdminDashboard /></SuperAdminRoute>} />
           <Route path="superadmin/franchises" element={<SuperAdminRoute><FranchisesPage /></SuperAdminRoute>} />

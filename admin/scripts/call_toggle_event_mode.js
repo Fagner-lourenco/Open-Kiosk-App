@@ -2,13 +2,21 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 const firebaseConfig = {
-  apiKey: process.env.VITE_FIREBASE_API_KEY || 'AIzaSyCaRS-fnWiUwNtPjlCmcIzlz4003lDdP8s',
-  authDomain: process.env.VITE_FIREBASE_AUTH_DOMAIN || 'open-kiosk-22b2b.firebaseapp.com',
-  projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'open-kiosk-22b2b',
-  storageBucket: process.env.VITE_FIREBASE_STORAGE_BUCKET || 'open-kiosk-22b2b.firebasestorage.app',
-  messagingSenderId: process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '66190112514',
-  appId: process.env.VITE_FIREBASE_APP_ID || '1:66190112514:web:7971482f37a9af47ebb41b',
+  apiKey: requireEnv('VITE_FIREBASE_API_KEY'),
+  authDomain: requireEnv('VITE_FIREBASE_AUTH_DOMAIN'),
+  projectId: requireEnv('VITE_FIREBASE_PROJECT_ID'),
+  storageBucket: requireEnv('VITE_FIREBASE_STORAGE_BUCKET'),
+  messagingSenderId: requireEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+  appId: requireEnv('VITE_FIREBASE_APP_ID'),
 };
 
 async function main() {

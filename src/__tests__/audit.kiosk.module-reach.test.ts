@@ -10,6 +10,13 @@ const SKIP_PATTERNS: RegExp[] = [
   /\.\.\/components\/ui\/resizable\.tsx$/,
   /\.\.\/hooks\/usePermissions\.ts$/,
   /\.\.\/plugins\/plugpagTerminal\.ts$/,
+  // PlugPag/Capacitor native modules — require registerPlugin from @capacitor/core
+  /\.\.\/components\/PlugPagTerminalStatus\.tsx$/,
+  /\.\.\/components\/DrinkQuickCheckoutModal\.tsx$/,
+  /\.\.\/hooks\/usePlugPagAutoConnect\.ts$/,
+  /\.\.\/services\/plugpagPaymentService\.ts$/,
+  /\.\.\/pages\/Shop\.tsx$/,
+  /\.\.\/App\.tsx$/,
 ];
 
 const shouldSkip = (modulePath: string): boolean =>

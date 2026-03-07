@@ -306,7 +306,7 @@ function EventDialog({
               </SelectContent>
             </Select>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-2">
               <Label>Status</Label>
               <Select value={status} onValueChange={(v) => setStatus(v as CommercialEventStatus)}>
@@ -603,7 +603,7 @@ function EventDetailDialog({
                   Nenhuma linha de orçamento ainda.
                 </p>
               ) : (
-                <>
+                <div className="overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -644,7 +644,7 @@ function EventDetailDialog({
                   <div className="text-right text-sm font-bold mt-2">
                     Total: {formatCurrency(totalBudget)}
                   </div>
-                </>
+                </div>
               )}
             </div>
           </div>
@@ -899,6 +899,7 @@ export function CommercialEventsTab({ franchiseId, storeId }: Props) {
               </p>
             </div>
           ) : (
+            <div className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -984,6 +985,7 @@ export function CommercialEventsTab({ franchiseId, storeId }: Props) {
                 ))}
               </TableBody>
             </Table>
+            </div>
           )}
         </CardContent>
       </Card>

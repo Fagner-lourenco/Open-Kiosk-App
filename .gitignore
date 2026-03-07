@@ -84,3 +84,6 @@ __pycache__/
 
 # Temporary tool folders
 tmpclaude-*/
+
+# Sensitive local payment scripts (manual experiments)
+functions/scripts/test-pagbank*.ts
