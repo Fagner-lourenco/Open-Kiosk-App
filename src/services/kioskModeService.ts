@@ -7,10 +7,21 @@
 
 import { registerPlugin, Capacitor } from '@capacitor/core';
 
+export interface KioskDiagnostics {
+  isDefaultHome: boolean;
+  lockTaskEnabled: boolean;
+  webViewPackage?: string | null;
+  webViewVersion?: string | null;
+  lastUnexpectedExitDetected: boolean;
+  lastUnexpectedExitReason?: string | null;
+  lastSystemEventAction?: string | null;
+}
+
 interface KioskModePlugin {
   exitLockTask(options?: { pin?: string }): Promise<void>;
   startLockTask(): Promise<void>;
   isInLockTaskMode(): Promise<{ locked: boolean }>;
+  getDiagnostics(): Promise<KioskDiagnostics>;
 }
 
 // Registrar plugin apenas se estiver em plataforma nativa
@@ -87,5 +98,18 @@ export const isInKioskMode = async (): Promise<boolean> => {
   } catch (error) {
     console.error('[KioskMode] Erro ao verificar Lock Task:', error);
     return false;
+  }
+};
+
+export const getKioskDiagnostics = async (): Promise<KioskDiagnostics | null> => {
+  if (!Capacitor.isNativePlatform() || !KioskMode) {
+    return null;
+  }
+
+  try {
+    return await KioskMode.getDiagnostics();
+  } catch (error) {
+    console.error('[KioskMode] Erro ao obter diagnosticos:', error);
+    return null;
   }
 };

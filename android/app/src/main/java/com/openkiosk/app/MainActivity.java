@@ -3,6 +3,8 @@ package com.openkiosk.app;
 import android.app.ActivityManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -41,6 +43,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(KioskModePlugin.class);
         // Registrar plugin PlugPagTerminal (PlugPag SDK 4.11.0)
         registerPlugin(PlugPagTerminalPlugin.class);
+        KioskDiagnosticsStore.beginProcessSession(this);
         
         try {
             super.onCreate(savedInstanceState);
@@ -60,6 +63,8 @@ public class MainActivity extends BridgeActivity {
             }
             throw e;
         }
+        KioskDiagnosticsStore.recordCurrentWebViewPackage(this);
+        logStartupDiagnostics();
         enableImmersiveMode();
         enableKioskProtections();
     }
@@ -69,8 +74,17 @@ public class MainActivity extends BridgeActivity {
         super.onResume();
         userInitiatedLeave = false;
         suppressLeaveHandlingUntilMs = 0;
+        KioskDiagnosticsStore.recordCurrentWebViewPackage(this);
         enableImmersiveMode();
         restoreLockTaskIfNeeded("onResume");
+    }
+
+    @Override
+    public void onDestroy() {
+        if (isFinishing() && !isChangingConfigurations()) {
+            KioskDiagnosticsStore.markProcessEnded(this, "activity_destroyed");
+        }
+        super.onDestroy();
     }
 
     @Override
@@ -189,6 +203,28 @@ public class MainActivity extends BridgeActivity {
         return false;
     }
 
+    public boolean isDefaultHomeApp() {
+        Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+        homeIntent.addCategory(Intent.CATEGORY_HOME);
+
+        PackageManager packageManager = getPackageManager();
+        ResolveInfo resolveInfo;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            resolveInfo = packageManager.resolveActivity(
+                homeIntent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY)
+            );
+        } else {
+            resolveInfo = packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY);
+        }
+
+        if (resolveInfo == null || resolveInfo.activityInfo == null) {
+            return false;
+        }
+
+        return getPackageName().equals(resolveInfo.activityInfo.packageName);
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         // Bloquear teclas de sistema
@@ -286,5 +322,21 @@ public class MainActivity extends BridgeActivity {
         }
 
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+    }
+
+    private void logStartupDiagnostics() {
+        Log.i(
+            TAG,
+            "Startup diagnostics: isDefaultHome=" + isDefaultHomeApp()
+                + ", lockTaskEnabled=" + isInLockTaskModeInternal()
+                + ", webViewPackage=" + safeString(KioskDiagnosticsStore.getWebViewPackageName(this))
+                + ", webViewVersion=" + safeString(KioskDiagnosticsStore.getWebViewVersion(this))
+                + ", lastUnexpectedExitDetected=" + KioskDiagnosticsStore.wasLastUnexpectedExitDetected(this)
+                + ", lastUnexpectedExitReason=" + safeString(KioskDiagnosticsStore.getLastUnexpectedExitReason(this))
+        );
+    }
+
+    private String safeString(String value) {
+        return value != null ? value : "null";
     }
 }

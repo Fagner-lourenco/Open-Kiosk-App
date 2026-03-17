@@ -43,8 +43,8 @@ export {
 // Dedup collection cleanup (scheduled)
 export { cleanupDedupCollections } from './analytics/cleanupDedupCollections';
 
-// Payments (PagBank + generic)
-export { createPayment, pagbankWebhook, cancelPagBankPayment, syncPendingPayments } from './payments';
+// Payments (PagBank + Mercado Pago + generic)
+export { createPayment, pagbankWebhook, cancelPagBankPayment, syncPendingPayments, mercadopagoWebhook, cancelMercadoPagoPayment, checkMercadoPagoPaymentStatus } from './payments';
 export { onPaymentUpdated } from './payments/onPaymentUpdated';
 
 // Finance automation triggers (ledger entries from operational events)

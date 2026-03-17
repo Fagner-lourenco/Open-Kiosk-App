@@ -15,6 +15,14 @@ import { useTranslation } from '@/i18n';
 import esp32Service, { ConnectionStatus, ConnectionType } from '@/services/esp32CommunicationService';
 import { ESP32ConnectionType } from '@/types/store';
 
+function normalizeConnectionOrder(
+  order: ESP32ConnectionType[],
+): ConnectionType[] {
+  return order.map((connectionType) =>
+    connectionType === 'ble' ? 'bluetooth' : connectionType
+  );
+}
+
 export interface UseESP32AutoConnectOptions {
   /** Habilitar autoconexão (padrão: true) */
   enabled?: boolean;
@@ -80,7 +88,9 @@ export function useESP32AutoConnect(
     }
 
     try {
-      const result = await esp32Service.autoConnectPreferredOrder(connectionOrder);
+      const result = await esp32Service.autoConnectPreferredOrder(
+        normalizeConnectionOrder(connectionOrder)
+      );
 
       if (result !== 'none') {
         setAutoConnectResult('success');

@@ -3,6 +3,9 @@ package com.openkiosk.app;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.os.Build;
 
 import com.getcapacitor.JSObject;
@@ -123,26 +126,36 @@ public class KioskModePlugin extends Plugin {
         }
 
         try {
-            boolean isLocked = false;
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                ActivityManager activityManager = (ActivityManager) activity.getSystemService(Context.ACTIVITY_SERVICE);
-                if (activityManager != null) {
-                    int lockTaskMode = activityManager.getLockTaskModeState();
-                    isLocked = lockTaskMode != ActivityManager.LOCK_TASK_MODE_NONE;
-                }
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                ActivityManager activityManager = (ActivityManager) activity.getSystemService(Context.ACTIVITY_SERVICE);
-                if (activityManager != null) {
-                    isLocked = activityManager.isInLockTaskMode();
-                }
-            }
-            
+            boolean isLocked = isLockTaskEnabled(activity);
             JSObject ret = new JSObject();
             ret.put("locked", isLocked);
             call.resolve(ret);
         } catch (Exception e) {
             call.reject("Erro ao verificar Lock Task: " + e.getMessage());
+        }
+    }
+
+    @PluginMethod
+    public void getDiagnostics(PluginCall call) {
+        Activity activity = getActivity();
+
+        if (activity == null) {
+            call.reject("Activity não disponível");
+            return;
+        }
+
+        try {
+            JSObject diagnostics = new JSObject();
+            diagnostics.put("isDefaultHome", isDefaultHomeApp(activity));
+            diagnostics.put("lockTaskEnabled", isLockTaskEnabled(activity));
+            diagnostics.put("webViewPackage", KioskDiagnosticsStore.getWebViewPackageName(activity));
+            diagnostics.put("webViewVersion", KioskDiagnosticsStore.getWebViewVersion(activity));
+            diagnostics.put("lastUnexpectedExitDetected", KioskDiagnosticsStore.wasLastUnexpectedExitDetected(activity));
+            diagnostics.put("lastUnexpectedExitReason", KioskDiagnosticsStore.getLastUnexpectedExitReason(activity));
+            diagnostics.put("lastSystemEventAction", KioskDiagnosticsStore.getLastSystemEventAction(activity));
+            call.resolve(diagnostics);
+        } catch (Exception e) {
+            call.reject("Erro ao obter diagnósticos do kiosk: " + e.getMessage());
         }
     }
 
@@ -155,5 +168,50 @@ public class KioskModePlugin extends Plugin {
         byte[] a = expected.getBytes(StandardCharsets.UTF_8);
         byte[] b = actual.getBytes(StandardCharsets.UTF_8);
         return MessageDigest.isEqual(a, b);
+    }
+
+    private boolean isLockTaskEnabled(Activity activity) {
+        boolean isLocked = false;
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            ActivityManager activityManager = (ActivityManager) activity.getSystemService(Context.ACTIVITY_SERVICE);
+            if (activityManager != null) {
+                int lockTaskMode = activityManager.getLockTaskModeState();
+                isLocked = lockTaskMode != ActivityManager.LOCK_TASK_MODE_NONE;
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            ActivityManager activityManager = (ActivityManager) activity.getSystemService(Context.ACTIVITY_SERVICE);
+            if (activityManager != null) {
+                isLocked = activityManager.isInLockTaskMode();
+            }
+        }
+
+        return isLocked;
+    }
+
+    private boolean isDefaultHomeApp(Activity activity) {
+        if (activity instanceof MainActivity) {
+            return ((MainActivity) activity).isDefaultHomeApp();
+        }
+
+        Intent homeIntent = new Intent(Intent.ACTION_MAIN);
+        homeIntent.addCategory(Intent.CATEGORY_HOME);
+
+        PackageManager packageManager = activity.getPackageManager();
+        ResolveInfo resolveInfo;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            resolveInfo = packageManager.resolveActivity(
+                homeIntent,
+                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY)
+            );
+        } else {
+            resolveInfo = packageManager.resolveActivity(homeIntent, PackageManager.MATCH_DEFAULT_ONLY);
+        }
+
+        if (resolveInfo == null || resolveInfo.activityInfo == null) {
+            return false;
+        }
+
+        return activity.getPackageName().equals(resolveInfo.activityInfo.packageName);
     }
 }

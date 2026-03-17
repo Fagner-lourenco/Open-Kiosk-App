@@ -15,6 +15,19 @@ const LOCAL_STORAGE_KEY = 'kiosk_default_tap_id';
 const PLUGPAG_DEVICE_ID_KEY = 'kiosk_plugpag_device_id';
 const LEGACY_PLUGPAG_MAC_KEY = 'kiosk_plugpag_mac';
 
+const normalizePlugPagDeviceIdValue = (deviceId: string | null | undefined): string | null => {
+  if (!deviceId) {
+    return null;
+  }
+
+  const normalized = deviceId.trim();
+  return normalized || null;
+};
+
+const looksLikeBluetoothMac = (deviceId: string | null | undefined): boolean => {
+  return !!normalizePlugPagDeviceIdValue(deviceId)?.match(/^(?:[0-9A-F]{2}:){5}[0-9A-F]{2}$/i);
+};
+
 export const getDefaultTapId = (): number => {
   try {
     const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -35,7 +48,9 @@ export const setDefaultTapId = (tapId: number): void => {
 /** Returns the configured PlugPag terminal identifier for this tablet. */
 export const getPlugPagDeviceId = (): string | null => {
   try {
-    return localStorage.getItem(PLUGPAG_DEVICE_ID_KEY) || localStorage.getItem(LEGACY_PLUGPAG_MAC_KEY);
+    return normalizePlugPagDeviceIdValue(
+      localStorage.getItem(PLUGPAG_DEVICE_ID_KEY) || localStorage.getItem(LEGACY_PLUGPAG_MAC_KEY)
+    );
   } catch {
     return null;
   }
@@ -44,8 +59,8 @@ export const getPlugPagDeviceId = (): string | null => {
 /** Persists the PlugPag terminal identifier for this tablet. */
 export const setPlugPagDeviceId = (deviceId: string | null): void => {
   try {
-    if (deviceId) {
-      const normalized = deviceId.trim();
+    const normalized = normalizePlugPagDeviceIdValue(deviceId);
+    if (normalized) {
       localStorage.setItem(PLUGPAG_DEVICE_ID_KEY, normalized);
       localStorage.setItem(LEGACY_PLUGPAG_MAC_KEY, normalized);
     } else {
@@ -83,14 +98,20 @@ export const TapSettingsSync: React.FC<{ children: React.ReactNode }> = ({ child
     if (!settings?.taps) return;
 
     const tapConfig = settings.taps[selectedTapId];
-    const configuredDeviceId = tapConfig?.plugpagDeviceId || null;
+    const configuredDeviceId = normalizePlugPagDeviceIdValue(tapConfig?.plugpagDeviceId);
     const currentDeviceId = getPlugPagDeviceId();
+    const shouldPreserveResolvedPairing =
+      !!configuredDeviceId &&
+      !!currentDeviceId &&
+      looksLikeBluetoothMac(configuredDeviceId) &&
+      !looksLikeBluetoothMac(currentDeviceId);
+    const nextDeviceId = shouldPreserveResolvedPairing ? currentDeviceId : configuredDeviceId;
 
-    if (configuredDeviceId !== currentDeviceId) {
-      setPlugPagDeviceId(configuredDeviceId);
-      if (configuredDeviceId) {
+    if (nextDeviceId !== currentDeviceId) {
+      setPlugPagDeviceId(nextDeviceId);
+      if (nextDeviceId) {
         console.log(
-          `[TapSettingsSync] PlugPag sincronizado da torneira ${selectedTapId + 1}: ${configuredDeviceId}`
+          `[TapSettingsSync] PlugPag sincronizado da torneira ${selectedTapId + 1}: ${nextDeviceId}`
         );
       } else {
         console.log(`[TapSettingsSync] Torneira ${selectedTapId + 1} sem terminal PlugPag vinculado`);

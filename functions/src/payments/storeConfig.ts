@@ -76,9 +76,80 @@ export const normalizePaymentGatewayConfig = (
   };
 };
 
+export interface MercadoPagoProviderConfig {
+  environment: 'sandbox' | 'production';
+  accessToken: string;
+  webhookSecret?: string;
+  userId?: string;
+  storeId?: string;
+  externalPosId?: string;
+  terminalId?: string;
+}
+
+export const resolveMercadoPagoConfig = (
+  gatewayConfig: NormalizedPaymentGatewayConfig
+): MercadoPagoProviderConfig => {
+  const accessToken =
+    (gatewayConfig.environment === 'production'
+      ? process.env.MP_ACCESS_TOKEN_PRODUCTION
+      : process.env.MP_ACCESS_TOKEN_SANDBOX) ||
+    process.env.MP_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    const { HttpsError } = require('firebase-functions/v2/https');
+    throw new HttpsError(
+      'failed-precondition',
+      'MP access_token nao configurado nas Functions.'
+    );
+  }
+
+  const mpConfig = gatewayConfig.providers?.mercadopago;
+
+  return {
+    environment: gatewayConfig.environment,
+    accessToken,
+    webhookSecret: process.env.MP_WEBHOOK_SECRET,
+    userId: mpConfig?.userId,
+    storeId: mpConfig?.storeId,
+    externalPosId: mpConfig?.externalPosId,
+    terminalId: mpConfig?.terminalId,
+  };
+};
+
 export const isMethodEnabled = (config: NormalizedPaymentGatewayConfig, method: PaymentMethod): boolean => {
   if (method === 'pix') return config.enabledMethods.pix;
   if (method === 'credit') return config.enabledMethods.credit;
   if (method === 'debit') return config.enabledMethods.debit;
   return false;
+};
+
+/**
+ * Resolve terminalId / externalPosId por torneira (tap-level),
+ * com fallback para store-level quando o tap não tem configuração específica.
+ *
+ * Cadeia de resolução:
+ *   1. tap.mpTerminalId / tap.mpExternalPosId  (per-tap)
+ *   2. storeConfig.providers.mercadopago.terminalId / externalPosId  (store-level)
+ */
+export const resolveTerminalForTap = (
+  tapId: string | undefined,
+  storeData: Record<string, any> | undefined,
+  storeConfig: MercadoPagoProviderConfig,
+): { terminalId?: string; externalPosId?: string } => {
+  if (tapId && storeData?.taps && Array.isArray(storeData.taps)) {
+    const tap = storeData.taps.find(
+      (t: any) => String(t.id) === String(tapId)
+    );
+    if (tap) {
+      return {
+        terminalId: tap.mpTerminalId || storeConfig.terminalId,
+        externalPosId: tap.mpExternalPosId || storeConfig.externalPosId,
+      };
+    }
+  }
+  // Fallback: store-level (compatível com fluxo atual)
+  return {
+    terminalId: storeConfig.terminalId,
+    externalPosId: storeConfig.externalPosId,
+  };
 };

@@ -16,10 +16,8 @@ import { useSettings } from "@/hooks/useSettings";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
 import { useCheckoutFlow } from "@/hooks/useCheckoutFlow";
 import { InactivityTimer, ProcessingProgress, StepperIndicator, TimeoutWarning } from "./checkout/index";
-import { MERCADO_PAGO_CONFIG, validateMercadoPagoConfig, POINT_ORDER_STATUS } from "@/config/mercadopago";
 import { usePaymentGateway } from "@/context/PaymentGatewayContext";
-import { useMercadoPagoPolling } from "@/hooks/useMercadoPagoPolling";
-import type { OrderStatus, PaymentStatus } from "@/types/mercadopago";
+import { usePaymentStatusListener } from "@/hooks/usePaymentStatusListener";
 import type { OrderCustomerData } from "@/types/sales";
 import QRCode from "react-qr-code";
 import { useTranslation } from "@/i18n";
@@ -101,7 +99,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const lastEnrichDataRef = useRef<OrderCustomerData | null>(null);
 
   // Estados específicos para Mercado Pago Point (Terminal)
-  const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'processing' | 'error'>('idle');
+  const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'card_processing' | 'processing' | 'error'>('idle');
+  // Flag: cancel não é possível quando ordem está no terminal
+  const [cancelBlocked, setCancelBlocked] = useState(false);
 
   const { currentCurrency } = useSettings();
   const { toast } = useToast();
@@ -205,18 +205,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   const processingStageRef = useRef(flowState.processingStage);
 
-  // Hook de polling otimizado com persistência e retry
+  // Hook de status via Firestore onSnapshot + Cloud Function fallback
   const {
-    isPolling,
-    attempts: pollingAttempt,
-    maxAttempts: pollingMaxAttempts,
-    startPolling,
-    stopPolling,
-    clearPersistedState,
-  } = useMercadoPagoPolling({
-    onSuccess: async (order) => {
-      console.log('[DrinkMP] Pagamento aprovado via polling hook', { orderId: order.id });
-      systemLogService.info('payment', `Pagamento aprovado: ${order.id}`, { orderId: order.id, orderNumber: orderNumberRef.current });
+    isListening: isPolling,
+    status: listenerStatus,
+    payment: listenerPayment,
+    startListening,
+    stopListening,
+  } = usePaymentStatusListener({
+    storeId: getCurrentStoreId() || undefined,
+    franchiseId: getCurrentFranchiseId() || undefined,
+    onPaid: async (payment) => {
+      console.log('[DrinkMP] Pagamento aprovado via listener', { paymentId: payment.id, providerOrderId: payment.providerOrderId });
+      systemLogService.info('payment', `Pagamento aprovado: ${payment.id}`, { paymentId: payment.id, orderNumber: orderNumberRef.current });
       
       // Guard contra duplicação
       if (saleRecordedRef.current) {
@@ -235,32 +236,34 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       });
       updateProcessingStage("payment_approved");
       
-      // Buscar dados do pagador (nome, email, cartão) em background — não bloqueia dispense
+      // Buscar dados do pagador (nome, email, cartão) via providerOrderId — não bloqueia dispense
       const orderNumber = orderNumberRef.current;
-      paymentService.fetchPayerDataFromOrder(order, gatewayConfig)
-        .then(async (customerData) => {
-          if (customerData && orderNumber) {
-            // Salvar dados para fingerprinting (usado pelo ranking opt-in)
-            lastEnrichDataRef.current = customerData;
-            await salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId());
-            systemLogService.info('payment', `Dados do pagador gravados: ${orderNumber}`, {
-              hasName: !!customerData.customerName,
-              hasCpf: !!customerData.customerIdentification,
-              provider: customerData.gatewayProvider,
-              cardBrand: customerData.cardBrand,
-            });
-          }
-        })
-        .catch((err) => {
-          console.warn('[DrinkMP] Falha ao enriquecer com dados do pagador (não-bloqueante):', err);
-          systemLogService.warn('payment', `Falha ao buscar dados do pagador: ${err instanceof Error ? err.message : String(err)}`, { orderNumber });
-        });
+      if (payment.providerOrderId) {
+        paymentService.checkMercadoPagoOrderStatus(payment.providerOrderId)
+          .then((order) => paymentService.fetchPayerDataFromOrder(order, gatewayConfig))
+          .then(async (customerData) => {
+            if (customerData && orderNumber) {
+              lastEnrichDataRef.current = customerData;
+              await salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId());
+              systemLogService.info('payment', `Dados do pagador gravados: ${orderNumber}`, {
+                hasName: !!customerData.customerName,
+                hasCpf: !!customerData.customerIdentification,
+                provider: customerData.gatewayProvider,
+                cardBrand: customerData.cardBrand,
+              });
+            }
+          })
+          .catch((err) => {
+            console.warn('[DrinkMP] Falha ao enriquecer com dados do pagador (não-bloqueante):', err);
+            systemLogService.warn('payment', `Falha ao buscar dados do pagador: ${err instanceof Error ? err.message : String(err)}`, { orderNumber });
+          });
+      }
 
       // Continuar com o fluxo pós-pagamento usando o orderNumber salvo
       await finishPaymentFlow(orderNumber);
     },
     onError: (errorMsg) => {
-      console.error('[DrinkMP] Erro no polling:', errorMsg);
+      console.error('[DrinkMP] Erro no listener:', errorMsg);
       systemLogService.error('payment', `Pagamento falhou: ${errorMsg}`, { orderNumber: orderNumberRef.current });
       
       // Mapear mensagens de erro para português amigável
@@ -299,15 +302,41 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // Áudio: erro de pagamento com cooldown de 10s (evita repetição em retry rápido)
       playGuarded('payment_error', modalScopeId.current, 10_000);
     },
-    onStatusChange: (status: OrderStatus, paymentStatus?: PaymentStatus) => {
-      console.log('[DrinkMP] Status changed:', { status, paymentStatus });
-      // Para Point: atualizar status visual quando a order chega no terminal
-      if (selectedPayment !== 'pix_qr' && status === 'at_terminal') {
-        setPointStatus('at_terminal');
+    onStatusChange: (status: GatewayPaymentStatus, payment) => {
+      console.log('[DrinkMP] Status changed:', { status, channel: payment.channel, providerStatus: (payment as any).providerStatus });
+      const providerStatus = ((payment as any).providerStatus || '').toLowerCase();
+
+      // Granular Point status from providerStatus
+      if (selectedPayment !== 'pix_qr') {
+        if (providerStatus === 'at_terminal' || providerStatus === 'opened') {
+          setPointStatus('at_terminal');
+          setCancelBlocked(true);
+        } else if (providerStatus === 'processing') {
+          setPointStatus('card_processing');
+          setCancelBlocked(true);
+        }
+      }
+
+      // Terminal statuses: pagamento recusado/cancelado/expirado
+      if (['canceled', 'expired', 'failed'].includes(status)) {
+        const errorMessages: Record<string, string> = {
+          failed: 'Pagamento recusado',
+          expired: 'Pagamento expirado',
+          canceled: 'Pagamento cancelado',
+        };
+        const errorMsg = errorMessages[status] || 'Pagamento não aprovado';
+        setMpError(errorMsg);
+        setPointStatus('error');
+        setCancelBlocked(false);
+        setIsProcessing(false);
+        updateProcessingStage('idle');
+        moveToStep(2);
+        toast({ title: 'Erro no Pagamento', description: errorMsg, variant: 'destructive' });
+        playGuarded('payment_error', modalScopeId.current, 10_000);
       }
     },
-    onAttempt: (attempt, maxAttempts) => {
-      console.log(`[DrinkMP] Polling tentativa ${attempt}/${maxAttempts}`);
+    onFallbackAttempt: (attempt, maxAttempts) => {
+      console.log(`[DrinkMP] Fallback tentativa ${attempt}/${maxAttempts}`);
     },
   });
   const emergencyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -587,9 +616,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       updateProcessingStage("idle");
       // Reset Point status
       setPointStatus('idle');
-      // Cleanup: Mercado Pago polling via hook
-      stopPolling();
-      clearPersistedState();
+      setCancelBlocked(false);
+      // Cleanup: Mercado Pago listener
+      stopListening();
       setMpOrderId(null);
       mpOrderIdRef.current = null;
       setMpQrData(null);
@@ -620,12 +649,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       orderNumberRef.current = '';
       // Reset verificação de idade
       setAgeVerified(false);
-      // Cleanup: cancelar pagamentos pendentes
+      // Cleanup: cancelar pagamentos pendentes via CF
       if (currentTransactionId && !isPagBank) {
-        paymentService.cancelPayment(currentTransactionId).catch(console.error);
+        paymentService.cancelMercadoPagoPaymentCF(currentTransactionId).catch(console.error);
       }
     }
-  }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage, stopPolling, clearPersistedState, cleanupPagBankListener, isPagBank]);
+  }, [isOpen, currentTransactionId, flowCancel, setTimerActive, updateProcessingStage, stopListening, cleanupPagBankListener, isPagBank]);
 
   // Ajustar método de pagamento se o atual estiver desabilitado
   useEffect(() => {
@@ -754,30 +783,37 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const orderIdToCancel = mpOrderIdRef.current ?? mpOrderId;
     const transactionIdToCancel = currentTransactionIdRef.current ?? currentTransactionId;
     
-    // Cancelar polling do Mercado Pago via hook
-    stopPolling();
-    clearPersistedState();
-    
-    // Reset estados locais
-    setMpOrderId(null);
-    mpOrderIdRef.current = null;
-    setMpQrData(null);
-    setMpError(null);
-    setPointStatus('idle');
-    saleRecordedRef.current = false;
-    
-    // Cancelar ordem remotamente no Mercado Pago (usando valor capturado)
+    // Cancelar ordem remotamente via Cloud Function (usando valor capturado)
     if (transactionIdToCancel || orderIdToCancel) {
       try {
-        const result = await paymentService.cancelPayment(transactionIdToCancel || '', orderIdToCancel ?? undefined);
+        const paymentIdToCancel = transactionIdToCancel || orderIdToCancel || '';
+        const result = await paymentService.cancelMercadoPagoPaymentCF(paymentIdToCancel);
         
         if (result.canceled) {
+          // Cancelamento confirmado — limpar tudo e voltar ao Step 2
+          stopListening();
+          setMpOrderId(null);
+          mpOrderIdRef.current = null;
+          setMpQrData(null);
+          setMpError(null);
+          setPointStatus('idle');
+          setCancelBlocked(false);
+          saleRecordedRef.current = false;
+          setIsProcessing(false);
+          updateProcessingStage("idle");
+          setCurrentTransactionId(null);
+          currentTransactionIdRef.current = null;
+          setMaxInactivityTime(60);
+          resetInactivityTimer();
+          moveToStep(2);
           toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
         } else if (result.reason === 'at_terminal') {
-          // Ordem está no terminal - usuário deve cancelar lá
+          // ⚠️ Ordem está no terminal — NÃO parar listener, NÃO voltar ao Step 2
+          // Manter no Step 3 monitorando. O cliente deve completar ou aguardar expiração.
+          setCancelBlocked(true);
           toast({ 
-            title: t('checkout.paymentCanceled'), 
-            description: 'Cancele diretamente no terminal de pagamento.',
+            title: 'Cancelamento não disponível', 
+            description: 'Complete o pagamento na maquininha ou aguarde a expiração automática.',
             variant: 'default'
           });
         } else if (result.reason === 'already_processed') {
@@ -786,21 +822,54 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             description: 'Este pagamento já foi concluído.',
             variant: 'default'
           });
+        } else {
+          // cancel_requested — manter listener para capturar resultado final
+          setCancelBlocked(true);
+          toast({
+            title: t('checkout.paymentCanceled'),
+            description: 'Cancelamento solicitado. Aguardando confirmação...',
+            variant: 'default'
+          });
         }
       } catch (error) {
         console.warn("[DrinkQR] Falha ao cancelar ordem remotamente:", error);
         systemLogService.error('payment', 'Falha ao cancelar ordem MP remotamente', { orderId: orderIdToCancel, error: error instanceof Error ? error.message : String(error) });
+        // Em caso de erro, limpar e voltar
+        stopListening();
+        setMpOrderId(null);
+        mpOrderIdRef.current = null;
+        setMpQrData(null);
+        setMpError(null);
+        setPointStatus('idle');
+        setCancelBlocked(false);
+        saleRecordedRef.current = false;
+        setIsProcessing(false);
+        updateProcessingStage("idle");
+        setCurrentTransactionId(null);
+        currentTransactionIdRef.current = null;
+        setMaxInactivityTime(60);
+        resetInactivityTimer();
+        moveToStep(2);
         toast({ title: t('checkout.paymentCanceled'), description: t('checkout.operationCancelledByUser') });
       }
+    } else {
+      // Sem IDs para cancelar — limpar e voltar
+      stopListening();
+      setMpOrderId(null);
+      mpOrderIdRef.current = null;
+      setMpQrData(null);
+      setMpError(null);
+      setPointStatus('idle');
+      setCancelBlocked(false);
+      saleRecordedRef.current = false;
+      setIsProcessing(false);
+      updateProcessingStage("idle");
+      setCurrentTransactionId(null);
+      currentTransactionIdRef.current = null;
+      setMaxInactivityTime(60);
+      resetInactivityTimer();
+      moveToStep(2);
     }
-    
-    setIsProcessing(false);
-    updateProcessingStage("idle");
-    setCurrentTransactionId(null);
-    currentTransactionIdRef.current = null;
-    setMaxInactivityTime(60);
-    resetInactivityTimer();
-    moveToStep(2);
   };
 
   // KIO-02: Retry dispense para pedidos já pagos com dispense falhado
@@ -1627,6 +1696,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     resetInactivityTimer();
     moveToStep(3);
     updateProcessingStage("awaiting_payment");
+    setCancelBlocked(false);
     setMpError(null);
 
     // ── Áudio: prompt de pagamento (por tentativa) ────────────────────────
@@ -1639,21 +1709,36 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
     // processing_payment toca em recording_sale (quando o sistema de fato confirma)
 
-    // Timeout de emergência: cancela pagamento após ~2 minutos (alinhado com PT2M + margem)
+    // Timeout de emergência inteligente:
+    // - Se at_terminal: NÃO cancelar (409), apenas avisar e deixar expirar naturalmente
+    // - Se idle/sending: cancelar normalmente
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
     }
+    const timeoutMs = (flowState.paymentTimeoutSeconds ?? 130) * 1000;
     emergencyTimeoutRef.current = setTimeout(() => {
       if (processingStageRef.current === "awaiting_payment") {
-        systemLogService.warn('payment', 'Emergency timeout: pagamento cancelado por tempo', { orderNumber: orderNumberRef.current });
-        handleCancelPayment();
-        toast({
-          title: t('checkout.timeout'),
-          description: t('checkout.paymentNotConfirmedTime'),
-          variant: "destructive",
-        });
+        const isAtTerminal = pointStatus === 'at_terminal' || pointStatus === 'card_processing' || cancelBlocked;
+        systemLogService.warn('payment', `Emergency timeout: ${isAtTerminal ? 'at_terminal - aguardando expiração' : 'cancelando'}`, { orderNumber: orderNumberRef.current, pointStatus });
+        
+        if (isAtTerminal) {
+          // Não tentar cancelar — terminal vai expirar sozinho (PT2M)
+          // Mostrar aviso mas manter listener ativo
+          toast({
+            title: 'Tempo quase esgotado',
+            description: 'Finalize o pagamento na maquininha ou aguarde expiração automática.',
+            variant: "destructive",
+          });
+        } else {
+          handleCancelPayment();
+          toast({
+            title: t('checkout.timeout'),
+            description: t('checkout.paymentNotConfirmedTime'),
+            variant: "destructive",
+          });
+        }
       }
-    }, (flowState.paymentTimeoutSeconds ?? 130) * 1000);
+    }, timeoutMs);
 
     try {
       if (!product || !selectedSize) {
@@ -1690,50 +1775,43 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
 
       if (selectedPayment === "pix_qr") {
-        // Usar Mercado Pago QR real
+        // Usar Mercado Pago QR via Cloud Function (backend)
         try {
-          validateMercadoPagoConfig();
-
-          const mpItems = [{
-            title: `${product.title} - ${selectedSize.label}`,
-            unit_price: resolvedUnitPrice.toFixed(2),
+          const cfItems = [{
+            name: `${product.title} - ${selectedSize.label}`,
             quantity: quantity,
-            unit_measure: 'unit',
-            total_amount: (resolvedUnitPrice * quantity).toFixed(2),
+            unitAmount: resolvedUnitPrice,
           }];
 
-          const externalRef = `KIOSK-${newOrderNumber}-${Date.now()}`;
-
-          console.log('[DrinkQR] Criando QR Order:', {
+          console.log('[DrinkQR] Criando QR Order via CF:', {
             amount: totalAmount,
-            items: mpItems.length,
-            externalRef,
+            items: cfItems.length,
+            tapId: selectedTapId,
           });
 
-          const result = await paymentService.processMercadoPagoQR(
+          const result = await paymentService.processMercadoPagoQRBackend(
             totalAmount,
-            mpItems,
-            externalRef,
-            resolvedConfig.externalPosId,
-            gatewayConfig
+            cfItems,
+            undefined,
+            { tapId: selectedTapId != null ? String(selectedTapId) : undefined }
           );
 
-          console.log('[DrinkQR] QR Order criada:', { orderId: result.orderId });
+          console.log('[DrinkQR] QR Order criada via CF:', { paymentId: result.transactionId, orderId: result.orderId });
 
           setMpOrderId(result.orderId || null);
           mpOrderIdRef.current = result.orderId || null;
           setMpQrData(result.qrData || null);
-          setCurrentTransactionId(result.orderId || null);
-          currentTransactionIdRef.current = result.orderId || null;
+          setCurrentTransactionId(result.transactionId || null);
+          currentTransactionIdRef.current = result.transactionId || null;
           
-          // Salvar orderNumber para uso no callback do polling
+          // Salvar orderNumber para uso no callback do listener
           orderNumberRef.current = newOrderNumber;
           
-          // Iniciar polling via hook (QR não é Point)
-          if (!result.orderId) {
-            throw new Error('Mercado Pago did not return orderId');
+          // Iniciar listener de status via Firestore onSnapshot
+          if (!result.transactionId) {
+            throw new Error('Cloud Function did not return paymentId');
           }
-          startPolling(result.orderId, false);
+          startListening(result.transactionId);
 
         } catch (error: unknown) {
           console.error('[DrinkQR] Erro ao criar QR:', error);
@@ -1750,59 +1828,48 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           });
         }
       } else if (selectedPayment === "credit_card" || selectedPayment === "debit_card") {
-        // Pagamento via Mercado Pago Point (Terminal físico)
-        const paymentType = selectedPayment === "credit_card" ? "credit_card" : "debit_card";
+        // Pagamento via Mercado Pago Point (Terminal físico) via Cloud Function
         
         try {
           setPointStatus('sending');
 
-          const mpItems = [{
-            title: `${product.title} - ${selectedSize.label}`,
-            unit_price: resolvedUnitPrice.toFixed(2),
+          const cfItems = [{
+            name: `${product.title} - ${selectedSize.label}`,
             quantity: quantity,
-            unit_measure: 'unit',
-            total_amount: (resolvedUnitPrice * quantity).toFixed(2),
+            unitAmount: resolvedUnitPrice,
           }];
 
-          const externalRef = `KIOSK-${newOrderNumber}-${Date.now()}`;
-
-          console.log('[DrinkPoint] Criando Point Order:', {
+          console.log('[DrinkPoint] Criando Point Order via CF:', {
             amount: totalAmount,
-            items: mpItems.length,
-            externalRef,
-            paymentType,
-            terminalId: resolvedConfig.terminalId || 'auto-detect',
-            configSource: resolvedConfig.source,
+            items: cfItems.length,
+            tapId: selectedTapId,
           });
 
-          const result = await paymentService.processMercadoPagoPoint(
+          const pointMethod = selectedPayment === 'credit_card' ? 'credit' : 'debit';
+          const result = await paymentService.processMercadoPagoPointBackend(
             totalAmount,
-            mpItems,
-            externalRef,
-            resolvedConfig.terminalId || undefined, // Se não configurado, busca automaticamente
-            {
-              defaultPaymentType: paymentType, // Pré-seleciona crédito ou débito no terminal
-              defaultInstallments: paymentType === "debit_card" ? 1 : undefined, // Débito sempre 1x
-            },
-            gatewayConfig
+            cfItems,
+            undefined,
+            { tapId: selectedTapId != null ? String(selectedTapId) : undefined, method: pointMethod as 'credit' | 'debit' }
           );
 
-          console.log('[DrinkPoint] Point Order criada:', { orderId: result.orderId, paymentType });
+          console.log('[DrinkPoint] Point Order criada via CF:', { paymentId: result.transactionId, orderId: result.orderId });
 
           setMpOrderId(result.orderId || null);
           mpOrderIdRef.current = result.orderId || null;
-          setCurrentTransactionId(result.orderId || null);
-          currentTransactionIdRef.current = result.orderId || null;
+          setCurrentTransactionId(result.transactionId || null);
+          currentTransactionIdRef.current = result.transactionId || null;
           setPointStatus('at_terminal');
+          setCancelBlocked(true); // Ordem enviada ao terminal — cancel via API não funciona
           
-          // Salvar orderNumber para uso no callback do polling
+          // Salvar orderNumber para uso no callback do listener
           orderNumberRef.current = newOrderNumber;
           
-          // Iniciar polling via hook (Point = true)
-          if (!result.orderId) {
-            throw new Error('Mercado Pago Point did not return orderId');
+          // Iniciar listener de status via Firestore onSnapshot
+          if (!result.transactionId) {
+            throw new Error('Cloud Function did not return paymentId');
           }
-          startPolling(result.orderId, true);
+          startListening(result.transactionId);
 
         } catch (error: unknown) {
           console.error('[DrinkPoint] Erro ao criar order Point:', error);
@@ -2380,7 +2447,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                               <div className="flex items-center justify-center gap-2 text-green-600 bg-green-50 rounded-full px-3 py-1.5">
                                 <Loader className="w-3 h-3 animate-spin" />
                                 <span className="text-xs font-medium">
-                                  {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
+                                  {t('checkout.verifyingPayment')}
                                 </span>
                               </div>
                             )}
@@ -2523,7 +2590,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                           </>
                         )}
 
-                        {/* Aguardando no terminal */}
+                        {/* Aguardando no terminal — cartão ainda não inserido */}
                         {pointStatus === 'at_terminal' && !mpError && (
                           <>
                             <CreditCard className={`w-20 h-20 mx-auto animate-pulse ${
@@ -2543,7 +2610,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                               }`}>
                                 <Clock className="w-4 h-4 animate-pulse" />
                                 <span className="text-sm">
-                                  {t('checkout.verifyingPayment')} ({pollingAttempt}/{pollingMaxAttempts})
+                                  {t('checkout.verifyingPayment')}
                                 </span>
                               </div>
                             )}
@@ -2552,17 +2619,24 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                               selectedPayment === "credit_card" ? "border-blue-600" : "border-orange-600"
                             }`}></div>
 
-                            <Button 
-                              variant="ghost" 
-                              onClick={handleCancelPayment}
-                              className="mt-4"
-                            >
-                              {t('common.cancel')}
-                            </Button>
+                            {/* Cancelamento bloqueado quando no terminal */}
+                            <p className="text-xs text-gray-400 mt-2">
+                              Complete o pagamento na maquininha ou aguarde expiração automática.
+                            </p>
                           </>
                         )}
 
-                        {/* Processando pagamento */}
+                        {/* Cartão inserido, processando no terminal */}
+                        {pointStatus === 'card_processing' && !mpError && (
+                          <>
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
+                            <CreditCard className="w-12 h-12 mx-auto text-green-600 mt-2" />
+                            <p className="text-gray-700 font-medium">Processando pagamento...</p>
+                            <p className="text-sm text-green-600 font-medium">Não remova o cartão</p>
+                          </>
+                        )}
+
+                        {/* Processando pagamento (status genérico) */}
                         {pointStatus === 'processing' && !mpError && (
                           <>
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>

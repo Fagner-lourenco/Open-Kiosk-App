@@ -44,6 +44,11 @@ import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 
 import { normalizePaymentGatewayConfigFromStore } from '@/config/paymentGateway';
+import {
+  clearKioskBootstrap,
+  hydrateKioskBootstrapState,
+  persistKioskBootstrapFromSettings,
+} from '@/services/kioskBootstrapService';
 
 import { normalizeStoreSettings } from '../../shared/utils/settingsNormalizer';
 
@@ -70,6 +75,62 @@ let servicesInitialized = false;
 
 
 let initializationPromise: Promise<void> | null = null;
+
+const EMPTY_FIREBASE_CONFIG: StoreSettings['firebaseConfig'] = {
+  apiKey: '',
+  authDomain: '',
+  projectId: '',
+  storageBucket: '',
+  messagingSenderId: '',
+  appId: '',
+};
+
+const normalizeCachedStoreSettings = (
+  cachedSettings: Partial<StoreSettings> | null | undefined
+): StoreSettings | null => {
+  if (!cachedSettings) {
+    return null;
+  }
+
+  const resolvedStoreId = cachedSettings.storeId || getCurrentStoreId() || undefined;
+  const resolvedFranchiseId = cachedSettings.franchiseId || getCurrentFranchiseId() || undefined;
+  const normalizedStoreLevel = normalizeStoreSettings(cachedSettings as Record<string, unknown>);
+  const normalizedPaymentGatewayConfig =
+    cachedSettings.paymentGatewayConfig ??
+    normalizePaymentGatewayConfigFromStore(cachedSettings as Record<string, unknown>) ??
+    undefined;
+
+  return {
+    ...cachedSettings,
+    name:
+      typeof cachedSettings.name === 'string' && cachedSettings.name.trim()
+        ? cachedSettings.name
+        : resolvedStoreId || '',
+    storeId: resolvedStoreId,
+    franchiseId: resolvedFranchiseId,
+    currency:
+      typeof cachedSettings.currency === 'string' && cachedSettings.currency.trim()
+        ? cachedSettings.currency
+        : 'BRL',
+    language: normalizedStoreLevel.language ?? (cachedSettings.language === 'en' ? 'en' : 'pt-BR'),
+    taxId: typeof cachedSettings.taxId === 'string' ? cachedSettings.taxId : '',
+    taxPercentage:
+      typeof cachedSettings.taxPercentage === 'number' && Number.isFinite(cachedSettings.taxPercentage)
+        ? cachedSettings.taxPercentage
+        : 0,
+    firebaseConfig: {
+      ...EMPTY_FIREBASE_CONFIG,
+      ...(cachedSettings.firebaseConfig || {}),
+    },
+    kioskEnabled: normalizedStoreLevel.kioskEnabled ?? cachedSettings.kioskEnabled,
+    attractTimeoutSeconds:
+      normalizedStoreLevel.attractTimeoutSeconds ?? cachedSettings.attractTimeoutSeconds,
+    attractScreenEnabled:
+      normalizedStoreLevel.attractScreenEnabled ?? cachedSettings.attractScreenEnabled,
+    attractVideoConfig: normalizedStoreLevel.attractVideoConfig ?? cachedSettings.attractVideoConfig,
+    paymentGatewayConfig: normalizedPaymentGatewayConfig,
+  };
+};
 
 
 
@@ -155,9 +216,11 @@ const useStoreSettingsCore = () => {
 
 
 
-        const parsed = JSON.parse(savedSettings);
+        const parsed = normalizeCachedStoreSettings(JSON.parse(savedSettings));
         // Garantir language default ao carregar de cache antigo
-        if (!parsed.language) parsed.language = 'pt-BR';
+        if (!parsed) {
+          return null;
+        }
         // Normalizar paymentGatewayConfig do cache (proteção contra dados stale)
         if (parsed.paymentGatewayConfig) {
           const cachedProvider = parsed.paymentGatewayConfig.provider;
@@ -225,9 +288,10 @@ const useStoreSettingsCore = () => {
 
 
 
-      const enrichedSettings = { ...newSettings };
-
-
+      const enrichedSettings = normalizeCachedStoreSettings({ ...newSettings });
+      if (!enrichedSettings) {
+        return;
+      }
 
       if (!enrichedSettings.franchiseId) {
 
@@ -254,6 +318,7 @@ const useStoreSettingsCore = () => {
 
 
       localStorage.setItem('storeSettings', JSON.stringify(enrichedSettings));
+      void persistKioskBootstrapFromSettings(enrichedSettings);
 
 
 
@@ -297,6 +362,11 @@ const useStoreSettingsCore = () => {
 
 
 
+      const normalizedSettings = normalizeCachedStoreSettings(newSettings);
+      if (!normalizedSettings) {
+        return;
+      }
+
       const cachedSettings: CachedSettings = {
 
 
@@ -305,7 +375,7 @@ const useStoreSettingsCore = () => {
 
 
 
-        data: newSettings,
+        data: normalizedSettings,
 
 
 
@@ -369,7 +439,7 @@ const useStoreSettingsCore = () => {
 
 
 
-        return cached.data as StoreSettings;
+        return normalizeCachedStoreSettings(cached.data as Partial<StoreSettings>);
 
 
 
@@ -871,6 +941,9 @@ const useStoreSettingsCore = () => {
 
       initNetworkListeners();
 
+      // 1.1 Reidrata bootstrap persistente do kiosk antes de tocar o hot cache
+      await hydrateKioskBootstrapState();
+
 
 
 
@@ -902,6 +975,7 @@ const useStoreSettingsCore = () => {
 
 
         setIsInitialized(true);
+        void persistKioskBootstrapFromSettings(localSettings);
 
 
 
@@ -942,6 +1016,7 @@ const useStoreSettingsCore = () => {
 
 
           setIsInitialized(true);
+          void persistKioskBootstrapFromSettings(idbSettings);
 
 
 
@@ -1001,7 +1076,7 @@ const useStoreSettingsCore = () => {
 
 
 
-            const minimalSettings: StoreSettings = {
+            const minimalSettings = normalizeCachedStoreSettings({
 
 
 
@@ -1033,39 +1108,17 @@ const useStoreSettingsCore = () => {
 
 
 
-              firebaseConfig: {
+              firebaseConfig: EMPTY_FIREBASE_CONFIG,
 
 
 
-                apiKey: '',
+            });
 
-
-
-                authDomain: '',
-
-
-
-                projectId: '',
-
-
-
-                storageBucket: '',
-
-
-
-                messagingSenderId: '',
-
-
-
-                appId: '',
-
-
-
-              },
-
-
-
-            };
+            if (!minimalSettings) {
+              console.warn('[useStoreSettings] Falha ao montar settings minimos');
+              setLoading(false);
+              return;
+            }
 
 
 
@@ -1078,6 +1131,7 @@ const useStoreSettingsCore = () => {
 
 
             setIsInitialized(true);
+            void persistKioskBootstrapFromSettings(minimalSettings);
 
 
 
@@ -1811,6 +1865,12 @@ const useStoreSettingsCore = () => {
 
     console.log('[useStoreSettings] Updating settings');
 
+    const normalizedSettings = normalizeCachedStoreSettings(newSettings);
+    if (!normalizedSettings) {
+      console.warn('[useStoreSettings] Ignorando updateSettings sem dados validos');
+      return;
+    }
+
 
 
 
@@ -1821,7 +1881,7 @@ const useStoreSettingsCore = () => {
 
 
 
-    setSettings(newSettings);
+    setSettings(normalizedSettings);
 
 
 
@@ -1837,7 +1897,7 @@ const useStoreSettingsCore = () => {
 
 
 
-    saveToLocalStorage(newSettings);
+    saveToLocalStorage(normalizedSettings);
 
 
 
@@ -1853,7 +1913,7 @@ const useStoreSettingsCore = () => {
 
 
 
-    saveToIndexedDB(newSettings);
+    saveToIndexedDB(normalizedSettings);
 
 
 
@@ -1871,9 +1931,9 @@ const useStoreSettingsCore = () => {
 
       try {
 
-        if (hasValidFirebaseConfig(newSettings.firebaseConfig) || isFirebaseInitialized()) {
+        if (hasValidFirebaseConfig(normalizedSettings.firebaseConfig) || isFirebaseInitialized()) {
 
-          initializeFirebase(newSettings);
+          initializeFirebase(normalizedSettings);
 
 
 
@@ -1923,7 +1983,7 @@ const useStoreSettingsCore = () => {
 
 
 
-    syncToFirebase(newSettings);
+    syncToFirebase(normalizedSettings);
 
 
 
@@ -1968,6 +2028,7 @@ const useStoreSettingsCore = () => {
 
 
     servicesInitialized = false;
+    void clearKioskBootstrap();
 
 
 

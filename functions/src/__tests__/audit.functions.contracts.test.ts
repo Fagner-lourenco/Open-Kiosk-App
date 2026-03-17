@@ -4,7 +4,15 @@ import path from 'node:path';
 import { parseReferenceId } from '../payments/paymentService';
 
 describe('Audit Functions - contratos e inconsistencias', () => {
-  it('parseReferenceId aceita formato canonico okp|franchise|store|payment', () => {
+  it('parseReferenceId aceita formato dash okp-franchise-store-payment', () => {
+    expect(parseReferenceId('okp-f1-s1-p1')).toEqual({
+      franchiseId: 'f1',
+      storeId: 's1',
+      paymentId: 'p1',
+    });
+  });
+
+  it('parseReferenceId aceita formato legacy pipe okp|franchise|store|payment', () => {
     expect(parseReferenceId('okp|f1|s1|p1')).toEqual({
       franchiseId: 'f1',
       storeId: 's1',
@@ -14,8 +22,8 @@ describe('Audit Functions - contratos e inconsistencias', () => {
 
   it('parseReferenceId rejeita formatos invalidos', () => {
     expect(parseReferenceId('')).toBeNull();
-    expect(parseReferenceId('okp|f1|s1')).toBeNull();
-    expect(parseReferenceId('wrong|f1|s1|p1')).toBeNull();
+    expect(parseReferenceId('okp-f1-s1')).toBeNull();
+    expect(parseReferenceId('wrong-f1-s1-p1')).toBeNull();
   });
 
   it('notificacao de pagamento nao deve converter valor dividindo por 100 quando amount ja esta em BRL (RED)', () => {

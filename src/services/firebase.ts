@@ -14,6 +14,7 @@ import {
 import { getAuth, Auth } from 'firebase/auth';
 import { StoreSettings } from '@/types/store';
 import { storeSubPath, StoreSubcollection } from '@/lib/pathResolver';
+import { getStoredKioskBootstrapSnapshot } from '@/services/kioskBootstrapService';
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
@@ -34,9 +35,13 @@ type StoredSelectionContext = {
 };
 
 const getStoredSelectionContext = (): StoredSelectionContext => {
+  const bootstrap = getStoredKioskBootstrapSnapshot();
   const storeSettingsStr = localStorage.getItem('storeSettings');
   if (!storeSettingsStr) {
-    return { storeId: null, franchiseId: null };
+    return {
+      storeId: bootstrap?.storeId || null,
+      franchiseId: bootstrap?.franchiseId || null,
+    };
   }
 
   try {
@@ -46,12 +51,15 @@ const getStoredSelectionContext = (): StoredSelectionContext => {
     };
 
     return {
-      storeId: storeSettings.storeId || null,
-      franchiseId: storeSettings.franchiseId || null,
+      storeId: storeSettings.storeId || bootstrap?.storeId || null,
+      franchiseId: storeSettings.franchiseId || bootstrap?.franchiseId || null,
     };
   } catch (parseError) {
     console.warn('[firebase] Error parsing storeSettings:', parseError);
-    return { storeId: null, franchiseId: null };
+    return {
+      storeId: bootstrap?.storeId || null,
+      franchiseId: bootstrap?.franchiseId || null,
+    };
   }
 };
 

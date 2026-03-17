@@ -69,32 +69,6 @@ describe('PaymentService Real Tests', () => {
     localStorage.clear();
   });
 
-  describe('PIX', () => {
-    it('should process PIX payment', async () => {
-      const result = await paymentService.processPixPayment(100.0, 'order-123');
-      expect(result).toBeDefined();
-      expect(result.success).toBeDefined();
-    });
-
-    it('should reject negative amount', async () => {
-      const result = await paymentService.processPixPayment(-50, 'order-neg');
-      expect(result).toBeDefined();
-    });
-  });
-
-  describe('Card (Point)', () => {
-    it('should process card payment via terminal', async () => {
-      const result = await paymentService.processCardPayment(120.0, 'credit', 'order-456');
-      expect(result).toBeDefined();
-      expect(result.success).toBeDefined();
-    });
-
-    it('should fail with invalid amount', async () => {
-      const result = await paymentService.processCardPayment(-10, 'debit', 'order-bad');
-      expect(result).toBeDefined();
-    });
-  });
-
   describe('MercadoPago QR', () => {
     it('should create QR order', async () => {
       const items = [{

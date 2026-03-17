@@ -211,6 +211,10 @@ interface TapConfigLocal {
   productName?: string;
   /** Identificador do terminal PlugPag vinculado (ex: "PRO-1733203195" ou MAC legado) */
   plugpagDeviceId?: string;
+  /** Terminal MP Point vinculado a esta torneira (ex: "GERTEC_MP35P__12345") */
+  mpTerminalId?: string;
+  /** External POS ID do MP QR vinculado a esta torneira (ex: "KIOSK-TAP-1") */
+  mpExternalPosId?: string;
 }
 
 // ============================================================================
@@ -596,6 +600,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           productId: t.productId,
           productName: t.productName,
           plugpagDeviceId: t.plugpagDeviceId,
+          mpTerminalId: t.mpTerminalId,
+          mpExternalPosId: t.mpExternalPosId,
         }));
       } else if (Array.isArray(storeData.dispensers) && storeData.dispensers.length > 0) {
         loadedTaps = convertDispensersToTaps(storeData.dispensers);
@@ -663,6 +669,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             productId: t.productId,
             productName: t.productName,
             plugpagDeviceId: t.plugpagDeviceId,
+            mpTerminalId: t.mpTerminalId,
+            mpExternalPosId: t.mpExternalPosId,
           }));
           // [FIX BUG-GES-06] Usar increment atômico em vez de valor stale do cache
           tapsPayload.tapsVersion = increment(1);
@@ -1659,29 +1667,80 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                       </div>
                     </div>
 
-                    {/* Terminal PlugPag (Maquininha) */}
-                    <div>
-                      <Label className="text-xs font-medium">Identificador do terminal PagBank (PlugPag)</Label>
-                      <Input
-                        value={tap.plugpagDeviceId ?? ''}
-                        onChange={(e) => {
-                          const updated = [...settings.taps!];
-                          const val = e.target.value.trim().toUpperCase();
-                          
-                          // Validar formato MAC: XX:XX:XX:XX:XX:XX (hexadecimal)
-                          updated[index] = { ...updated[index], plugpagDeviceId: val || undefined };
-                          handleChange('taps', updated);
-                        }}
-                        placeholder="PRO-1733203195 ou 90:97:D5:F1:74:B5"
-                        className="w-56 font-mono"
-                        maxLength={64}
-                      />
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Para Moderninha PRO/PRO 2/WIFI, use preferencialmente o identificador exibido na tela de
-                        pareamento Bluetooth (ex: <span className="font-mono">PRO-1733203195</span>), alinhado ao demo
-                        oficial do PagBank. O MAC legado ainda pode ser informado para compatibilidade, quando necessario.
-                      </p>
-                    </div>
+                    {/* ── Terminais de Pagamento (por gateway ativo) ──────────── */}
+                    {gatewayConfig.provider !== 'none' && (
+                      <div className="mt-2 p-3 border rounded-lg bg-muted/20 space-y-3">
+                        <Label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          💳 Terminal de Pagamento — {tap.name}
+                        </Label>
+
+                        {/* Mercado Pago Point — visível quando provider = mercado_pago */}
+                        {gatewayConfig.provider === 'mercado_pago' && (
+                          <div className="space-y-2">
+                            <div>
+                              <Label className="text-xs font-medium">Terminal MP Point (ID)</Label>
+                              <Input
+                                value={tap.mpTerminalId ?? ''}
+                                onChange={(e) => {
+                                  const updated = [...settings.taps!];
+                                  const val = e.target.value.trim();
+                                  updated[index] = { ...updated[index], mpTerminalId: val || undefined };
+                                  handleChange('taps', updated);
+                                }}
+                                placeholder="Ex: GERTEC_MP35P__12345"
+                                className="w-64 font-mono"
+                                maxLength={128}
+                              />
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                ID do terminal Point vinculado a esta torneira. Se vazio, usa o Terminal ID global (
+                                <span className="font-mono">{gatewayConfig.providers?.mercadopago?.terminalId || '—'}</span>).
+                              </p>
+                            </div>
+                            <div>
+                              <Label className="text-xs font-medium">External POS ID (QR por torneira)</Label>
+                              <Input
+                                value={tap.mpExternalPosId ?? ''}
+                                onChange={(e) => {
+                                  const updated = [...settings.taps!];
+                                  const val = e.target.value.trim();
+                                  updated[index] = { ...updated[index], mpExternalPosId: val || undefined };
+                                  handleChange('taps', updated);
+                                }}
+                                placeholder="Ex: KIOSK-TAP-1"
+                                className="w-64 font-mono"
+                                maxLength={128}
+                              />
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                POS ID para QR dinâmico nesta torneira. Se vazio, usa o External POS ID global (
+                                <span className="font-mono">{gatewayConfig.providers?.mercadopago?.externalPosId || '—'}</span>).
+                              </p>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* PagBank PlugPag — visível quando provider = pagbank */}
+                        {gatewayConfig.provider === 'pagbank' && (
+                          <div>
+                            <Label className="text-xs font-medium">Identificador do terminal PagBank (PlugPag)</Label>
+                            <Input
+                              value={tap.plugpagDeviceId ?? ''}
+                              onChange={(e) => {
+                                const updated = [...settings.taps!];
+                                const val = e.target.value.trim().toUpperCase();
+                                updated[index] = { ...updated[index], plugpagDeviceId: val || undefined };
+                                handleChange('taps', updated);
+                              }}
+                              placeholder="PRO-1733203195 ou 90:97:D5:F1:74:B5"
+                              className="w-56 font-mono"
+                              maxLength={64}
+                            />
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Para Moderninha PRO/PRO 2/WIFI, use o identificador de pareamento Bluetooth (ex: <span className="font-mono">PRO-1733203195</span>).
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

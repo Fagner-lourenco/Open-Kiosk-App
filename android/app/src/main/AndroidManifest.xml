@@ -26,6 +26,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
             <!-- Abre o app quando um USB serial OTG compatível for conectado -->
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
@@ -49,6 +55,18 @@
 
         <!-- PlugPag SDK: Activity obrigatória para transações de pagamento -->
         <activity android:name="br.com.uol.pagseguro.plugpag.PlugPagActivity" />
+
+        <receiver
+            android:name=".KioskLifecycleReceiver"
+            android:enabled="true"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->
@@ -76,6 +94,7 @@
     
     <!-- Keep Screen On (para kiosk mode) -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     
     <!-- 🔧 FIX v4.1.1: Solicitar exclusão de battery optimization para manter BLE vivo (MIUI/Xiaomi) -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
@@ -83,6 +102,7 @@
     <!-- Foreground Service para manter conexão BLE estável -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- PlugPag SDK: necessário para identificação do dispositivo -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />

@@ -25,11 +25,13 @@ import NotFound from "./pages/NotFound";
 import LoginPage from "./pages/LoginPage";
 import AcceptInvitePage from "./pages/AcceptInvitePage";
 import StoreSelectPage from "./pages/StoreSelectPage";
+import DeviceNotProvisionedPage from "./pages/DeviceNotProvisionedPage";
 import { FranchiseGuard } from "@/components/FranchiseGuard";
 import { TapSettingsSync } from "@/components/TapSettingsSync";
 import { usePlugPagAutoConnect } from "@/hooks/usePlugPagAutoConnect";
 import { purgeNativeWebViewRuntimeCaches } from "@/services/nativeWebViewCacheService";
-import { getCurrentStoreId } from "@/services/firebase";
+import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
+import { getStoredKioskBootstrapSnapshot } from "@/services/kioskBootstrapService";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
@@ -42,7 +44,12 @@ const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
  * - Se não autenticado: mostra apenas rotas públicas (login)
  * - Se autenticado: monta providers que dependem de sessão (Store, ESP32, etc)
  */
-const AuthGate: React.FC<{ children: React.ReactNode; isStoreLoading?: boolean }> = ({ children, isStoreLoading }) => {
+const AuthGate: React.FC<{
+  children: React.ReactNode;
+  isStoreLoading?: boolean;
+  isKiosk?: boolean;
+  hasKioskProvisioning?: boolean;
+}> = ({ children, isStoreLoading, isKiosk = false, hasKioskProvisioning = false }) => {
   const { isLoading, user } = useAuth();
 
   // Enquanto valida sessão, mostra loading
@@ -63,7 +70,13 @@ const AuthGate: React.FC<{ children: React.ReactNode; isStoreLoading?: boolean }
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/invite" element={<AcceptInvitePage />} />
-          <Route path="*" element={<LoginPage />} />
+          {isKiosk && !hasKioskProvisioning && (
+            <Route path="/device-not-provisioned" element={<DeviceNotProvisionedPage />} />
+          )}
+          <Route
+            path="*"
+            element={isKiosk && !hasKioskProvisioning ? <DeviceNotProvisionedPage /> : <LoginPage />}
+          />
         </Routes>
       </HashRouter>
     );
@@ -77,18 +90,38 @@ const AuthGate: React.FC<{ children: React.ReactNode; isStoreLoading?: boolean }
  * KioskGuard - Redireciona para /shop se modo Kiosk estiver habilitado nas configurações
  * e usuário estiver na raiz (/). Só atua se isKiosk for verdadeiro (superfície quiosque).
  */
-const KioskGuard: React.FC<{ children: React.ReactNode; kioskEnabled?: boolean; isKiosk: boolean }> = ({ children, kioskEnabled, isKiosk }) => {
+const KioskGuard: React.FC<{
+  children: React.ReactNode;
+  kioskEnabled?: boolean;
+  isKiosk: boolean;
+  isProvisioned: boolean;
+}> = ({ children, kioskEnabled, isKiosk, isProvisioned }) => {
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
+    if (!isKiosk) {
+      return;
+    }
+
+    if (!isProvisioned && location.pathname !== '/device-not-provisioned') {
+      console.warn('[KioskGuard] Dispositivo sem bootstrap valido, redirecionando para provisioning');
+      navigate('/device-not-provisioned', { replace: true });
+      return;
+    }
+
+    if (isProvisioned && location.pathname === '/device-not-provisioned') {
+      navigate(kioskEnabled ? '/shop' : '/', { replace: true });
+      return;
+    }
+
     // Só redirecionar se estiver na superfície quiosque E o modo kiosk (software) estiver ON
     // e o usuário estiver tentando acessar a landing page (Index)
-    if (isKiosk && kioskEnabled && (location.pathname === '/' || location.pathname === '')) {
+    if (kioskEnabled && (location.pathname === '/' || location.pathname === '')) {
       console.log('[KioskGuard] Redirecionando para /shop (Modo Kiosk Ativo)');
       navigate('/shop', { replace: true });
     }
-  }, [kioskEnabled, isKiosk, location.pathname, navigate]);
+  }, [isKiosk, isProvisioned, kioskEnabled, location.pathname, navigate]);
 
   return <>{children}</>;
 };
@@ -104,13 +137,25 @@ const PlugPagBootstrap: React.FC = () => {
   return null;
 };
 
+const hasHealthyCapacitorBridge = (): boolean => {
+  const capacitorBridge = (window as Window & {
+    Capacitor?: {
+      Plugins?: Record<string, unknown>;
+      triggerEvent?: (eventName: string, target: string, eventData?: unknown) => boolean;
+    };
+  }).Capacitor;
+
+  return !!capacitorBridge?.Plugins && typeof capacitorBridge.triggerEvent === 'function';
+};
+
 const AppContent = () => {
   const { loading, settings } = useStoreSettings();
+  const kioskBootstrap = getStoredKioskBootstrapSnapshot();
 
   // Usar idioma salvo nas configurações da loja (Firebase) - undefined enquanto carrega
   const initialLanguage = settings?.language as Language | undefined;
   // Obter storeId da seleção atual (admin selector) ou das configurações salvas
-  const storeId = getCurrentStoreId() || settings?.storeId || undefined;
+  const storeId = getCurrentStoreId() || kioskBootstrap?.storeId || settings?.storeId || undefined;
 
   // Estado para tornar a detecção de rota reativa (visto que o HashRouter está abaixo)
   const [currentHash, setCurrentHash] = useState(window.location.hash);
@@ -127,7 +172,6 @@ const AppContent = () => {
   // Detectar se é modo Kiosk ou Admin de forma mais robusta e reativa
   const isKiosk = useMemo(() => {
     const hash = currentHash;
-    const path = window.location.pathname;
 
     // KIO-06 fix: detectar kiosk por rotas explícitas (não por exclusão)
     const isKioskRoute = hash === '' ||
@@ -135,10 +179,18 @@ const AppContent = () => {
       hash.startsWith('#/shop') ||
       hash.startsWith('#/checkout') ||
       hash.startsWith('#/payment') ||
-      hash.startsWith('#/attract');
+      hash.startsWith('#/attract') ||
+      hash.startsWith('#/device-not-provisioned');
 
     return isKioskRoute;
   }, [currentHash]);
+
+  const effectiveKioskEnabled = settings?.kioskEnabled ?? kioskBootstrap?.kioskEnabled ?? false;
+  const hasKioskProvisioning = Boolean(
+    (settings?.storeId && settings?.franchiseId) ||
+    (kioskBootstrap?.storeId && kioskBootstrap?.franchiseId) ||
+    (getCurrentStoreId() && getCurrentFranchiseId())
+  );
 
   // KIO-08 fix: Bloquear back button apenas em modo kiosk
   useEffect(() => {
@@ -156,6 +208,14 @@ const AppContent = () => {
 
   // Listener para visibilitychange - trata transições background/foreground no Android
   useEffect(() => {
+    const recoverBrokenNativeBridge = () => {
+      if (!Capacitor.isNativePlatform()) return;
+      if (hasHealthyCapacitorBridge()) return;
+
+      console.warn('[App] Capacitor bridge unhealthy after WebView resume - forcing reload');
+      window.location.reload();
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         console.log('[App] App voltou ao foreground');
@@ -164,6 +224,7 @@ const AppContent = () => {
           // Trigger online event para resync se necessário
           window.dispatchEvent(new Event('online'));
         }
+        recoverBrokenNativeBridge();
       } else {
         console.log('[App] App foi para background');
       }
@@ -171,8 +232,13 @@ const AppContent = () => {
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    const bridgeHealthTimer = window.setTimeout(() => {
+      recoverBrokenNativeBridge();
+    }, 1500);
+
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearTimeout(bridgeHealthTimer);
     };
   }, []);
 
@@ -211,7 +277,11 @@ const AppContent = () => {
       storeId={storeId}
     >
       <AuthContextProvider isKiosk={isKiosk}>
-        <AuthGate isStoreLoading={loading}>
+        <AuthGate
+          isStoreLoading={loading}
+          isKiosk={isKiosk}
+          hasKioskProvisioning={hasKioskProvisioning}
+        >
           <StoreProvider initialStoreId={storeId}>
             <PaymentGatewayProvider>
               <ESP32Provider>
@@ -221,11 +291,16 @@ const AppContent = () => {
                     <PermissionProvider>
                       <HashRouter>
                         <AdminSecretAccess>
-                          <KioskGuard kioskEnabled={settings?.kioskEnabled} isKiosk={isKiosk}>
+                          <KioskGuard
+                            kioskEnabled={effectiveKioskEnabled}
+                            isKiosk={isKiosk}
+                            isProvisioned={hasKioskProvisioning}
+                          >
                             <Routes>
                               {/* Rotas públicas */}
                               <Route path="/login" element={<LoginPage />} />
                               <Route path="/invite" element={<AcceptInvitePage />} />
+                              <Route path="/device-not-provisioned" element={<DeviceNotProvisionedPage />} />
 
                               {/* Rotas protegidas em modo franchise */}
                               <Route path="/" element={

@@ -51,6 +51,10 @@ export interface CreatePaymentInput {
   amount: number;
   currency: string;
   method: PaymentMethod;
+  /** MP channel: 'qr' or 'point'. Required when provider is mercado_pago. */
+  channel?: 'qr' | 'point';
+  /** Tap ID — resolve terminal/POS por torneira quando configurado. */
+  tapId?: string;
   items: PaymentItemInput[];
   customer?: PaymentCustomer;
   card?: PaymentCard;
@@ -68,6 +72,8 @@ export interface CreatePaymentResponse {
   method: PaymentMethod;
   status: PaymentStatus;
   pix?: PaymentPixPayload;
+  /** QR code data string for MP QR dynamic payments */
+  qrData?: string;
   providerOrderId?: string;
   providerPaymentId?: string;
 }
@@ -116,6 +122,8 @@ export interface PaymentRecord {
   status: PaymentStatus;
   amount: number;
   currency: string;
+  /** MP channel used: 'qr' or 'point' */
+  channel?: 'qr' | 'point';
   orderId?: string;
   referenceId?: string;
   environment?: 'sandbox' | 'production';
@@ -124,8 +132,11 @@ export interface PaymentRecord {
   providerPaymentId?: string;
   customer?: PaymentCustomer;
   cardLast4?: string;
+  /** Raw provider-side status (e.g. 'at_terminal', 'processed') for granular UI */
+  providerStatus?: string;
   cancelRequested?: boolean;
   cancelRequestedAt?: string;
+  requiresRefund?: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
   error?: string;
@@ -138,6 +149,8 @@ export interface ProviderCreatePaymentInput {
   amount: number;
   currency: string;
   method: PaymentMethod;
+  /** MP channel: 'qr' or 'point' */
+  channel?: 'qr' | 'point';
   items: PaymentItemInput[];
   customer?: PaymentCustomer;
   card?: PaymentCard;
@@ -163,6 +176,8 @@ export interface ProviderCreatePaymentResult {
   providerOrderId?: string;
   providerPaymentId?: string;
   pix?: PaymentPixPayload;
+  /** QR code data string for MP QR dynamic payments */
+  qrData?: string;
   /** Allowlisted provider metadata. Never store full raw response. */
   providerMetadata?: ProviderMetadata;
   /** @deprecated Use providerMetadata. Will be removed. */
@@ -171,6 +186,8 @@ export interface ProviderCreatePaymentResult {
 
 export interface ProviderPaymentStatusResult {
   status: PaymentStatus;
+  /** Raw provider-side status string (e.g. 'at_terminal', 'processed') */
+  providerStatus?: string;
   providerPaymentId?: string;
   providerOrderId?: string;
   pix?: PaymentPixPayload;

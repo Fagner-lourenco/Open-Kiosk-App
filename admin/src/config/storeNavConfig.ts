@@ -17,6 +17,7 @@ import {
   BarChart3,
   Users,
   Settings,
+  Tablet,
   // Commercial (CRM)
   Kanban,
   CalendarDays,
@@ -39,6 +40,7 @@ export interface StoreNavItem {
   icon: LucideIcon;
   group: 'overview' | 'operação' | 'catalogo' | 'gestao' | 'comercial' | 'financeiro';
 }
+// Note: 'gestao' group is intentionally missing the accent for backward compat
 
 export const STORE_NAV_GROUPS: Record<string, string> = {
   overview: 'Visão Geral',
@@ -65,6 +67,7 @@ export const STORE_NAV_ITEMS: StoreNavItem[] = [
   { label: 'Inventário', href: 'inventory', icon: Boxes, group: 'catalogo' },
 
   // Gestão
+  { label: 'Dispositivos', href: 'devices', icon: Tablet, group: 'gestao' },
   { label: 'Equipe', href: 'members', icon: Users, group: 'gestao' },
   { label: 'Relatórios', href: 'reports', icon: BarChart3, group: 'gestao' },
   { label: 'Configurações', href: 'settings', icon: Settings, group: 'gestao' },

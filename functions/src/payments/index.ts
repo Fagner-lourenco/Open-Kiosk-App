@@ -7,8 +7,13 @@ import {
   createPaymentIntent,
   parseReferenceId,
   syncPendingPaymentsForPagBank,
+  syncPendingPaymentsForMP,
   verifyPagBankSignature,
 } from './paymentService';
+import { verifyMPSignature, mapMPStatus } from './providers/mercadopago';
+
+/** States from which a payment must NOT regress. Used by webhooks and cancel logic. */
+const TERMINAL_STATUSES: PaymentStatus[] = ['paid', 'canceled', 'expired', 'refunded', 'failed'];
 
 // 🔒 FIX BUG-26: Return null for unknown webhook status instead of defaulting to 'pending'
 const mapWebhookStatus = (status?: string): PaymentStatus | null => {
@@ -103,7 +108,6 @@ export const pagbankWebhook = onRequest(
         }
 
         // Guard: não regredir estados terminais
-        const TERMINAL_STATUSES: PaymentStatus[] = ['paid', 'refunded'];
         const currentPaymentData = paymentSnap.data() as { status: PaymentStatus };
         const currentStatus = currentPaymentData.status;
 
@@ -162,8 +166,7 @@ export const cancelPagBankPayment = onCall(
       const payment = paymentSnap.data() as import('./types').PaymentRecord;
 
       // Already in terminal state — nothing to cancel
-      const terminalStates: import('./types').PaymentStatus[] = ['paid', 'canceled', 'expired', 'refunded', 'failed'];
-      if (terminalStates.includes(payment.status)) {
+      if (TERMINAL_STATUSES.includes(payment.status)) {
         return { canceled: payment.status === 'canceled', reason: `already_${payment.status}`, needsProviderCancel: false };
       }
 
@@ -211,6 +214,361 @@ export const cancelPagBankPayment = onCall(
 export const syncPendingPayments = onSchedule(
   { schedule: 'every 5 minutes', timeZone: 'America/Sao_Paulo', region: 'southamerica-east1' },
   async () => {
-    await syncPendingPaymentsForPagBank();
+    try {
+      await syncPendingPaymentsForPagBank();
+    } catch (err) {
+      logger.error('[syncPendingPayments] PagBank sync failed:', err);
+    }
+    try {
+      await syncPendingPaymentsForMP();
+    } catch (err) {
+      logger.error('[syncPendingPayments] MercadoPago sync failed:', err);
+    }
+  }
+);
+
+// ====================================================================
+// Mercado Pago — Webhook, Cancel, CheckStatus
+// ====================================================================
+
+/**
+ * Map MP order status (from webhook) to our PaymentStatus.
+ * Returns null for unrecognized statuses to skip processing.
+ * Re-uses mapMPStatus from provider (which defaults unknown → 'pending'),
+ * and wraps it to return null for truly unknown statuses.
+ */
+const KNOWN_MP_STATUSES = new Set(['processed', 'approved', 'canceled', 'cancelled', 'expired', 'failed', 'rejected', 'refunded', 'created', 'opened', 'at_terminal']);
+const mapMPWebhookStatus = (status?: string): PaymentStatus | null => {
+  const normalized = (status || '').toLowerCase();
+  if (!normalized || !KNOWN_MP_STATUSES.has(normalized)) return null;
+  return mapMPStatus(normalized);
+};
+
+export const mercadopagoWebhook = onRequest(
+  { region: 'southamerica-east1' },
+  async (req, res) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+
+    const webhookSecret = process.env.MP_WEBHOOK_SECRET;
+
+    if (!webhookSecret) {
+      logger.error('[mercadopagoWebhook] MP_WEBHOOK_SECRET nao configurado.');
+      res.status(500).send('Missing webhook secret');
+      return;
+    }
+
+    // MP sends data.id as query parameter for HMAC verification
+    const dataIdParam = (req.query['data.id'] as string) || '';
+    const xSignature = req.header('x-signature') || '';
+    const xRequestId = req.header('x-request-id') || '';
+
+    if (!verifyMPSignature(xSignature, dataIdParam, xRequestId, webhookSecret)) {
+      logger.warn('[mercadopagoWebhook] Assinatura HMAC invalida');
+      res.status(401).send('Invalid signature');
+      return;
+    }
+
+    const payload = req.body || {};
+
+    // Extract external_reference — MP webhook body contains it directly
+    const externalReference =
+      payload?.data?.external_reference ||
+      payload?.external_reference;
+
+    const parsed = parseReferenceId(externalReference);
+
+    if (!parsed) {
+      logger.warn('[mercadopagoWebhook] external_reference invalido ou ausente', {
+        externalReference,
+        action: payload?.action,
+      });
+      // Respond 200 to avoid MP retries for unrecognized references
+      res.status(200).send({ received: true });
+      return;
+    }
+
+    const { franchiseId, storeId, paymentId } = parsed;
+    const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
+
+    const orderStatus = payload?.data?.status || payload?.status;
+    const status = mapMPWebhookStatus(orderStatus);
+
+    if (status === null) {
+      logger.warn('[mercadopagoWebhook] Status nao mapeado, ignorando', {
+        orderStatus,
+        action: payload?.action,
+        paymentId,
+      });
+      res.status(200).send({ received: true });
+      return;
+    }
+
+    // Extract payment details from webhook body
+    const providerOrderId = payload?.data?.id || dataIdParam;
+    const providerPaymentId = payload?.data?.transactions?.payments?.[0]?.reference?.id
+      ? String(payload.data.transactions.payments[0].reference.id)
+      : undefined;
+
+    try {
+      await db.runTransaction(async (txn) => {
+        const paymentSnap = await txn.get(paymentRef);
+        if (!paymentSnap.exists) {
+          logger.warn('[mercadopagoWebhook] pagamento nao encontrado', { paymentId });
+          return;
+        }
+
+        const currentPaymentData = paymentSnap.data() as { status: PaymentStatus; cancelRequested?: boolean };
+        const currentStatus = currentPaymentData.status;
+
+        // Guard: don't regress terminal states
+        if (TERMINAL_STATUSES.includes(currentStatus) && !TERMINAL_STATUSES.includes(status)) {
+          logger.info(`[mercadopagoWebhook] Ignorando — estado terminal: ${currentStatus}`);
+          return;
+        }
+
+        const updateData: Record<string, unknown> = {
+          status,
+          providerStatus: orderStatus || undefined,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          providerOrderId,
+          providerPaymentId,
+        };
+
+        // If cancel was requested but payment arrived, flag for refund
+        if (currentPaymentData.cancelRequested && status === 'paid') {
+          updateData.requiresRefund = true;
+          updateData.cancelRequestedBeforePayment = true;
+          logger.warn('[mercadopagoWebhook] Payment arrived AFTER cancel_requested', { paymentId });
+        }
+
+        txn.set(paymentRef, updateData, { merge: true });
+      });
+    } catch (err) {
+      logger.error('[mercadopagoWebhook] Transaction error:', err);
+    }
+
+    res.status(200).send({ received: true });
+  }
+);
+
+/**
+ * Cancel a Mercado Pago payment.
+ * Same pattern as cancelPagBankPayment — marks cancel_requested atomically.
+ * Attempts POST /v1/orders/{id}/cancel if order is in cancellable state.
+ */
+export const cancelMercadoPagoPayment = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    requireAuth(request);
+
+    const data = request.data as { franchiseId: string; storeId: string; paymentId: string };
+    const { franchiseId, storeId, paymentId } = data;
+    if (!franchiseId || !storeId || !paymentId) {
+      throw new HttpsError('invalid-argument', 'franchiseId, storeId e paymentId obrigatorios.');
+    }
+
+    await requireFranchiseAccess(request, franchiseId);
+    await requireStoreAccess(request, franchiseId, storeId);
+
+    const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
+
+    const cancelResult = await db.runTransaction(async (txn) => {
+      const paymentSnap = await txn.get(paymentRef);
+      if (!paymentSnap.exists) {
+        throw new HttpsError('not-found', 'Pagamento nao encontrado.');
+      }
+
+      const payment = paymentSnap.data() as import('./types').PaymentRecord;
+
+      if (TERMINAL_STATUSES.includes(payment.status)) {
+        return { canceled: payment.status === 'canceled', reason: `already_${payment.status}`, providerOrderId: undefined };
+      }
+
+      if (payment.cancelRequested) {
+        return { canceled: false, reason: 'cancel_requested', providerOrderId: undefined };
+      }
+
+      txn.set(paymentRef, {
+        cancelRequested: true,
+        cancelRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        canceled: false,
+        reason: 'cancel_requested',
+        providerOrderId: payment.providerOrderId,
+        channel: payment.channel,
+      };
+    });
+
+    // Attempt provider cancel outside transaction
+    if (cancelResult.providerOrderId) {
+      try {
+        const storeRef = db.doc(`franchises/${franchiseId}/stores/${storeId}`);
+        const storeSnap = await storeRef.get();
+        const { normalizePaymentGatewayConfig, resolveMercadoPagoConfig } = await import('./storeConfig');
+        const gatewayConfig = normalizePaymentGatewayConfig(storeSnap.data());
+        if (gatewayConfig && gatewayConfig.provider === 'mercado_pago') {
+          const mpConfig = resolveMercadoPagoConfig(gatewayConfig);
+          const authHeaders = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${mpConfig.accessToken}`,
+          };
+          const cancelUrl = `https://api.mercadopago.com/v1/orders/${cancelResult.providerOrderId}/cancel`;
+          const response = await fetch(cancelUrl, {
+            method: 'POST',
+            headers: authHeaders,
+          });
+          if (response.ok) {
+            await paymentRef.set({
+              status: 'canceled',
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            }, { merge: true });
+            return { canceled: true, reason: 'provider_canceled' };
+          }
+
+          // Provider did not cancel. Resolve explicit reason to improve frontend UX.
+          try {
+            const statusUrl = `https://api.mercadopago.com/v1/orders/${cancelResult.providerOrderId}`;
+            const statusResponse = await fetch(statusUrl, {
+              method: 'GET',
+              headers: authHeaders,
+            });
+            if (statusResponse.ok) {
+              const order = await statusResponse.json() as { status?: string };
+              const orderStatus = String(order?.status || '').toLowerCase();
+
+              if (orderStatus === 'at_terminal') {
+                return { canceled: false, reason: 'at_terminal' };
+              }
+
+              if ((orderStatus === 'created' || orderStatus === 'opened') && cancelResult.channel === 'point') {
+                return { canceled: false, reason: 'at_terminal' };
+              }
+
+              // QR orders in 'created'/'opened' state: cancel locally since API didn't accept
+              if ((orderStatus === 'created' || orderStatus === 'opened') && cancelResult.channel !== 'point') {
+                await paymentRef.set({
+                  status: 'canceled',
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                return { canceled: true, reason: 'provider_canceled' };
+              }
+
+              if (orderStatus === 'processed') {
+                return { canceled: false, reason: 'already_processed' };
+              }
+
+              if (orderStatus === 'canceled' || orderStatus === 'cancelled') {
+                await paymentRef.set({
+                  status: 'canceled',
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                }, { merge: true });
+                return { canceled: true, reason: 'provider_canceled' };
+              }
+            }
+          } catch (statusErr) {
+            logger.warn('[cancelMercadoPagoPayment] Failed to resolve order status after cancel non-ok', statusErr);
+          }
+
+          logger.info('[cancelMercadoPagoPayment] Provider cancel returned non-ok, sync will handle', {
+            status: response.status,
+            providerOrderId: cancelResult.providerOrderId,
+          });
+        }
+      } catch (err) {
+        logger.warn('[cancelMercadoPagoPayment] Provider cancel attempt error:', err);
+      }
+    }
+
+    return { canceled: cancelResult.canceled, reason: cancelResult.reason };
+  }
+);
+
+/**
+ * Check MP payment status on-demand (Cloud Function fallback for frontend).
+ * Frontend calls this when onSnapshot hasn't updated after 10s.
+ */
+export const checkMercadoPagoPaymentStatus = onCall(
+  { region: 'southamerica-east1' },
+  async (request) => {
+    requireAuth(request);
+
+    const data = request.data as { franchiseId: string; storeId: string; paymentId: string };
+    const { franchiseId, storeId, paymentId } = data;
+    if (!franchiseId || !storeId || !paymentId) {
+      throw new HttpsError('invalid-argument', 'franchiseId, storeId e paymentId obrigatorios.');
+    }
+
+    await requireFranchiseAccess(request, franchiseId);
+    await requireStoreAccess(request, franchiseId, storeId);
+
+    const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
+    const paymentSnap = await paymentRef.get();
+    if (!paymentSnap.exists) {
+      throw new HttpsError('not-found', 'Pagamento nao encontrado.');
+    }
+
+    const payment = paymentSnap.data() as import('./types').PaymentRecord;
+    if (payment.provider !== 'mercado_pago') {
+      throw new HttpsError('failed-precondition', 'Pagamento nao e Mercado Pago.');
+    }
+
+    if (!payment.providerOrderId) {
+      return { status: payment.status };
+    }
+
+    // Terminal states — no need to query provider
+    if (TERMINAL_STATUSES.includes(payment.status)) {
+      return { status: payment.status };
+    }
+
+    try {
+      const storeRef = db.doc(`franchises/${franchiseId}/stores/${storeId}`);
+      const storeSnap = await storeRef.get();
+      const { normalizePaymentGatewayConfig, resolveMercadoPagoConfig } = await import('./storeConfig');
+      const { createMercadoPagoProvider } = await import('./providers/mercadopago');
+      const gatewayConfig = normalizePaymentGatewayConfig(storeSnap.data());
+
+      if (!gatewayConfig || gatewayConfig.provider !== 'mercado_pago') {
+        return { status: payment.status };
+      }
+
+      const mpConfig = resolveMercadoPagoConfig(gatewayConfig);
+      const provider = createMercadoPagoProvider(mpConfig);
+      const statusResult = await provider.getPaymentStatus?.(payment);
+
+      if (!statusResult) {
+        return { status: payment.status };
+      }
+
+      if (statusResult.status !== payment.status || statusResult.providerStatus !== payment.providerStatus) {
+        const updateData: Record<string, unknown> = {
+          providerOrderId: statusResult.providerOrderId,
+          providerPaymentId: statusResult.providerPaymentId,
+          providerStatus: statusResult.providerStatus || undefined,
+        };
+
+        if (payment.cancelRequested && statusResult.status === 'paid') {
+          updateData.requiresRefund = true;
+          updateData.cancelRequestedBeforePayment = true;
+        }
+
+        const { updatePaymentStatus } = await import('./paymentService');
+        await updatePaymentStatus(paymentRef, statusResult.status, updateData);
+      }
+
+      return { status: statusResult.status };
+    } catch (error) {
+      logger.warn('[checkMercadoPagoPaymentStatus] Error checking status', {
+        paymentId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { status: payment.status };
+    }
   }
 );

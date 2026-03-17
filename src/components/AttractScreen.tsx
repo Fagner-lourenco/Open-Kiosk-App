@@ -57,6 +57,8 @@ const AttractScreen = ({
   const firstRenderedFrameIdentityRef = useRef<string | null>(null);
   const playbackWatchdogRef = useRef<number | null>(null);
   const frameProbeHandleRef = useRef<number | null>(null);
+  const playbackRetryTimerRef = useRef<number | null>(null);
+  const failedPlaybackAttemptsRef = useRef<Record<string, number>>({});
   const videoPlaybackStateRef = useRef<VideoPlaybackState>('idle');
   const [shouldRender, setShouldRender] = useState(visible);
   const [isEntering, setIsEntering] = useState(false);
@@ -65,7 +67,6 @@ const AttractScreen = ({
   const startTriggeredRef = useRef(false);
 
   const videoSettings: AttractVideoConfig | null = attractVideoConfig ?? null;
-  const shouldUseRemoteFallback = videoSettings?.lastValidationResult === 'remote_only';
 
   const {
     videoUrl: cachedVideoUrl,
@@ -78,7 +79,7 @@ const AttractScreen = ({
     videoSettings?.videoUrl && videoSettings.isEnabled ? videoSettings.videoUrl : null,
     {
       autoDownload: true,
-      useFallbackWhileDownloading: shouldUseRemoteFallback,
+      useFallbackWhileDownloading: true,
       cacheKey: videoSettings?.cacheKey,
       contentType: videoSettings?.contentType,
       validationResult: videoSettings?.lastValidationResult,
@@ -97,6 +98,13 @@ const AttractScreen = ({
     if (playbackWatchdogRef.current) {
       window.clearTimeout(playbackWatchdogRef.current);
       playbackWatchdogRef.current = null;
+    }
+  };
+
+  const clearPlaybackRetryTimer = () => {
+    if (playbackRetryTimerRef.current) {
+      window.clearTimeout(playbackRetryTimerRef.current);
+      playbackRetryTimerRef.current = null;
     }
   };
 
@@ -162,6 +170,8 @@ const AttractScreen = ({
 
     if (playbackIdentity) {
       failedVideoIdentityRef.current = playbackIdentity;
+      failedPlaybackAttemptsRef.current[playbackIdentity] =
+        (failedPlaybackAttemptsRef.current[playbackIdentity] || 0) + 1;
     }
 
     prevVideoUrlRef.current = null;
@@ -179,9 +189,11 @@ const AttractScreen = ({
       setVideoPlaybackState('idle');
       prevVideoUrlRef.current = null;
       firstRenderedFrameIdentityRef.current = null;
+      clearPlaybackRetryTimer();
       return;
     }
 
+    delete failedPlaybackAttemptsRef.current[playbackIdentity];
     if (failedVideoIdentityRef.current === playbackIdentity) {
       setVideoPlaybackState('failed');
       return;
@@ -210,6 +222,41 @@ const AttractScreen = ({
       })}`,
     );
   }, [cachedVideoError, videoSettings?.videoUrl, videoSource]);
+
+  useEffect(() => {
+    clearPlaybackRetryTimer();
+
+    if (!visible || videoPlaybackState !== 'failed' || !playbackIdentity || !videoSettings?.isEnabled) {
+      return;
+    }
+
+    const attemptCount = failedPlaybackAttemptsRef.current[playbackIdentity] || 0;
+    if (attemptCount >= 3) {
+      return;
+    }
+
+    playbackRetryTimerRef.current = window.setTimeout(() => {
+      if (failedVideoIdentityRef.current !== playbackIdentity) {
+        return;
+      }
+
+      console.warn(
+        `[AttractVideo] ${JSON.stringify({
+          event: 'retry-after-failure',
+          playbackIdentity,
+          attempt: attemptCount + 1,
+          source: videoSource,
+        })}`,
+      );
+      failedVideoIdentityRef.current = null;
+      prevVideoUrlRef.current = null;
+      setVideoPlaybackState('loading');
+    }, 4000);
+
+    return () => {
+      clearPlaybackRetryTimer();
+    };
+  }, [playbackIdentity, videoPlaybackState, videoSettings?.isEnabled, videoSource, visible]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -370,6 +417,7 @@ const AttractScreen = ({
     return () => {
       disposed = true;
       clearPlaybackWatchdog();
+      clearPlaybackRetryTimer();
       clearFrameProbe(video);
       video.removeEventListener('loadstart', handleLoadStart);
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
@@ -413,6 +461,7 @@ const AttractScreen = ({
 
     setIsEntering(false);
     clearPlaybackWatchdog();
+    clearPlaybackRetryTimer();
     videoRef.current?.pause();
 
     const timeoutId = window.setTimeout(() => {

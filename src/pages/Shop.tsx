@@ -20,6 +20,7 @@ import { useTranslation } from "@/i18n";
 import { useDebounce } from "@/hooks/useDebounce";
 import { enterKioskMode } from "@/services/kioskModeService";
 import { systemLogService } from "@/services/systemLogService";
+import { deviceHeartbeatService } from "@/services/deviceHeartbeatService";
 import ShopProductCard from "@/components/ShopProductCard";
 import DrinkCard from "@/components/DrinkCard";
 
@@ -74,7 +75,20 @@ const Shop = () => {
   // Kiosk idle overlay (suppressed when any modal/overlay is active)
   const isSuppressed = isCartOpen || isDrinkCheckoutOpen || !!drinkPickupData || isKeyboardVisible || isCheckoutOpen;
   const attractTimeout = settings?.attractTimeoutSeconds ?? 15;
-  const { isIdle, resetIdle } = useKioskIdle({ timeoutSeconds: attractTimeout, suppressed: isSuppressed });
+  const suppressionReasons = [
+    isCartOpen ? 'cart-open' : null,
+    isDrinkCheckoutOpen ? 'drink-checkout-open' : null,
+    drinkPickupData ? 'drink-pickup-active' : null,
+    isKeyboardVisible ? 'keyboard-visible' : null,
+    isCheckoutOpen ? 'checkout-open' : null,
+  ].filter(Boolean).join(',');
+  const { isIdle, resetIdle } = useKioskIdle({
+    timeoutSeconds: attractTimeout,
+    suppressed: isSuppressed,
+    debugLabel: 'shop-attract',
+    suppressedReason: suppressionReasons || undefined,
+  });
+  const isAttractVisible = isIdle && (settings?.attractScreenEnabled ?? true);
 
   // Debounce searchQuery para evitar re-renders excessivos durante digitação/voz
   const debouncedSearchQuery = useDebounce(searchQuery, 200);
@@ -87,6 +101,9 @@ const Shop = () => {
   useEffect(() => {
     const activateKiosk = async () => {
       try {
+        // Iniciar heartbeat ANTES do lock task para que o dialog de permissão GPS apareça
+        await deviceHeartbeatService.start();
+
         console.log('[Shop] Ativando kiosk mode...');
         const success = await enterKioskMode();
         if (success) {
@@ -102,7 +119,38 @@ const Shop = () => {
     };
 
     activateKiosk();
+
+    return () => {
+      deviceHeartbeatService.stop();
+    };
   }, []); // Executar apenas uma vez na montagem
+
+  useEffect(() => {
+    console.log('[Shop] Attract configuration updated:', {
+      attractTimeoutSeconds: attractTimeout,
+      attractScreenEnabled: settings?.attractScreenEnabled ?? true,
+      hasVideoConfig: !!settings?.attractVideoConfig?.isEnabled,
+    });
+  }, [attractTimeout, settings?.attractScreenEnabled, settings?.attractVideoConfig?.isEnabled]);
+
+  useEffect(() => {
+    if (!isSuppressed) {
+      console.log('[Shop] Attract screen timer active');
+      return;
+    }
+
+    console.log('[Shop] Attract screen suppressed:', {
+      reasons: suppressionReasons.split(',').filter(Boolean),
+    });
+  }, [isSuppressed, suppressionReasons]);
+
+  useEffect(() => {
+    console.log('[Shop] Attract visibility changed:', {
+      visible: isAttractVisible,
+      isIdle,
+      attractScreenEnabled: settings?.attractScreenEnabled ?? true,
+    });
+  }, [isAttractVisible, isIdle, settings?.attractScreenEnabled]);
 
   useEffect(() => {
     if (products) {
@@ -443,7 +491,7 @@ const Shop = () => {
 
       {/* Attract Screen Overlay */}
       <AttractScreen
-        visible={isIdle && (settings?.attractScreenEnabled ?? true)}
+        visible={isAttractVisible}
         onStart={resetIdle}
         title={t('shop.orderHere')}
         subtitle={t('shop.touchToStart')}

@@ -32,7 +32,7 @@ import {
   type PlugPagAuthEvent,
 } from '@/plugins/plugpagTerminal';
 import type { PluginListenerHandle } from '@capacitor/core';
-import { getPlugPagDeviceId } from '@/components/TapSettingsSync';
+import { getPlugPagDeviceId, setPlugPagDeviceId } from '@/components/TapSettingsSync';
 
 // ============================================================================
 // CONSTANTS
@@ -290,6 +290,11 @@ class PlugPagPaymentService {
 
       this.requestedDeviceId = targetDeviceId;
       this.connectedDeviceId = connectedTarget;
+      if (resolvedName && resolvedName !== targetDeviceId) {
+        setPlugPagDeviceId(resolvedName);
+      } else if (!resolvedName && resolvedAddress && resolvedAddress !== targetDeviceId) {
+        setPlugPagDeviceId(resolvedAddress);
+      }
 
       console.log(
         '[PlugPagService] BT conectado ao terminal:',

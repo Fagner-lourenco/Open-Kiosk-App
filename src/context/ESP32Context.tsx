@@ -57,6 +57,63 @@ async function updateDispenseStatusWithRetry(
   }
 }
 
+function extractJsonObjectsFromTransportLine(line: string): string[] {
+  const payload = line.trim();
+  if (!payload || !payload.includes('{')) {
+    return [];
+  }
+
+  const jsons: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < payload.length; i++) {
+    const char = payload[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\' && inString) {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) {
+      continue;
+    }
+
+    if (char === '{') {
+      if (depth === 0) {
+        start = i;
+      }
+      depth++;
+      continue;
+    }
+
+    if (char === '}') {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        jsons.push(payload.substring(start, i + 1));
+        start = -1;
+      } else if (depth < 0) {
+        depth = 0;
+        start = -1;
+      }
+    }
+  }
+
+  return jsons;
+}
+
 // ============================================
 // PROVIDER
 // ============================================
@@ -907,10 +964,39 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       }
     });
 
+    const consumeTransportLine = (transport: 'BLE' | 'USB OTG', line: string) => {
+      const trimmedLine = line.trim();
+      const jsonPayloads = extractJsonObjectsFromTransportLine(trimmedLine);
+
+      if (jsonPayloads.length > 0) {
+        jsonPayloads.forEach((jsonPayload) => {
+          try {
+            const json = JSON.parse(jsonPayload);
+            handleESP32Response(json);
+          } catch (error) {
+            console.warn(`[ESP32Context] ${transport} JSON invalido:`, jsonPayload, error);
+            addLog('received', jsonPayload);
+          }
+        });
+
+        const leftoverText = trimmedLine.replace(jsonPayloads.join(''), '').trim();
+        if (leftoverText) {
+          addLog('received', leftoverText);
+        }
+        return;
+      }
+
+      if (trimmedLine) {
+        addLog('received', trimmedLine);
+      }
+    };
+
     // 🆕 Listener para dados recebidos via Bluetooth
     // NOTA: O serviço agora envia linhas completas (já processou o buffer)
     const unsubBleData = esp32Service.setOnBleDataReceived((line: string) => {
       console.log('[ESP32Context] BLE linha recebida:', line);
+      consumeTransportLine('BLE', line);
+      return;
 
       // Tentar parsear como JSON
       if (line.startsWith('{')) {
@@ -933,6 +1019,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     // NOTA: O serviço agora envia linhas completas (já processou o buffer)
     const unsubUsbData = esp32Service.setOnUsbDataReceived((line: string) => {
       console.log('[ESP32Context] USB OTG linha recebida:', line);
+      consumeTransportLine('USB OTG', line);
+      return;
 
       // Tentar parsear como JSON
       if (line.startsWith('{')) {

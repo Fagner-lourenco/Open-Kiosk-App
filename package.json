@@ -1,7 +1,7 @@
 {
   "name": "open-kiosk-app",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -42,6 +42,7 @@
     "@capacitor/device": "^7.0.0",
     "@capacitor/file-transfer": "^1.0.12",
     "@capacitor/filesystem": "^7.1.8",
+    "@capacitor/geolocation": "^7.1.8",
     "@capacitor/haptics": "^7.0.0",
     "@capacitor/keyboard": "^7.0.0",
     "@capacitor/network": "^7.0.0",

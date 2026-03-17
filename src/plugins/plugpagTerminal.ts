@@ -57,8 +57,10 @@ export interface PlugPagConnectResult {
   deviceId: string;
   requestedDeviceId?: string;
   mode?: string;
+  authenticated?: boolean;
   resolvedBluetoothAddress?: string | null;
   resolvedBluetoothName?: string | null;
+  diagnostics?: Record<string, unknown>;
 }
 
 export interface PlugPagDisconnectResult {

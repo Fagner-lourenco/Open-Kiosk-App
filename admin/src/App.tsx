@@ -74,6 +74,7 @@ const FinanceCashPage = lazyNamed(StoreSubPages, 'FinanceCashPage');
 const FinancePaymentsPage = lazyNamed(StoreSubPages, 'FinancePaymentsPage');
 const FinanceReportsPage = lazyNamed(StoreSubPages, 'FinanceReportsPage');
 const FinanceSettingsPage = lazyNamed(StoreSubPages, 'FinanceSettingsPage');
+const StoreDevicesPage = lazyNamed(StoreSubPages, 'StoreDevicesPage');
 
 // Super Admin (lazy – default exports via barrel)
 const SuperAdminDashboard = lazy(() => import('@/pages/superadmin/SuperAdminDashboard'));
@@ -324,6 +325,8 @@ export default function App() {
             <Route path="finance/payments" element={<FinancePaymentsPage />} />
             <Route path="finance/reports" element={<FinanceReportsPage />} />
             <Route path="finance/settings" element={<FinanceSettingsPage />} />
+            {/* Dispositivos kiosk */}
+            <Route path="devices" element={<StoreDevicesPage />} />
           </Route>
 
           {/* Equipe - requer permissão de gestão de usuários */}

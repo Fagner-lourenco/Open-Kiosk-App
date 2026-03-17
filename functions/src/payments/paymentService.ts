@@ -21,6 +21,7 @@ const KIOSK_ANONYMOUS_CUSTOMER = {
 import crypto from 'crypto';
 import { db, admin, requireAuth, requireFranchiseAccess, sanitizeForLog } from '../lib';
 import { createPagBankProvider, type PagBankProviderConfig } from './providers/pagbank';
+import { createMercadoPagoProvider } from './providers/mercadopago';
 import {
   type CreatePaymentInput,
   type CreatePaymentResponse,
@@ -29,12 +30,12 @@ import {
   type PaymentStatus,
   type ProviderCreatePaymentInput,
 } from './types';
-import { normalizePaymentGatewayConfig, isMethodEnabled } from './storeConfig';
+import { normalizePaymentGatewayConfig, isMethodEnabled, resolveMercadoPagoConfig, resolveTerminalForTap } from './storeConfig';
 
 const DEFAULT_QR_EXPIRATION_MINUTES = 30;
 
 const buildReferenceId = (franchiseId: string, storeId: string, paymentId: string): string =>
-  `okp|${franchiseId}|${storeId}|${paymentId}`;
+  `okp-${franchiseId}-${storeId}-${paymentId}`;
 
 export const parseReferenceId = (referenceId?: string | null): {
   franchiseId: string;
@@ -42,7 +43,9 @@ export const parseReferenceId = (referenceId?: string | null): {
   paymentId: string;
 } | null => {
   if (!referenceId) return null;
-  const parts = referenceId.split('|');
+  // Support both dash (new) and pipe (legacy) separators
+  const sep = referenceId.includes('|') ? '|' : '-';
+  const parts = referenceId.split(sep);
   if (parts.length !== 4) return null;
   if (parts[0] !== 'okp') return null;
   const [, franchiseId, storeId, paymentId] = parts;
@@ -116,7 +119,15 @@ const resolvePagBankConfig = (environment: 'sandbox' | 'production'): PagBankPro
 /** @deprecated Full PAN masking removed (Phase 0 Security Hardening). cardLast4 is now extracted from provider response. */
 // const maskCardLast4 — REMOVED: never receive full PAN in Cloud Functions
 
-const ensureMethodAllowed = (configProvider: string, method: PaymentMethod): void => {
+const ensureMethodAllowed = (configProvider: string, method: PaymentMethod, channel?: 'qr' | 'point'): void => {
+  if (configProvider === 'mercado_pago') {
+    // MP: method is inferred from what the customer uses at the terminal/QR.
+    // Channel (qr/point) is required.
+    if (!channel) {
+      throw new HttpsError('invalid-argument', 'Channel (qr ou point) obrigatorio para Mercado Pago.');
+    }
+    return;
+  }
   if (configProvider !== 'pagbank') {
     throw new HttpsError('failed-precondition', 'Gateway nao suportado para createPayment.');
   }
@@ -157,10 +168,20 @@ export const createPaymentIntent = async (
       taxId: data.customer?.taxId || KIOSK_ANONYMOUS_CUSTOMER.taxId,
       email: data.customer?.email || KIOSK_ANONYMOUS_CUSTOMER.email,
     };
+  } else if (data.channel) {
+    // MP (QR/Point): customer data is NOT required — payment method is chosen
+    // at the terminal or QR. Apply anonymous fallback if not provided.
+    if (!data.customer?.name || !data.customer?.taxId) {
+      data.customer = {
+        name: data.customer?.name || KIOSK_ANONYMOUS_CUSTOMER.name,
+        taxId: data.customer?.taxId || KIOSK_ANONYMOUS_CUSTOMER.taxId,
+        email: data.customer?.email || KIOSK_ANONYMOUS_CUSTOMER.email,
+      };
+    }
   } else if (!data.customer?.name || !data.customer?.taxId) {
     throw new HttpsError('invalid-argument', 'Dados do cliente obrigatorios.');
   }
-  if ((method === 'credit' || method === 'debit') && !data.card) {
+  if ((method === 'credit' || method === 'debit') && !data.card && !data.channel) {
     throw new HttpsError('invalid-argument', 'Dados do cartao obrigatorios.');
   }
   if (data.card) {
@@ -236,7 +257,7 @@ export const createPaymentIntent = async (
     throw new HttpsError('failed-precondition', 'Gateway de pagamento nao configurado.');
   }
 
-  ensureMethodAllowed(gatewayConfig.provider, method);
+  ensureMethodAllowed(gatewayConfig.provider, method, data.channel);
 
   if (!isMethodEnabled(gatewayConfig, method)) {
     throw new HttpsError('failed-precondition', 'Metodo de pagamento desativado.');
@@ -320,6 +341,7 @@ export const createPaymentIntent = async (
     status: 'pending',
     amount,
     currency,
+    channel: data.channel,
     orderId: data.orderId,
     referenceId,
     environment: gatewayConfig.environment,
@@ -339,8 +361,21 @@ export const createPaymentIntent = async (
   await paymentRef.set(paymentRecord);
 
   try {
-    const pagbankConfig = resolvePagBankConfig(gatewayConfig.environment);
-    const provider = createPagBankProvider(pagbankConfig);
+    let provider: import('./types').PaymentProvider;
+
+    if (gatewayConfig.provider === 'mercado_pago') {
+      const mpConfig = resolveMercadoPagoConfig(gatewayConfig);
+      // Resolve terminal/POS por tap (fallback: store-level)
+      const tapResolved = resolveTerminalForTap(data.tapId, storeData, mpConfig);
+      provider = createMercadoPagoProvider({
+        ...mpConfig,
+        terminalId: tapResolved.terminalId,
+        externalPosId: tapResolved.externalPosId,
+      });
+    } else {
+      const pagbankConfig = resolvePagBankConfig(gatewayConfig.environment);
+      provider = createPagBankProvider(pagbankConfig);
+    }
 
     const providerPayload: ProviderCreatePaymentInput = {
       paymentId: paymentRef.id,
@@ -349,6 +384,7 @@ export const createPaymentIntent = async (
       amount,
       currency,
       method,
+      channel: data.channel,
       items: data.items,
       customer: data.customer,
       card: data.card,
@@ -375,6 +411,7 @@ export const createPaymentIntent = async (
       method,
       status: providerResult.status,
       pix: update.pix,
+      qrData: providerResult.qrData,
       providerOrderId: providerResult.providerOrderId,
       providerPaymentId: providerResult.providerPaymentId,
     };
@@ -388,7 +425,7 @@ export const createPaymentIntent = async (
       },
       { merge: true }
     );
-    logger.error('[payments] PagBank createPayment error', sanitizeForLog({ error: errorMessage }));
+    logger.error('[payments] createPayment error', sanitizeForLog({ error: errorMessage, provider: gatewayConfig.provider }));
     throw new HttpsError('internal', errorMessage);
   }
 };
@@ -491,4 +528,73 @@ export const verifyPagBankSignature = (
     return false;
   }
   return crypto.timingSafeEqual(signatureBuffer, expectedBuffer);
+};
+
+export const syncPendingPaymentsForMP = async (): Promise<void> => {
+  let lastDoc: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+  let hasMore = true;
+  const BATCH_SIZE = 50;
+
+  while (hasMore) {
+    let query = db
+      .collectionGroup('payments')
+      .where('status', '==', 'pending')
+      .where('provider', '==', 'mercado_pago')
+      .limit(BATCH_SIZE);
+
+    if (lastDoc) {
+      query = query.startAfter(lastDoc);
+    }
+
+    const pendingSnap = await query.get();
+    hasMore = pendingSnap.size === BATCH_SIZE;
+    if (pendingSnap.empty) break;
+    lastDoc = pendingSnap.docs[pendingSnap.docs.length - 1];
+
+    for (const doc of pendingSnap.docs) {
+      const payment = doc.data() as PaymentRecord;
+      if (!payment.providerOrderId) continue;
+
+      try {
+        const storeRef = db.doc(`franchises/${payment.franchiseId}/stores/${payment.storeId}`);
+        const storeSnap = await storeRef.get();
+        const gatewayConfig = normalizePaymentGatewayConfig(storeSnap.data());
+        if (!gatewayConfig || gatewayConfig.provider !== 'mercado_pago') continue;
+
+        const mpConfig = resolveMercadoPagoConfig(gatewayConfig);
+        const provider = createMercadoPagoProvider(mpConfig);
+        const statusResult = await provider.getPaymentStatus?.(payment);
+        if (!statusResult) continue;
+
+        if (statusResult.status !== payment.status || statusResult.providerStatus !== payment.providerStatus) {
+          const isCancelRequested = !!payment.cancelRequested;
+          const newStatus = (isCancelRequested && statusResult.status === 'paid')
+            ? 'paid' as PaymentStatus
+            : statusResult.status;
+
+          const extraUpdate: Record<string, unknown> = {
+            providerOrderId: statusResult.providerOrderId,
+            providerPaymentId: statusResult.providerPaymentId,
+            providerStatus: statusResult.providerStatus || undefined,
+          };
+
+          if (isCancelRequested && statusResult.status === 'paid') {
+            extraUpdate.requiresRefund = true;
+            extraUpdate.cancelRequestedBeforePayment = true;
+            logger.warn('[payments] MP Payment arrived AFTER cancel_requested — needs refund', {
+              paymentId: doc.id,
+              orderId: payment.orderId,
+            });
+          }
+
+          await updatePaymentStatus(doc.ref, newStatus, extraUpdate);
+        }
+      } catch (error) {
+        logger.warn('[payments] sync pending MP failed', {
+          paymentId: doc.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
 };

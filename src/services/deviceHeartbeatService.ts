@@ -28,7 +28,8 @@
 
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
-import { Device } from '@capacitor/device';
+import { Device, type DeviceInfo as CapDeviceInfo } from '@capacitor/device';
+import { Geolocation } from '@capacitor/geolocation';
 import { getDefaultTapId, getPlugPagDeviceId } from '@/components/TapSettingsSync';
 
 // ============================================================================
@@ -51,6 +52,14 @@ export interface DeviceInfo {
   metadata?: Record<string, unknown>;
 }
 
+export interface DeviceLocation {
+  lat: number;
+  lng: number;
+  accuracy: number;        // metros
+  provider: 'gps' | 'network' | 'unknown';
+  updatedAt: number;       // epoch ms
+}
+
 export interface HeartbeatOptions {
   deviceId?: string;
   deviceType?: DeviceInfo['deviceType'];
@@ -66,6 +75,8 @@ export interface HeartbeatOptions {
 
 const HEARTBEAT_INTERVAL_MS = 60 * 1000; // 1 minuto
 const DEVICE_STORAGE_KEY = 'open-kiosk:deviceId';
+const LOCATION_CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutos
+const LOCATION_TIMEOUT_MS = 8_000;             // 8 segundos
 
 // ============================================================================
 // SERVICE
@@ -76,6 +87,9 @@ class DeviceHeartbeatService {
   private cachedDeviceId: string | null = null;
   private startTime: number = Date.now();
   private esp32Info: Partial<DeviceInfo> = {};
+  private cachedLocation: DeviceLocation | null = null;
+  private locationCachedAt: number = 0;
+  private cachedDeviceInfo: CapDeviceInfo | null = null;
 
   /**
    * Obtém ou gera um deviceId único para este dispositivo
@@ -118,6 +132,78 @@ class DeviceHeartbeatService {
    */
   getUptime(): number {
     return Math.floor((Date.now() - this.startTime) / 1000);
+  }
+
+  /**
+   * Coleta info do hardware (modelo, fabricante, SO) uma única vez.
+   */
+  private async collectDeviceInfo(): Promise<CapDeviceInfo | null> {
+    if (this.cachedDeviceInfo) return this.cachedDeviceInfo;
+    try {
+      this.cachedDeviceInfo = await Device.getInfo();
+      return this.cachedDeviceInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Solicita permissão de GPS antes de entrar em lock task mode.
+   * Deve ser chamado cedo no ciclo de vida do app para que o dialog apareça.
+   */
+  private async requestLocationPermission(): Promise<void> {
+    try {
+      const perm = await Geolocation.checkPermissions();
+      if (perm.location === 'granted') return;
+
+      console.log('[DeviceHeartbeat] Solicitando permissão de GPS...');
+      const req = await Geolocation.requestPermissions();
+      console.log('[DeviceHeartbeat] Permissão GPS:', req.location);
+    } catch (err) {
+      console.warn('[DeviceHeartbeat] Não foi possível solicitar permissão GPS:', (err as Error).message);
+    }
+  }
+
+  /**
+   * Coleta posição GPS do dispositivo com cache de 15 minutos.
+   * Nunca lança exceção — falhas são silenciosas para não bloquear o heartbeat.
+   */
+  private async collectLocation(): Promise<DeviceLocation | null> {
+    const now = Date.now();
+    if (this.cachedLocation && now - this.locationCachedAt < LOCATION_CACHE_TTL_MS) {
+      return this.cachedLocation;
+    }
+
+    try {
+      const permission = await Geolocation.checkPermissions();
+      if (permission.location !== 'granted') {
+        // Solicitar permissão — em modo kiosk dedicado será concedida via provisioning
+        const req = await Geolocation.requestPermissions();
+        if (req.location !== 'granted') return null;
+      }
+
+      const pos = await Promise.race([
+        Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: LOCATION_TIMEOUT_MS }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('GPS timeout')), LOCATION_TIMEOUT_MS + 500)
+        ),
+      ]);
+
+      const location: DeviceLocation = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy,
+        provider: pos.coords.accuracy <= 50 ? 'gps' : 'network',
+        updatedAt: now,
+      };
+
+      this.cachedLocation = location;
+      this.locationCachedAt = now;
+      return location;
+    } catch (err) {
+      console.warn('[DeviceHeartbeat] GPS não disponível:', (err as Error).message);
+      return null;
+    }
   }
 
   /**
@@ -164,6 +250,8 @@ class DeviceHeartbeatService {
         `franchises/${franchiseId}/stores/${storeId}/devices/${deviceId}`
       );
 
+        const hwInfo = await this.collectDeviceInfo();
+
         const heartbeatData: Record<string, unknown> = {
           deviceId,
           deviceType,
@@ -182,11 +270,32 @@ class DeviceHeartbeatService {
         }
         if (franchiseId) heartbeatData.franchiseId = franchiseId;
 
+        // Info do hardware (modelo, fabricante, SO)
+        if (hwInfo) {
+          heartbeatData.deviceModel = hwInfo.model;
+          heartbeatData.deviceManufacturer = hwInfo.manufacturer;
+          heartbeatData.osVersion = `${hwInfo.operatingSystem} ${hwInfo.osVersion}`;
+        }
+
       // Adicionar campos opcionais
       if (options.ip) heartbeatData.ip = options.ip;
       if (options.mac) heartbeatData.mac = options.mac;
       if (options.firmwareVersion) heartbeatData.firmwareVersion = options.firmwareVersion;
       if (options.metadata) heartbeatData.metadata = options.metadata;
+
+      // Coletar GPS (isolado — nunca propaga erro ao heartbeat)
+      if (deviceType === 'kiosk') {
+        const location = await this.collectLocation();
+        if (location) {
+          heartbeatData.location = {
+            lat: location.lat,
+            lng: location.lng,
+            accuracy: location.accuracy,
+            provider: location.provider,
+            updatedAt: location.updatedAt,
+          };
+        }
+      }
 
       // Mesclar com info do ESP32 se disponível
         if (deviceType === 'kiosk' && this.esp32Info) {
@@ -208,15 +317,20 @@ class DeviceHeartbeatService {
   }
 
   /**
-   * Inicia heartbeat periódico
+   * Inicia heartbeat periódico.
+   * Deve ser chamado ANTES de enterKioskMode() para que o dialog de
+   * permissão GPS apareça antes do lock task bloquear a tela.
    */
-  start(): void {
+  async start(): Promise<void> {
     if (this.heartbeatInterval) {
       console.log('[DeviceHeartbeat] Já iniciado');
       return;
     }
 
     console.log('[DeviceHeartbeat] 🚀 Iniciando heartbeat periódico');
+
+    // Solicitar permissão GPS antecipadamente (antes de lock task mode)
+    await this.requestLocationPermission();
 
     // Enviar heartbeat inicial
     this.sendHeartbeat();

@@ -369,6 +369,12 @@ export interface TapConfig {
 
   /** Identificador do terminal PlugPag vinculado a esta torneira (ex: "PRO-1733203195" ou MAC legado) */
   plugpagDeviceId?: string;
+
+  /** Identificador do terminal MP Point vinculado a esta torneira (ex: "GERTEC_MP35P__12345") */
+  mpTerminalId?: string;
+
+  /** External POS ID do MP QR vinculado a esta torneira (ex: "KIOSK-TAP-1") */
+  mpExternalPosId?: string;
 }
 
 // ============================================================================

@@ -163,37 +163,6 @@ class PaymentService {
   }
 
   /**
-   * PIX Payment — MOCK REMOVIDO (Phase 0 Security Hardening)
-   *
-   * Para PIX real, use processMercadoPagoQR() ou createPayment() via Cloud Functions.
-   * @throws PaymentError sempre — mocks não são permitidos em produção.
-   */
-  async processPixPayment(_amount: number, _orderId: string): Promise<PaymentResult> {
-    throw new PaymentError(
-      'MOCK_DISABLED',
-      'processPixPayment mock foi removido. Use processMercadoPagoQR() ou createPayment() para PIX real.'
-    );
-  }
-
-  /**
-   * Card Payment — MOCK REMOVIDO (Phase 0 Security Hardening)
-   *
-   * Para cartão card-present, será integrado via PlugPag (Phase 1).
-   * Para cartão REST (PagBank), use createPayment() via Cloud Functions com card.encrypted.
-   * @throws PaymentError sempre — mocks não são permitidos em produção.
-   */
-  async processCardPayment(
-    _amount: number,
-    _cardType: 'credit' | 'debit',
-    _orderId: string
-  ): Promise<PaymentResult> {
-    throw new PaymentError(
-      'MOCK_DISABLED',
-      'processCardPayment mock foi removido. Use createPayment() com card.encrypted ou PlugPag (Phase 1).'
-    );
-  }
-
-  /**
    * Cancel active payment transaction
    */
   async cancelPayment(transactionId: string, orderId?: string): Promise<{ canceled: boolean; reason?: string }> {
@@ -831,6 +800,143 @@ class PaymentService {
   markTerminalOrderComplete(): void {
     this.clearLastTerminalOrder();
     console.log('[PaymentService] Terminal liberado para nova ordem');
+  }
+
+  // ===== MERCADO PAGO VIA CLOUD FUNCTIONS =====
+
+  /**
+   * Create MP QR payment via Cloud Functions (backend-managed).
+   * Token stays on the server. Returns qrData for display.
+   */
+  async processMercadoPagoQRBackend(
+    amount: number,
+    items: Array<{ name: string; quantity: number; unitAmount: number }>,
+    orderId?: string,
+    options?: { storeId?: string; franchiseId?: string; tapId?: string }
+  ): Promise<PaymentResult> {
+    const storeId = options?.storeId || getCurrentStoreId();
+    const franchiseId = options?.franchiseId || getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId) {
+      throw new PaymentError('PAYMENT_CONTEXT', 'storeId/franchiseId ausente.');
+    }
+
+    const input: CreatePaymentInput = {
+      franchiseId,
+      storeId,
+      orderId,
+      amount,
+      currency: 'BRL',
+      method: 'pix', // method is pix for QR flow
+      channel: 'qr',
+      tapId: options?.tapId,
+      items,
+    };
+
+    const response = await this.createPayment(input);
+
+    return {
+      success: false, // Still pending — client needs to pay
+      transactionId: response.paymentId,
+      orderId: response.providerOrderId,
+      qrData: response.qrData,
+      message: 'QR Code gerado via backend. Aguardando pagamento...',
+    };
+  }
+
+  /**
+   * Create MP Point payment via Cloud Functions (backend-managed).
+   * Terminal handling is done server-side.
+   */
+  async processMercadoPagoPointBackend(
+    amount: number,
+    items: Array<{ name: string; quantity: number; unitAmount: number }>,
+    orderId?: string,
+    options?: { storeId?: string; franchiseId?: string; tapId?: string; method?: 'credit' | 'debit' }
+  ): Promise<PaymentResult> {
+    const storeId = options?.storeId || getCurrentStoreId();
+    const franchiseId = options?.franchiseId || getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId) {
+      throw new PaymentError('PAYMENT_CONTEXT', 'storeId/franchiseId ausente.');
+    }
+
+    const input: CreatePaymentInput = {
+      franchiseId,
+      storeId,
+      orderId,
+      amount,
+      currency: 'BRL',
+      method: options?.method || 'credit',
+      channel: 'point',
+      tapId: options?.tapId,
+      items,
+    };
+
+    const response = await this.createPayment(input);
+
+    return {
+      success: false,
+      transactionId: response.paymentId,
+      orderId: response.providerOrderId,
+      message: 'Pedido enviado ao terminal via backend. Aguardando pagamento...',
+    };
+  }
+
+  /**
+   * Cancel MP payment via Cloud Function.
+   */
+  async cancelMercadoPagoPaymentCF(
+    paymentId: string,
+    options?: { storeId?: string; franchiseId?: string }
+  ): Promise<{ canceled: boolean; reason?: string }> {
+    const storeId = options?.storeId || getCurrentStoreId();
+    const franchiseId = options?.franchiseId || getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId || !paymentId) {
+      return { canceled: false, reason: 'missing_ids' };
+    }
+
+    try {
+      const app = getFirebaseApp();
+      const functions = getFunctions(app, 'southamerica-east1');
+      const cancelFn = httpsCallable<
+        { franchiseId: string; storeId: string; paymentId: string },
+        { canceled: boolean; reason?: string }
+      >(functions, 'cancelMercadoPagoPayment');
+
+      const result = await cancelFn({ franchiseId, storeId, paymentId });
+      return result.data;
+    } catch (error) {
+      console.warn('[PaymentService] cancelMercadoPagoPaymentCF failed:', error);
+      return { canceled: false, reason: 'cancel_function_unavailable' };
+    }
+  }
+
+  /**
+   * Check MP payment status on-demand via Cloud Function.
+   * Used as fallback when onSnapshot hasn't fired.
+   */
+  async checkMercadoPagoPaymentStatusCF(
+    paymentId: string,
+    options?: { storeId?: string; franchiseId?: string }
+  ): Promise<{ status: string }> {
+    const storeId = options?.storeId || getCurrentStoreId();
+    const franchiseId = options?.franchiseId || getCurrentFranchiseId();
+
+    if (!storeId || !franchiseId || !paymentId) {
+      throw new PaymentError('PAYMENT_CONTEXT', 'IDs ausentes para check status.');
+    }
+
+    const app = getFirebaseApp();
+    const functions = getFunctions(app, 'southamerica-east1');
+    const checkFn = httpsCallable<
+      { franchiseId: string; storeId: string; paymentId: string },
+      { status: string }
+    >(functions, 'checkMercadoPagoPaymentStatus');
+
+    const result = await checkFn({ franchiseId, storeId, paymentId });
+    return result.data;
   }
 
   // ===== PAGBANK CANCELLATION (KIO-03/KIO-04 fix) =====

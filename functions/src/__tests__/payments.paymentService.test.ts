@@ -67,10 +67,19 @@ describe('payments/paymentService', () => {
     });
 
     it('retorna null para prefixo errado', () => {
-      expect(parseReferenceId('xxx|f1|s1|p1')).toBeNull();
+      expect(parseReferenceId('xxx-f1-s1-p1')).toBeNull();
     });
 
-    it('parse referenceId válido', () => {
+    it('parse referenceId válido (dash)', () => {
+      const result = parseReferenceId('okp-franchise1-store1-payment1');
+      expect(result).toEqual({
+        franchiseId: 'franchise1',
+        storeId: 'store1',
+        paymentId: 'payment1',
+      });
+    });
+
+    it('parse referenceId válido (legacy pipe)', () => {
       const result = parseReferenceId('okp|franchise1|store1|payment1');
       expect(result).toEqual({
         franchiseId: 'franchise1',
@@ -80,7 +89,7 @@ describe('payments/paymentService', () => {
     });
 
     it('retorna null para partes vazias', () => {
-      expect(parseReferenceId('okp||s1|p1')).toBeNull();
+      expect(parseReferenceId('okp--s1-p1')).toBeNull();
     });
   });
 

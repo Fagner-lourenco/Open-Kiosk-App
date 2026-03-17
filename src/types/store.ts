@@ -1,5 +1,6 @@
 import { Product } from './product';
 import type { AttractVideoConfig as SharedAttractVideoConfig } from '../../shared/types/store';
+import type { ESP32ConnectionType, PaymentGatewayConfig } from '../../shared/types/store';
 
 // F-01: Re-exportar tipos de pagamento do shared como fonte canônica
 // Isso garante que KIOSK e shared usem a mesma definição
@@ -89,6 +90,12 @@ export interface TapConfig {
 
   // Terminal PlugPag vinculado (identificador generico aceito pelo SDK, ex: PRO-1733203195)
   plugpagDeviceId?: string;
+
+  // Terminal MP Point vinculado a esta torneira (ex: GERTEC_MP35P__12345)
+  mpTerminalId?: string;
+
+  // External POS ID do MP QR vinculado a esta torneira (ex: KIOSK-TAP-1)
+  mpExternalPosId?: string;
 }
 
 export interface StoreSettings {

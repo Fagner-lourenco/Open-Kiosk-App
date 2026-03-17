@@ -169,3 +169,7 @@ export function FinanceSettingsPage() {
   const { franchiseId, storeId } = useStoreContext();
   return <FinanceSettingsTab franchiseId={franchiseId} storeId={storeId} />;
 }
+
+// ─── Dispositivos ────────────────────────────────────────────────────────────
+
+export { StoreDevicesPage } from '@/pages/stores/StoreDevicesPage';

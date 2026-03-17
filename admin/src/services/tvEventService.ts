@@ -567,12 +567,15 @@ export async function resetRanking(
   let lastDoc: any = null;
 
    
-  while (true) {
+  let hasMoreDocs = true;
+
+  while (hasMoreDocs) {
     const q = lastDoc
       ? query(colRef, startAfter(lastDoc), limit(PAGE_SIZE))
       : query(colRef, limit(PAGE_SIZE));
     const snap = await getDocs(q);
-    if (snap.empty) break;
+    hasMoreDocs = !snap.empty;
+    if (!hasMoreDocs) break;
 
     const batchOp = writeBatch(db);
     snap.docs.forEach((d) => batchOp.delete(d.ref));

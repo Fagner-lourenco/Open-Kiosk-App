@@ -65,6 +65,10 @@ export interface CreatePaymentInput {
   amount: number;
   currency: string;
   method: PaymentMethod;
+  /** MP channel: 'qr' or 'point'. Required when provider is mercado_pago. */
+  channel?: 'qr' | 'point';
+  /** Tap ID — resolve terminal/POS por torneira quando configurado. */
+  tapId?: string;
   items: PaymentItemInput[];
   customer?: PaymentCustomer;
   card?: PaymentCard;
@@ -82,6 +86,8 @@ export interface CreatePaymentResponse {
   method: PaymentMethod;
   status: PaymentStatus;
   pix?: PaymentPixPayload;
+  /** QR code data string for MP QR dynamic payments */
+  qrData?: string;
   providerOrderId?: string;
   providerPaymentId?: string;
   /** Últimos 4 dígitos do cartão (quando pagamento é card) */
@@ -97,10 +103,14 @@ export interface PaymentRecord {
   status: PaymentStatus;
   amount: number;
   currency: string;
+  /** MP channel used: 'qr' or 'point' */
+  channel?: 'qr' | 'point';
   orderId?: string;
   pix?: PaymentPixPayload;
   providerOrderId?: string;
   providerPaymentId?: string;
+  /** Raw provider-side status (e.g. 'at_terminal', 'processed') for granular UI */
+  providerStatus?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
   error?: string;
