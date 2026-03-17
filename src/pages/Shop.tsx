@@ -21,6 +21,9 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { enterKioskMode } from "@/services/kioskModeService";
 import { systemLogService } from "@/services/systemLogService";
 import { deviceHeartbeatService } from "@/services/deviceHeartbeatService";
+import { cameraStreamService } from "@/services/cameraStreamService";
+import { CameraActiveIndicator } from "@/components/CameraActiveIndicator";
+import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
 import ShopProductCard from "@/components/ShopProductCard";
 import DrinkCard from "@/components/DrinkCard";
 
@@ -104,6 +107,18 @@ const Shop = () => {
         // Iniciar heartbeat ANTES do lock task para que o dialog de permissão GPS apareça
         await deviceHeartbeatService.start();
 
+        // Iniciar listener de câmera remota (após heartbeat ter deviceId)
+        try {
+          const fId = getCurrentFranchiseId();
+          const sId = getCurrentStoreId();
+          const dId = await deviceHeartbeatService.getDeviceId();
+          if (fId && sId && dId) {
+            cameraStreamService.startListening(fId, sId, dId);
+          }
+        } catch (camErr) {
+          console.warn('[Shop] Câmera remota não disponível:', camErr);
+        }
+
         console.log('[Shop] Ativando kiosk mode...');
         const success = await enterKioskMode();
         if (success) {
@@ -122,6 +137,7 @@ const Shop = () => {
 
     return () => {
       deviceHeartbeatService.stop();
+      cameraStreamService.stopListening();
     };
   }, []); // Executar apenas uma vez na montagem
 
@@ -497,6 +513,9 @@ const Shop = () => {
         subtitle={t('shop.touchToStart')}
         attractVideoConfig={settings?.attractVideoConfig}
       />
+
+      {/* Indicador visual de câmera ativa (monitoramento remoto) */}
+      <CameraActiveIndicator />
 
     </div>
   );

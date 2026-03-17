@@ -13,9 +13,10 @@ import { db } from '@/lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Wifi, WifiOff, MapPin, Tablet, Clock, Cpu, Beer } from 'lucide-react';
+import { Wifi, WifiOff, MapPin, Tablet, Clock, Cpu, Beer, Video } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { DeviceCameraDialog } from './DeviceCameraDialog';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,7 @@ interface StoreDeviceListProps {
 export function StoreDeviceList({ franchiseId, storeId }: StoreDeviceListProps) {
   const [devices, setDevices] = useState<DeviceDoc[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cameraDevice, setCameraDevice] = useState<DeviceDoc | null>(null);
 
   useEffect(() => {
     if (!franchiseId || !storeId) return;
@@ -183,16 +185,27 @@ export function StoreDeviceList({ franchiseId, storeId }: StoreDeviceListProps) 
                     </span>
                   )}
                 </div>
-                <Badge
-                  variant={online ? 'default' : 'secondary'}
-                  className="shrink-0 gap-1 text-[11px]"
-                >
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setCameraDevice(device)}
+                    disabled={!online}
+                    title={online ? 'Abrir câmera remota' : 'Dispositivo offline'}
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <Video className="h-4 w-4" />
+                  </button>
+                  <Badge
+                    variant={online ? 'default' : 'secondary'}
+                    className="shrink-0 gap-1 text-[11px]"
+                  >
                   {online ? (
                     <><Wifi className="h-3 w-3" /> Online</>
                   ) : (
                     <><WifiOff className="h-3 w-3" /> Offline</>
                   )}
                 </Badge>
+                </div>
               </div>
             </CardHeader>
 
@@ -263,6 +276,18 @@ export function StoreDeviceList({ franchiseId, storeId }: StoreDeviceListProps) 
           </Card>
         );
       })}
+
+      {/* Dialog de câmera remota */}
+      {cameraDevice && (
+        <DeviceCameraDialog
+          open={!!cameraDevice}
+          onOpenChange={(open) => { if (!open) setCameraDevice(null); }}
+          franchiseId={franchiseId}
+          storeId={storeId}
+          deviceId={cameraDevice.deviceId}
+          deviceLabel={buildDeviceLabel(cameraDevice).primary}
+        />
+      )}
     </div>
   );
 }

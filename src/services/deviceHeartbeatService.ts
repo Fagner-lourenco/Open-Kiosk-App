@@ -148,6 +148,29 @@ class DeviceHeartbeatService {
   }
 
   /**
+   * Solicita permissões de câmera e microfone antes de entrar em lock task mode.
+   * Abre getUserMedia brevemente para disparar o dialog do Android,
+   * e fecha imediatamente. Isso garante que câmera e microfone funcionem
+   * quando solicitados remotamente pelo Admin.
+   */
+  private async requestCameraAndMicPermissions(): Promise<void> {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      console.log('[DeviceHeartbeat] Permissões de câmera e microfone concedidas');
+    } catch (err) {
+      // Tentar só câmera se áudio falhou
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach((t) => t.stop());
+        console.log('[DeviceHeartbeat] Permissão de câmera concedida (mic indisponível)');
+      } catch (camErr) {
+        console.warn('[DeviceHeartbeat] Câmera/mic não disponível:', (camErr as Error).message);
+      }
+    }
+  }
+
+  /**
    * Solicita permissão de GPS antes de entrar em lock task mode.
    * Deve ser chamado cedo no ciclo de vida do app para que o dialog apareça.
    */
@@ -331,6 +354,9 @@ class DeviceHeartbeatService {
 
     // Solicitar permissão GPS antecipadamente (antes de lock task mode)
     await this.requestLocationPermission();
+
+    // Solicitar permissões de câmera e microfone (antes de lock task mode)
+    await this.requestCameraAndMicPermissions();
 
     // Enviar heartbeat inicial
     this.sendHeartbeat();

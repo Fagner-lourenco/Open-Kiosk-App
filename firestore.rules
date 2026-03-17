@@ -506,6 +506,29 @@ service cloud.firestore {
           // Apenas admin pode deletar
           allow delete: if isSuperAdmin() || 
                           isFranchiseOwner(franchiseId);
+
+          // Sessões de câmera remota sob demanda
+          match /cameraSessions/{sessionId} {
+            // Leitura: admin/manager com acesso à loja OU dispositivo com claim
+            allow read: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId) ||
+                          hasDeviceStoreClaim(franchiseId, storeId);
+
+            // Criação: apenas admin/manager (quem solicita a sessão)
+            allow create: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']);
+
+            // Atualização: admin/manager OU dispositivo (para enviar offer/answer/status)
+            allow update: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager']) ||
+                            hasDeviceStoreClaim(franchiseId, storeId);
+
+            // Sem delete — sessões são registro de auditoria
+            allow delete: if false;
+          }
         }
         
         // ────────────────────────────────────────────────────────────────────
