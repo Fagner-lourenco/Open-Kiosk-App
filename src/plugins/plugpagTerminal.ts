@@ -1,13 +1,13 @@
 /**
  * plugpagTerminal.ts — Capacitor bridge wrapper for PlugPag Terminal Plugin
  *
- * Full integration with PagBank PlugPag SDK 4.11.0
+ * Full integration with PagBank PlugPag SDK 4.12.0-beta
  * Typed TS interface mirroring the Android PlugPagTerminalPlugin.java.
  *
  * Usage:
  *   import { PlugPagTerminal } from '@/plugins/plugpagTerminal';
  *   await PlugPagTerminal.initialize({ appName: 'OpenKiosk' });
- *   await PlugPagTerminal.connect({ deviceId: '00:1B:66:...' });
+ *   await PlugPagTerminal.connect({ deviceId: 'PRO-1733203195' });
  *   const result = await PlugPagTerminal.startPayment({ amountCents: 1500, type: 'DEBIT' });
  */
 
@@ -46,13 +46,19 @@ export interface PlugPagOpenSettingsResult {
 // ---------------------------------------------------------------------------
 
 export interface PlugPagConnectOptions {
-  /** Bluetooth MAC address of the terminal (e.g. "00:1B:66:XX:YY:ZZ") */
+  /** Terminal identifier accepted by PlugPag (e.g. "PRO-1733203195" or a legacy BT MAC) */
   deviceId: string;
+  /** Código de ativação PagBank — passado ao PlugPagDevice para que initBTConnection use internamente */
+  activationCode?: string;
 }
 
 export interface PlugPagConnectResult {
   connected: boolean;
   deviceId: string;
+  requestedDeviceId?: string;
+  mode?: string;
+  resolvedBluetoothAddress?: string | null;
+  resolvedBluetoothName?: string | null;
 }
 
 export interface PlugPagDisconnectResult {
@@ -65,11 +71,15 @@ export interface PlugPagDisconnectResult {
 
 export interface PlugPagAuthResult {
   authenticated: boolean;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  resultCode?: number | null;
+  durationMs?: number | null;
 }
 
 export interface PlugPagActivationOptions {
   /** Código de ativação fornecido pelo PagBank */
-  activationCode: string;
+  activationCode?: string;
 }
 
 export interface PlugPagInvalidateResult {
@@ -183,7 +193,11 @@ export interface PlugPagEventData {
 export interface PlugPagConnectionEvent {
   status: 'connected' | 'disconnected' | 'error';
   deviceId?: string;
+  requestedDeviceId?: string;
   code?: number;
+  mode?: string;
+  resolvedBluetoothAddress?: string | null;
+  resolvedBluetoothName?: string | null;
 }
 
 export interface PlugPagTransactionEvent {
@@ -194,6 +208,12 @@ export interface PlugPagTransactionEvent {
 export interface PlugPagAuthEvent {
   status: 'authenticated' | 'error';
   message?: string;
+  authenticated?: boolean;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  resultCode?: number | null;
+  durationMs?: number | null;
+  lockTaskRestored?: boolean;
 }
 
 /**
@@ -249,6 +269,9 @@ export interface PlugPagTerminalPlugin {
 
   /** Request authentication (activation) with PagBank */
   requestAuthentication(options: PlugPagActivationOptions): Promise<PlugPagAuthResult>;
+
+  /** Request interactive authentication using the official demo flow */
+  requestInteractiveAuthentication(): Promise<PlugPagAuthResult>;
 
   /** Invalidate authentication (deactivation) */
   invalidateAuthentication(): Promise<PlugPagInvalidateResult>;

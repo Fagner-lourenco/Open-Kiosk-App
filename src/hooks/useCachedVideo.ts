@@ -2,58 +2,70 @@
  * ============================================
  * useCachedVideo Hook
  * ============================================
- * 
- * Hook para carregar vídeos com cache automático.
- * Download em background, progresso em tempo real.
+ *
+ * Resolves attract-screen videos from:
+ * - native-file (preferred on native platforms)
+ * - cache-api (browser fallback)
+ * - remote (direct playback without offline cache)
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  downloadVideo, 
-  getCachedVideoUrl, 
-  isVideoCached, 
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import {
   addDownloadListener,
+  downloadVideo,
+  getCachedVideo,
   isCacheAPIAvailable,
+  isVideoCached,
+  revokeVideoObjectURL,
+  type VideoCacheRequest,
+  type VideoCacheSource,
+  type VideoValidationResult,
 } from '@/services/videoCacheService';
 
 export interface UseCachedVideoState {
-  /** URL para usar no elemento <video> */
   videoUrl: string | null;
-  
-  /** Se o vídeo está em cache local */
   isCached: boolean;
-  
-  /** Se está baixando o vídeo */
   isDownloading: boolean;
-  
-  /** Progresso do download (0-100) */
   downloadProgress: number;
-  
-  /** Erro no download */
-  error: string | null;
-  
-  /** Se o cache API está disponível */
+  error: Error | string | null;
   cacheAvailable: boolean;
+  source: VideoCacheSource | null;
 }
 
 export interface UseCachedVideoOptions {
-  /** Baixar automaticamente se não estiver em cache */
   autoDownload?: boolean;
-  
-  /** Usar URL original enquanto baixa (default: true) */
   useFallbackWhileDownloading?: boolean;
+  cacheKey?: string | null;
+  contentType?: string | null;
+  validationResult?: VideoValidationResult;
 }
 
-/**
- * Hook para gerenciar vídeo com cache
- */
+const buildRequest = (
+  url: string | undefined | null,
+  options: UseCachedVideoOptions,
+): VideoCacheRequest | null => {
+  if (!url) {
+    return null;
+  }
+
+  return {
+    url,
+    cacheKey: options.cacheKey,
+    contentType: options.contentType,
+    validationResult: options.validationResult,
+  };
+};
+
 export const useCachedVideo = (
   url: string | undefined | null,
-  options: UseCachedVideoOptions = {}
+  options: UseCachedVideoOptions = {},
 ): UseCachedVideoState & { triggerDownload: () => void } => {
   const {
     autoDownload = true,
     useFallbackWhileDownloading = true,
+    cacheKey,
+    contentType,
+    validationResult,
   } = options;
 
   const [state, setState] = useState<UseCachedVideoState>({
@@ -63,68 +75,85 @@ export const useCachedVideo = (
     downloadProgress: 0,
     error: null,
     cacheAvailable: isCacheAPIAvailable(),
+    source: null,
   });
 
   const mountedRef = useRef(true);
   const downloadTriggeredRef = useRef(false);
 
-  // Verifica cache e carrega URL
+  const currentRequest = useMemo(() => buildRequest(url, {
+    cacheKey,
+    contentType,
+    validationResult,
+  }), [cacheKey, contentType, url, validationResult]);
+
   const checkAndLoadVideo = useCallback(async () => {
-    if (!url) {
-      console.warn('[useCachedVideo] URL is null/undefined — skipping video load');
-      setState((prev) => ({ ...prev, videoUrl: null, isCached: false }));
+    if (!currentRequest) {
+      setState((prev) => ({
+        ...prev,
+        videoUrl: null,
+        isCached: false,
+        source: null,
+      }));
       return;
     }
-    console.warn('[useCachedVideo] Checking cache for URL:', url.substring(0, 60) + '...');
 
     try {
-      const cached = await isVideoCached(url);
-      
-      if (cached) {
-        const cachedUrl = await getCachedVideoUrl(url);
-        if (mountedRef.current) {
-          setState((prev) => ({
-            ...prev,
-            videoUrl: cachedUrl,
-            isCached: true,
-            isDownloading: false,
-            downloadProgress: 100,
-            error: null,
-          }));
-        }
+      const cached = await isVideoCached(currentRequest);
+      const resolved = await getCachedVideo(currentRequest);
+
+      if (!mountedRef.current) {
         return;
       }
 
-      // Não está em cache
-      if (mountedRef.current) {
+      if (cached && resolved) {
         setState((prev) => ({
           ...prev,
-          videoUrl: useFallbackWhileDownloading ? url : null,
-          isCached: false,
+          videoUrl: resolved.videoUrl,
+          isCached: resolved.isCached,
+          source: resolved.source,
+          isDownloading: false,
+          downloadProgress: 100,
+          error: null,
         }));
+        return;
       }
 
-      // Auto-download se habilitado
-      if (autoDownload && !downloadTriggeredRef.current) {
+      setState((prev) => ({
+        ...prev,
+        videoUrl: useFallbackWhileDownloading ? currentRequest.url : null,
+        isCached: false,
+        source: resolved?.source || 'remote',
+        error: null,
+      }));
+
+      if (
+        autoDownload &&
+        !downloadTriggeredRef.current &&
+        validationResult !== 'remote_only' &&
+        validationResult !== 'cors_warning'
+      ) {
         downloadTriggeredRef.current = true;
-        triggerDownload();
+        void triggerDownload();
       }
     } catch (error) {
       console.error('[useCachedVideo] Error checking cache:', error);
-      if (mountedRef.current) {
-        setState((prev) => ({
-          ...prev,
-          videoUrl: url, // Fallback para URL original
-          isCached: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        }));
+      if (!mountedRef.current) {
+        return;
       }
-    }
-  }, [url, autoDownload, useFallbackWhileDownloading]);
 
-  // Trigger download manual
+      setState((prev) => ({
+        ...prev,
+        videoUrl: currentRequest.url,
+        isCached: false,
+        source: 'remote',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
+    }
+  }, [autoDownload, currentRequest, useFallbackWhileDownloading, validationResult]);
+
   const triggerDownload = useCallback(async () => {
-    if (!url || !isCacheAPIAvailable()) {
+    if (!currentRequest || !isCacheAPIAvailable()) {
       return;
     }
 
@@ -133,92 +162,87 @@ export const useCachedVideo = (
       isDownloading: true,
       downloadProgress: 0,
       error: null,
+      source: prev.source || 'remote',
     }));
 
     try {
-      const cachedUrl = await downloadVideo(url, (progress) => {
-        if (mountedRef.current) {
-          setState((prev) => ({ ...prev, downloadProgress: progress }));
+      const result = await downloadVideo(currentRequest, (progress) => {
+        if (!mountedRef.current) {
+          return;
         }
+
+        setState((prev) => ({
+          ...prev,
+          downloadProgress: progress,
+        }));
       });
 
-      if (mountedRef.current) {
-        if (cachedUrl) {
-          setState((prev) => ({
-            ...prev,
-            videoUrl: cachedUrl,
-            isCached: true,
-            isDownloading: false,
-            downloadProgress: 100,
-            error: null,
-          }));
-        } else {
-          // Download falhou, usa URL original
-          setState((prev) => ({
-            ...prev,
-            videoUrl: url,
-            isDownloading: false,
-            error: 'Download failed',
-          }));
-        }
+      if (!mountedRef.current || !result) {
+        return;
       }
+
+      setState((prev) => ({
+        ...prev,
+        videoUrl: result.videoUrl,
+        isCached: result.isCached,
+        source: result.source,
+        isDownloading: false,
+        downloadProgress: 100,
+        error: result.isCached ? null : prev.error,
+      }));
     } catch (error) {
-      if (mountedRef.current) {
-        setState((prev) => ({
-          ...prev,
-          videoUrl: url, // Fallback
-          isDownloading: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        }));
+      if (!mountedRef.current) {
+        return;
       }
+
+      setState((prev) => ({
+        ...prev,
+        videoUrl: currentRequest.url,
+        isCached: false,
+        source: 'remote',
+        isDownloading: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
     }
-  }, [url]);
+  }, [currentRequest]);
 
-  // Listener para progresso de download
   useEffect(() => {
-    if (!url) return;
+    if (!currentRequest) {
+      return;
+    }
 
-    const unsubscribe = addDownloadListener(url, (downloadState) => {
-      if (mountedRef.current) {
-        setState((prev) => ({
-          ...prev,
-          isDownloading: downloadState.isDownloading,
-          downloadProgress: downloadState.progress,
-          error: downloadState.error,
-        }));
+    const unsubscribe = addDownloadListener(currentRequest, (downloadState) => {
+      if (!mountedRef.current) {
+        return;
       }
+
+      setState((prev) => ({
+        ...prev,
+        isDownloading: downloadState.isDownloading,
+        downloadProgress: downloadState.progress,
+        error: downloadState.error,
+        source: downloadState.source,
+        isCached: downloadState.isCached,
+      }));
     });
 
     return unsubscribe;
-  }, [url]);
+  }, [currentRequest]);
 
-  // Carrega vídeo quando URL muda
   useEffect(() => {
     downloadTriggeredRef.current = false;
-    checkAndLoadVideo();
-  }, [url, checkAndLoadVideo]);
+    void checkAndLoadVideo();
+  }, [checkAndLoadVideo]);
 
-  // Cleanup de Blob URLs para evitar memory leak
-  // CRÍTICO: Cada URL.createObjectURL() aloca memória que não é liberada automaticamente
-  useEffect(() => {
-    const currentUrl = state.videoUrl;
-    
-    return () => {
-      // Revogar apenas Blob URLs (começam com 'blob:')
-      if (currentUrl && currentUrl.startsWith('blob:')) {
-        console.log('[useCachedVideo] Revoking blob URL:', currentUrl.substring(0, 50));
-        URL.revokeObjectURL(currentUrl);
-      }
-    };
-  }, [state.videoUrl]);
-
-  // Cleanup
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      if (currentRequest) {
+        revokeVideoObjectURL(currentRequest);
+      }
     };
-  }, []);
+  }, [currentRequest]);
 
   return {
     ...state,
@@ -226,11 +250,11 @@ export const useCachedVideo = (
   };
 };
 
-/**
- * Hook simplificado que apenas retorna a URL (cached ou original)
- */
-export const useVideoUrl = (url: string | undefined | null): string | null => {
-  const { videoUrl } = useCachedVideo(url, { autoDownload: true });
+export const useVideoUrl = (
+  url: string | undefined | null,
+  options: Omit<UseCachedVideoOptions, 'autoDownload'> = {},
+): string | null => {
+  const { videoUrl } = useCachedVideo(url, { ...options, autoDownload: true });
   return videoUrl;
 };
 

@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/white"
+    android:fitsSystemWindows="true"
+    tools:context=".qrcode.view.qrcode.QrCodeActivity">
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textAlignment="center"
+        android:text="@string/commonui_qrcode_title"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        android:textColor="@color/black"
+        android:textSize="@dimen/commonui_18sp"
+        android:layout_marginTop="@dimen/commonui_16dp"/>
+
+    <TextView
+        android:id="@+id/tv_subtitle"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="@dimen/commonui_38dp"
+        android:layout_marginVertical="@dimen/commonui_18dp"
+        android:layout_marginTop="@dimen/commonui_8dp"
+        android:layout_marginBottom="@dimen/commonui_minus_2dp"
+        android:gravity="center"
+        android:text="@string/commonui_qrcode_subtitle"
+        android:textColor="@color/plugpag_button_disable_text"
+        android:textSize="@dimen/commonui_16sp"
+        android:visibility="gone"
+        tools:visibility="visible"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/tv_title" />
+
+    <br.com.uol.pagseguro.lib.commonui.qrcode.view.qrcode.QRCodeView
+        android:id="@+id/qr_code_view"
+        android:layout_width="@dimen/commonui_300dp"
+        android:layout_height="@dimen/commonui_300dp"
+        android:layout_marginTop="@dimen/commonui_16dp"
+        app:layout_constraintTop_toBottomOf="@id/tv_subtitle"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <TextView
+        android:id="@+id/tv_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAlignment="center"
+        android:textColor="@color/black"
+        android:textSize="@dimen/commonui_24sp"
+        android:visibility="gone"
+        tools:visibility="visible"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/qr_code_view" />
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:padding="@dimen/commonui_8dp"
+        android:layout_marginBottom="@dimen/commonui_16dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/btn_enter_code"
+        app:layout_constraintTop_toBottomOf="@id/qr_code_view">
+
+        <TextView
+            android:id="@+id/tv_loading_message"
+            android:layout_width="@dimen/commonui_200dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/commonui_8dp"
+            app:layout_goneMarginStart="@dimen/commonui_0dp"
+            android:text="@string/commonui_wait_qr_code_confirmation"
+            android:textSize="@dimen/commonui_14sp"
+            android:textColor="@color/plugpag_button_disable_text"
+            android:textStyle="bold"
+            android:textAlignment="center"
+            app:layout_constraintStart_toEndOf="@id/progress_qr_code"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <com.google.android.material.progressindicator.CircularProgressIndicator
+            android:id="@+id/progress_qr_code"
+            android:layout_width="@dimen/commonui_32dp"
+            android:layout_height="@dimen/commonui_32dp"
+            android:indeterminate="true"
+            app:indicatorColor="@color/blue"
+            app:indicatorSize="@dimen/commonui_24dp"
+            app:layout_constraintTop_toTopOf="@id/tv_loading_message"
+            app:layout_constraintBottom_toBottomOf="@id/tv_loading_message"
+            app:layout_constraintStart_toStartOf="parent" />
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+    <Button
+        android:id="@+id/btn_enter_code"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/commonui_16dp"
+        android:layout_marginEnd="@dimen/commonui_16dp"
+        android:layout_marginBottom="@dimen/commonui_4dp"
+        android:text="@string/commonui_enter_code"
+        android:textSize="@dimen/commonui_14sp"
+        android:textColor="@color/white"
+        android:textAllCaps="false"
+        android:visibility="gone"
+        tools:visibility="visible"
+        android:background="@drawable/commonui_rounded_corner"
+        android:fontFamily="sans-serif-medium"
+        app:layout_constraintBottom_toTopOf="@id/btn_cancel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <Button
+        android:id="@+id/btn_cancel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        style="@style/PlugPagBorderlessButton"
+        android:layout_marginStart="@dimen/commonui_16dp"
+        android:layout_marginEnd="@dimen/commonui_16dp"
+        android:layout_marginBottom="@dimen/commonui_8dp"
+        android:text="@string/commonui_cancel"
+        android:textAllCaps="false"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

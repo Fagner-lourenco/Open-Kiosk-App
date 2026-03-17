@@ -32,9 +32,13 @@ import { encryptCard } from "@/utils/pagbankEncrypt";
 import { evaluateDynamicPrice, toPricingSnapshot } from "../../shared/utils/dynamicPricingEngine";
 import type { DynamicPricingResult, PricingSnapshot } from "../../shared/types/dynamicPricing";
 import { useAudioVoice } from "@/hooks/useAudioVoice";
-import { plugpagPaymentService, MAX_PLUGPAG_RETRIES, type PlugPagTerminalState } from "@/services/plugpagPaymentService";
+import {
+  plugpagPaymentService,
+  MAX_PLUGPAG_RETRIES,
+  type PlugPagTerminalState,
+} from "@/services/plugpagPaymentService";
 import { PlugPagTerminalStatus } from "@/components/PlugPagTerminalStatus";
-import { getPlugPagMac } from "@/components/TapSettingsSync";
+import { getPlugPagDeviceId } from "@/components/TapSettingsSync";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -122,8 +126,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     if (!isPagBank) return false;
     const plugpagConfig = gatewayConfig?.providers?.pagbank?.plugpag;
     if (!plugpagConfig?.enabled) return false;
-    const mac = getPlugPagMac();
-    return !!mac;
+    const deviceId = getPlugPagDeviceId();
+    return !!deviceId;
   }, [isPagBank, gatewayConfig]);
 
   // Quando PlugPag está ativo e o método é cartão, usamos o terminal físico
@@ -132,7 +136,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   // 🔍 DIAG: Log decisão de pagamento para debug de sync Admin→Kiosk
   useEffect(() => {
-    const mac = getPlugPagMac();
+    const deviceId = getPlugPagDeviceId();
     console.log('[DrinkQuickCheckout] Payment decision:', {
       'gatewayConfig.provider': gatewayConfig?.provider ?? '(null)',
       'resolvedConfig.provider': resolvedConfig.provider,
@@ -140,17 +144,25 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       isPagBank,
       isPlugPagEnabled,
       usePlugPagForCard,
-      plugpagMac: mac || '(empty)',
+      plugpagDeviceId: deviceId || '(empty)',
       plugpagEnabled: gatewayConfig?.providers?.pagbank?.plugpag?.enabled ?? false,
       isConfigured,
     });
   }, [provider, isPagBank, isPlugPagEnabled, usePlugPagForCard, gatewayConfig, resolvedConfig, isConfigured]);
+
+  useEffect(() => {
+    const unsubscribe = plugpagPaymentService.onStateChange((state) => {
+      setPlugpagTerminalState(state);
+    });
+    return unsubscribe;
+  }, []);
 
   // PagBank (estado local)
   const [pagbankPaymentId, setPagbankPaymentId] = useState<string | null>(null);
   const [pagbankStatus, setPagbankStatus] = useState<GatewayPaymentStatus | null>(null);
   const [pagbankQrCodeText, setPagbankQrCodeText] = useState<string | null>(null);
   const [pagbankError, setPagbankError] = useState<string | null>(null);
+  const [plugpagTerminalState, setPlugpagTerminalState] = useState<PlugPagTerminalState>(plugpagPaymentService.getState());
   const pagbankUnsubscribeRef = useRef<(() => void) | null>(null);
 
   // PlugPag: retry state for card-present payment failures
@@ -427,7 +439,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       timestamp: new Date(),
       kegLevelPercent,
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [selectedSize, isDpActive, dpConfig, kegLevelPercent, dpTick]);
 
   /** Preço unitário resolvido (com ou sem DP) */
@@ -1183,9 +1195,22 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           });
         }
       } else {
+        // Pagamento negado ou erro
+        const errorMsg = response.error || 'Pagamento não aprovado no terminal';
+        const errorCode = (response as any).errorCode;
+
+        // AUTH_REQUIRED: não contar como retry — precisa autenticação PagBank
+        // Manter processingStage="awaiting_payment" para o bloco de UI com botão
+        // "Autenticar PagBank" continuar visível
+        if (errorCode === 'AUTH_REQUIRED') {
+          systemLogService.warn('payment', `PlugPag AUTH_REQUIRED: ${errorMsg}`, { orderNumber });
+          setPagbankError(errorMsg);
+          setIsProcessing(false);
+          return;
+        }
+
         // Pagamento negado ou erro — NÃO voltar ao step 2, manter na tela de pagamento.
         // O botão "Tentar Novamente" no UI re-invoca handleRetryPlugPagPayment.
-        const errorMsg = response.error || 'Pagamento não aprovado no terminal';
         plugpagRetryCountRef.current += 1;
         const retryInfo = plugpagRetryCountRef.current < MAX_PLUGPAG_RETRIES
           ? ` (tentativa ${plugpagRetryCountRef.current}/${MAX_PLUGPAG_RETRIES})`
@@ -1236,6 +1261,64 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           variant: 'destructive',
         });
       }
+    }
+  };
+
+  const handleAuthenticatePlugPag = async () => {
+    setPagbankError(null);
+    const result = await plugpagPaymentService.authenticateInteractive();
+    if (!result.success) {
+      toast({
+        title: 'Autenticação PagBank não concluída',
+        description: result.error || 'Não foi possível autenticar a conta PagBank.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({ title: 'PagBank autenticado!', description: 'Pronto para processar pagamentos.' });
+
+    // Se há um pagamento pendente, retomar automaticamente
+    const orderNumber = plugpagLastOrderRef.current;
+    const totalAmount = plugpagLastAmountRef.current;
+    if (orderNumber && totalAmount) {
+      setIsProcessing(true);
+      updateProcessingStage("awaiting_payment");
+      await handleStartPlugPagPayment(orderNumber, totalAmount);
+    }
+  };
+
+  const handleForceActivatePlugPag = async () => {
+    const plugpagConfig = gatewayConfig?.providers?.pagbank?.plugpag;
+    const code = plugpagConfig?.activationCode;
+    if (!code) {
+      toast({
+        title: 'Código não configurado',
+        description: 'Configure o código de ativação no painel admin.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setPagbankError(null);
+    const result = await plugpagPaymentService.forceActivate(code);
+    if (!result.success) {
+      toast({
+        title: 'Ativação falhou',
+        description: result.error || 'Não foi possível ativar com o código fornecido.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    toast({ title: 'Terminal ativado!', description: 'Pronto para processar pagamentos.' });
+
+    const orderNumber = plugpagLastOrderRef.current;
+    const totalAmount = plugpagLastAmountRef.current;
+    if (orderNumber && totalAmount) {
+      setIsProcessing(true);
+      updateProcessingStage("awaiting_payment");
+      await handleStartPlugPagPayment(orderNumber, totalAmount);
     }
   };
 
@@ -2146,8 +2229,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       </div>
                     </div>
 
-                    {selectedPayment !== "pix_qr" && (
-                      <>
+                    <>
                         <Separator />
                         <h3 className="font-medium">Dados do cartão</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2184,8 +2266,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             />
                           </div>
                         </div>
-                      </>
-                    )}
+                    </>
                   </div>
                 </Card>
               )}
@@ -2335,13 +2416,22 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             <p className="text-red-700 font-medium">Erro no terminal</p>
                             <p className="text-red-600 text-sm mt-1">{pagbankError}</p>
                             <div className="flex gap-2 justify-center mt-4">
-                              {plugpagRetryCountRef.current < MAX_PLUGPAG_RETRIES && (
+                              {pagbankError.includes('Autenticação PagBank') ? (
                                 <Button
                                   variant="default"
-                                  onClick={handleRetryPlugPagPayment}
+                                  onClick={handleAuthenticatePlugPag}
                                 >
-                                  Tentar novamente ({MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current} restante{MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current !== 1 ? 's' : ''})
+                                  Autenticar PagBank
                                 </Button>
+                              ) : (
+                                plugpagRetryCountRef.current < MAX_PLUGPAG_RETRIES && (
+                                  <Button
+                                    variant="default"
+                                    onClick={handleRetryPlugPagPayment}
+                                  >
+                                    Tentar novamente ({MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current} restante{MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current !== 1 ? 's' : ''})
+                                  </Button>
+                                )
                               )}
                               <Button
                                 variant="outline"
@@ -2354,7 +2444,18 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                         )}
 
                         {!pagbankError && (
-                          <PlugPagTerminalStatus />
+                          <>
+                            <PlugPagTerminalStatus />
+
+                            {plugpagTerminalState === 'authenticating' && (
+                              <Button
+                                variant="outline"
+                                onClick={handleCancelPayment}
+                              >
+                                Cancelar
+                              </Button>
+                            )}
+                          </>
                         )}
                       </div>
                     ) : isPagBank ? (

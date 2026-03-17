@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/red_error_hint"/>
+  <stroke android:width="@dimen/commonui_1dp" android:color="@android:color/transparent" />
+    <padding android:bottom="@dimen/commonui_16dp" android:left="@dimen/commonui_16dp" android:top="@dimen/commonui_16dp"
+        android:right="@dimen/commonui_16dp"
+        />
+    <corners android:radius="192dp"/>
+</shape>

@@ -53,17 +53,25 @@ const STORE_SUBCOLLECTIONS = [
 
 const BATCH_LIMIT = 400; // Firestore batch max is 500, keep margin
 
-async function deleteSubcollectionBatch(parentPath: string, subcollection: string): Promise<number> {
-  const collRef = db.collection(`${parentPath}/${subcollection}`);
+async function deleteCollectionRecursively(collRef: FirebaseFirestore.CollectionReference): Promise<number> {
   let totalDeleted = 0;
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const snap = await collRef.limit(BATCH_LIMIT).get();
     if (snap.empty) break;
 
+    for (const snapshotDoc of snap.docs) {
+      if (typeof snapshotDoc.ref.listCollections === 'function') {
+        const nestedCollections = await snapshotDoc.ref.listCollections();
+        for (const nestedCollection of nestedCollections) {
+          totalDeleted += await deleteCollectionRecursively(nestedCollection);
+        }
+      }
+    }
+
     const batch = db.batch();
-    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    snap.docs.forEach((snapshotDoc) => batch.delete(snapshotDoc.ref));
     await batch.commit();
     totalDeleted += snap.size;
 
@@ -86,7 +94,7 @@ async function deleteSubcollection(parentPath: string, subcollection: string): P
     return -1;
   }
 
-  return deleteSubcollectionBatch(parentPath, subcollection);
+  return deleteCollectionRecursively(collRef);
 }
 
 /**

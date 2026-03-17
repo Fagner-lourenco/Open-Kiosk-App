@@ -16,6 +16,7 @@ import {
   CachedVideo,
 } from './cacheService';
 import { getCurrentStoreId } from './firebase';
+import { removeVideoFromCacheById, shouldPreserveCacheStorageCache } from './videoCacheService';
 
 // Configurações de cleanup
 const CLEANUP_CONFIG = {
@@ -131,21 +132,21 @@ const cleanupVideos = async (): Promise<number> => {
     for (const video of videos) {
       // Remove se é de outra loja ou muito antigo
       if (video.storeId !== currentStoreId) {
-        await cacheDelete(STORES.VIDEOS, video.id);
+        await removeVideoFromCacheById(video.id);
         cleaned++;
         console.log(`[Cleanup] Removed video from other store: ${video.id}`);
       } else if (now - video.cachedAt > CLEANUP_CONFIG.VIDEOS_MAX_AGE_MS) {
-        await cacheDelete(STORES.VIDEOS, video.id);
+        await removeVideoFromCacheById(video.id);
         cleaned++;
         console.log(`[Cleanup] Removed old video: ${video.id}`);
       }
     }
 
-    // Também limpa do Cache API
+    // Tambem limpa caches antigos do Cache API e qualquer cache manual obsoleto
     if (typeof caches !== 'undefined') {
       const cacheNames = await caches.keys();
       for (const name of cacheNames) {
-        if (name.startsWith('kiosk-video-cache') && !name.endsWith('v1')) {
+        if (!shouldPreserveCacheStorageCache(name) && name.startsWith('kiosk-video-cache')) {
           await caches.delete(name);
           console.log(`[Cleanup] Removed old video cache: ${name}`);
         }

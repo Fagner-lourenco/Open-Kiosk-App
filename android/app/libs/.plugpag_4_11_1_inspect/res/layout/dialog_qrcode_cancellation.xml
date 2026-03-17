@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/white">
+
+    <TextView
+        android:id="@+id/textview_cancellation_title"
+        style="@style/qr_code_cancel_title"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="@string/payment_qrcode_cancellation_title"
+        android:layout_marginTop="@dimen/commonui_32dp"
+        android:layout_marginHorizontal="@dimen/commonui_24dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/textview_wait_until_it_is_payed_to_finish_the_sale"
+        style="@style/qr_code_cancel_text"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="@string/payment_qrcode_wait_until_it_is_payed_to_finish_the_sale"
+        android:layout_marginHorizontal="@dimen/commonui_24dp"
+        android:layout_marginVertical="@dimen/commonui_8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/textview_cancellation_title"
+        app:layout_constraintBottom_toTopOf="@id/button_wait_qr_code"/>
+
+    <Button
+        android:id="@+id/button_cancel_qr_code"
+        style="@style/PlugPagBorderlessButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/payment_qrcode_cancel"
+        android:textSize="@dimen/commonui_14sp"
+        android:textAllCaps="false"
+        android:layout_marginBottom="@dimen/commonui_16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/button_wait_qr_code" />
+
+    <Button
+        android:id="@+id/button_wait_qr_code"
+        style="@style/PlugPagBorderlessButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/wait"
+        android:textSize="@dimen/commonui_14sp"
+        android:textAllCaps="false"
+        android:layout_marginEnd="@dimen/commonui_16dp"
+        android:layout_marginBottom="@dimen/commonui_16dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

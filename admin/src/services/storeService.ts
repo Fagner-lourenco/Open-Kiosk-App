@@ -9,14 +9,13 @@ import {
   doc,
   getDoc,
   getDocs,
-  addDoc,
+  setDoc,
   updateDoc,
   deleteDoc,
   query,
   orderBy,
   serverTimestamp,
   runTransaction,
-  writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { storesPath, storePath } from '@/lib/pathResolver';
@@ -24,11 +23,26 @@ import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 
 /** 🔒 FIX BUG-33: Helper to count existing stores and enforce maxStores */
 const franchisePath = (franchiseId: string) => `franchises/${franchiseId}`;
+const DEFAULT_STORE_TIMEZONE = 'America/Sao_Paulo';
+const DEFAULT_STORE_CURRENCY = 'BRL';
+const DEFAULT_STORE_LANGUAGE = 'pt-BR';
+const DEFAULT_ATTRACT_TIMEOUT_SECONDS = 60;
+
+function generateStoreSlug(name: string, fallbackId: string): string {
+  const baseSlug = name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return baseSlug || fallbackId;
+}
 
 export interface Store {
   id: string;
   name: string;
-  address?: string;
+  address?: string | Record<string, unknown>;
   phone?: string;
   email?: string;
   isActive: boolean;
@@ -57,7 +71,7 @@ export interface CreateStoreData {
 
 export interface UpdateStoreData {
   name?: string;
-  address?: string;
+  address?: string | Record<string, unknown>;
   phone?: string;
   email?: string;
   isActive?: boolean;
@@ -125,9 +139,25 @@ export async function createStore(
     }
   }
 
+  const storesRef = collection(db, storesPath(franchiseId));
+  const storeRef = doc(storesRef);
+  const normalizedName = data.name.trim();
+  const normalizedPhone = data.phone?.trim() || undefined;
+  const normalizedEmail = data.email?.trim() || undefined;
+  const normalizedAddress = data.address?.trim() || undefined;
   const storeData = {
-    ...data,
+    storeId: storeRef.id,
     franchiseId,
+    slug: generateStoreSlug(normalizedName, storeRef.id),
+    name: normalizedName,
+    address: normalizedAddress,
+    phone: normalizedPhone,
+    email: normalizedEmail,
+    timezone: DEFAULT_STORE_TIMEZONE,
+    currency: DEFAULT_STORE_CURRENCY,
+    language: DEFAULT_STORE_LANGUAGE,
+    taxPercentage: 0,
+    attractTimeoutSeconds: DEFAULT_ATTRACT_TIMEOUT_SECONDS,
     isActive: data.isActive ?? true,
     operators: [],
     settings: {},
@@ -136,12 +166,9 @@ export async function createStore(
     updatedAt: serverTimestamp(),
   };
 
-  const docRef = await addDoc(
-    collection(db, storesPath(franchiseId)),
-    storeData
-  );
+  await setDoc(storeRef, sanitizeFirestoreData(storeData));
 
-  return docRef.id;
+  return storeRef.id;
 }
 
 /**
@@ -162,56 +189,10 @@ export async function updateStore(
 }
 
 /**
- * [FIX BUG-S1/S3] Cascade delete: remove todas as subcoleções conhecidas de um store.
- * Usa batches de 500 operações (limite do Firestore).
- */
-const STORE_SUBCOLLECTIONS = [
-  'products', 'orders', 'settings', 'dispensers', 'inventoryLogs', 'dailyStats', 'metrics',
-  'kegs', 'taps', 'tapAssignments', 'servingSessions', 'wastageEvents',
-  'rankingAgg', 'challenges', 'prizes',
-  'customers', 'deals', 'calendarItems', 'commercialEvents', 'quotes',
-  'finAccounts', 'finCategories', 'finCostCenters', 'finParties', 'finLedger', 'finInvoices', 'finBills', 'finPayments',
-  'systemLogs', 'tvConfig', 'eventStats',
-] as const;
-
-async function deleteSubcollection(parentPath: string, subcollection: string): Promise<number> {
-  const colRef = collection(db, parentPath, subcollection);
-  const snap = await getDocs(colRef);
-  if (snap.empty) return 0;
-
-  // Firestore batch limit is 500 operations
-  const chunks: typeof snap.docs[] = [];
-  for (let i = 0; i < snap.docs.length; i += 450) {
-    chunks.push(snap.docs.slice(i, i + 450));
-  }
-
-  let deleted = 0;
-  for (const chunk of chunks) {
-    const batch = writeBatch(db);
-    chunk.forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-    deleted += chunk.length;
-  }
-  return deleted;
-}
-
-/**
  * Delete a store with cascade delete of all subcollections
  */
 export async function deleteStore(franchiseId: string, storeId: string): Promise<void> {
-  const storePath_ = storePath(franchiseId, storeId);
-
-  // 1. Delete all subcollections
-  for (const sub of STORE_SUBCOLLECTIONS) {
-    try {
-      await deleteSubcollection(storePath_, sub);
-    } catch (err) {
-      console.warn(`[storeService] Failed to delete subcollection ${sub}:`, err);
-    }
-  }
-
-  // 2. Delete store document itself
-  const docRef = doc(db, storePath_);
+  const docRef = doc(db, storePath(franchiseId, storeId));
   await deleteDoc(docRef);
 }
 

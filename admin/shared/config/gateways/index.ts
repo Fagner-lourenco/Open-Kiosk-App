@@ -89,7 +89,7 @@ const pagbankGateway: GatewayDefinition = {
       label: 'Usar Maquininha PagBank',
       type: 'toggle',
       required: false,
-      helpText: 'Ative para receber cartão na Moderninha Pro 2 via Bluetooth. Configure o MAC da maquininha na seção "Torneiras" abaixo.',
+      helpText: 'Ative para receber cartão na Moderninha Pro 2 via Bluetooth. Configure o identificador do terminal na seção "Torneiras" abaixo.',
     },
     {
       key: 'plugpag.activationCode',
@@ -97,7 +97,7 @@ const pagbankGateway: GatewayDefinition = {
       type: 'text',
       required: false,
       placeholder: 'Ex: 403938',
-      helpText: 'Código fornecido pelo PagBank para ativar a integração SDK. Deixe vazio se a maquininha já funciona normalmente.',
+      helpText: 'Código fornecido pelo PagBank para fluxos legados de ativação. O fluxo principal segue o demo oficial com autenticação interativa.',
       dependsOn: 'plugpag.enabled',
     },
     // ── API PagBank (PIX e cartão online) ────────────────
@@ -119,7 +119,8 @@ const pagbankGateway: GatewayDefinition = {
   ],
 
   adminNotes: [
-    '📌 Para maquininha (PlugPag): Ative o toggle acima e configure o MAC na seção Torneiras. Basta isso!',
+    '📌 Para maquininha (PlugPag): Ative o toggle acima e configure o identificador do terminal na seção Torneiras.',
+    '📌 Para Moderninha PRO/PRO 2/WIFI, prefira o identificador de pareamento exibido como PRO-... no Bluetooth, alinhado ao demo oficial.',
     '📌 Para PIX via API: Configure o Auth Token no backend:',
     '  PAGBANK_AUTH_TOKEN_PRODUCTION=seu_token (no arquivo functions/.env)',
     '  PAGBANK_AUTH_TOKEN_SANDBOX=seu_token_sandbox (para testes)',

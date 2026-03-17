@@ -2,9 +2,6 @@
  * ============================================================================
  * Attract Video Card
  * ============================================================================
- *
- * Sub-component for StoreSettingsTab: configures the attract-screen background
- * video (URL, upload, opacity, cover mode, titles).
  */
 
 import { useState } from 'react';
@@ -21,8 +18,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Loader2, Video, CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
-import { validateVideoUrl, type ValidationResult } from '@/utils/videoUrlValidator';
-import { VideoUploader } from '../VideoUploader';
+import { validateVideoUrl, getVideoValidationLabel, type ValidationResult } from '@/utils/videoUrlValidator';
+import { generateAttractVideoCacheKey } from '@/utils/attractVideoCacheKey';
+import { VideoUploader, type UploadedVideoResult } from '../VideoUploader';
 import type { AttractVideoConfig } from '../../../../shared/types/store';
 
 export interface AttractVideoCardProps {
@@ -32,73 +30,142 @@ export interface AttractVideoCardProps {
   onVideoConfigChange: (update: Partial<AttractVideoConfig>) => void;
 }
 
+const statusStyles: Record<ValidationResult['status'], string> = {
+  valid: 'text-green-700',
+  remote_only: 'text-amber-700',
+  invalid: 'text-red-700',
+};
+
 export function AttractVideoCard({ videoConfig, franchiseId, storeId, onVideoConfigChange }: AttractVideoCardProps) {
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
 
   const handleValidateUrl = async () => {
-    if (!videoConfig.videoUrl) return;
+    if (!videoConfig.videoUrl) {
+      return;
+    }
+
     setValidating(true);
     setValidationResult(null);
+
     try {
       const result = await validateVideoUrl(videoConfig.videoUrl);
       setValidationResult(result);
-      // Store validation metadata in the config
       onVideoConfigChange({
+        cacheKey: result.cacheable ? generateAttractVideoCacheKey() : undefined,
         lastValidatedAt: new Date().toISOString(),
         lastValidationResult: result.status,
         contentType: result.contentType,
+        contentLength: result.contentLength,
+        width: result.width,
+        height: result.height,
+        durationSeconds: result.durationSeconds,
+        containerFormat: result.containerFormat,
+        videoCodec: result.videoCodec || undefined,
+        codecProfile: result.codecProfile || undefined,
+        codecLevel: result.codecLevel || undefined,
       });
     } finally {
       setValidating(false);
     }
   };
 
-  const handleUploadComplete = (downloadUrl: string, contentType: string) => {
+  const handleUploadComplete = ({
+    downloadUrl,
+    contentType,
+    cacheKey,
+    contentLength,
+    width,
+    height,
+    durationSeconds,
+    containerFormat,
+    videoCodec,
+    codecProfile,
+    codecLevel,
+  }: UploadedVideoResult) => {
+    const nextResult: ValidationResult = {
+      status: 'valid',
+      message: 'Upload concluido. Asset cacheavel no kiosk.',
+      contentType,
+      contentLength,
+      width,
+      height,
+      durationSeconds,
+      containerFormat,
+      videoCodec,
+      codecProfile,
+      codecLevel,
+      cacheable: true,
+    };
+
+    setValidationResult(nextResult);
     onVideoConfigChange({
       videoUrl: downloadUrl,
+      cacheKey,
       contentType,
+      contentLength,
+      width,
+      height,
+      durationSeconds,
+      containerFormat,
+      videoCodec: videoCodec || undefined,
+      codecProfile: codecProfile || undefined,
+      codecLevel: codecLevel || undefined,
       lastValidatedAt: new Date().toISOString(),
       lastValidationResult: 'valid',
     });
   };
+
+  const currentStatus = validationResult?.status || videoConfig.lastValidationResult;
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center">
           <Video className="h-5 w-5 mr-2" />
-          Vídeo de Fundo (Tela de Atração)
+          Video de Fundo (Tela de Atracao)
         </CardTitle>
         <CardDescription>
-          Configure o vídeo exibido na tela de atração do Kiosk quando ocioso
+          Configure o video exibido na tela de atracao do Kiosk quando ocioso.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
-        {/* Enable video toggle */}
         <div className="flex items-center justify-between">
           <div>
-            <Label>Habilitar Vídeo</Label>
-            <p className="text-sm text-muted-foreground">Reproduzir vídeo de fundo na tela de atração</p>
+            <Label>Habilitar Video</Label>
+            <p className="text-sm text-muted-foreground">Reproduzir video de fundo na tela de atracao</p>
           </div>
           <Switch
             checked={videoConfig.isEnabled ?? false}
-            onCheckedChange={(v) => onVideoConfigChange({ isEnabled: v })}
+            onCheckedChange={(value) => onVideoConfigChange({ isEnabled: value })}
           />
         </div>
 
         {videoConfig.isEnabled && (
           <>
-            {/* Video URL input + validate button */}
             <div className="space-y-2">
-              <Label>URL do Vídeo</Label>
+              <Label>URL do Video</Label>
               <div className="flex gap-2">
                 <Input
                   value={videoConfig.videoUrl || ''}
-                  onChange={(e) => {
-                    onVideoConfigChange({ videoUrl: e.target.value });
-                    setValidationResult(null);
-                  }}
+                    onChange={(event) => {
+                      onVideoConfigChange({
+                        videoUrl: event.target.value,
+                        cacheKey: undefined,
+                        lastValidatedAt: undefined,
+                        lastValidationResult: undefined,
+                        contentType: undefined,
+                        contentLength: undefined,
+                        width: undefined,
+                        height: undefined,
+                        durationSeconds: undefined,
+                        containerFormat: undefined,
+                        videoCodec: undefined,
+                        codecProfile: undefined,
+                        codecLevel: undefined,
+                      });
+                      setValidationResult(null);
+                    }}
                   placeholder="https://cdn.exemplo.com/video.mp4"
                   className="flex-1"
                 />
@@ -108,30 +175,36 @@ export function AttractVideoCard({ videoConfig, franchiseId, storeId, onVideoCon
                   onClick={handleValidateUrl}
                   disabled={validating || !videoConfig.videoUrl}
                 >
-                  {validating ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    'Validar'
-                  )}
+                  {validating ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Validar'}
                 </Button>
               </div>
 
-              {/* Validation result badge */}
+              {currentStatus && (
+                <p className="text-xs font-medium text-muted-foreground">
+                  Status: {getVideoValidationLabel(currentStatus as ValidationResult['status'])}
+                </p>
+              )}
+
               {validationResult && (
-                <div className={`flex items-center gap-2 text-sm ${
-                  validationResult.status === 'valid' ? 'text-green-700' :
-                  validationResult.status === 'cors_warning' ? 'text-yellow-700' :
-                  'text-red-700'
-                }`}>
+                <div className={`flex items-center gap-2 text-sm ${statusStyles[validationResult.status]}`}>
                   {validationResult.status === 'valid' && <CheckCircle className="h-4 w-4" />}
-                  {validationResult.status === 'cors_warning' && <AlertTriangle className="h-4 w-4" />}
+                  {validationResult.status === 'remote_only' && <AlertTriangle className="h-4 w-4" />}
                   {validationResult.status === 'invalid' && <XCircle className="h-4 w-4" />}
                   <span>{validationResult.message}</span>
                 </div>
               )}
+
+              {videoConfig.cacheKey && (
+                <p className="text-xs text-muted-foreground">
+                  Cache key atual: <span className="font-mono">{videoConfig.cacheKey}</span>
+                </p>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Politica recomendada: MP4 1080p, bitrate medio ate 8 Mbps e preferencia por assets em Firebase Storage.
+              </p>
             </div>
 
-            {/* Upload section */}
             <VideoUploader
               franchiseId={franchiseId}
               storeId={storeId}
@@ -139,51 +212,47 @@ export function AttractVideoCard({ videoConfig, franchiseId, storeId, onVideoCon
               onUploadComplete={handleUploadComplete}
             />
 
-            {/* Display title */}
             <div>
-              <Label>Título Customizado</Label>
+              <Label>Titulo Customizado</Label>
               <Input
                 value={videoConfig.displayTitle || ''}
-                onChange={(e) => onVideoConfigChange({ displayTitle: e.target.value })}
-                placeholder="Faça seu pedido aqui"
+                onChange={(event) => onVideoConfigChange({ displayTitle: event.target.value })}
+                placeholder="Faca seu pedido aqui"
                 maxLength={200}
               />
-              <p className="text-xs text-muted-foreground mt-1">Exibido sobre o vídeo na tela de atração</p>
+              <p className="text-xs text-muted-foreground mt-1">Exibido sobre o video na tela de atracao</p>
             </div>
 
-            {/* Display subtitle */}
             <div>
-              <Label>Subtítulo Customizado</Label>
+              <Label>Subtitulo Customizado</Label>
               <Input
                 value={videoConfig.displaySubtitle || ''}
-                onChange={(e) => onVideoConfigChange({ displaySubtitle: e.target.value })}
+                onChange={(event) => onVideoConfigChange({ displaySubtitle: event.target.value })}
                 placeholder="Toque para iniciar"
                 maxLength={200}
               />
             </div>
 
-            {/* Opacity slider */}
             <div>
-              <Label>Opacidade do Vídeo: {Math.round((videoConfig.videoOpacity ?? 0.4) * 100)}%</Label>
+              <Label>Opacidade do Video: {Math.round((videoConfig.videoOpacity ?? 0.4) * 100)}%</Label>
               <input
                 type="range"
                 min="0"
                 max="100"
                 value={Math.round((videoConfig.videoOpacity ?? 0.4) * 100)}
-                onChange={(e) => onVideoConfigChange({ videoOpacity: Number(e.target.value) / 100 })}
+                onChange={(event) => onVideoConfigChange({ videoOpacity: Number(event.target.value) / 100 })}
                 className="w-full mt-1"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Controla o escurecimento sobre o vídeo (0% = invisível, 100% = sem escurecimento)
+                Controla o escurecimento sobre o video (0% = invisivel, 100% = sem escurecimento)
               </p>
             </div>
 
-            {/* Cover mode */}
             <div>
               <Label>Modo de Preenchimento</Label>
               <Select
                 value={videoConfig.videoCoverMode || 'cover'}
-                onValueChange={(v) => onVideoConfigChange({ videoCoverMode: v as 'cover' | 'contain' })}
+                onValueChange={(value) => onVideoConfigChange({ videoCoverMode: value as 'cover' | 'contain' })}
               >
                 <SelectTrigger>
                   <SelectValue />

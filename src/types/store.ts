@@ -1,6 +1,21 @@
 import { Product } from './product';
 import type { AttractVideoConfig as SharedAttractVideoConfig } from '../../shared/types/store';
 
+// F-01: Re-exportar tipos de pagamento do shared como fonte canônica
+// Isso garante que KIOSK e shared usem a mesma definição
+export type {
+  PaymentProvider,
+  PaymentEnvironment,
+  EnabledPaymentMethods,
+  PagBankProviderConfig,
+  PlugPagConfig,
+  MercadoPagoProviderConfig,
+  PaymentGatewayConfig,
+} from '../../shared/types/store';
+
+// F-01: Importar ESP32ConnectionType canônico do shared (superset inclui 'ble')
+export type { ESP32ConnectionType } from '../../shared/types/store';
+
 // ============================================
 // Multi-Store Support Types
 // ============================================
@@ -51,8 +66,7 @@ export interface Store {
 // Store Settings (Local + Firebase Config)
 // ============================================
 
-// Tipos de conexão ESP32
-export type ESP32ConnectionType = 'usb' | 'wifi' | 'bluetooth';
+// Tipos de conexão ESP32 — re-exportados do shared acima (inclui 'ble')
 
 export interface TapConfig {
   id: number;                   // 0-3 (máx 4 torneiras)
@@ -73,7 +87,7 @@ export interface TapConfig {
   productId?: string;
   productName?: string;
 
-  // Terminal PlugPag vinculado (MAC Bluetooth)
+  // Terminal PlugPag vinculado (identificador generico aceito pelo SDK, ex: PRO-1733203195)
   plugpagDeviceId?: string;
 }
 
@@ -200,109 +214,11 @@ export interface StoreSettings {
 // ============================================
 // Payment Gateway Configuration
 // ============================================
-
-/** Provedores de pagamento suportados (canônico)
- *
- * NOTE: Legacy 'mercadopago' format is automatically converted to canonical
- * 'mercado_pago' at runtime via normalizeProvider(). This ensures the type
- * system enforces canonical format while maintaining full backward compatibility
- * with existing Firestore documents containing the legacy format.
- *
- * @see normalizeProvider() - Runtime conversion for legacy data
- * @see PaymentGatewayConfigSchema - Zod schema still validates both formats on input
- */
-export type PaymentProvider = 'none' | 'mercado_pago' | 'pagbank';
-
-/** Ambiente de pagamento */
-export type PaymentEnvironment = 'sandbox' | 'production';
-
-/** Métodos de pagamento habilitados */
-export interface EnabledPaymentMethods {
-  cash: boolean;
-  pix: boolean;
-  credit: boolean;
-  debit: boolean;
-}
-
-/** Configuração específica do PagBank (sem segredos) */
-export interface PagBankProviderConfig {
-  clientId?: string;
-  merchantId?: string;
-  publicKey?: string;
-  /** Configuração PlugPag (card-present via Bluetooth terminal) */
-  plugpag?: PlugPagConfig;
-}
-
-/** Configuração PlugPag para pagamento card-present */
-export interface PlugPagConfig {
-  /** Feature flag — habilita pagamento via terminal PlugPag */
-  enabled: boolean;
-  /** Bluetooth MAC address do terminal (e.g. "00:1B:66:XX:YY:ZZ") */
-  deviceId: string;
-  /** Código de ativação do PagBank para este terminal */
-  activationCode?: string;
-}
-
-/** Configuração específica do Mercado Pago (sem segredos) */
-export interface MercadoPagoProviderConfig {
-  userId?: string;
-  storeId?: string;
-  externalPosId?: string;
-  terminalId?: string;
-}
-
-/** Configuração do gateway de pagamento */
-export interface PaymentGatewayConfig {
-  // Identificação do provedor (canônico)
-  provider: PaymentProvider;
-
-  // Ambiente (canônico)
-  environment: PaymentEnvironment;
-
-  // Métodos de pagamento habilitados
-  enabledMethods: EnabledPaymentMethods;
-
-  // Chave PIX (quando habilitado)
-  pixKey?: string;
-
-  // Configurações por provedor (sem segredos)
-  providers?: {
-    pagbank?: PagBankProviderConfig;
-    mercadopago?: MercadoPagoProviderConfig;
-  };
-
-  // -------------------------------
-  // Legacy fields (read-compat only)
-  // -------------------------------
-  /** @deprecated Evitar persistir tokens no Firestore */
-  accessToken?: string;
-  /** @deprecated Usar environment */
-  mode?: PaymentEnvironment;
-  /** @deprecated Mover para providers.mercadopago */
-  userId?: string;
-  /** @deprecated Mover para providers.mercadopago */
-  storeId?: string;
-  /** @deprecated Mover para providers.mercadopago */
-  externalPosId?: string;
-  /** @deprecated Mover para providers.mercadopago */
-  terminalId?: string;
-  /** @deprecated */
-  pollingIntervalMs?: number;
-  /** @deprecated */
-  pollingMaxAttempts?: number;
-  /** @deprecated */
-  pointExpirationTime?: string;
-  /** @deprecated */
-  qrExpirationMinutes?: number;
-  /** @deprecated */
-  configuredAt?: string;
-  /** @deprecated */
-  configuredBy?: string;
-  /** @deprecated */
-  lastValidatedAt?: string;
-  /** @deprecated */
-  lastValidationResult?: 'success' | 'error';
-}
+// F-01: Todos os tipos de pagamento agora são re-exportados do shared
+// (PaymentProvider, PaymentEnvironment, EnabledPaymentMethods,
+//  PagBankProviderConfig, PlugPagConfig, MercadoPagoProviderConfig,
+//  PaymentGatewayConfig)
+// Ver imports no topo do arquivo.
 
 export interface InventoryLog {
   id: string;

@@ -48,12 +48,14 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
 
-    // PlugPag SDK 4.11.0 — PagBank card-present terminal (Bluetooth Classic)
-    // AAR from: https://github.com/nicfrezza/plugpag / PagSeguro releases
-    // Located at: android/app/libs/plugpag-4.11.0.aar
-    implementation(name: 'plugpag-4.11.0', ext: 'aar')
-    // PlugPag transitive dependencies (from plugpag-4.11.0.pom)
-    // NOTE: flatDir AAR does NOT resolve transitive deps — all must be declared here
+    // PlugPag SDK — versão estável 4.11.1 (release)
+    // Downgrade de 4.12.0-beta: o beta introduziu novo sistema de autenticação
+    // que exige login PagBank mesmo para terminais (Moderninha PRO).
+    // A documentação oficial diz: "esta biblioteca não necessita de nenhum tipo
+    // de autenticação com login e senha pois o terminal já está autenticada."
+    // O 4.11.1 é a versão release estável e respeita esse comportamento.
+    implementation(name: 'plugpag-4.11.1', ext: 'aar')
+    // Explicit deps kept to avoid regressions in our current Android setup.
     implementation 'com.squareup.retrofit2:retrofit:2.6.2'
     implementation 'com.squareup.okhttp3:logging-interceptor:4.4.0'
     implementation 'io.reactivex.rxjava2:rxjava:2.2.18'

@@ -1,6 +1,7 @@
 [
   {
     "origin": [
+      "https://localhost",
       "https://admin-kappa-five-12.vercel.app",
       "https://*.vercel.app",
       "http://localhost:5173",

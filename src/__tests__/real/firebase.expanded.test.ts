@@ -126,6 +126,7 @@ let localStorageStore: Record<string, string> = {};
   beforeEach(async () => {
     vi.clearAllMocks();
     localStorageStore = {}; // Resetar store
+    window.location.hash = '#/admin';
 
     // Configurar mocks do localStorage global
     localStorageMock.getItem.mockImplementation((key: string) => localStorageStore[key] || null);
@@ -377,8 +378,8 @@ let localStorageStore: Record<string, string> = {};
       expect(result).toBeNull();
     });
 
-    it('deve retornar franchiseId da chave padronizada', () => {
-      localStorage.setItem('open-kiosk-admin:selectedFranchise', 'franchise-123');
+    it('deve retornar franchiseId da chave padronizada do kiosk', () => {
+      localStorage.setItem('open-kiosk:selectedFranchise', 'franchise-123');
 
       const result = getCurrentFranchiseId();
       expect(result).toBe('franchise-123');
@@ -391,7 +392,7 @@ let localStorageStore: Record<string, string> = {};
       expect(result).toBe('legacy-franchise-456');
     });
 
-    it('deve extrair franchiseId de storeSettings e sincronizar', () => {
+    it('deve usar storeSettings como fallback no admin', () => {
       const storeSettings = {
         franchiseId: 'settings-franchise-789',
         storeId: 'store-123',
@@ -400,10 +401,19 @@ let localStorageStore: Record<string, string> = {};
 
       const result = getCurrentFranchiseId();
       expect(result).toBe('settings-franchise-789');
+    });
 
-      // Verificar se sincronizou com chave padronizada
-      const synced = localStorage.getItem('open-kiosk-admin:selectedFranchise');
-      expect(synced).toBe('settings-franchise-789');
+    it('deve priorizar storeSettings em rota de kiosk mesmo com seleção antiga do admin', () => {
+      window.location.hash = '#/shop';
+      localStorage.setItem('open-kiosk-admin:selectedFranchise', 'admin-franchise');
+      localStorage.setItem('selectedFranchiseId', 'legacy-franchise');
+      localStorage.setItem('storeSettings', JSON.stringify({
+        franchiseId: 'kiosk-franchise',
+        storeId: 'kiosk-store',
+      }));
+
+      const result = getCurrentFranchiseId();
+      expect(result).toBe('kiosk-franchise');
     });
 
     it('deve retornar null se storeSettings não puder ser parseado', () => {
@@ -464,7 +474,7 @@ let localStorageStore: Record<string, string> = {};
     });
 
     it('deve usar path correto com franchiseId quando disponível', () => {
-      localStorage.setItem('open-kiosk-admin:selectedFranchise', 'franchise-123');
+      localStorage.setItem('open-kiosk:selectedFranchise', 'franchise-123');
 
       const collection = getStoreCollection('store-456', 'products');
 
@@ -514,14 +524,14 @@ let localStorageStore: Record<string, string> = {};
       expect(result).toBeNull();
     });
 
-    it('deve retornar storeId da chave padronizada', () => {
-      localStorage.setItem('open-kiosk-admin:selectedStore', 'store-123');
+    it('deve retornar storeId da chave padronizada do kiosk', () => {
+      localStorage.setItem('open-kiosk:selectedStore', 'store-123');
 
       const result = getCurrentStoreId();
       expect(result).toBe('store-123');
     });
 
-    it('deve extrair storeId de storeSettings', () => {
+    it('deve extrair storeId de storeSettings quando não há seleção do admin', () => {
       const storeSettings = {
         storeId: 'settings-store-456',
         storeName: 'Test Store',
@@ -537,6 +547,19 @@ let localStorageStore: Record<string, string> = {};
 
       const result = getCurrentStoreId();
       expect(result).toBe('legacy-store-789');
+    });
+
+    it('deve priorizar storeSettings em rota de kiosk mesmo com seleção antiga do admin', () => {
+      window.location.hash = '#/shop';
+      localStorage.setItem('open-kiosk-admin:selectedStore', 'admin-store');
+      localStorage.setItem('currentStoreId', 'legacy-store');
+      localStorage.setItem('storeSettings', JSON.stringify({
+        storeId: 'kiosk-store',
+        franchiseId: 'kiosk-franchise',
+      }));
+
+      const result = getCurrentStoreId();
+      expect(result).toBe('kiosk-store');
     });
 
     it('deve retornar null se storeSettings não puder ser parseado', () => {

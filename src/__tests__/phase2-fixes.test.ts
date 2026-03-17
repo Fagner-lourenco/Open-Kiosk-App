@@ -1,4 +1,6 @@
 /// <reference types="vitest/globals" />
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 /**
  * ============================================================================
  * Phase 2 (P2) — Testes de Regressão e Aceite
@@ -15,6 +17,10 @@
  *
  * @version 1.0.0
  */
+
+function readRepoFile(relativePath: string): string {
+  return readFileSync(path.resolve(process.cwd(), relativePath), 'utf-8');
+}
 
 // ============================================================================
 // KIO-06 — Detecção kiosk por inclusão (não exclusão)
@@ -206,26 +212,22 @@ describe('KIO-07: pong handler processa finishTypes e taps', () => {
 // KIO-16 — network_security_config
 // ============================================================================
 describe('KIO-16: network security config cobre IPs dinâmicos', () => {
+  const networkConfig = readRepoFile('android/app/src/main/res/xml/network_security_config.xml');
+  const capacitorConfig = readRepoFile('capacitor.config.ts');
+
   it('base-config cleartext deve ser true para IoT local', () => {
-    // A config agora usa base-config cleartextTrafficPermitted="true"
-    // em vez de domain-config com IPs individuais (que não funcionam como subnet)
-    const baseConfigCleartext = true;
-    expect(baseConfigCleartext).toBe(true);
+    expect(networkConfig).toContain('<base-config cleartextTrafficPermitted="true">');
+    expect(capacitorConfig).toContain('allowMixedContent: true');
+    expect(capacitorConfig).toContain('cleartext: true');
   });
 
   it('domínios Firebase devem forçar HTTPS', () => {
-    const httpsOnlyDomains = [
-      'firebaseio.com',
-      'googleapis.com',
-      'firebase.google.com',
-      'firebaseapp.com',
-      'firebasestorage.app',
-      'pagbank.uol.com.br',
-      'api.pagseguro.com',
-    ];
-
-    expect(httpsOnlyDomains).toContain('firebaseio.com');
-    expect(httpsOnlyDomains).toContain('pagbank.uol.com.br');
-    expect(httpsOnlyDomains.length).toBeGreaterThanOrEqual(7);
+    expect(networkConfig).toContain('<domain includeSubdomains="true">firebaseio.com</domain>');
+    expect(networkConfig).toContain('<domain includeSubdomains="true">googleapis.com</domain>');
+    expect(networkConfig).toContain('<domain includeSubdomains="true">firebase.google.com</domain>');
+    expect(networkConfig).toContain('<domain includeSubdomains="true">firebaseapp.com</domain>');
+    expect(networkConfig).toContain('<domain includeSubdomains="true">firebasestorage.app</domain>');
+    expect(networkConfig).toContain('<domain includeSubdomains="true">pagbank.uol.com.br</domain>');
+    expect(networkConfig).toContain('<domain includeSubdomains="true">api.pagseguro.com</domain>');
   });
 });

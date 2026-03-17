@@ -16,6 +16,8 @@ const DEFAULT_ENABLED_METHODS = {
  * @param provider - Valor do Firestore (pode estar em formato legado)
  * @returns Canonical payment provider
  */
+// CANONICAL SOURCE: shared/utils/normalizeProvider.ts
+// Cópia local mantida porque FUNCTIONS não importa de shared/.
 const normalizeProvider = (provider?: string): NormalizedPaymentGatewayConfig['provider'] => {
   if (!provider) return 'mercado_pago';
   if (provider === 'mercadopago') return 'mercado_pago';

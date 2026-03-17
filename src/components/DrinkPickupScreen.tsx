@@ -132,7 +132,7 @@ const DrinkPickupScreen = ({
       clearScope(pickupScopeRef.current);
       pickupScopeRef.current = '';
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [isOpen, orderNumber]);
 
   // Start flow hint após 20 s em estado waiting
@@ -146,7 +146,7 @@ const DrinkPickupScreen = ({
       }
     }, 20000);
     return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [isOpen, dispenseState]);
 
   // ============================================
@@ -331,7 +331,7 @@ const DrinkPickupScreen = ({
     }, 60_000); // 60s de safety net — dá tempo para atendente agir antes de fechar sozinho
 
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [isOpen, dispenseState]);
 
   // ============================================
@@ -380,7 +380,7 @@ const DrinkPickupScreen = ({
     }, 1000);
 
     return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [isOpen, dispenseState]); // onTimeout/onComplete acessados via ref — não precisam de dep
 
   // ============================================

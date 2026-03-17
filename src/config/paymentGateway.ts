@@ -11,6 +11,7 @@
 
 import { MERCADO_PAGO_CONFIG } from './mercadopago';
 import type { PaymentGatewayConfig, PaymentProvider, PaymentEnvironment, EnabledPaymentMethods } from '@/types/store';
+import { normalizeProvider } from '@shared/utils/normalizeProvider';
 
 /**
  * Configuração resolvida de pagamento
@@ -42,21 +43,7 @@ export interface ResolvedPaymentConfig {
  * @param gatewayConfig - Configuração do Firestore (opcional)
  * @returns Configuração resolvida com todos os campos
  */
-/**
- * Normaliza formato de payment provider (legacy → canonical)
- *
- * Converte legacy 'mercadopago' para canonical 'mercado_pago'.
- * Esta é a primeira linha de defesa para backward-compatibility com dados antigos.
- *
- * @param provider - Valor do Firestore (pode estar em formato legado)
- * @returns Canonical PaymentProvider
- */
-const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
-  if (!provider) return 'mercado_pago';
-  if (provider === 'mercadopago') return 'mercado_pago';
-  if (provider === 'none' || provider === 'mercado_pago' || provider === 'pagbank') return provider;
-  return 'none';
-};
+// normalizeProvider importado de @shared/utils/normalizeProvider
 
 const resolveEnabledMethods = (gatewayConfig?: PaymentGatewayConfig | null): EnabledPaymentMethods => ({
   cash: gatewayConfig?.enabledMethods?.cash ?? true,

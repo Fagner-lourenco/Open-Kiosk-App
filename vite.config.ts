@@ -149,7 +149,44 @@ export default defineConfig(({ mode }) => ({
     },
   },
   build: {
-    chunkSizeWarningLimit: 1600, // Suprimir aviso para chunks até 1.6MB
+    chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // F-04: Code splitting for vendor libs
+          'vendor-firebase': [
+            'firebase/app',
+            'firebase/auth',
+            'firebase/firestore',
+            'firebase/storage',
+            'firebase/functions',
+          ],
+          'vendor-react': [
+            'react',
+            'react-dom',
+            'react-router-dom',
+          ],
+          'vendor-ui': [
+            '@radix-ui/react-dialog',
+            '@radix-ui/react-dropdown-menu',
+            '@radix-ui/react-select',
+            '@radix-ui/react-tabs',
+            '@radix-ui/react-toast',
+            '@radix-ui/react-tooltip',
+          ],
+          'vendor-query': [
+            '@tanstack/react-query',
+          ],
+          'vendor-utils': [
+            'zod',
+            'date-fns',
+            'clsx',
+            'tailwind-merge',
+            'class-variance-authority',
+          ],
+        },
+      },
+    },
   },
     test: {
       globals: true,

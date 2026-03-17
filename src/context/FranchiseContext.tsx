@@ -32,14 +32,13 @@ import {
 } from '../types/franchise';
 import { franchiseService } from '../services/franchiseService';
 import { authService } from '../services/authService';
-
-// ============================================================================
-// CONSTANTES
-// ============================================================================
-
-/** Chave para franquia selecionada no localStorage (alinhado com Admin) */
-const SELECTED_FRANCHISE_KEY = 'open-kiosk-admin:selectedFranchise';
-const SELECTED_STORE_KEY = 'open-kiosk-admin:selectedStore';
+import {
+  KIOSK_SELECTED_FRANCHISE_KEY as SELECTED_FRANCHISE_KEY,
+  KIOSK_SELECTED_STORE_KEY as SELECTED_STORE_KEY,
+  setKioskSelectedFranchiseId,
+  setKioskSelectedStoreId,
+  syncKioskSelectionFromStoreSettings,
+} from '../services/firebase';
 
 // ============================================================================
 // TIPOS
@@ -94,6 +93,10 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
   const [currentStore, setCurrentStore] = useState<StoreInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    syncKioskSelectionFromStoreSettings();
+  }, []);
 
   // ==========================================================================
   // LOAD INITIAL DATA
@@ -256,7 +259,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
 
       setCurrentFranchise(franchise);
       setCurrentMembership(effectiveMembership);
-      localStorage.setItem(SELECTED_FRANCHISE_KEY, franchiseId);
+      setKioskSelectedFranchiseId(franchiseId);
     } catch (err) {
       console.error('[FranchiseContext] Erro ao carregar franquia:', err);
       throw err;
@@ -291,7 +294,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
   const clearFranchise = useCallback(() => {
     setCurrentFranchise(null);
     setCurrentMembership(null);
-    localStorage.removeItem(SELECTED_FRANCHISE_KEY);
+    setKioskSelectedFranchiseId(null);
   }, []);
 
   const refreshFranchise = useCallback(async () => {
@@ -366,7 +369,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
     
     // Define a loja atual
     setCurrentStore(store);
-    localStorage.setItem(SELECTED_STORE_KEY, storeId);
+    setKioskSelectedStoreId(storeId);
   }, [userStores, selectFranchise]);
 
   // ==========================================================================

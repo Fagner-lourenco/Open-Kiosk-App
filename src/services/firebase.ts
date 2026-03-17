@@ -1,4 +1,3 @@
-
 import { initializeApp, FirebaseApp, getApps } from 'firebase/app';
 import {
   getFirestore,
@@ -21,23 +20,109 @@ let db: Firestore | null = null;
 let auth: Auth | null = null;
 let persistenceEnabled = false;
 
+const KIOSK_ROUTE_PREFIXES = ['#/shop', '#/checkout', '#/payment', '#/attract'] as const;
+export const KIOSK_SELECTED_FRANCHISE_KEY = 'open-kiosk:selectedFranchise';
+export const KIOSK_SELECTED_STORE_KEY = 'open-kiosk:selectedStore';
+const ADMIN_SELECTED_FRANCHISE_KEY = 'open-kiosk-admin:selectedFranchise';
+const ADMIN_SELECTED_STORE_KEY = 'open-kiosk-admin:selectedStore';
+const LEGACY_SELECTED_FRANCHISE_KEY = 'selectedFranchiseId';
+const LEGACY_SELECTED_STORE_KEY = 'currentStoreId';
+
+type StoredSelectionContext = {
+  storeId: string | null;
+  franchiseId: string | null;
+};
+
+const getStoredSelectionContext = (): StoredSelectionContext => {
+  const storeSettingsStr = localStorage.getItem('storeSettings');
+  if (!storeSettingsStr) {
+    return { storeId: null, franchiseId: null };
+  }
+
+  try {
+    const storeSettings = JSON.parse(storeSettingsStr) as {
+      storeId?: string;
+      franchiseId?: string;
+    };
+
+    return {
+      storeId: storeSettings.storeId || null,
+      franchiseId: storeSettings.franchiseId || null,
+    };
+  } catch (parseError) {
+    console.warn('[firebase] Error parsing storeSettings:', parseError);
+    return { storeId: null, franchiseId: null };
+  }
+};
+
+const isKioskRuntimeRoute = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  const hash = window.location.hash || '';
+  return hash === '' ||
+    hash === '#/' ||
+    KIOSK_ROUTE_PREFIXES.some(prefix => hash.startsWith(prefix));
+};
+
+const readStorageValue = (key: string): string | null => {
+  const value = localStorage.getItem(key);
+  if (!value) {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  return trimmedValue || null;
+};
+
+export const setKioskSelectedFranchiseId = (franchiseId: string | null): void => {
+  if (franchiseId) {
+    localStorage.setItem(KIOSK_SELECTED_FRANCHISE_KEY, franchiseId);
+    return;
+  }
+
+  localStorage.removeItem(KIOSK_SELECTED_FRANCHISE_KEY);
+};
+
+export const setKioskSelectedStoreId = (storeId: string | null): void => {
+  if (storeId) {
+    localStorage.setItem(KIOSK_SELECTED_STORE_KEY, storeId);
+    return;
+  }
+
+  localStorage.removeItem(KIOSK_SELECTED_STORE_KEY);
+};
+
+export const syncKioskSelectionFromStoreSettings = (): void => {
+  const storedSettings = getStoredSelectionContext();
+
+  if (storedSettings.franchiseId) {
+    setKioskSelectedFranchiseId(storedSettings.franchiseId);
+  }
+
+  if (storedSettings.storeId) {
+    setKioskSelectedStoreId(storedSettings.storeId);
+  }
+};
+
 /**
- * Verifica se o firebaseConfig possui campos mÃ­nimos vÃ¡lidos
+ * Verifica se o firebaseConfig possui campos minimos validos
  */
 export const hasValidFirebaseConfig = (config?: StoreSettings['firebaseConfig']): boolean => {
   return !!config?.apiKey && !!config?.projectId;
 };
 
 /**
- * Verifica se o Firebase jÃ¡ foi inicializado
+ * Verifica se o Firebase ja foi inicializado
  */
 export const isFirebaseInitialized = (): boolean => {
   return getApps().length > 0;
 };
 
 /**
- * Inicializa Firebase a partir das variáveis de ambiente (.env)
- * Usado em modo franchise quando não há settings salvos localmente
+ * Inicializa Firebase a partir das variaveis de ambiente (.env)
+ * Usado em modo franchise quando nao ha settings salvos localmente
  */
 export const initializeFirebaseFromEnv = () => {
   const envConfig = {
@@ -49,9 +134,8 @@ export const initializeFirebaseFromEnv = () => {
     appId: import.meta.env.VITE_FIREBASE_APP_ID,
   };
 
-  // Verifica se as variáveis existem
   if (!envConfig.apiKey || !envConfig.projectId) {
-    console.error('[Firebase] Variáveis de ambiente não configuradas!');
+    console.error('[Firebase] Variaveis de ambiente nao configuradas!');
     return null;
   }
 
@@ -68,7 +152,6 @@ export const initializeFirebaseFromEnv = () => {
     app = initializeApp(envConfig);
     auth = getAuth(app);
 
-    // Inicializa Firestore com cache persistente
     try {
       db = initializeFirestore(app, {
         ignoreUndefinedProperties: true,
@@ -91,7 +174,6 @@ export const initializeFirebaseFromEnv = () => {
   }
 };
 
-// Auto-inicializa quando variáveis de ambiente estão disponíveis
 if (import.meta.env.VITE_FIREBASE_API_KEY) {
   console.log('[Firebase] Auto-initializing from env config...');
   initializeFirebaseFromEnv();
@@ -112,11 +194,8 @@ export const initializeFirebase = (settings: StoreSettings) => {
     }
 
     app = initializeApp(settings.firebaseConfig);
-
-    // Inicializa Auth
     auth = getAuth(app);
 
-    // Inicializa Firestore com cache persistente offline
     try {
       db = initializeFirestore(app, {
         ignoreUndefinedProperties: true,
@@ -128,7 +207,6 @@ export const initializeFirebase = (settings: StoreSettings) => {
       persistenceEnabled = true;
       console.log('Firebase initialized with persistent offline cache');
     } catch (persistError) {
-      // Fallback para Firestore padrão se persistência falhar
       console.warn('Persistent cache failed, using default Firestore:', persistError);
       db = getFirestore(app);
       persistenceEnabled = false;
@@ -143,7 +221,7 @@ export const initializeFirebase = (settings: StoreSettings) => {
 };
 
 /**
- * Verifica se a persistência offline está habilitada
+ * Verifica se a persistencia offline esta habilitada
  */
 export const isPersistenceEnabled = (): boolean => persistenceEnabled;
 
@@ -166,32 +244,22 @@ export const getFirebaseApp = (): FirebaseApp => {
 // ============================================
 
 /**
- * Obter franchiseId do localStorage (para modo franquia)
- * Tenta múltiplas fontes para maior compatibilidade entre Kiosk e Admin
+ * Obter franchiseId do contexto atual.
+ * Em rotas de kiosk, prioriza o storeSettings local para evitar herdar
+ * selecoes antigas do Admin salvas no mesmo WebView.
  */
 export const getCurrentFranchiseId = (): string | null => {
   try {
-    // 1. Chave padronizada com Admin (preferida)
-    const franchiseId = localStorage.getItem('open-kiosk-admin:selectedFranchise');
-    if (franchiseId) return franchiseId;
+    const kioskSelectedFranchiseId = readStorageValue(KIOSK_SELECTED_FRANCHISE_KEY);
+    const selectedFranchiseId = readStorageValue(ADMIN_SELECTED_FRANCHISE_KEY);
+    const legacyFranchiseId = readStorageValue(LEGACY_SELECTED_FRANCHISE_KEY);
+    const storedSettings = getStoredSelectionContext();
 
-    // 2. Tentar extrair de storeSettings (Kiosk)
-    const storeSettingsStr = localStorage.getItem('storeSettings');
-    if (storeSettingsStr) {
-      try {
-        const storeSettings = JSON.parse(storeSettingsStr);
-        if (storeSettings.franchiseId) {
-          // NOTA: NÃO sincronizar de volta para chave padronizada —
-          // storeSettings pode ter auto-generated IDs divergentes do slug canônico.
-          // Apenas retorna como fallback sem contaminar a chave Admin.
-          return storeSettings.franchiseId;
-        }
-      } catch (parseError) {
-        console.warn('[getCurrentFranchiseId] Error parsing storeSettings:', parseError);
-      }
+    if (isKioskRuntimeRoute()) {
+      return storedSettings.franchiseId || kioskSelectedFranchiseId || legacyFranchiseId || selectedFranchiseId || null;
     }
 
-    return null;
+    return kioskSelectedFranchiseId || storedSettings.franchiseId || legacyFranchiseId || selectedFranchiseId || null;
   } catch (error) {
     console.error('Error getting current franchise ID:', error);
     return null;
@@ -199,7 +267,7 @@ export const getCurrentFranchiseId = (): string | null => {
 };
 
 /**
- * Obter referência para uma subcollection de uma loja
+ * Obter referencia para uma subcollection de uma loja
  * Ex: franchises/{franchiseId}/stores/{storeId}/products
  */
 export const getStoreCollection = (
@@ -209,22 +277,21 @@ export const getStoreCollection = (
 ): CollectionReference => {
   const database = getFirebaseDb();
   if (!storeId) {
-    throw new Error(`[getStoreCollection] storeId obrigatório para coleção ${collectionName}`);
+    throw new Error(`[getStoreCollection] storeId obrigatorio para colecao ${collectionName}`);
   }
 
-  // Usar pathResolver para determinar o path correto
   const franchiseId = franchiseIdOverride || getCurrentFranchiseId();
   if (!franchiseId) {
-    throw new Error('[getStoreCollection] franchiseId obrigatório para coleções de loja');
+    throw new Error('[getStoreCollection] franchiseId obrigatorio para colecoes de loja');
   }
-  const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
 
+  const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
   console.log(`[getStoreCollection] Using path: ${path}`);
   return collection(database, path);
 };
 
 /**
- * Obter referência para um documento dentro de uma subcollection de loja
+ * Obter referencia para um documento dentro de uma subcollection de loja
  * Ex: franchises/{franchiseId}/stores/{storeId}/products/{productId}
  */
 export const getStoreDoc = (
@@ -235,38 +302,36 @@ export const getStoreDoc = (
 ): DocumentReference => {
   const database = getFirebaseDb();
   if (!storeId) {
-    throw new Error(`[getStoreDoc] storeId obrigatório para documento ${collectionName}/${docId}`);
+    throw new Error(`[getStoreDoc] storeId obrigatorio para documento ${collectionName}/${docId}`);
   }
 
-  // Usar pathResolver para determinar o path correto
   const franchiseId = franchiseIdOverride || getCurrentFranchiseId();
   if (!franchiseId) {
-    throw new Error('[getStoreDoc] franchiseId obrigatório para documentos de loja');
+    throw new Error('[getStoreDoc] franchiseId obrigatorio para documentos de loja');
   }
-  const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
 
+  const path = storeSubPath(franchiseId, storeId, collectionName as StoreSubcollection);
   console.log(`[getStoreDoc] Using path: ${path}/${docId}`);
   return doc(database, `${path}/${docId}`);
 };
 
 /**
- * Obter storeId do localStorage
- * Tenta múltiplas chaves para compatibilidade
+ * Obter storeId do contexto atual.
+ * Em rotas de kiosk, prioriza o storeSettings local para evitar herdar
+ * selecoes antigas do Admin salvas no mesmo WebView.
  */
 export const getCurrentStoreId = (): string | null => {
   try {
-    // 1. Chave nova padronizada com Admin (modo franquia)
-    const newStoreId = localStorage.getItem('open-kiosk-admin:selectedStore');
-    if (newStoreId) return newStoreId;
+    const kioskSelectedStoreId = readStorageValue(KIOSK_SELECTED_STORE_KEY);
+    const selectedStoreId = readStorageValue(ADMIN_SELECTED_STORE_KEY);
+    const legacyStoreId = readStorageValue(LEGACY_SELECTED_STORE_KEY);
+    const storedSettings = getStoredSelectionContext();
 
-    // 2. Formato via storeSettings
-    const settings = localStorage.getItem('storeSettings');
-    if (settings) {
-      const parsed = JSON.parse(settings);
-      if (parsed.storeId) return parsed.storeId;
+    if (isKioskRuntimeRoute()) {
+      return storedSettings.storeId || kioskSelectedStoreId || legacyStoreId || selectedStoreId || null;
     }
 
-    return null;
+    return kioskSelectedStoreId || storedSettings.storeId || legacyStoreId || selectedStoreId || null;
   } catch (error) {
     console.error('Error getting current store ID:', error);
     return null;
@@ -274,8 +339,8 @@ export const getCurrentStoreId = (): string | null => {
 };
 
 /**
- * Obtém instância do Auth (para uso direto)
- * @throws Se Firebase não estiver inicializado
+ * Obtem instancia do Auth (para uso direto)
+ * @throws Se Firebase nao estiver inicializado
  */
 export const getFirebaseAuth = (): Auth => {
   if (!auth) {
@@ -284,6 +349,4 @@ export const getFirebaseAuth = (): Auth => {
   return auth;
 };
 
-// Re-exportar instâncias para uso direto nos services
-// Nota: Essas exportações podem ser null se Firebase não foi inicializado
 export { db, auth };

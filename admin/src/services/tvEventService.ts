@@ -566,7 +566,7 @@ export async function resetRanking(
   let deleted = 0;
   let lastDoc: any = null;
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     const q = lastDoc
       ? query(colRef, startAfter(lastDoc), limit(PAGE_SIZE))

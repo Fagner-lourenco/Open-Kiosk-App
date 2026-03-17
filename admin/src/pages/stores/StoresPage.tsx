@@ -141,6 +141,37 @@ function StoreSparkline({ franchiseId, storeId }: { franchiseId: string; storeId
   );
 }
 
+function formatStoreAddress(
+  address: string | {
+    street?: string;
+    number?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    country?: string;
+  } | undefined,
+): string {
+  if (!address) {
+    return '';
+  }
+
+  if (typeof address === 'string') {
+    return address.trim();
+  }
+
+  return [
+    address.street,
+    address.number,
+    address.neighborhood,
+    address.city,
+    address.state,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim())
+    .join(', ');
+}
+
 export function StoresPage() {
   const PAGE_SIZE = 20;
   const { currentFranchise, stores, loading, refreshStores } = useFranchise();
@@ -174,10 +205,13 @@ export function StoresPage() {
     setDeleteStoreName(storeName);
   };
 
-  const filteredStores = stores.filter(store =>
-    store.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    store.address?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const normalizedSearchQuery = searchQuery.toLowerCase();
+  const filteredStores = stores.filter((store) => {
+    const formattedAddress = formatStoreAddress(store.address).toLowerCase();
+
+    return store.name.toLowerCase().includes(normalizedSearchQuery) ||
+      formattedAddress.includes(normalizedSearchQuery);
+  });
 
   const totalPages = Math.max(1, Math.ceil(filteredStores.length / PAGE_SIZE));
   const paginatedStores = filteredStores.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -330,10 +364,10 @@ export function StoresPage() {
               </CardHeader>
               <CardContent className="pt-0">
                 <div className="space-y-2 text-sm text-muted-foreground">
-                  {store.address && (
+                  {formatStoreAddress(store.address) && (
                     <div className="flex items-center gap-2">
                       <MapPin className="h-4 w-4" />
-                      <span className="truncate">{store.address}</span>
+                      <span className="truncate">{formatStoreAddress(store.address)}</span>
                     </div>
                   )}
                   <div className="flex items-center gap-2">

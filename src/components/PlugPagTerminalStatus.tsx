@@ -46,6 +46,17 @@ const stateConfig: Record<PlugPagTerminalState, {
     color: 'text-blue-500',
     animate: true,
   },
+  connected_but_unauthenticated: {
+    label: 'Terminal conectado, autenticação PagBank pendente',
+    icon: <Wifi className="h-5 w-5" />,
+    color: 'text-amber-600',
+  },
+  authenticating: {
+    label: 'Abrindo autenticação do PagBank...',
+    icon: <Loader2 className="h-5 w-5 animate-spin" />,
+    color: 'text-blue-500',
+    animate: true,
+  },
   connected: {
     label: 'Terminal pronto',
     icon: <Wifi className="h-5 w-5" />,
@@ -120,10 +131,11 @@ export const PlugPagTerminalStatus: React.FC<PlugPagTerminalStatusProps> = ({
         <span className="text-lg font-medium">{message || config.label}</span>
       </div>
 
-      {/* Connected MAC */}
-      {state === 'connected' && plugpagPaymentService.getConnectedMac() && (
+      {/* Connected terminal identifier */}
+      {(state === 'connected' || state === 'connected_but_unauthenticated' || state === 'authenticating') &&
+        plugpagPaymentService.getConnectedDeviceId() && (
         <span className="text-xs text-muted-foreground font-mono">
-          {plugpagPaymentService.getConnectedMac()}
+          {plugpagPaymentService.getConnectedDeviceId()}
         </span>
       )}
 

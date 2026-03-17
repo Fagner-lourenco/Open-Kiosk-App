@@ -1,16 +1,14 @@
 /**
- * usePlugPagAutoConnect — Hook de auto-conexão do terminal PlugPag no boot do app
+ * usePlugPagAutoConnect
  *
- * Quando PlugPag está habilitado na config da loja e um MAC está salvo em localStorage,
- * este hook inicializa o SDK e conecta automaticamente ao terminal via Bluetooth Classic.
- *
- * Uso: Montar uma vez no AppContent (dentro de PaymentGatewayProvider).
+ * Auto-connects the configured PlugPag terminal on native Android builds.
+ * The identifier comes from localStorage and may be a PRO-* device name or a legacy MAC.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { usePaymentGateway } from '@/context/PaymentGatewayContext';
 import { plugpagPaymentService, type PlugPagTerminalState } from '@/services/plugpagPaymentService';
-import { getPlugPagMac } from '@/components/TapSettingsSync';
+import { getPlugPagDeviceId } from '@/components/TapSettingsSync';
 
 export function usePlugPagAutoConnect() {
   const { gatewayConfig } = usePaymentGateway();
@@ -18,40 +16,34 @@ export function usePlugPagAutoConnect() {
   const [terminalState, setTerminalState] = useState<PlugPagTerminalState>('idle');
 
   useEffect(() => {
-    // Só roda em plataforma nativa (Android)
     if (!Capacitor.isNativePlatform()) return;
-    // Só tenta uma vez
     if (attemptedRef.current) return;
 
-    // Verificar se PlugPag está habilitado
     const plugpagConfig = gatewayConfig?.providers?.pagbank?.plugpag;
     if (!plugpagConfig?.enabled) return;
 
-    // Verificar se há MAC configurado
-    const mac = getPlugPagMac();
-    if (!mac) {
-      console.log('[PlugPagAutoConnect] PlugPag habilitado mas sem MAC configurado');
+    const deviceId = getPlugPagDeviceId();
+    if (!deviceId) {
+      console.log('[PlugPagAutoConnect] PlugPag habilitado mas sem identificador configurado');
       return;
     }
 
     attemptedRef.current = true;
-    console.log('[PlugPagAutoConnect] Iniciando auto-conexão ao terminal:', mac);
+    console.log('[PlugPagAutoConnect] Iniciando auto-conexao ao terminal:', deviceId);
 
-    // Passar activation code da config (se disponível) para auto-ativação
     const activationCode = plugpagConfig.activationCode || undefined;
+    console.log(`[PlugPagAutoConnect] activationCode from Firestore: ${activationCode ? `"${activationCode}"` : 'undefined'}`);
 
-    // Inicializar + conectar em background (não bloqueia o boot)
-    plugpagPaymentService.connect(mac, activationCode).then(connected => {
+    plugpagPaymentService.connect(deviceId, activationCode).then(connected => {
       if (connected) {
-        console.log('[PlugPagAutoConnect] ✅ Terminal conectado com sucesso');
+        console.log('[PlugPagAutoConnect] Terminal conectado com sucesso');
       } else {
-        console.warn('[PlugPagAutoConnect] ⚠️ Falha na auto-conexão — retry manual necessário');
+        console.warn('[PlugPagAutoConnect] Falha na auto-conexao - retry manual necessario');
       }
     }).catch(err => {
-      console.error('[PlugPagAutoConnect] ❌ Erro na auto-conexão:', err);
+      console.error('[PlugPagAutoConnect] Erro na auto-conexao:', err);
     });
 
-    // Listener de estado
     const unsub = plugpagPaymentService.onStateChange((state) => {
       setTerminalState(state);
     });
@@ -59,7 +51,6 @@ export function usePlugPagAutoConnect() {
     return unsub;
   }, [gatewayConfig]);
 
-  // Auto-reconectar quando app volta do background
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
@@ -67,10 +58,11 @@ export function usePlugPagAutoConnect() {
       if (document.visibilityState === 'visible') {
         const state = plugpagPaymentService.getState();
         if (state === 'disconnected' || state === 'error') {
-          const mac = getPlugPagMac();
-          if (mac) {
+          const deviceId = getPlugPagDeviceId();
+          const activationCode = gatewayConfig?.providers?.pagbank?.plugpag?.activationCode || undefined;
+          if (deviceId) {
             console.log('[PlugPagAutoConnect] App voltou ao foreground, reconectando...');
-            plugpagPaymentService.connect(mac).catch(() => {});
+            plugpagPaymentService.connect(deviceId, activationCode).catch(() => {});
           }
         }
       }
@@ -78,7 +70,7 @@ export function usePlugPagAutoConnect() {
 
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
-  }, []);
+  }, [gatewayConfig]);
 
   return { terminalState };
 }

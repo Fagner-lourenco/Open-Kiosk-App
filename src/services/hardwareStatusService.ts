@@ -12,6 +12,8 @@
 
 import { doc, setDoc, onSnapshot, Unsubscribe, serverTimestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId, getFirebaseAuth } from './firebase';
+import { systemLogService } from './systemLogService';
+import { buildLocalHttpUrl } from '@/utils/localNetworkGuard';
 
 /**
  * Tenta buscar MAC do ESP32 via HTTP GET /status (Opção A)
@@ -24,7 +26,7 @@ export async function fetchDeviceMAC(ipAddress: string | undefined): Promise<str
   try {
     // Timeout 3s (device slow, mas não travamos UI)
     const response = await Promise.race([
-      fetch(`http://${ipAddress}/status`, { method: 'GET' }),
+      fetch(buildLocalHttpUrl(ipAddress, '/status'), { method: 'GET' }),
       new Promise<Response>((_, reject) =>
         setTimeout(() => reject(new Error('Timeout')), 3000)
       )
@@ -77,6 +79,8 @@ export interface HardwareStatus {
   updatedAt: Date | null;
   lastSyncAt?: Date | null;
   kioskVersion?: string;
+  lastError?: string | null;
+  lastErrorAt?: Date | null;
 
   // Contexto (para collectionGroup rules)
   franchiseId?: string;
@@ -96,6 +100,38 @@ class HardwareStatusService {
   private currentStatus: HardwareStatus = { ...DEFAULT_STATUS };
   private updateInterval: number | null = null;
   private unsubscribe: Unsubscribe | null = null;
+  private lastSyncError: { code?: string; message: string; at: Date } | null = null;
+
+  private setSyncError(message: string, code?: string): void {
+    const errorAt = new Date();
+    this.lastSyncError = { code, message, at: errorAt };
+    this.currentStatus = {
+      ...this.currentStatus,
+      lastError: message,
+      lastErrorAt: errorAt,
+    };
+  }
+
+  private clearSyncError(): void {
+    this.lastSyncError = null;
+    this.currentStatus = {
+      ...this.currentStatus,
+      lastError: null,
+      lastErrorAt: null,
+    };
+  }
+
+  private async recordSyncFailure(message: string, error?: unknown): Promise<void> {
+    const errorCode = typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : undefined;
+
+    this.setSyncError(message, errorCode);
+    systemLogService.error('esp32', message, {
+      code: errorCode || null,
+      error: error instanceof Error ? error.message : error ? String(error) : null,
+    });
+  }
 
   /**
    * Atualiza o status no Firestore (chamado pelo Kiosk)
@@ -109,18 +145,21 @@ class HardwareStatusService {
       console.warn('[HardwareStatus] ⚠️ Usuário não autenticado - ignorando escrita no Firestore');
       // Atualiza apenas estado local
       this.currentStatus = { ...this.currentStatus, ...status };
+      await this.recordSyncFailure('[HardwareStatus] Escrita ignorada: usuário não autenticado');
       return;
     }
 
     const db = getFirebaseDb();
     if (!db) {
       console.warn('[HardwareStatus] Firebase DB não disponível');
+      await this.recordSyncFailure('[HardwareStatus] Firebase DB não disponível');
       return;
     }
 
     const storeId = getCurrentStoreId();
     if (!storeId) {
       console.warn('[HardwareStatus] storeId não encontrado - verifique localStorage');
+      await this.recordSyncFailure('[HardwareStatus] storeId não encontrado para heartbeat');
       return;
     }
 
@@ -129,6 +168,7 @@ class HardwareStatusService {
     if (!franchiseId) {
       console.warn('[HardwareStatus] franchiseId não encontrado - verifique localStorage');
       console.warn('[HardwareStatus] Verificando storeSettings:', localStorage.getItem('storeSettings'));
+      await this.recordSyncFailure('[HardwareStatus] franchiseId não encontrado para heartbeat');
       return;
     }
     
@@ -148,6 +188,7 @@ class HardwareStatusService {
         franchiseId,
         storeId,
         updatedAt: new Date(),
+        lastSyncAt: new Date(),
       };
 
       await setDoc(statusRef, {
@@ -156,8 +197,11 @@ class HardwareStatusService {
         ),
         updatedAt: serverTimestamp(),
         lastHeartbeat: serverTimestamp(),
+        lastError: null,
+        lastErrorAt: null,
         kioskVersion: import.meta.env.VITE_APP_VERSION || '1.0.0', // Versão do Kiosk
       }, { merge: true });
+      this.clearSyncError();
 
       // Tentar buscar MAC via HTTP /status quando estiver online e sem MAC
       // Skip quando conectado via USB — esp32Ip aponta para o AP WiFi do ESP32 (192.168.4.1)
@@ -166,7 +210,7 @@ class HardwareStatusService {
       //      não incluem esp32Type, mas ele já foi setado em chamada anterior.
       const effectiveType = status.esp32Type || this.currentStatus.esp32Type;
       const hasMac = status.macAddress || this.currentStatus.macAddress;
-      if (status.esp32Connected && status.esp32Ip && !hasMac && effectiveType !== 'usb') {
+      if (status.esp32Connected && status.esp32Ip && !hasMac && effectiveType === 'wifi') {
         fetchDeviceMAC(status.esp32Ip).then((mac) => {
           if (mac) {
             this.currentStatus.macAddress = mac;
@@ -180,6 +224,7 @@ class HardwareStatusService {
       console.log('[HardwareStatus] ✅ Status atualizado com sucesso no Firestore');
     } catch (error) {
       console.error('[HardwareStatus] ❌ Erro ao atualizar status:', error);
+      await this.recordSyncFailure('[HardwareStatus] Erro ao atualizar status no Firestore', error);
     }
   }
 
@@ -256,6 +301,8 @@ class HardwareStatusService {
           updatedAt: data.updatedAt?.toDate?.() || null,
           lastSyncAt: data.lastSyncAt?.toDate?.() || null,
           kioskVersion: data.kioskVersion,
+          lastError: data.lastError || null,
+          lastErrorAt: data.lastErrorAt?.toDate?.() || null,
         };
         callback(status);
       } else {
@@ -272,6 +319,10 @@ class HardwareStatusService {
    */
   getCurrentStatus(): HardwareStatus {
     return { ...this.currentStatus };
+  }
+
+  getLastSyncError(): { code?: string; message: string; at: Date } | null {
+    return this.lastSyncError ? { ...this.lastSyncError } : null;
   }
 
   /**

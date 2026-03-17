@@ -23,9 +23,8 @@ allprojects {
         mavenCentral()
         // JitPack para usb-serial-for-android (usado por capacitor-usb-serial-plugin)
         maven { url 'https://jitpack.io' }
-        // PagSeguro PlugPag SDK 4.x — repositório Maven oficial
-        // Ref: https://github.com/nicfrezza/plugpag (mirror verificado do PagSeguro)
-        maven { url 'https://raw.githubusercontent.com/nicfrezza/plugpag/master/4.x.x/' }
+        // PagSeguro PlugPag SDK 4.x repository used by the official demo
+        maven { url 'https://github.com/pagseguromaster/plugpag/raw/master/4.x/android' }
     }
 }
 

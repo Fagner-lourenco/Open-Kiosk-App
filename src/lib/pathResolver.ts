@@ -70,7 +70,16 @@ export type StoreSubcollection =
   | 'wastageEvents'
   | 'maintenanceLogs'
   | 'notifications'
-  | 'systemLogs';
+  | 'systemLogs'
+  // F-02: Subcollections do ADMIN (alinhamento)
+  | 'rankingAgg'
+  | 'challenges'
+  | 'prizes'
+  | 'customers'
+  | 'deals'
+  | 'calendarItems'
+  | 'commercialEvents'
+  | 'quotes';
 
 /**
  * Retorna o path de uma subcollection da loja

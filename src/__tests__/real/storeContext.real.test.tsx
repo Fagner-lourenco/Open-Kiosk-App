@@ -76,6 +76,7 @@ describe('StoreContext', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    window.location.hash = '#/admin';
   });
 
   describe('StoreProvider', () => {
@@ -119,6 +120,26 @@ describe('StoreContext', () => {
         const storeIdText = screen.getByTestId('storeId').textContent;
         // Deve ter terminado loading e ter algum valor (ou null)
         expect(storeIdText).toBeDefined();
+      });
+    });
+
+    it('prioriza storeSettings em rota de kiosk mesmo com seleção antiga do admin', async () => {
+      window.location.hash = '#/shop';
+      localStorage.setItem('open-kiosk-admin:selectedStore', 'admin-store');
+      localStorage.setItem('storeSettings', JSON.stringify({
+        storeId: 'kiosk-store',
+        franchiseId: 'kiosk-franchise',
+        name: 'Kiosk Store',
+      }));
+
+      render(
+        <StoreProvider>
+          <TestConsumer />
+        </StoreProvider>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('storeId').textContent).toBe('kiosk-store');
       });
     });
 

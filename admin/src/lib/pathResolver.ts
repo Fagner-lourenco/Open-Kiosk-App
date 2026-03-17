@@ -49,7 +49,15 @@ export type StoreSubcollection =
   | 'calendarItems'
   | 'commercialEvents'
   | 'quotes'
-  | 'systemLogs';
+  | 'systemLogs'
+  // F-02: Subcollections do KIOSK (alinhamento)
+  | 'taps'
+  | 'kegs'
+  | 'tapAssignments'
+  | 'servingSessions'
+  | 'wastageEvents'
+  | 'maintenanceLogs'
+  | 'notifications';
 
 /**
  * Subcoleções do módulo financeiro (dentro de .../finance/)

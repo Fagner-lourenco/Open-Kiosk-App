@@ -7,6 +7,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
@@ -20,6 +21,7 @@ import com.getcapacitor.BridgeActivity;
 import androidx.appcompat.app.AlertDialog;
 
 public class MainActivity extends BridgeActivity {
+    private static final String TAG = "MainActivity";
 
     private Handler relaunchHandler = new Handler(Looper.getMainLooper());
     private static final int RELAUNCH_DELAY_MS = 500;
@@ -30,6 +32,8 @@ public class MainActivity extends BridgeActivity {
     // Throttle para evitar ANR - controla tempo mínimo entre chamadas de bringAppToFront
     private long lastBringToFrontTime = 0;
     private static final long BRING_TO_FRONT_THROTTLE_MS = 2000; // 2 segundos entre chamadas
+    private long suppressLeaveHandlingUntilMs = 0;
+    private boolean restoreLockTaskOnResume = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -64,7 +68,9 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
         userInitiatedLeave = false;
+        suppressLeaveHandlingUntilMs = 0;
         enableImmersiveMode();
+        restoreLockTaskIfNeeded("onResume");
     }
 
     @Override
@@ -72,7 +78,7 @@ public class MainActivity extends BridgeActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             enableImmersiveMode();
-        } else if (userInitiatedLeave) {
+        } else if (userInitiatedLeave && !shouldSuppressUserLeaveHandling()) {
             // Se perder foco, tentar retomar imediatamente
             relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
         }
@@ -82,7 +88,7 @@ public class MainActivity extends BridgeActivity {
     public void onPause() {
         super.onPause();
         // Re-lançar app se o usuário tentar sair para background
-        if (userInitiatedLeave) {
+        if (userInitiatedLeave && !shouldSuppressUserLeaveHandling()) {
             relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
         }
     }
@@ -91,7 +97,7 @@ public class MainActivity extends BridgeActivity {
     public void onStop() {
         super.onStop();
         // Último recurso quando saída foi iniciada pelo usuário
-        if (userInitiatedLeave) {
+        if (userInitiatedLeave && !shouldSuppressUserLeaveHandling()) {
             relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
         }
     }
@@ -99,6 +105,10 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
+        if (shouldSuppressUserLeaveHandling()) {
+            Log.i(TAG, "Ignoring onUserLeaveHint during expected system dialog");
+            return;
+        }
         userInitiatedLeave = true;
         relaunchHandler.postDelayed(this::bringAppToFront, RELAUNCH_DELAY_MS);
     }
@@ -106,6 +116,77 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onBackPressed() {
         // Bloquear botão voltar completamente - não chamar super
+    }
+
+    public void suppressUserLeaveHandling(long durationMs) {
+        long deadline = System.currentTimeMillis() + Math.max(durationMs, 0);
+        suppressLeaveHandlingUntilMs = Math.max(suppressLeaveHandlingUntilMs, deadline);
+        Log.i(TAG, "Suppressing kiosk relaunch while a system dialog is expected");
+    }
+
+    public synchronized boolean suspendLockTaskForExternalFlow(long durationMs) {
+        suppressUserLeaveHandling(durationMs);
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            restoreLockTaskOnResume = false;
+            return false;
+        }
+
+        if (!isInLockTaskModeInternal()) {
+            restoreLockTaskOnResume = false;
+            return false;
+        }
+
+        try {
+            stopLockTask();
+            restoreLockTaskOnResume = true;
+            Log.i(TAG, "Lock task suspended for external authentication flow");
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to suspend lock task for external flow", e);
+            restoreLockTaskOnResume = false;
+            return false;
+        }
+    }
+
+    public synchronized void restoreLockTaskIfNeeded(String reason) {
+        if (!restoreLockTaskOnResume || Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return;
+        }
+
+        if (isInLockTaskModeInternal()) {
+            restoreLockTaskOnResume = false;
+            return;
+        }
+
+        try {
+            startLockTask();
+            restoreLockTaskOnResume = false;
+            Log.i(TAG, "Lock task restored after external flow: " + reason);
+        } catch (Exception e) {
+            Log.w(TAG, "Unable to restore lock task yet: " + reason, e);
+        }
+    }
+
+    private boolean shouldSuppressUserLeaveHandling() {
+        return System.currentTimeMillis() < suppressLeaveHandlingUntilMs;
+    }
+
+    private boolean isInLockTaskModeInternal() {
+        ActivityManager activityManager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        if (activityManager == null) {
+            return false;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            return activityManager.getLockTaskModeState() != ActivityManager.LOCK_TASK_MODE_NONE;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            return activityManager.isInLockTaskMode();
+        }
+
+        return false;
     }
 
     @Override

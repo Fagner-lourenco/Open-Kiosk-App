@@ -29,7 +29,7 @@
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
 import { Device } from '@capacitor/device';
-import { getDefaultTapId, getPlugPagMac } from '@/components/TapSettingsSync';
+import { getDefaultTapId, getPlugPagDeviceId } from '@/components/TapSettingsSync';
 
 // ============================================================================
 // TIPOS
@@ -175,8 +175,11 @@ class DeviceHeartbeatService {
           appVersion: import.meta.env.VITE_APP_VERSION || '1.0.0',
           selectedTapId: getDefaultTapId(),
         };
-        const plugpagMac = getPlugPagMac();
-        if (plugpagMac) heartbeatData.plugpagMac = plugpagMac;
+        const plugpagDeviceId = getPlugPagDeviceId();
+        if (plugpagDeviceId) {
+          heartbeatData.plugpagDeviceId = plugpagDeviceId;
+          heartbeatData.plugpagMac = plugpagDeviceId;
+        }
         if (franchiseId) heartbeatData.franchiseId = franchiseId;
 
       // Adicionar campos opcionais

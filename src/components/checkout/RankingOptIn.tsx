@@ -83,7 +83,7 @@ export function RankingOptIn({
   // Voz: convidar ao ranking no mount
   useEffect(() => {
     playGuarded('isis_ranking_invite', orderNumber);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, []);
 
   // Start countdown on mount

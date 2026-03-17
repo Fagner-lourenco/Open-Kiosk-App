@@ -18,6 +18,7 @@ import { salesService } from '@/services/salesService';
 import { persistFailedDispense, reconcileOnStartup } from '@/services/dispenseRecoveryService';
 import { systemLogService } from '@/services/systemLogService';
 import { useToast } from '@/hooks/use-toast';
+import { buildLocalHttpUrl } from '@/utils/localNetworkGuard';
 import {
   TapStatus,
   TapConfig,
@@ -115,7 +116,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // 🔧 FIX Bug #7 (grace period): Ampliado de 60s para 120s.
   // Reboot real do ESP32 (boot + WiFi/BLE stack init) pode levar até 90s no pior caso.
   // Configurável via storeSettings.esp32DisconnectGraceMs para ajuste sem deploy.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const DISCONNECT_GRACE_MS = (storeSettings as any)?.esp32DisconnectGraceMs ?? 120_000;
 
   // Inicializar systemLogService
@@ -1015,7 +1016,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       try {
         // Buscar status via HTTP GET /status (usando IP configurável)
         const wifiIP = getESP32WiFiIP();
-        const response = await fetch(`http://${wifiIP}/status`, {
+        const response = await fetch(buildLocalHttpUrl(wifiIP, '/status'), {
           method: 'GET',
           headers: { 'Accept': 'application/json' },
           signal: abortController.signal,

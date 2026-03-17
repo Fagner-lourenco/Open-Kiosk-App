@@ -9,12 +9,20 @@ const mocks = vi.hoisted(() => {
   const docSet = vi.fn().mockResolvedValue(undefined);
   const docFn = vi.fn(() => ({ get: docGet, set: docSet }));
   const collectionFn = vi.fn(() => ({ doc: docFn }));
+  // F-11: runTransaction mock that passes a txn object with get/set mirroring docRef
+  const runTransaction = vi.fn(async (fn: any) => {
+    const txn = {
+      get: docGet,
+      set: docSet,
+    };
+    return fn(txn);
+  });
 
-  return { docGet, docSet, docFn, collectionFn };
+  return { docGet, docSet, docFn, collectionFn, runTransaction };
 });
 
 vi.mock('../lib', () => ({
-  db: { doc: mocks.docFn, collection: mocks.collectionFn },
+  db: { doc: mocks.docFn, collection: mocks.collectionFn, runTransaction: mocks.runTransaction },
   admin: {
     firestore: {
       FieldValue: { serverTimestamp: vi.fn(() => 'SERVER_TS') },

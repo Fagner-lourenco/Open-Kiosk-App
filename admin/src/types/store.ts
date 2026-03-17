@@ -5,7 +5,19 @@
  */
 
 import { Timestamp } from 'firebase/firestore';
-import type { AttractVideoConfig } from '../../../shared/types/store';
+import type { AttractVideoConfig, PaymentGatewayConfig, ESP32ConnectionType } from '../../../shared/types/store';
+
+// F-01: Re-exportar tipos de pagamento do shared como fonte canônica
+export type {
+  PaymentProvider,
+  PaymentEnvironment,
+  EnabledPaymentMethods,
+  PagBankProviderConfig,
+  PlugPagConfig,
+  MercadoPagoProviderConfig,
+  PaymentGatewayConfig,
+  ESP32ConnectionType,
+} from '../../../shared/types/store';
 
 /**
  * Endereço da loja
@@ -22,83 +34,12 @@ export interface StoreAddress {
 }
 
 /**
- * Configuração de gateway de pagamento (canônico)
- *
- * NOTE: Legacy 'mercadopago' format is automatically converted to canonical
- * 'mercado_pago' at runtime via normalizeProvider(). This ensures the type
- * system enforces canonical format while maintaining full backward compatibility
- * with existing Firestore documents containing the legacy format.
- *
- * @see normalizeProvider() - Runtime conversion for legacy data
- * @see PaymentGatewayConfigSchema - Zod schema still validates both formats on input
- */
-export type PaymentProvider = 'none' | 'mercado_pago' | 'pagbank';
-export type PaymentEnvironment = 'sandbox' | 'production';
-
-export interface EnabledPaymentMethods {
-  cash: boolean;
-  pix: boolean;
-  credit: boolean;
-  debit: boolean;
-}
-
-export interface PagBankProviderConfig {
-  clientId?: string;
-  merchantId?: string;
-  publicKey?: string;
-  /** Configuração PlugPag (card-present via Bluetooth terminal) */
-  plugpag?: PlugPagConfig;
-}
-
-/** Configuração PlugPag para pagamento card-present */
-export interface PlugPagConfig {
-  /** Feature flag — habilita pagamento via terminal PlugPag */
-  enabled: boolean;
-  /** Bluetooth MAC address do terminal (e.g. "00:1B:66:XX:YY:ZZ") */
-  deviceId: string;
-  /** Código de ativação do PagBank para este terminal */
-  activationCode?: string;
-}
-
-export interface MercadoPagoProviderConfig {
-  userId?: string;
-  storeId?: string;
-  externalPosId?: string;
-  terminalId?: string;
-}
-
-export interface PaymentGatewayConfig {
-  provider: PaymentProvider;
-  environment: PaymentEnvironment;
-  enabledMethods: EnabledPaymentMethods;
-  pixKey?: string;
-  providers?: {
-    pagbank?: PagBankProviderConfig;
-    mercadopago?: MercadoPagoProviderConfig;
-  };
-
-  // Legacy fields (read-compat only)
-  accessToken?: string;
-  mode?: PaymentEnvironment;
-  userId?: string;
-  storeId?: string;
-  externalPosId?: string;
-  terminalId?: string;
-  pollingIntervalMs?: number;
-  pollingMaxAttempts?: number;
-  pointExpirationTime?: string;
-  qrExpirationMinutes?: number;
-  configuredAt?: string;
-  configuredBy?: string;
-  lastValidatedAt?: string;
-  lastValidationResult?: 'success' | 'error';
-}
-
-/**
  * Configuração do ESP32
+ * Usa ESP32ConnectionType do shared (superset: usb | wifi | ble | bluetooth)
+ * lastSeen aceita Timestamp (Firestore Admin) | Date para compat
  */
 export interface ESP32Config {
-  connectionType: 'usb' | 'ble' | 'wifi';
+  connectionType: ESP32ConnectionType;
   connectionId?: string;
   lastSeen?: Timestamp | Date;
   firmwareVersion?: string;
@@ -112,7 +53,7 @@ export interface Store {
   franchiseId: string;
   name: string;
   slug: string;
-  address?: StoreAddress;
+  address?: StoreAddress | string;
   phone?: string;
   email?: string;
   timezone: string;

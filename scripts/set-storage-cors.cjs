@@ -1,17 +1,26 @@
 /**
- * Aplica CORS no bucket Firebase Storage usando token do Firebase CLI.
- * 
- * Uso: node scripts/set-storage-cors.js
+ * Applies Firebase Storage CORS using a Firebase CLI token.
+ *
+ * Usage:
+ *   node scripts/set-storage-cors.cjs
+ *   FIREBASE_STORAGE_BUCKET=my-bucket.firebasestorage.app node scripts/set-storage-cors.cjs
  */
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const BUCKET = 'open-kiosk-22b2b.firebasestorage.app';
+const DEFAULT_BUCKET = process.env.FIREBASE_STORAGE_BUCKET || 'open-kiosk-22b2b.firebasestorage.app';
+const BUCKET_CANDIDATES = Array.from(new Set([
+  DEFAULT_BUCKET,
+  DEFAULT_BUCKET.endsWith('.firebasestorage.app')
+    ? DEFAULT_BUCKET.replace(/\.firebasestorage\.app$/i, '.appspot.com')
+    : DEFAULT_BUCKET,
+]));
 
 const CORS_CONFIG = [
   {
     origin: [
+      'https://localhost',
       'https://admin-kappa-five-12.vercel.app',
       'https://*.vercel.app',
       'http://localhost:5173',
@@ -34,130 +43,111 @@ const CORS_CONFIG = [
 ];
 
 function getFirebaseToken() {
-  // Try configstore path (firebase-tools stores tokens here)
   const configPaths = [
     path.join(process.env.APPDATA || '', 'configstore', 'firebase-tools.json'),
     path.join(process.env.HOME || process.env.USERPROFILE || '', '.config', 'configstore', 'firebase-tools.json'),
   ];
 
-  for (const p of configPaths) {
+  for (const configPath of configPaths) {
     try {
-      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-      if (data.tokens && data.tokens.access_token) {
+      const data = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (data.tokens?.access_token) {
         return data.tokens.access_token;
       }
-      // Also check refresh_token for re-auth
-      if (data.tokens && data.tokens.refresh_token) {
-        console.log('Found refresh_token but no access_token at:', p);
-      }
-    } catch (e) {
-      // Try next path
+    } catch {
+      // Try the next path.
     }
   }
+
   return null;
 }
 
-function patchCors(accessToken) {
+function storageRequest(bucket, method, accessToken, body) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ cors: CORS_CONFIG });
+    const payload = body ? JSON.stringify(body) : null;
     const options = {
       hostname: 'storage.googleapis.com',
-      path: `/storage/v1/b/${encodeURIComponent(BUCKET)}?fields=cors`,
-      method: 'PATCH',
+      path: `/storage/v1/b/${encodeURIComponent(bucket)}?fields=cors`,
+      method,
       headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body),
+        Authorization: `Bearer ${accessToken}`,
       },
     };
-    const req = https.request(options, (res) => {
+
+    if (payload) {
+      options.headers['Content-Type'] = 'application/json';
+      options.headers['Content-Length'] = Buffer.byteLength(payload);
+    }
+
+    const request = https.request(options, (response) => {
       let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          resolve(JSON.parse(data));
-        } else {
-          reject(new Error(`GCS API ${res.statusCode}: ${data}`));
+      response.on('data', (chunk) => {
+        data += chunk;
+      });
+      response.on('end', () => {
+        if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
+          resolve(JSON.parse(data || '{}'));
+          return;
         }
+
+        reject(new Error(`GCS API ${response.statusCode}: ${data}`));
       });
     });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
+
+    request.on('error', reject);
+
+    if (payload) {
+      request.write(payload);
+    }
+
+    request.end();
   });
 }
 
-function getCors(accessToken) {
-  return new Promise((resolve, reject) => {
-    const options = {
-      hostname: 'storage.googleapis.com',
-      path: `/storage/v1/b/${encodeURIComponent(BUCKET)}?fields=cors`,
-      method: 'GET',
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    };
-    const req = https.request(options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          resolve(JSON.parse(data));
-        } else {
-          reject(new Error(`GCS API ${res.statusCode}: ${data}`));
-        }
-      });
-    });
-    req.on('error', reject);
-    req.end();
-  });
+async function resolveBucket(accessToken) {
+  for (const bucket of BUCKET_CANDIDATES) {
+    try {
+      await storageRequest(bucket, 'GET', accessToken);
+      return bucket;
+    } catch (error) {
+      console.warn(`[storage-cors] Bucket candidate unavailable: ${bucket} (${error.message})`);
+    }
+  }
+
+  throw new Error(`No bucket candidate was reachable. Tried: ${BUCKET_CANDIDATES.join(', ')}`);
 }
 
 async function run() {
   console.log('Looking for Firebase CLI token...');
   const token = getFirebaseToken();
-  
   if (!token) {
-    // Fallback: use firebase-tools programmatically
-    console.log('No configstore token found. Trying firebase-tools module...');
-    try {
-      const fbToolsPath = require.resolve('firebase-tools', { paths: [process.cwd(), path.join(process.cwd(), 'node_modules')] });
-      const firebase = require(fbToolsPath);
-      const accounts = await firebase.login.list();
-      if (accounts && accounts.length > 0) {
-        const fbToken = accounts[0].tokens.access_token;
-        console.log('Got token from firebase-tools login.list()');
-        return await applyAndVerify(fbToken);
-      }
-    } catch (e) {
-      console.error('firebase-tools fallback failed:', e.message);
-    }
     console.error('ERROR: No Firebase CLI token found. Run "npx firebase login" first.');
     process.exit(1);
   }
-  
-  return await applyAndVerify(token);
-}
 
-async function applyAndVerify(token) {
-  console.log(`\nApplying CORS to bucket: ${BUCKET}`);
+  const bucket = await resolveBucket(token);
+  console.log(`Applying CORS to bucket: ${bucket}`);
   console.log('Origins:', CORS_CONFIG[0].origin);
-  
+
   try {
-    const result = await patchCors(token);
-    console.log('\n✅ CORS applied successfully!');
-    console.log('Result:', JSON.stringify(result, null, 2));
-  } catch (e) {
-    console.error('\n❌ Failed to apply CORS:', e.message);
+    const result = await storageRequest(bucket, 'PATCH', token, { cors: CORS_CONFIG });
+    console.log('\nCORS applied successfully.');
+    console.log(JSON.stringify(result, null, 2));
+  } catch (error) {
+    console.error('\nFailed to apply CORS:', error.message);
     process.exit(1);
   }
-  
-  // Verify
+
   try {
-    const current = await getCors(token);
+    const current = await storageRequest(bucket, 'GET', token);
     console.log('\nVerification - current CORS config:');
     console.log(JSON.stringify(current, null, 2));
-  } catch (e) {
-    console.warn('Could not verify:', e.message);
+  } catch (error) {
+    console.warn('Could not verify current bucket CORS:', error.message);
   }
 }
 
-run().catch(e => { console.error('Fatal:', e.message); process.exit(1); });
+run().catch((error) => {
+  console.error('Fatal:', error.message);
+  process.exit(1);
+});

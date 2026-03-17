@@ -28,6 +28,8 @@ import StoreSelectPage from "./pages/StoreSelectPage";
 import { FranchiseGuard } from "@/components/FranchiseGuard";
 import { TapSettingsSync } from "@/components/TapSettingsSync";
 import { usePlugPagAutoConnect } from "@/hooks/usePlugPagAutoConnect";
+import { purgeNativeWebViewRuntimeCaches } from "@/services/nativeWebViewCacheService";
+import { getCurrentStoreId } from "@/services/firebase";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
@@ -108,7 +110,7 @@ const AppContent = () => {
   // Usar idioma salvo nas configurações da loja (Firebase) - undefined enquanto carrega
   const initialLanguage = settings?.language as Language | undefined;
   // Obter storeId da seleção atual (admin selector) ou das configurações salvas
-  const storeId = localStorage.getItem('open-kiosk-admin:selectedStore') || settings?.storeId || undefined;
+  const storeId = getCurrentStoreId() || settings?.storeId || undefined;
 
   // Estado para tornar a detecção de rota reativa (visto que o HashRouter está abaixo)
   const [currentHash, setCurrentHash] = useState(window.location.hash);
@@ -181,18 +183,18 @@ const AppContent = () => {
 
     const cleanupNativeWebViewCache = async () => {
       try {
-        if ('serviceWorker' in navigator) {
-          const registrations = await navigator.serviceWorker.getRegistrations();
-          await Promise.all(registrations.map((registration) => registration.unregister()));
-          console.log('[PWA] Service Workers removidos em plataforma nativa:', registrations.length);
+        const result = await purgeNativeWebViewRuntimeCaches();
+
+        if (result.serviceWorkersRemoved > 0) {
+          console.log('[PWA] Service Workers removidos em plataforma nativa:', result.serviceWorkersRemoved);
         }
 
-        if ('caches' in window) {
-          const keys = await caches.keys();
-          await Promise.all(keys.map((key) => caches.delete(key)));
-          if (keys.length > 0) {
-            console.log('[PWA] Cache Storage limpo em plataforma nativa:', keys.length);
-          }
+        if (result.deletedCacheKeys.length > 0) {
+          console.log('[PWA] Cache Storage limpo em plataforma nativa:', result.deletedCacheKeys);
+        }
+
+        if (result.preservedCacheKeys.length > 0) {
+          console.log('[PWA] Cache Storage preservado em plataforma nativa:', result.preservedCacheKeys);
         }
       } catch (error) {
         console.warn('[PWA] Falha ao limpar SW/cache no nativo:', error);

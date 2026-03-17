@@ -9,33 +9,20 @@
 
 import type {
   PaymentGatewayConfig,
-  PaymentProvider,
   PaymentEnvironment,
   EnabledPaymentMethods,
 } from '@/types/store';
 import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
+import { normalizeProvider } from '@shared/utils/normalizeProvider';
+
+// Re-exportar para manter compatibilidade dos consumidores internos do ADMIN
+export { normalizeProvider };
 
 export const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
   cash: true,
   pix: true,
   credit: true,
   debit: true,
-};
-
-/**
- * Normaliza formato de payment provider (legacy → canonical)
- *
- * Converte legacy 'mercadopago' para canonical 'mercado_pago'.
- * Esta é a primeira linha de defesa para backward-compatibility com dados antigos.
- *
- * @param provider - Valor do Firestore (pode estar em formato legado)
- * @returns Canonical PaymentProvider
- */
-export const normalizeProvider = (provider?: PaymentProvider | string): PaymentProvider => {
-  if (!provider) return 'mercado_pago';
-  if (provider === 'mercadopago') return 'mercado_pago';
-  if (provider === 'none' || provider === 'mercado_pago' || provider === 'pagbank') return provider;
-  return 'none';
 };
 
 /**

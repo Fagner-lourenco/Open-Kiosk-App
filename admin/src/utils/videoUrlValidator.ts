@@ -1,34 +1,36 @@
 /**
- * ============================================================================
+ * ============================================
  * Video URL Validator
- * ============================================================================
+ * ============================================
  *
- * Validates video URLs for the attract screen configuration.
- * Performs HEAD request to check MIME type, CORS, and content length.
- *
- * Rules:
- * - Must be HTTPS
- * - HEAD request with redirect follow
- * - Content-Type must start with `video/`
- * - Warning if > 100MB, block if > 500MB
- * - CORS failure = warning (not blocker, WebView may bypass)
+ * Validation states map directly to kiosk behavior:
+ * - valid: cacheable on the kiosk and safe for offline playback
+ * - remote_only: playable remotely, but not suitable for kiosk caching/offline
+ * - invalid: should be fixed before relying on this asset
  */
 
+import {
+  describeAttractVideoMetrics,
+  evaluateAttractVideoPolicy,
+} from '../../shared/utils/attractVideoPolicy';
+import { inspectVideoUrl } from '@/utils/videoMetadataInspector';
+
 export type ValidationResult = {
-  status: 'valid' | 'invalid' | 'cors_warning';
+  status: 'valid' | 'invalid' | 'remote_only';
   message: string;
   contentType?: string;
   contentLength?: number;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  containerFormat?: 'mp4' | 'webm' | 'unknown';
+  videoCodec?: string | null;
+  codecProfile?: string | null;
+  codecLevel?: string | null;
+  cacheable: boolean;
 };
 
-const MAX_SIZE_WARNING = 100 * 1024 * 1024;  // 100MB
-const MAX_SIZE_BLOCK = 500 * 1024 * 1024;    // 500MB
-
-/**
- * Known external video hosting domains where HEAD requests always fail
- * due to CORS. We skip the fetch and return a soft warning instead.
- */
-const CORS_WHITELIST_DOMAINS = [
+const REMOTE_ONLY_DOMAINS = [
   'pexels.com',
   'pixabay.com',
   'coverr.co',
@@ -41,44 +43,65 @@ const CORS_WHITELIST_DOMAINS = [
   'player.coverr.co',
 ];
 
-function isWhitelistedDomain(hostname: string): boolean {
-  return CORS_WHITELIST_DOMAINS.some(
-    (d) => hostname === d || hostname.endsWith('.' + d),
-  );
+const FIREBASE_STORAGE_DOMAINS = [
+  'firebasestorage.googleapis.com',
+  'storage.googleapis.com',
+  'firebasestorage.app',
+  'appspot.com',
+];
+
+function isDomainMatch(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
-/**
- * Validates a video URL by performing a HEAD request.
- *
- * @param url - The URL to validate
- * @returns Validation result with status and details
- */
+function isRemoteOnlyDomain(hostname: string): boolean {
+  return REMOTE_ONLY_DOMAINS.some((domain) => isDomainMatch(hostname, domain));
+}
+
+function isFirebaseStorageUrl(url: URL): boolean {
+  return FIREBASE_STORAGE_DOMAINS.some((domain) => isDomainMatch(url.hostname, domain));
+}
+
+function buildSuccessMessage(
+  contentLength: number | undefined,
+  detail: string,
+  mode: 'valid' | 'warning',
+): string {
+  const sizeMessage = contentLength
+    ? ` Tamanho: ${(contentLength / (1024 * 1024)).toFixed(1)} MB.`
+    : '';
+
+  if (mode === 'warning') {
+    return `Cacheavel no kiosk, mas no limite da politica. ${detail}${sizeMessage}`.trim();
+  }
+
+  return `Cacheavel no kiosk. ${detail}${sizeMessage}`.trim();
+}
+
 export async function validateVideoUrl(url: string): Promise<ValidationResult> {
-  // Basic URL checks
   if (!url || !url.trim()) {
-    return { status: 'invalid', message: 'URL vazia' };
+    return { status: 'invalid', message: 'URL vazia', cacheable: false };
   }
 
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
-    return { status: 'invalid', message: 'URL inválida' };
+    return { status: 'invalid', message: 'URL invalida', cacheable: false };
   }
 
   if (parsed.protocol !== 'https:') {
-    return { status: 'invalid', message: 'URL deve usar HTTPS' };
+    return { status: 'invalid', message: 'URL deve usar HTTPS', cacheable: false };
   }
 
-  // Skip HEAD for whitelisted external domains (always blocked by CORS)
-  if (isWhitelistedDomain(parsed.hostname)) {
+  if (isRemoteOnlyDomain(parsed.hostname)) {
     return {
-      status: 'cors_warning',
-      message: `Domínio externo (${parsed.hostname}) — não é possível validar do navegador. O vídeo será carregado diretamente no Kiosk.`,
+      status: 'remote_only',
+      message: `Playback remoto apenas. ${parsed.hostname} nao oferece um caminho confiavel para cache offline do kiosk.`,
+      cacheable: false,
     };
   }
 
-  // HEAD request
   try {
     const response = await fetch(url, {
       method: 'HEAD',
@@ -89,62 +112,123 @@ export async function validateVideoUrl(url: string): Promise<ValidationResult> {
       return {
         status: 'invalid',
         message: `Servidor retornou ${response.status} ${response.statusText}`,
+        cacheable: false,
       };
     }
 
     const contentType = response.headers.get('content-type') || '';
-    const contentLength = parseInt(response.headers.get('content-length') || '0', 10);
+    const contentLength = Number(response.headers.get('content-length') || '0') || undefined;
 
-    // Check MIME type
     if (!contentType.startsWith('video/')) {
       return {
         status: 'invalid',
-        message: `Content-Type "${contentType}" não é vídeo. Esperado: video/mp4, video/webm, etc.`,
-        contentType,
-        contentLength: contentLength || undefined,
-      };
-    }
-
-    // Check size
-    if (contentLength > MAX_SIZE_BLOCK) {
-      return {
-        status: 'invalid',
-        message: `Arquivo muito grande (${formatBytes(contentLength)}). Máximo: 500MB`,
+        message: `Content-Type "${contentType}" nao e video.`,
         contentType,
         contentLength,
+        cacheable: false,
       };
     }
 
-    const sizeWarning = contentLength > MAX_SIZE_WARNING
-      ? ` (${formatBytes(contentLength)} - considere comprimir)`
-      : contentLength > 0
-        ? ` (${formatBytes(contentLength)})`
-        : '';
+    let inspection;
+    try {
+      inspection = await inspectVideoUrl(url);
+    } catch (error) {
+      return {
+        status: 'invalid',
+        message: `Nao foi possivel ler metadados confiaveis do video. ${error instanceof Error ? error.message : 'Falha desconhecida.'}`,
+        contentType,
+        contentLength,
+        cacheable: false,
+      };
+    }
+
+    const policy = evaluateAttractVideoPolicy({
+      width: inspection.width,
+      height: inspection.height,
+      durationSeconds: inspection.durationSeconds,
+      contentLength,
+      containerFormat: inspection.containerFormat,
+      videoCodec: inspection.videoCodec,
+      codecProfile: inspection.codecProfile,
+      codecLevel: inspection.codecLevel,
+    });
+
+    if (policy.status === 'invalid') {
+      return {
+        status: 'invalid',
+        message: `Video fora da politica do kiosk. ${policy.summary}`,
+        contentType,
+        contentLength,
+        width: inspection.width,
+        height: inspection.height,
+        durationSeconds: inspection.durationSeconds,
+        containerFormat: inspection.containerFormat,
+        videoCodec: inspection.videoCodec,
+        codecProfile: inspection.codecProfile,
+        codecLevel: inspection.codecLevel,
+        cacheable: false,
+      };
+    }
+
+    const detail = policy.summary === 'Dentro da politica do kiosk.'
+      ? describeAttractVideoMetrics(
+        {
+          width: inspection.width,
+          height: inspection.height,
+          durationSeconds: inspection.durationSeconds,
+          contentLength,
+        },
+        policy.averageBitrateMbps,
+      )
+      : policy.summary;
 
     return {
       status: 'valid',
-      message: `Válido: ${contentType}${sizeWarning}`,
+      message: buildSuccessMessage(contentLength, detail || 'Video compativel com o kiosk.', policy.status),
       contentType,
-      contentLength: contentLength || undefined,
+      contentLength,
+      width: inspection.width,
+      height: inspection.height,
+      durationSeconds: inspection.durationSeconds,
+      containerFormat: inspection.containerFormat,
+      videoCodec: inspection.videoCodec,
+      codecProfile: inspection.codecProfile,
+      codecLevel: inspection.codecLevel,
+      cacheable: true,
     };
   } catch (error) {
-    // CORS or network error
     if (error instanceof TypeError) {
+      if (isFirebaseStorageUrl(parsed)) {
+        return {
+          status: 'invalid',
+          message: 'Firebase Storage bloqueou a validacao por CORS. O bucket precisa liberar https://localhost para o kiosk.',
+          cacheable: false,
+        };
+      }
+
       return {
-        status: 'cors_warning',
-        message: 'CORS bloqueado no navegador. O vídeo pode funcionar no Kiosk (WebView ignora CORS).',
+        status: 'remote_only',
+        message: 'CORS bloqueado no navegador. O video pode tocar remotamente, mas nao e seguro depender de cache offline no kiosk.',
+        cacheable: false,
       };
     }
 
     return {
       status: 'invalid',
       message: `Erro ao verificar URL: ${error instanceof Error ? error.message : 'Desconhecido'}`,
+      cacheable: false,
     };
   }
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+export function getVideoValidationLabel(status: ValidationResult['status'] | 'cors_warning'): string {
+  switch (status) {
+    case 'valid':
+      return 'Cacheavel no kiosk';
+    case 'remote_only':
+    case 'cors_warning':
+      return 'Playback remoto apenas';
+    default:
+      return 'Invalido';
+  }
 }

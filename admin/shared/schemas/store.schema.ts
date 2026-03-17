@@ -148,13 +148,22 @@ export const PaymentGatewayConfigSchema = z.object({
 export const AttractVideoConfigSchema = z.object({
   isEnabled: z.boolean().default(false),
   videoUrl: z.string().url('URL inválida').optional(),
+  cacheKey: z.string().min(1).optional(),
   displayTitle: z.string().max(200).optional(),
   displaySubtitle: z.string().max(200).optional(),
   videoOpacity: z.number().min(0).max(1).default(0.4),
   videoCoverMode: z.enum(['cover', 'contain']).default('cover'),
   lastValidatedAt: z.string().optional(),
-  lastValidationResult: z.enum(['valid', 'invalid', 'cors_warning']).optional(),
+  lastValidationResult: z.enum(['valid', 'invalid', 'remote_only', 'cors_warning']).optional(),
   contentType: z.string().optional(),
+  contentLength: z.number().positive().optional(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+  durationSeconds: z.number().positive().optional(),
+  containerFormat: z.enum(['mp4', 'webm', 'unknown']).optional(),
+  videoCodec: z.string().optional(),
+  codecProfile: z.string().optional(),
+  codecLevel: z.string().optional(),
 });
 
 // ============================================================================
@@ -166,6 +175,7 @@ export const AttractVideoConfigSchema = z.object({
  */
 export const StoreSchema = z.object({
   id: z.string().min(1),
+  storeId: z.string().min(1).optional(),
   franchiseId: z.string().min(1, 'Franquia é obrigatória'),
   slug: z.string()
     .min(3, 'Slug deve ter pelo menos 3 caracteres')
@@ -175,7 +185,10 @@ export const StoreSchema = z.object({
   isActive: z.boolean().default(true),
   
   // Localização
-  address: StoreAddressSchema.optional(),
+  address: z.union([
+    StoreAddressSchema,
+    z.string().min(1).max(500),
+  ]).optional(),
   contact: StoreContactSchema.optional(),
   phone: z.string().optional(),
   email: z.string().email().optional(),
@@ -218,7 +231,10 @@ export const CreateStoreSchema = z.object({
     .regex(/^[a-z0-9-]+$/)
     .optional(),
   franchiseId: z.string().optional(),
-  address: StoreAddressSchema.partial().optional(),
+  address: z.union([
+    StoreAddressSchema.partial(),
+    z.string().min(1).max(500),
+  ]).optional(),
   contact: StoreContactSchema.partial().optional(),
   phone: z.string().optional(),
   email: z.string().email().optional(),

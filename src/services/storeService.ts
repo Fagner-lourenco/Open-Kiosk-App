@@ -9,6 +9,28 @@ import { sanitizeFirestoreData } from '@/utils/firestoreSanitize';
 // ============================================
 
 class StoreService {
+  private lastLoadSource: 'none' | 'firestore' | 'cache' = 'none';
+
+  private getStoreAlias(data: Record<string, unknown>): string | null {
+    if (typeof data.storeId === 'string' && data.storeId.trim()) {
+      return data.storeId.trim();
+    }
+
+    return null;
+  }
+
+  private hasValidStoreData(data: Record<string, unknown> | undefined): boolean {
+    if (!data || Object.keys(data).length === 0) {
+      return false;
+    }
+
+    const name = typeof data.name === 'string' ? data.name.trim() : '';
+    const slug = typeof data.slug === 'string' ? data.slug.trim() : '';
+    const storeAlias = this.getStoreAlias(data);
+
+    return Boolean(name && (slug || storeAlias));
+  }
+
   /**
    * Get current storeId from local storage
    */
@@ -24,7 +46,7 @@ class StoreService {
     return franchiseId;
   }
 
-  private normalizeStoreData(data: Record<string, unknown>): Store {
+  private normalizeStoreData(data: Record<string, unknown>, snapshotId?: string): Store {
     const normalizeTimestamp = (value: unknown): Date | string | undefined => {
       if (!value) return undefined;
       if (value instanceof Date) return value;
@@ -35,8 +57,14 @@ class StoreService {
       return undefined;
     };
 
+    const normalizedStoreId = this.getStoreAlias(data) || snapshotId || '';
+    const normalizedSlug =
+      typeof data.slug === 'string' && data.slug.trim()
+        ? data.slug.trim()
+        : normalizedStoreId;
+
     // Runtime validation for required Store fields
-    const requiredFields = ['storeId', 'name', 'slug', 'isActive', 'taxId', 'currency', 'taxPercentage'] as const;
+    const requiredFields = ['name', 'slug', 'isActive', 'currency', 'taxPercentage'] as const;
     for (const field of requiredFields) {
       if (data[field] === undefined) {
         console.warn(`[StoreService] normalizeStoreData: missing required field '${field}'`);
@@ -45,6 +73,24 @@ class StoreService {
 
     return {
       ...(data as unknown as Store),
+      id: snapshotId || normalizedStoreId,
+      storeId: normalizedStoreId,
+      slug: normalizedSlug,
+      name:
+        typeof data.name === 'string' && data.name.trim()
+          ? data.name.trim()
+          : normalizedStoreId || 'Store',
+      isActive: data.isActive !== false,
+      taxId: typeof data.taxId === 'string' ? data.taxId : '',
+      currency:
+        typeof data.currency === 'string' && data.currency.trim()
+          ? data.currency.trim()
+          : 'BRL',
+      taxPercentage:
+        typeof data.taxPercentage === 'number' && Number.isFinite(data.taxPercentage)
+          ? data.taxPercentage
+          : 0,
+      language: data.language === 'en' ? 'en' : 'pt-BR',
       createdAt: normalizeTimestamp((data as { createdAt?: unknown }).createdAt),
       updatedAt: normalizeTimestamp((data as { updatedAt?: unknown }).updatedAt),
     };
@@ -60,8 +106,8 @@ class StoreService {
       const storeDoc = doc(db, storePath(franchiseId, storeId));
       const snapshot = await getDoc(storeDoc);
 
-      const data = snapshot.data();
-      const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
+      const data = snapshot.data() as Record<string, unknown> | undefined;
+      const hasValidData = this.hasValidStoreData(data);
 
       return snapshot.exists() && !!hasValidData;
     } catch (error) {
@@ -84,80 +130,91 @@ class StoreService {
       const storeDoc = doc(db, path);
       const snapshot = await getDoc(storeDoc);
 
-      const data = snapshot.data();
-      const hasValidData = data && Object.keys(data).length > 0 && (data.storeId || data.name);
+      const data = snapshot.data() as Record<string, unknown> | undefined;
+      const hasValidData = this.hasValidStoreData(data);
 
       if (!snapshot.exists() || !hasValidData) {
         console.warn(`[StoreService] Store ${storeId} not found or empty - attempting recovery`);
 
         const recovered = await this.recoverStoreFromLocalStorage(storeId);
         if (recovered) {
+          this.lastLoadSource = 'cache';
           return recovered;
         }
 
         console.warn(`[StoreService] Could not recover store ${storeId}`);
+        this.lastLoadSource = 'none';
         return null;
       }
 
-      const normalized = this.normalizeStoreData(data as Record<string, unknown>);
-      return { id: snapshot.id, ...normalized } as Store;
+      this.lastLoadSource = 'firestore';
+      return this.normalizeStoreData(data as Record<string, unknown>, snapshot.id);
     } catch (error: any) {
       if (error?.code === 'permission-denied' || error?.message?.includes('permission')) {
         console.warn('[StoreService] Permission denied, trying cache fallback');
-        return await this.recoverStoreFromLocalStorage(storeId);
+        const recovered = await this.recoverStoreFromLocalStorage(storeId);
+        this.lastLoadSource = recovered ? 'cache' : 'none';
+        return recovered;
       }
       console.error('[StoreService] Error fetching store:', error);
+      this.lastLoadSource = 'none';
       throw error;
     }
   }
 
   /**
-   * Recover store data from local storage and write it to Firestore.
+   * Recover store data from local storage without mutating the canonical Firestore document.
    */
   private async recoverStoreFromLocalStorage(storeId: string): Promise<Store | null> {
     try {
-      const localSettings = localStorage.getItem('storeSettings');
-      if (!localSettings) {
+      const recovered = this.getCachedStore(storeId);
+      if (!recovered) {
         console.log('[StoreService] No localStorage settings available for recovery');
         return null;
       }
 
-      const parsed = JSON.parse(localSettings);
-      if (parsed.storeId !== storeId) {
-        console.log(`[StoreService] localStorage storeId (${parsed.storeId}) does not match requested (${storeId})`);
-        return null;
-      }
-
-      if (!parsed.name) {
-        console.log('[StoreService] localStorage missing required field: name');
-        return null;
-      }
-
-      console.log('[StoreService] Recovering store from localStorage...');
-
-      await this.ensureStoreExists(
-        storeId,
-        parsed.name,
-        parsed.currency || 'BRL',
-        parsed.taxId || '',
-        parsed.taxPercentage || 0
-      );
-
-      const db = getFirebaseDb();
-      const franchiseId = this.requireFranchiseId();
-      const storeDoc = doc(db, storePath(franchiseId, storeId));
-      const newSnapshot = await getDoc(storeDoc);
-
-      if (newSnapshot.exists() && newSnapshot.data()?.storeId) {
-        console.log('[StoreService] Store recovered successfully from localStorage');
-        return { id: newSnapshot.id, ...newSnapshot.data() } as Store;
-      }
-
-      return null;
+      console.warn('[StoreService] Using local cache fallback without writing back to Firestore');
+      return recovered;
     } catch (recoveryError) {
       console.error('[StoreService] Recovery failed:', recoveryError);
       return null;
     }
+  }
+
+  getCachedStore(storeId: string): Store | null {
+    const localSettings = localStorage.getItem('storeSettings');
+    if (!localSettings) {
+      return null;
+    }
+
+    const parsed = JSON.parse(localSettings) as Record<string, unknown>;
+    if (parsed.storeId !== storeId) {
+      console.log(`[StoreService] localStorage storeId (${parsed.storeId}) does not match requested (${storeId})`);
+      return null;
+    }
+
+    if (!parsed.name) {
+      console.log('[StoreService] localStorage missing required field: name');
+      return null;
+    }
+
+    return this.normalizeStoreData({
+      ...parsed,
+      storeId,
+      slug: typeof parsed.slug === 'string' && parsed.slug.trim() ? parsed.slug : storeId,
+      isActive: parsed.isActive !== false,
+      currency: typeof parsed.currency === 'string' && parsed.currency.trim() ? parsed.currency : 'BRL',
+      taxId: typeof parsed.taxId === 'string' ? parsed.taxId : '',
+      taxPercentage:
+        typeof parsed.taxPercentage === 'number' && Number.isFinite(parsed.taxPercentage)
+          ? parsed.taxPercentage
+          : 0,
+      language: parsed.language === 'en' ? 'en' : 'pt-BR',
+    }, storeId);
+  }
+
+  getLastLoadSource(): 'none' | 'firestore' | 'cache' {
+    return this.lastLoadSource;
   }
 
   /**
@@ -168,24 +225,40 @@ class StoreService {
       const db = getFirebaseDb();
       const franchiseId = this.requireFranchiseId();
       const storeRef = doc(db, storePath(franchiseId, store.storeId));
+      const canonicalStore = sanitizeFirestoreData({
+        ...store,
+        franchiseId,
+        storeId: store.storeId,
+        slug: store.slug || store.storeId,
+        isActive: store.isActive ?? true,
+        currency: store.currency || 'BRL',
+        taxPercentage:
+          typeof store.taxPercentage === 'number' && Number.isFinite(store.taxPercentage)
+            ? store.taxPercentage
+            : 0,
+        language: store.language || 'pt-BR',
+        attractTimeoutSeconds: store.attractTimeoutSeconds ?? 60,
+        timezone:
+          typeof (store as { timezone?: unknown }).timezone === 'string' &&
+          (store as { timezone?: string }).timezone
+            ? (store as { timezone?: string }).timezone
+          : 'America/Sao_Paulo',
+        }) as Record<string, unknown>;
 
       const exists = await getDoc(storeRef);
       if (exists.exists()) {
         console.log(`[StoreService] Store ${store.storeId} already exists, updating...`);
-        const sanitizedStore = sanitizeFirestoreData(store) as Store;
         await updateDoc(storeRef, {
-          ...sanitizedStore,
+          ...canonicalStore,
           updatedAt: serverTimestamp(),
         });
         return store.storeId;
       }
 
-      const sanitizedStore = sanitizeFirestoreData(store) as Store;
-
       // [FIX Bug-6] Atomic writeBatch — store + settings em uma única operação
       const batch = writeBatch(db);
       batch.set(storeRef, {
-        ...sanitizedStore,
+        ...canonicalStore,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
@@ -193,8 +266,8 @@ class StoreService {
       // v4.1.5: usar 'config' (alinhado com Listener 2 em useStoreSettings.tsx)
       const settingsRef = doc(db, storePath(franchiseId, store.storeId), 'settings', 'config');
       batch.set(settingsRef, {
-        currency: store.currency,
-        language: store.language || 'pt-BR',
+        currency: canonicalStore.currency,
+        language: canonicalStore.language || 'pt-BR',
         createdAt: serverTimestamp(),
       }, { merge: true });
 
@@ -241,11 +314,7 @@ class StoreService {
       const snapshot = await getDocs(storesCollection);
 
       return snapshot.docs.map((storeDoc) => {
-        const normalized = this.normalizeStoreData(storeDoc.data() as Record<string, unknown>);
-        return {
-          id: storeDoc.id,
-          ...normalized,
-        };
+        return this.normalizeStoreData(storeDoc.data() as Record<string, unknown>, storeDoc.id);
       }) as Store[];
     } catch (error) {
       console.error('[StoreService] Error fetching stores:', error);
@@ -265,11 +334,7 @@ class StoreService {
       const snapshot = await getDocs(q);
 
       return snapshot.docs.map((storeDoc) => {
-        const normalized = this.normalizeStoreData(storeDoc.data() as Record<string, unknown>);
-        return {
-          id: storeDoc.id,
-          ...normalized,
-        };
+        return this.normalizeStoreData(storeDoc.data() as Record<string, unknown>, storeDoc.id);
       }) as Store[];
     } catch (error) {
       console.error('[StoreService] Error fetching active stores:', error);
@@ -290,8 +355,8 @@ class StoreService {
       const storeRef = doc(db, path);
       const snapshot = await getDoc(storeRef);
 
-      const data = snapshot.data();
-      const hasValidData = data && Object.keys(data).length > 0 && data.storeId;
+      const data = snapshot.data() as Record<string, unknown> | undefined;
+      const hasValidData = this.hasValidStoreData(data);
 
       if (!snapshot.exists() || !hasValidData) {
         console.log(`[StoreService] Creating/populating store document: ${storeId}`);
@@ -300,6 +365,7 @@ class StoreService {
           storeRef,
           {
             storeId,
+            franchiseId,
             name,
             slug: storeId,
             isActive: true,
@@ -308,6 +374,7 @@ class StoreService {
             taxPercentage,
             attractTimeoutSeconds: 60,
             language: 'pt-BR',
+            timezone: 'America/Sao_Paulo',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           },

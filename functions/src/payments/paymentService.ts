@@ -252,39 +252,56 @@ export const createPaymentIntent = async (
   }
 
   // ====================================================================
-  // KIO-18: Idempotency — deduplicate by orderId before creating new payment
-  // If an active (non-terminal) payment already exists for this orderId,
-  // return it instead of creating a duplicate.
+  // KIO-18 + F-10: Idempotency — transactional dedup by orderId
+  // Uses a deterministic doc ID based on orderId to prevent race conditions.
+  // If an active payment already exists, return it atomically.
   // ====================================================================
   if (data.orderId) {
-    const existingSnap = await storeRef
-      .collection('payments')
-      .where('orderId', '==', data.orderId)
-      .where('status', 'in', ['pending', 'paid'])
-      .limit(1)
-      .get();
+    const dedupRef = storeRef.collection('payments').doc(`order_${data.orderId}`);
+    const dedupResult = await db.runTransaction(async (txn) => {
+      const dedupSnap = await txn.get(dedupRef);
+      if (dedupSnap.exists) {
+        const existing = dedupSnap.data() as PaymentRecord;
+        // Only return if payment is still active (not failed/expired)
+        if (existing.status !== 'failed' && existing.status !== 'expired') {
+          return {
+            hit: true as const,
+            paymentId: dedupRef.id,
+            provider: existing.provider,
+            method: existing.method,
+            status: existing.status,
+            pix: existing.pix,
+            providerOrderId: existing.providerOrderId,
+            providerPaymentId: existing.providerPaymentId,
+          };
+        }
+        // Failed/expired — allow retry by falling through
+      }
+      return { hit: false as const, ref: dedupRef };
+    });
 
-    if (!existingSnap.empty) {
-      const existingDoc = existingSnap.docs[0];
-      const existingPayment = existingDoc.data() as PaymentRecord;
-      logger.info('[payments] Idempotency hit — returning existing payment', {
-        paymentId: existingDoc.id,
+    if (dedupResult.hit) {
+      logger.info('[payments] Idempotency hit (transactional)', {
+        paymentId: dedupResult.paymentId,
         orderId: data.orderId,
-        status: existingPayment.status,
+        status: dedupResult.status,
       });
       return {
-        paymentId: existingDoc.id,
-        provider: existingPayment.provider,
-        method: existingPayment.method,
-        status: existingPayment.status,
-        pix: existingPayment.pix,
-        providerOrderId: existingPayment.providerOrderId,
-        providerPaymentId: existingPayment.providerPaymentId,
+        paymentId: dedupResult.paymentId,
+        provider: dedupResult.provider,
+        method: dedupResult.method,
+        status: dedupResult.status,
+        pix: dedupResult.pix,
+        providerOrderId: dedupResult.providerOrderId,
+        providerPaymentId: dedupResult.providerPaymentId,
       };
     }
   }
 
-  const paymentRef = storeRef.collection('payments').doc();
+  // Use deterministic ID when orderId present, random otherwise
+  const paymentRef = data.orderId
+    ? storeRef.collection('payments').doc(`order_${data.orderId}`)
+    : storeRef.collection('payments').doc();
   const referenceId = buildReferenceId(franchiseId, storeId, paymentRef.id);
   const expiresAt =
     method === 'pix'

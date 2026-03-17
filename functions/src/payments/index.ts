@@ -151,44 +151,59 @@ export const cancelPagBankPayment = onCall(
     await requireStoreAccess(request, franchiseId, storeId);
 
     const paymentRef = db.doc(`franchises/${franchiseId}/stores/${storeId}/payments/${paymentId}`);
-    const paymentSnap = await paymentRef.get();
-    if (!paymentSnap.exists) {
-      throw new HttpsError('not-found', 'Pagamento nao encontrado.');
-    }
 
-    const payment = paymentSnap.data() as import('./types').PaymentRecord;
+    // F-11: Transactional cancel to prevent race conditions
+    const cancelResult = await db.runTransaction(async (txn) => {
+      const paymentSnap = await txn.get(paymentRef);
+      if (!paymentSnap.exists) {
+        throw new HttpsError('not-found', 'Pagamento nao encontrado.');
+      }
 
-    // Already in terminal state — nothing to cancel
-    const terminalStates: import('./types').PaymentStatus[] = ['paid', 'canceled', 'expired', 'refunded', 'failed'];
-    if (terminalStates.includes(payment.status)) {
-      return { canceled: payment.status === 'canceled', reason: `already_${payment.status}` };
-    }
+      const payment = paymentSnap.data() as import('./types').PaymentRecord;
 
-    // Attempt real cancellation via PagBank API if providerOrderId exists
-    if (payment.providerOrderId && payment.provider === 'pagbank') {
+      // Already in terminal state — nothing to cancel
+      const terminalStates: import('./types').PaymentStatus[] = ['paid', 'canceled', 'expired', 'refunded', 'failed'];
+      if (terminalStates.includes(payment.status)) {
+        return { canceled: payment.status === 'canceled', reason: `already_${payment.status}`, needsProviderCancel: false };
+      }
+
+      // Already cancel_requested — idempotent
+      if (payment.cancelRequested) {
+        return { canceled: false, reason: 'cancel_requested', needsProviderCancel: false };
+      }
+
+      // Mark as cancel_requested atomically
+      txn.set(paymentRef, {
+        cancelRequested: true,
+        cancelRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+
+      return {
+        canceled: false,
+        reason: 'cancel_requested',
+        needsProviderCancel: !!(payment.providerOrderId && payment.provider === 'pagbank'),
+        providerOrderId: payment.providerOrderId,
+        orderId: payment.orderId,
+      };
+    });
+
+    // Attempt provider cancel outside transaction (safe — already marked cancel_requested)
+    if (cancelResult.needsProviderCancel) {
       try {
-        // PagBank does not have a standard cancel endpoint for PIX orders.
-        // For card charges, we could attempt a void, but for PIX QR we can only wait for expiration.
-        // Mark as cancel_requested and let syncPendingPayments handle reconciliation.
         logger.info('[cancelPagBankPayment] Provider cancel delegated to sync/webhook', {
-          providerOrderId: payment.providerOrderId,
+          providerOrderId: cancelResult.providerOrderId,
         });
       } catch (err) {
         logger.warn('[cancelPagBankPayment] Provider cancel attempt error:', err);
       }
     }
 
-    // Mark as cancel_requested — the sync job and webhook will reconcile
-    await paymentRef.set(
-      {
-        cancelRequested: true,
-        cancelRequestedAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    if (cancelResult.reason !== 'cancel_requested' || cancelResult.canceled) {
+      return { canceled: cancelResult.canceled, reason: cancelResult.reason };
+    }
 
-    logger.info('[cancelPagBankPayment] Marked cancel_requested', { paymentId, orderId: payment.orderId });
+    logger.info('[cancelPagBankPayment] Marked cancel_requested', { paymentId, orderId: cancelResult.orderId });
     return { canceled: false, reason: 'cancel_requested' };
   }
 );

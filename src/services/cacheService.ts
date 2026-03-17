@@ -52,6 +52,12 @@ export interface CachedVideo {
   url: string;
   blob?: Blob;
   version: string;
+  cacheKey?: string;
+  cacheApiKey?: string;
+  source?: 'cache-api' | 'native-file';
+  nativeFilePath?: string;
+  nativeFileUri?: string;
+  contentType?: string;
   cachedAt: number;
   size: number;
   storeId: string;

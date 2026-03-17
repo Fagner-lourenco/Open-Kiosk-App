@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout style="@style/PlugPagAuthenticationFragment">
+
+        <!-- Logo -->
+        <ImageView style="@style/PlugPagPagSeguroLogo" />
+
+        <!-- E-mail -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/plugpag_authentication_wrapper_email"
+            style="@style/PlugPagAuthenticationTextInputLayout"
+            android:hint="@string/plugpag_authentication_hint_email">
+
+            <androidx.appcompat.widget.AppCompatEditText
+                android:id="@+id/plugpag_authentication_email"
+                style="@style/PlugPagAuthenticationTextInputEditText.Email"
+                tools:hint="@string/plugpag_authentication_hint_email" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/plugpag_authentication_wrapper_password"
+            style="@style/PlugPagAuthenticationTextInputLayout"
+            android:hint="@string/plugpag_authentication_hint_password">
+
+            <com.google.android.material.textfield.TextInputEditText
+                android:id="@+id/plugpag_authentication_password"
+                style="@style/PlugPagAuthenticationTextInputEditText.Password"
+                tools:hint="@string/plugpag_authentication_hint_password" />
+
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <!-- Authenticate -->
+        <Button
+            android:id="@+id/plugpag_authentication_authenticate"
+            style="@style/PlugPagButton"
+            android:text="@string/plugpag_authentication_button_login" />
+
+        <!-- Forgot password -->
+        <TextView
+            android:id="@+id/plugpag_authentication_forgot_password"
+            style="@style/PlugPagAuthenticationForgotPasswordText"
+            android:text="@string/plugpag_authentication_text_forgot_password" />
+
+    </LinearLayout>
+</ScrollView>

@@ -2,113 +2,239 @@
  * ============================================
  * Video Cache Service
  * ============================================
- * 
- * Gerencia cache de vídeos usando Cache API.
- * Download único com versionamento e fallback.
- * 
- * Características:
- * - Download em background (não bloqueia UI)
- * - Versionamento por URL hash
- * - Controle de tamanho máximo
- * - Fallback para URL original se cache falhar
+ *
+ * Manages attract-screen video caching across three sources:
+ * - remote: direct playback from the original URL
+ * - cache-api: browser Cache API fallback for web/PWA
+ * - native-file: Capacitor native file cache for Android/iOS
  */
 
-import { cacheSet, cacheGet, cacheDelete, cacheGetByIndex, STORES, CachedVideo } from './cacheService';
+import { Capacitor } from '@capacitor/core';
+import { Directory, Filesystem } from '@capacitor/filesystem';
+import { FileTransfer } from '@capacitor/file-transfer';
+import {
+  cacheDelete,
+  cacheGet,
+  cacheGetAll,
+  cacheGetByIndex,
+  cacheSet,
+  STORES,
+  type CachedVideo,
+} from './cacheService';
 import { getCurrentStoreId } from './firebase';
 
-const VIDEO_CACHE_NAME = 'kiosk-video-cache-v1';
-const MAX_CACHE_SIZE_MB = 500; // 500MB máximo para vídeos
+export const VIDEO_CACHE_NAME = 'kiosk-video-cache-v1';
+const VIDEO_NATIVE_DIRECTORY = 'video-cache';
+const MAX_CACHE_SIZE_MB = 500;
 const MAX_CACHE_SIZE_BYTES = MAX_CACHE_SIZE_MB * 1024 * 1024;
+const MANUAL_CACHE_PREFIXES = [VIDEO_CACHE_NAME, 'kiosk-manual-'];
+const REMOTE_ONLY_RESULTS = new Set(['remote_only', 'cors_warning']);
 
-// Estado do download
-interface DownloadState {
+export type VideoCacheSource = 'remote' | 'cache-api' | 'native-file';
+export type VideoValidationResult = 'valid' | 'invalid' | 'remote_only' | 'cors_warning' | undefined;
+
+export interface VideoCacheRequest {
+  url: string;
+  cacheKey?: string | null;
+  contentType?: string | null;
+  validationResult?: VideoValidationResult;
+}
+
+export type VideoCacheRequestInput = string | VideoCacheRequest;
+
+export interface DownloadState {
   url: string;
   progress: number;
   isDownloading: boolean;
   error: string | null;
+  source: VideoCacheSource;
+  isCached: boolean;
 }
 
-const downloadStates: Map<string, DownloadState> = new Map();
-const downloadListeners: Map<string, Set<(state: DownloadState) => void>> = new Map();
+export interface VideoCacheResult {
+  videoUrl: string;
+  source: VideoCacheSource;
+  isCached: boolean;
+  metadata?: CachedVideo;
+}
 
-// 🔧 v4.0.7: Tracking de Object URLs para evitar memory leaks
-const activeObjectURLs: Map<string, string> = new Map(); // videoId -> objectURL
+interface NormalizedVideoRequest {
+  url: string;
+  normalizedUrl: string;
+  videoId: string;
+  version: string;
+  storeId: string;
+  cacheKey: string;
+  cacheApiKey: string;
+  nativeFilePath: string;
+  validationResult?: VideoValidationResult;
+  contentType?: string;
+}
 
-/**
- * Gera ID único para vídeo baseado em URL
- */
-const generateVideoId = (url: string): string => {
-  // Hash simples da URL
-  let hash = 0;
-  for (let i = 0; i < url.length; i++) {
-    const char = url.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  return `video_${Math.abs(hash).toString(16)}`;
+interface ActiveObjectURL {
+  version: string;
+  objectUrl: string;
+}
+
+const downloadStates = new Map<string, DownloadState>();
+const downloadListeners = new Map<string, Set<(state: DownloadState) => void>>();
+const activeObjectURLs = new Map<string, ActiveObjectURL>();
+
+const isNativeFileCachingSupported = (): boolean => Capacitor.isNativePlatform();
+
+export const isCacheAPIAvailable = (): boolean => {
+  return typeof caches !== 'undefined' || isNativeFileCachingSupported();
 };
 
-/**
- * Gera versão do vídeo baseado em URL e timestamp
- */
-const generateVersion = (url: string): string => {
+export const shouldPreserveCacheStorageCache = (cacheName: string): boolean => {
+  return MANUAL_CACHE_PREFIXES.some((prefix) => cacheName === prefix || cacheName.startsWith(prefix));
+};
+
+const toRequest = (input: VideoCacheRequestInput): VideoCacheRequest => {
+  return typeof input === 'string' ? { url: input } : input;
+};
+
+const normalizeUrl = (url: string): string => {
   try {
     const urlObj = new URL(url);
-    // Remove query params que mudam (como cache busters)
-    urlObj.search = '';
-    return btoa(urlObj.toString()).slice(0, 16);
+    return urlObj.toString();
   } catch {
-    // Fallback para URLs inválidas - usa hash simples da string
-    return btoa(url.slice(0, 50)).slice(0, 16);
+    return url;
   }
 };
 
-/**
- * Notifica listeners sobre mudança de estado
- */
+const stripQueryAndHash = (url: string): string => {
+  try {
+    const urlObj = new URL(url);
+    urlObj.search = '';
+    urlObj.hash = '';
+    return urlObj.toString();
+  } catch {
+    return url;
+  }
+};
+
+const hashString = (value: string): string => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) - hash) + value.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(16);
+};
+
+const sanitizeSegment = (value: string): string => {
+  const trimmed = value.trim();
+  return trimmed.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'default';
+};
+
+const getVideoId = (url: string): string => `video_${hashString(stripQueryAndHash(url))}`;
+
+const getVersion = (url: string, cacheKey?: string | null): string => {
+  const identity = `${stripQueryAndHash(url)}::${cacheKey || 'url-only'}`;
+  return hashString(identity);
+};
+
+const buildCacheApiKey = (videoId: string, version: string): string => {
+  const baseOrigin = typeof window !== 'undefined' && window.location?.origin
+    ? window.location.origin
+    : 'https://localhost';
+  return `${baseOrigin}/__kiosk_video_cache__/${videoId}?v=${version}`;
+};
+
+const getExtensionFromContentType = (contentType?: string | null): string | null => {
+  if (!contentType) return null;
+  const normalized = contentType.toLowerCase();
+  if (normalized.includes('webm')) return 'webm';
+  if (normalized.includes('ogg') || normalized.includes('ogv')) return 'ogv';
+  if (normalized.includes('quicktime')) return 'mov';
+  if (normalized.includes('mp4')) return 'mp4';
+  return null;
+};
+
+const getExtensionFromUrl = (url: string): string | null => {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(/\.([a-z0-9]{2,5})$/i);
+    if (!match) return null;
+    const extension = match[1].toLowerCase();
+    if (['mp4', 'webm', 'ogv', 'ogg', 'mov', 'm4v'].includes(extension)) {
+      return extension;
+    }
+  } catch {
+    // Ignore invalid URL parsing here.
+  }
+  return null;
+};
+
+const getVideoExtension = (request: Pick<NormalizedVideoRequest, 'url' | 'contentType'>): string => {
+  return getExtensionFromContentType(request.contentType) || getExtensionFromUrl(request.url) || 'mp4';
+};
+
+const normalizeVideoRequest = (input: VideoCacheRequestInput): NormalizedVideoRequest | null => {
+  const request = toRequest(input);
+  const url = request.url?.trim();
+
+  if (!url) {
+    return null;
+  }
+
+  const normalizedUrl = normalizeUrl(url);
+  const videoId = getVideoId(normalizedUrl);
+  const version = getVersion(normalizedUrl, request.cacheKey);
+  const storeId = sanitizeSegment(getCurrentStoreId() || 'global');
+  const extension = getVideoExtension({ url: normalizedUrl, contentType: request.contentType });
+
+  return {
+    url: normalizedUrl,
+    normalizedUrl,
+    videoId,
+    version,
+    storeId,
+    cacheKey: request.cacheKey?.trim() || 'url-only',
+    cacheApiKey: buildCacheApiKey(videoId, version),
+    nativeFilePath: `${VIDEO_NATIVE_DIRECTORY}/${storeId}/${videoId}-${version}.${extension}`,
+    validationResult: request.validationResult,
+    contentType: request.contentType || undefined,
+  };
+};
+
+const isRemoteOnly = (validationResult?: VideoValidationResult): boolean => {
+  return validationResult ? REMOTE_ONLY_RESULTS.has(validationResult) : false;
+};
+
 const notifyDownloadListeners = (videoId: string, state: DownloadState) => {
   const listeners = downloadListeners.get(videoId);
-  if (listeners) {
-    listeners.forEach((listener) => {
-      try {
-        listener(state);
-      } catch (error) {
-        console.error('[VideoCacheService] Error in download listener:', error);
-      }
-    });
-  }
+  if (!listeners) return;
+
+  listeners.forEach((listener) => {
+    try {
+      listener(state);
+    } catch (error) {
+      console.error('[VideoCacheService] Error in download listener:', error);
+    }
+  });
 };
 
-/**
- * Atualiza estado do download
- */
 const updateDownloadState = (videoId: string, partial: Partial<DownloadState>) => {
   const current = downloadStates.get(videoId) || {
     url: '',
     progress: 0,
     isDownloading: false,
     error: null,
+    source: 'remote' as VideoCacheSource,
+    isCached: false,
   };
   const updated = { ...current, ...partial };
   downloadStates.set(videoId, updated);
   notifyDownloadListeners(videoId, updated);
 };
 
-/**
- * Verifica se Cache API está disponível
- */
-export const isCacheAPIAvailable = (): boolean => {
-  return typeof caches !== 'undefined';
-};
-
-/**
- * Obtém o cache de vídeos
- */
 const getVideoCache = async (): Promise<Cache | null> => {
-  if (!isCacheAPIAvailable()) {
+  if (typeof caches === 'undefined') {
     return null;
   }
-  
+
   try {
     return await caches.open(VIDEO_CACHE_NAME);
   } catch (error) {
@@ -117,373 +243,620 @@ const getVideoCache = async (): Promise<Cache | null> => {
   }
 };
 
-/**
- * Calcula tamanho total do cache de vídeos
- */
+const getExistingObjectUrl = (videoId: string, version: string): string | null => {
+  const existing = activeObjectURLs.get(videoId);
+  if (!existing) {
+    return null;
+  }
+
+  if (existing.version === version) {
+    return existing.objectUrl;
+  }
+
+  URL.revokeObjectURL(existing.objectUrl);
+  activeObjectURLs.delete(videoId);
+  return null;
+};
+
+const storeObjectUrl = (videoId: string, version: string, objectUrl: string): string => {
+  const existing = activeObjectURLs.get(videoId);
+  if (existing && existing.objectUrl !== objectUrl) {
+    URL.revokeObjectURL(existing.objectUrl);
+  }
+  activeObjectURLs.set(videoId, { version, objectUrl });
+  return objectUrl;
+};
+
+const buildRemoteResult = (request: NormalizedVideoRequest, metadata?: CachedVideo): VideoCacheResult => ({
+  videoUrl: request.url,
+  source: 'remote',
+  isCached: false,
+  metadata,
+});
+
+const getMetadata = async (request: NormalizedVideoRequest): Promise<CachedVideo | undefined> => {
+  return cacheGet<CachedVideo>(STORES.VIDEOS, request.videoId);
+};
+
+const getLegacyCacheApiKey = (metadata: CachedVideo, request: NormalizedVideoRequest): string => {
+  return metadata.cacheApiKey
+    || metadata.url
+    || buildCacheApiKey(metadata.id || request.videoId, metadata.version || request.version);
+};
+
+const fileExists = async (path: string): Promise<boolean> => {
+  try {
+    await Filesystem.stat({ directory: Directory.Data, path });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const removeNativeFileIfPresent = async (path?: string): Promise<void> => {
+  if (!path || !isNativeFileCachingSupported()) {
+    return;
+  }
+
+  try {
+    await Filesystem.deleteFile({ directory: Directory.Data, path });
+  } catch (error) {
+    console.debug('[VideoCacheService] Native file already absent or could not be deleted:', path, error);
+  }
+};
+
+const removeCacheApiEntryIfPresent = async (cacheApiKey?: string): Promise<void> => {
+  if (!cacheApiKey) {
+    return;
+  }
+
+  const cache = await getVideoCache();
+  if (!cache) {
+    return;
+  }
+
+  await cache.delete(cacheApiKey);
+};
+
+const removeCachedVideoRecord = async (metadata: CachedVideo): Promise<void> => {
+  await removeCacheApiEntryIfPresent(metadata.cacheApiKey || metadata.url || undefined);
+  await removeNativeFileIfPresent(metadata.nativeFilePath);
+  const objectUrl = activeObjectURLs.get(metadata.id);
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl.objectUrl);
+    activeObjectURLs.delete(metadata.id);
+  }
+  await cacheDelete(STORES.VIDEOS, metadata.id);
+};
+
+const buildMetadata = (
+  request: NormalizedVideoRequest,
+  partial: Pick<CachedVideo, 'size' | 'source'> & Partial<Pick<CachedVideo, 'cacheApiKey' | 'nativeFilePath' | 'nativeFileUri' | 'contentType'>>
+): CachedVideo => ({
+  id: request.videoId,
+  url: request.url,
+  version: request.version,
+  cacheKey: request.cacheKey,
+  cachedAt: Date.now(),
+  size: partial.size,
+  storeId: request.storeId,
+  source: partial.source,
+  cacheApiKey: partial.cacheApiKey,
+  nativeFilePath: partial.nativeFilePath,
+  nativeFileUri: partial.nativeFileUri,
+  contentType: partial.contentType || request.contentType,
+});
+
+const resolveFromCacheApi = async (
+  request: NormalizedVideoRequest,
+  metadata: CachedVideo,
+): Promise<VideoCacheResult | null> => {
+  const objectUrl = getExistingObjectUrl(metadata.id, metadata.version);
+  if (objectUrl) {
+    return {
+      videoUrl: objectUrl,
+      source: 'cache-api',
+      isCached: true,
+      metadata,
+    };
+  }
+
+  const cache = await getVideoCache();
+  if (!cache) {
+    return null;
+  }
+
+  const response = await cache.match(getLegacyCacheApiKey(metadata, request));
+  if (!response) {
+    return null;
+  }
+
+  const blob = await response.blob();
+  return {
+    videoUrl: storeObjectUrl(metadata.id, metadata.version, URL.createObjectURL(blob)),
+    source: 'cache-api',
+    isCached: true,
+    metadata,
+  };
+};
+
+const resolveFromNativeFile = async (
+  metadata: CachedVideo,
+): Promise<VideoCacheResult | null> => {
+  if (!metadata.nativeFilePath || !isNativeFileCachingSupported()) {
+    return null;
+  }
+
+  if (!(await fileExists(metadata.nativeFilePath))) {
+    return null;
+  }
+
+  let uri = metadata.nativeFileUri;
+  if (!uri) {
+    const uriResult = await Filesystem.getUri({
+      directory: Directory.Data,
+      path: metadata.nativeFilePath,
+    });
+    uri = uriResult.uri;
+  }
+
+  return {
+    videoUrl: Capacitor.convertFileSrc(uri),
+    source: 'native-file',
+    isCached: true,
+    metadata: {
+      ...metadata,
+      nativeFileUri: uri,
+    },
+  };
+};
+
+const resolveCachedVideo = async (request: NormalizedVideoRequest): Promise<VideoCacheResult> => {
+  const metadata = await getMetadata(request);
+  if (!metadata) {
+    return buildRemoteResult(request);
+  }
+
+  if (metadata.version !== request.version) {
+    await removeCachedVideoRecord(metadata);
+    return buildRemoteResult(request);
+  }
+
+  if (metadata.source === 'native-file' || metadata.nativeFilePath) {
+    const nativeResult = await resolveFromNativeFile(metadata);
+    if (nativeResult) {
+      return nativeResult;
+    }
+  }
+
+  const cacheApiResult = await resolveFromCacheApi(request, metadata);
+  if (cacheApiResult) {
+    return cacheApiResult;
+  }
+
+  await removeCachedVideoRecord(metadata);
+  return buildRemoteResult(request);
+};
+
+const cleanupOldVideos = async (requiredSpace: number, keepVideoId?: string): Promise<void> => {
+  const storeId = sanitizeSegment(getCurrentStoreId() || 'global');
+  const videos = await cacheGetByIndex<CachedVideo>(STORES.VIDEOS, 'storeId', storeId);
+  videos.sort((first, second) => first.cachedAt - second.cachedAt);
+
+  const currentSize = await getVideoCacheSize();
+  if (currentSize + requiredSpace <= MAX_CACHE_SIZE_BYTES) {
+    return;
+  }
+
+  let freedSpace = 0;
+  for (const video of videos) {
+    if (video.id === keepVideoId) {
+      continue;
+    }
+
+    await removeCachedVideoRecord(video);
+    freedSpace += video.size || 0;
+
+    if (currentSize - freedSpace + requiredSpace <= MAX_CACHE_SIZE_BYTES) {
+      break;
+    }
+  }
+};
+
+const isCacheableUrl = (url: string): boolean => {
+  try {
+    const urlObj = new URL(url);
+    const currentOrigin = window.location.origin;
+
+    if (urlObj.origin === currentOrigin) {
+      return true;
+    }
+
+    const allowedDomains = [
+      'firebasestorage.googleapis.com',
+      'firebasestorage.app',
+      'storage.googleapis.com',
+      'appspot.com',
+      'cdn.jsdelivr.net',
+      'unpkg.com',
+      'cdnjs.cloudflare.com',
+    ];
+
+    return allowedDomains.some((domain) => urlObj.hostname === domain || urlObj.hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+};
+
+const downloadToNativeFile = async (
+  request: NormalizedVideoRequest,
+  previousMetadata?: CachedVideo,
+): Promise<VideoCacheResult | null> => {
+  if (!isNativeFileCachingSupported() || isRemoteOnly(request.validationResult)) {
+    return null;
+  }
+
+  try {
+    const nativeDirectory = request.nativeFilePath.split('/').slice(0, -1).join('/');
+    if (nativeDirectory) {
+      await Filesystem.mkdir({
+        directory: Directory.Data,
+        path: nativeDirectory,
+        recursive: true,
+      });
+    }
+
+    const destinationUri = await Filesystem.getUri({
+      directory: Directory.Data,
+      path: request.nativeFilePath,
+    });
+
+    updateDownloadState(request.videoId, {
+      progress: 5,
+      source: 'native-file',
+      isCached: false,
+    });
+
+    await cleanupOldVideos(previousMetadata?.size || 0, request.videoId);
+
+    await FileTransfer.downloadFile({
+      url: request.url,
+      path: destinationUri.uri,
+    });
+
+    const stat = await Filesystem.stat({
+      directory: Directory.Data,
+      path: request.nativeFilePath,
+    });
+
+    const metadata = buildMetadata(request, {
+      size: Number(stat.size || 0),
+      source: 'native-file',
+      nativeFilePath: request.nativeFilePath,
+      nativeFileUri: destinationUri.uri,
+      contentType: request.contentType,
+    });
+
+    await cacheSet(STORES.VIDEOS, metadata);
+    updateDownloadState(request.videoId, {
+      progress: 100,
+      source: 'native-file',
+      isCached: true,
+    });
+
+    return {
+      videoUrl: Capacitor.convertFileSrc(destinationUri.uri),
+      source: 'native-file',
+      isCached: true,
+      metadata,
+    };
+  } catch (error) {
+    console.warn('[VideoCacheService] Native file caching failed, falling back to Cache API:', error);
+    await removeNativeFileIfPresent(request.nativeFilePath);
+    return null;
+  }
+};
+
+const downloadToCacheApi = async (
+  request: NormalizedVideoRequest,
+  onProgress?: (progress: number) => void,
+): Promise<VideoCacheResult | null> => {
+  if (typeof caches === 'undefined') {
+    return null;
+  }
+
+  if (isRemoteOnly(request.validationResult) || !isCacheableUrl(request.url)) {
+    return buildRemoteResult(request);
+  }
+
+  const response = await fetch(request.url);
+  if (!response.ok) {
+    throw new Error(`HTTP error: ${response.status}`);
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || '0');
+  if (contentLength > 0) {
+    await cleanupOldVideos(contentLength, request.videoId);
+  }
+
+  let videoBlob: Blob;
+  if (response.body && contentLength > 0) {
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let receivedLength = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      chunks.push(value);
+      receivedLength += value.length;
+      const progress = Math.round((receivedLength / contentLength) * 100);
+      updateDownloadState(request.videoId, {
+        progress,
+        source: 'cache-api',
+        isCached: false,
+      });
+      onProgress?.(progress);
+    }
+
+    videoBlob = new Blob(chunks as BlobPart[], {
+      type: request.contentType || response.headers.get('content-type') || 'video/mp4',
+    });
+  } else {
+    videoBlob = await response.blob();
+  }
+
+  const cache = await getVideoCache();
+  if (!cache) {
+    return null;
+  }
+
+  await cache.put(request.cacheApiKey, new Response(videoBlob, {
+    headers: {
+      'Content-Type': videoBlob.type,
+      'Content-Length': videoBlob.size.toString(),
+    },
+  }));
+
+  const metadata = buildMetadata(request, {
+    size: videoBlob.size,
+    source: 'cache-api',
+    cacheApiKey: request.cacheApiKey,
+    contentType: videoBlob.type,
+  });
+  await cacheSet(STORES.VIDEOS, metadata);
+
+  updateDownloadState(request.videoId, {
+    progress: 100,
+    source: 'cache-api',
+    isCached: true,
+  });
+
+  return {
+    videoUrl: storeObjectUrl(metadata.id, metadata.version, URL.createObjectURL(videoBlob)),
+    source: 'cache-api',
+    isCached: true,
+    metadata,
+  };
+};
+
 export const getVideoCacheSize = async (): Promise<number> => {
   try {
-    const videos = await cacheGetByIndex<CachedVideo>(STORES.VIDEOS, 'cachedAt', IDBKeyRange.lowerBound(0));
-    return videos.reduce((total, v) => total + (v.size || 0), 0);
+    const videos = await cacheGetAll<CachedVideo>(STORES.VIDEOS);
+    return videos.reduce((total, video) => total + (video.size || 0), 0);
   } catch (error) {
     console.error('[VideoCacheService] Error getting cache size:', error);
     return 0;
   }
 };
 
-/**
- * Limpa vídeos antigos se necessário para liberar espaço
- */
-const cleanupOldVideos = async (requiredSpace: number): Promise<void> => {
-  const storeId = getCurrentStoreId() || '';
-  const videos = await cacheGetByIndex<CachedVideo>(STORES.VIDEOS, 'storeId', storeId);
-  
-  // Ordena por data de cache (mais antigos primeiro)
-  videos.sort((a, b) => a.cachedAt - b.cachedAt);
-  
-  let freedSpace = 0;
-  const currentSize = await getVideoCacheSize();
-  
-  if (currentSize + requiredSpace <= MAX_CACHE_SIZE_BYTES) {
-    return; // Espaço suficiente
-  }
-
-  const cache = await getVideoCache();
-  
-  for (const video of videos) {
-    if (freedSpace >= requiredSpace) break;
-    
-    // Remove do Cache API
-    if (cache) {
-      await cache.delete(video.url);
-    }
-    
-    // Remove do IndexedDB
-    await cacheDelete(STORES.VIDEOS, video.id);
-    
-    freedSpace += video.size || 0;
-    console.log(`[VideoCacheService] Removed old video: ${video.id}, freed ${video.size} bytes`);
-  }
-};
-
-/**
- * Verifica se a URL é do mesmo domínio (same-origin) ou de um CDN permitido
- * URLs externas geralmente bloqueiam CORS para fetch
- */
-const isCacheableUrl = (url: string): boolean => {
-  try {
-    const urlObj = new URL(url);
-    const currentOrigin = window.location.origin;
-    
-    // Same-origin sempre pode ser cacheado
-    if (urlObj.origin === currentOrigin) {
-      return true;
-    }
-    
-    // CDNs conhecidos que suportam CORS
-    const allowedDomains = [
-      'firebasestorage.googleapis.com',
-      'storage.googleapis.com',
-      'cdn.jsdelivr.net',
-      'unpkg.com',
-      'cdnjs.cloudflare.com',
-      // Adicione outros CDNs conforme necessário
-    ];
-    
-    return allowedDomains.some(domain => urlObj.hostname.endsWith(domain));
-  } catch {
-    return false;
-  }
-};
-
-/**
- * Baixa vídeo e armazena em cache
- * NOTA: Vídeos de domínios externos (cross-origin) geralmente não podem ser
- * baixados via fetch devido a restrições de CORS. Nesse caso, a URL original
- * é retornada e o elemento <video> carrega diretamente (browsers permitem isso).
- */
 export const downloadVideo = async (
-  url: string,
-  onProgress?: (progress: number) => void
-): Promise<string | null> => {
-  const videoId = generateVideoId(url);
-  const version = generateVersion(url);
-  const storeId = getCurrentStoreId() || '';
-
-  // Verifica se já está em download
-  const currentState = downloadStates.get(videoId);
-  if (currentState?.isDownloading) {
-    console.log('[VideoCacheService] Download already in progress:', videoId);
+  input: VideoCacheRequestInput,
+  onProgress?: (progress: number) => void,
+): Promise<VideoCacheResult | null> => {
+  const request = normalizeVideoRequest(input);
+  if (!request) {
     return null;
   }
 
-  // Verifica se a URL pode ser cacheada (CORS)
-  if (!isCacheableUrl(url)) {
-    console.log('[VideoCacheService] URL externa (CORS), usando diretamente:', url);
-    // Não tenta download, retorna URL original
-    // O elemento <video> pode carregar cross-origin diretamente
-    return url;
+  const currentState = downloadStates.get(request.videoId);
+  if (currentState?.isDownloading) {
+    console.log('[VideoCacheService] Download already in progress:', request.videoId);
+    return null;
   }
 
-  updateDownloadState(videoId, { url, isDownloading: true, progress: 0, error: null });
+  updateDownloadState(request.videoId, {
+    url: request.url,
+    isDownloading: true,
+    progress: 0,
+    error: null,
+    source: 'remote',
+    isCached: false,
+  });
 
   try {
-    // Verifica se já está em cache com mesma versão
-    const cached = await cacheGet<CachedVideo>(STORES.VIDEOS, videoId);
-    if (cached && cached.version === version) {
-      console.log('[VideoCacheService] Video already cached:', videoId);
-      updateDownloadState(videoId, { isDownloading: false, progress: 100 });
-      return getCachedVideoUrl(url);
+    const previousMetadata = await getMetadata(request);
+    if (previousMetadata && previousMetadata.version !== request.version) {
+      await removeCachedVideoRecord(previousMetadata);
     }
 
-    // Baixa o vídeo
-    console.log('[VideoCacheService] Downloading video:', url);
-    
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`);
-    }
-
-    const contentLength = response.headers.get('content-length');
-    const totalSize = contentLength ? parseInt(contentLength, 10) : 0;
-
-    // Limpa espaço se necessário
-    if (totalSize > 0) {
-      await cleanupOldVideos(totalSize);
-    }
-
-    // Lê com progresso se possível
-    let videoBlob: Blob;
-    
-    if (response.body && totalSize > 0) {
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let receivedLength = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-        
-        chunks.push(value);
-        receivedLength += value.length;
-        
-        const progress = Math.round((receivedLength / totalSize) * 100);
-        updateDownloadState(videoId, { progress });
-        onProgress?.(progress);
-      }
-
-      videoBlob = new Blob(chunks as unknown as BlobPart[], { type: response.headers.get('content-type') || 'video/mp4' });
-    } else {
-      videoBlob = await response.blob();
-    }
-
-    // Armazena no Cache API
-    const cache = await getVideoCache();
-    if (cache) {
-      const cacheResponse = new Response(videoBlob, {
-        headers: {
-          'Content-Type': videoBlob.type,
-          'Content-Length': videoBlob.size.toString(),
-        },
+    const resolved = await resolveCachedVideo(request);
+    if (resolved.isCached) {
+      updateDownloadState(request.videoId, {
+        isDownloading: false,
+        progress: 100,
+        source: resolved.source,
+        isCached: true,
       });
-      await cache.put(url, cacheResponse);
+      return resolved;
     }
 
-    // Armazena metadados no IndexedDB
-    const videoMeta: CachedVideo = {
-      id: videoId,
-      url,
-      version,
-      cachedAt: Date.now(),
-      size: videoBlob.size,
-      storeId,
-    };
-    await cacheSet(STORES.VIDEOS, videoMeta);
-
-    updateDownloadState(videoId, { isDownloading: false, progress: 100 });
-    console.log('[VideoCacheService] Video cached successfully:', videoId, 'size:', videoBlob.size);
-
-    // 🔧 v4.0.7: Revogar URL anterior se existir (evita memory leak)
-    const previousUrl = activeObjectURLs.get(videoId);
-    if (previousUrl) {
-      URL.revokeObjectURL(previousUrl);
+    if (isRemoteOnly(request.validationResult)) {
+      updateDownloadState(request.videoId, {
+        isDownloading: false,
+        progress: 100,
+        source: 'remote',
+        isCached: false,
+      });
+      return buildRemoteResult(request, previousMetadata);
     }
-    
-    const objectUrl = URL.createObjectURL(videoBlob);
-    activeObjectURLs.set(videoId, objectUrl);
-    return objectUrl;
+
+    const nativeResult = await downloadToNativeFile(request, previousMetadata);
+    if (nativeResult) {
+      updateDownloadState(request.videoId, {
+        isDownloading: false,
+        progress: 100,
+        source: nativeResult.source,
+        isCached: nativeResult.isCached,
+      });
+      return nativeResult;
+    }
+
+    const cacheApiResult = await downloadToCacheApi(request, onProgress);
+    if (cacheApiResult) {
+      updateDownloadState(request.videoId, {
+        isDownloading: false,
+        progress: 100,
+        source: cacheApiResult.source,
+        isCached: cacheApiResult.isCached,
+      });
+      return cacheApiResult;
+    }
+
+    updateDownloadState(request.videoId, {
+      isDownloading: false,
+      progress: 100,
+      source: 'remote',
+      isCached: false,
+    });
+    return buildRemoteResult(request);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     console.error('[VideoCacheService] Download failed:', error);
-    updateDownloadState(videoId, { isDownloading: false, error: errorMessage });
+    updateDownloadState(request.videoId, {
+      isDownloading: false,
+      error: errorMessage,
+      source: 'remote',
+      isCached: false,
+    });
+    return buildRemoteResult(request);
+  }
+};
+
+export const getCachedVideo = async (input: VideoCacheRequestInput): Promise<VideoCacheResult | null> => {
+  const request = normalizeVideoRequest(input);
+  if (!request) {
     return null;
   }
+
+  return resolveCachedVideo(request);
 };
 
-/**
- * Obtém URL do vídeo em cache (ou URL original como fallback)
- */
-export const getCachedVideoUrl = async (url: string): Promise<string> => {
-  const videoId = generateVideoId(url);
+export const getCachedVideoUrl = async (input: VideoCacheRequestInput): Promise<string> => {
+  const result = await getCachedVideo(input);
+  return result?.videoUrl || toRequest(input).url;
+};
 
-  try {
-    // Verifica se está em cache
-    const cached = await cacheGet<CachedVideo>(STORES.VIDEOS, videoId);
-    if (!cached) {
-      return url; // Fallback para URL original
-    }
+export const isVideoCached = async (input: VideoCacheRequestInput): Promise<boolean> => {
+  const result = await getCachedVideo(input);
+  return result?.isCached ?? false;
+};
 
-    // Tenta obter do Cache API
-    // 🔧 Reutiliza Object URL existente se já tiver sido criada (evita blob churn + GC pressure)
-    const existingUrl = activeObjectURLs.get(videoId);
-    if (existingUrl) {
-      return existingUrl;
-    }
-
-    const cache = await getVideoCache();
-    if (cache) {
-      const response = await cache.match(url);
-      if (response) {
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(blob);
-        activeObjectURLs.set(videoId, objectUrl);
-        return objectUrl;
-      }
-    }
-
-    return url; // Fallback para URL original
-  } catch (error) {
-    console.error('[VideoCacheService] Error getting cached video:', error);
-    return url; // Fallback para URL original
+export const removeVideoFromCache = async (input: VideoCacheRequestInput): Promise<void> => {
+  const request = normalizeVideoRequest(input);
+  if (!request) {
+    return;
   }
-};
 
-/**
- * Verifica se vídeo está em cache
- */
-export const isVideoCached = async (url: string): Promise<boolean> => {
-  const videoId = generateVideoId(url);
-  
-  try {
-    const cached = await cacheGet<CachedVideo>(STORES.VIDEOS, videoId);
-    if (!cached) return false;
-
-    // Verifica se ainda existe no Cache API
-    const cache = await getVideoCache();
-    if (cache) {
-      const response = await cache.match(url);
-      return !!response;
-    }
-
-    return false;
-  } catch (error) {
-    return false;
+  const metadata = await getMetadata(request);
+  if (!metadata) {
+    revokeVideoObjectURL(request.url);
+    return;
   }
+
+  await removeCachedVideoRecord(metadata);
+  console.log('[VideoCacheService] Video removed from cache:', metadata.id);
 };
 
-/**
- * Remove vídeo do cache
- */
-export const removeVideoFromCache = async (url: string): Promise<void> => {
-  const videoId = generateVideoId(url);
-
-  try {
-    // Remove do Cache API
-    const cache = await getVideoCache();
-    if (cache) {
-      await cache.delete(url);
-    }
-
-    // Remove do IndexedDB
-    await cacheDelete(STORES.VIDEOS, videoId);
-    
-    console.log('[VideoCacheService] Video removed from cache:', videoId);
-  } catch (error) {
-    console.error('[VideoCacheService] Error removing video:', error);
+export const removeVideoFromCacheById = async (videoId: string): Promise<void> => {
+  const metadata = await cacheGet<CachedVideo>(STORES.VIDEOS, videoId);
+  if (!metadata) {
+    return;
   }
+  await removeCachedVideoRecord(metadata);
 };
 
-/**
- * Limpa todo o cache de vídeos
- */
 export const clearVideoCache = async (): Promise<void> => {
   try {
-    // Limpa Cache API
-    if (isCacheAPIAvailable()) {
+    const videos = await cacheGetAll<CachedVideo>(STORES.VIDEOS);
+    await Promise.all(videos.map((video) => removeCachedVideoRecord(video)));
+
+    if (typeof caches !== 'undefined') {
       await caches.delete(VIDEO_CACHE_NAME);
     }
 
-    // Limpa IndexedDB
-    const videos = await cacheGetByIndex<CachedVideo>(STORES.VIDEOS, 'cachedAt', IDBKeyRange.lowerBound(0));
-    for (const video of videos) {
-      await cacheDelete(STORES.VIDEOS, video.id);
-    }
-
+    revokeAllVideoObjectURLs();
     console.log('[VideoCacheService] Video cache cleared');
   } catch (error) {
     console.error('[VideoCacheService] Error clearing cache:', error);
   }
 };
 
-/**
- * Registra listener para progresso de download
- */
 export const addDownloadListener = (
-  url: string,
-  listener: (state: DownloadState) => void
-): () => void => {
-  const videoId = generateVideoId(url);
-  
-  if (!downloadListeners.has(videoId)) {
-    downloadListeners.set(videoId, new Set());
+  input: VideoCacheRequestInput,
+  listener: (state: DownloadState) => void,
+): (() => void) => {
+  const request = normalizeVideoRequest(input);
+  if (!request) {
+    return () => {};
   }
-  
-  downloadListeners.get(videoId)!.add(listener);
 
-  // Notifica com estado atual se existir
-  const currentState = downloadStates.get(videoId);
+  if (!downloadListeners.has(request.videoId)) {
+    downloadListeners.set(request.videoId, new Set());
+  }
+
+  downloadListeners.get(request.videoId)?.add(listener);
+
+  const currentState = downloadStates.get(request.videoId);
   if (currentState) {
     listener(currentState);
   }
 
   return () => {
-    const listeners = downloadListeners.get(videoId);
-    if (listeners) {
-      listeners.delete(listener);
-      // Limpa o Set se não houver mais listeners
-      if (listeners.size === 0) {
-        downloadListeners.delete(videoId);
-        // Também limpa o estado se download já completou
-        const state = downloadStates.get(videoId);
-        if (state && !state.isDownloading) {
-          downloadStates.delete(videoId);
-        }
+    const listeners = downloadListeners.get(request.videoId);
+    if (!listeners) {
+      return;
+    }
+
+    listeners.delete(listener);
+    if (listeners.size === 0) {
+      downloadListeners.delete(request.videoId);
+      const state = downloadStates.get(request.videoId);
+      if (state && !state.isDownloading) {
+        downloadStates.delete(request.videoId);
       }
     }
   };
 };
 
-/**
- * Obtém estado atual do download
- */
-export const getDownloadState = (url: string): DownloadState | null => {
-  const videoId = generateVideoId(url);
-  return downloadStates.get(videoId) || null;
+export const getDownloadState = (input: VideoCacheRequestInput): DownloadState | null => {
+  const request = normalizeVideoRequest(input);
+  if (!request) {
+    return null;
+  }
+  return downloadStates.get(request.videoId) || null;
 };
 
-/**
- * Obtém estatísticas do cache de vídeos
- */
 export const getVideoCacheStats = async (): Promise<{
   count: number;
   totalSize: number;
   maxSize: number;
   usagePercent: number;
 }> => {
-  const videos = await cacheGetByIndex<CachedVideo>(STORES.VIDEOS, 'cachedAt', IDBKeyRange.lowerBound(0));
-  const totalSize = videos.reduce((acc, v) => acc + (v.size || 0), 0);
-  
+  const videos = await cacheGetAll<CachedVideo>(STORES.VIDEOS);
+  const totalSize = videos.reduce((accumulator, video) => accumulator + (video.size || 0), 0);
+
   return {
     count: videos.length,
     totalSize,
@@ -492,44 +865,44 @@ export const getVideoCacheStats = async (): Promise<{
   };
 };
 
-/**
- * 🔧 v4.0.7: Revoga um Object URL específico para liberar memória
- * Chamar quando o vídeo não é mais necessário (ex: componente desmontando)
- */
-export const revokeVideoObjectURL = (url: string): void => {
-  const videoId = generateVideoId(url);
-  const objectUrl = activeObjectURLs.get(videoId);
-  if (objectUrl) {
-    URL.revokeObjectURL(objectUrl);
-    activeObjectURLs.delete(videoId);
-    console.log('[VideoCacheService] Object URL revoked:', videoId);
+export const revokeVideoObjectURL = (input: VideoCacheRequestInput): void => {
+  const request = normalizeVideoRequest(input);
+  if (!request) {
+    return;
   }
+
+  const existing = activeObjectURLs.get(request.videoId);
+  if (!existing) {
+    return;
+  }
+
+  URL.revokeObjectURL(existing.objectUrl);
+  activeObjectURLs.delete(request.videoId);
+  console.log('[VideoCacheService] Object URL revoked:', request.videoId);
 };
 
-/**
- * 🔧 v4.0.7: Revoga todos os Object URLs ativos para liberar memória
- * Útil ao sair da tela de atração ou resetar o app
- */
 export const revokeAllVideoObjectURLs = (): void => {
-  activeObjectURLs.forEach((objectUrl, videoId) => {
-    URL.revokeObjectURL(objectUrl);
+  activeObjectURLs.forEach((entry, videoId) => {
+    URL.revokeObjectURL(entry.objectUrl);
     console.log('[VideoCacheService] Object URL revoked:', videoId);
   });
   activeObjectURLs.clear();
-  console.log('[VideoCacheService] All Object URLs revoked');
 };
 
 export default {
   download: downloadVideo,
+  getCached: getCachedVideo,
   getCachedUrl: getCachedVideoUrl,
   isCached: isVideoCached,
   remove: removeVideoFromCache,
+  removeById: removeVideoFromCacheById,
   clear: clearVideoCache,
   getStats: getVideoCacheStats,
   getSize: getVideoCacheSize,
   addDownloadListener,
   getDownloadState,
   isAvailable: isCacheAPIAvailable,
+  shouldPreserveCacheStorageCache,
   revokeObjectURL: revokeVideoObjectURL,
   revokeAllObjectURLs: revokeAllVideoObjectURLs,
 };

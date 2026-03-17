@@ -2,12 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { VOICE_ERROR_MESSAGES, VoiceSearchHook } from '@/types/voiceSearchTypes';
 
 // Web Speech API type declarations for cross-config compatibility
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 interface SpeechRecognitionEventCompat {
   resultIndex: number;
   results: any;
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+ 
 interface SpeechRecognitionErrorEventCompat {
   error: string;
 }
@@ -16,7 +16,7 @@ declare global {
   // Only extend Window, don't redeclare existing DOM types
   // SpeechRecognition is already in DOM lib for tsconfig.app.json
   // For tsconfig.test.json, these enable compilation without DOM SpeechRecognition
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   interface Window {
     [key: string]: any; // Allow dynamic access for SpeechRecognition/webkitSpeechRecognition
   }

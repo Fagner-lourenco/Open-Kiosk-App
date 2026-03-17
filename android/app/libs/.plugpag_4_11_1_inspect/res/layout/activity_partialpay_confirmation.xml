@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    android:id="@+id/cl_partialpay_confirmation_activity"
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
+    android:orientation="vertical"
+    android:background="@android:color/transparent">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/frame_partialpay_confirmation_layout"
+        android:animateLayoutChanges="true"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:background="@android:color/white">
+
+        <TextView
+            android:id="@+id/textview_title"
+            style="@style/bigBlackTitle"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/size_all_xxxxlarge"
+            android:text="@string/partialpay_confirmation_title"
+            android:gravity="center"
+            android:textSize="@dimen/textsize_all_h7"
+            android:textColor="@color/plugpag_white"
+            android:background="@color/plugpag_colorPrimary"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/frame_partialpay_confirmation_layout_center"
+            android:animateLayoutChanges="true"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/textview_title"
+            app:layout_constraintBottom_toTopOf="@+id/line1">
+
+            <TextView
+                android:id="@+id/textview_approved"
+                style="@style/titleBlack"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="@string/partialpay_approved"
+                android:gravity="center"
+                android:textSize="@dimen/textsize_all_h3"
+                android:textColor="@color/plugpag_black"
+                android:textFontWeight="400"
+                android:layout_marginBottom="@dimen/size_all_medium"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toTopOf="@+id/textview_value_approved" />
+
+            <TextView
+                android:id="@+id/textview_value_approved"
+                style="@style/titleBlack"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="R$ 0,00"
+                android:gravity="center"
+                android:textSize="@dimen/textsize_all_h8"
+                android:textColor="@color/plugpag_black2"
+                android:textFontWeight="500"
+                android:layout_marginBottom="@dimen/size_all_large"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toTopOf="@+id/textview_remaining" />
+
+            <TextView
+                android:id="@+id/textview_remaining"
+                style="@style/titleBlack"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="@string/partialpay_remaining"
+                android:gravity="center"
+                android:textSize="@dimen/textsize_all_h3"
+                android:textColor="@color/plugpag_black"
+                android:textFontWeight="400"
+                android:layout_marginBottom="@dimen/size_all_medium"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toTopOf="@+id/textview_value_remaining" />
+
+            <TextView
+                android:id="@+id/textview_value_remaining"
+                style="@style/titleBlack"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:text="R$ 0,00"
+                android:gravity="center"
+                android:textSize="@dimen/textsize_all_h8"
+                android:textColor="@color/plugpag_red"
+                android:textFontWeight="500"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintBottom_toBottomOf="parent" />
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <View
+            android:id="@+id/line1"
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/gray_12"
+            android:layout_margin="@dimen/size_all_large"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintBottom_toTopOf="@+id/textview_question" />
+        
+        <TextView
+            android:id="@+id/textview_question"
+            style="@style/titleBlack"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:text="@string/partialpay_question"
+            android:gravity="center"
+            android:textSize="@dimen/textsize_all_h3"
+            android:textColor="@color/plugpag_black"
+            android:textFontWeight="400"
+            android:layout_marginBottom="@dimen/size_all_large"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintBottom_toTopOf="@+id/button_confirmation" />
+
+        <Button
+            android:id="@+id/button_confirmation"
+            style="@style/PlugPagButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/size_all_xmedium"
+            android:layout_marginLeft="@dimen/size_all_xmedium"
+            android:layout_marginRight="@dimen/size_all_xmedium"
+            android:text="@string/partialpay_question_confirmation"
+            android:textAlignment="center"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/button_cancel" />
+
+        <Button
+            android:id="@+id/button_cancel"
+            style="@style/PlugPagButton"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="@dimen/size_all_xxmedium"
+            android:layout_marginLeft="@dimen/size_all_xmedium"
+            android:layout_marginRight="@dimen/size_all_xmedium"
+            android:textColor="@color/plugpag_button_disable_text"
+            android:background="@drawable/rounded_corner_off"
+            android:text="@string/partialpay_question_cancel"
+            android:textAlignment="center"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintBottom_toBottomOf="@id/frame_partialpay_confirmation_layout" />
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

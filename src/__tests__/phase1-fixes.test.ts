@@ -1,4 +1,7 @@
 /// <reference types="vitest/globals" />
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { isAllowedLocalHttpTarget } from '@/utils/localNetworkGuard';
 /**
  * ============================================================================
  * Phase 1 (P1) — Testes de Regressão e Aceite
@@ -18,6 +21,10 @@
  *
  * @version 1.0.0
  */
+
+function readRepoFile(relativePath: string): string {
+  return readFileSync(path.resolve(process.cwd(), relativePath), 'utf-8');
+}
 
 // ============================================================================
 // ADM-01 — PermissionGuard fail-closed
@@ -398,30 +405,25 @@ describe('KIO-13: disconnect não chama serial.disconnect() duplicado', () => {
 // AND-01 — exitLockTask exige PIN de manutenção
 // ============================================================================
 describe('AND-01: exitLockTask com PIN', () => {
-  const MAINTENANCE_PIN = '159357';
+  const pluginSource = readRepoFile('android/app/src/main/java/com/openkiosk/app/KioskModePlugin.java');
 
-  function simulateExitLockTask(pin: string): { success: boolean; error?: string } {
-    if (pin !== MAINTENANCE_PIN) {
-      return { success: false, error: 'PIN de manutenção inválido' };
-    }
-    return { success: true };
-  }
-
-  it('deve rejeitar PIN incorreto', () => {
-    const result = simulateExitLockTask('000000');
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('PIN');
+  it('deve validar o PIN contra BuildConfig no plugin real', () => {
+    expect(pluginSource).toContain('private static final String MAINTENANCE_PIN = BuildConfig.MAINTENANCE_PIN;');
+    expect(pluginSource).toContain('String pin = call.getString("pin", "")');
+    // F-06: Agora usa comparação timing-safe + rate limit
+    expect(pluginSource).toContain('timingSafeEquals(MAINTENANCE_PIN, pin)');
+    expect(pluginSource).toContain('MessageDigest.isEqual');
   });
 
-  it('deve rejeitar PIN vazio', () => {
-    const result = simulateExitLockTask('');
-    expect(result.success).toBe(false);
+  it('deve rejeitar PIN inválido no plugin real', () => {
+    expect(pluginSource).toContain('call.reject("PIN de manutenção inválido")');
   });
 
-  it('deve aceitar PIN correto', () => {
-    const result = simulateExitLockTask(MAINTENANCE_PIN);
-    expect(result.success).toBe(true);
-    expect(result.error).toBeUndefined();
+  it('deve ter rate limit contra brute-force (F-06)', () => {
+    expect(pluginSource).toContain('MAX_ATTEMPTS');
+    expect(pluginSource).toContain('LOCKOUT_MS');
+    expect(pluginSource).toContain('failedAttempts');
+    expect(pluginSource).toContain('lockoutUntil');
   });
 });
 
@@ -429,30 +431,23 @@ describe('AND-01: exitLockTask com PIN', () => {
 // AND-02 — cleartext traffic restrito
 // ============================================================================
 describe('AND-02: cleartext traffic policy', () => {
-  /**
-   * Validates that cleartext is ONLY allowed for local ESP32 IPs,
-   * not globally via usesCleartextTraffic="true".
-   */
-  const ALLOWED_CLEARTEXT_DOMAINS = [
-    '192.168.4.1', // ESP32 AP mode
-    '192.168.0.0/16', // Local network
-    'localhost',
-  ];
+  it('deve validar a policy real do app para hosts HTTP locais', () => {
+    expect(isAllowedLocalHttpTarget('192.168.4.1')).toBe(true);
+    expect(isAllowedLocalHttpTarget('192.168.0.25')).toBe(true);
+    expect(isAllowedLocalHttpTarget('localhost')).toBe(true);
+    expect(isAllowedLocalHttpTarget('esp32.local')).toBe(true);
+    expect(isAllowedLocalHttpTarget('api.example.com')).toBe(false);
+    expect(isAllowedLocalHttpTarget('8.8.8.8')).toBe(false);
+  });
 
-  it('deve permitir cleartext apenas para IPs locais', () => {
-    const testDomains = [
-      { domain: '192.168.4.1', expected: true },
-      { domain: 'localhost', expected: true },
-      { domain: 'api.example.com', expected: false },
-      { domain: 'firebase.googleapis.com', expected: false },
-    ];
+  it('deve apontar os fetches do ESP32 para a proteção centralizada', () => {
+    const hardwareServiceSource = readRepoFile('src/services/hardwareStatusService.ts');
+    const esp32ServiceSource = readRepoFile('src/services/esp32CommunicationService.ts');
 
-    for (const { domain, expected } of testDomains) {
-      const isAllowed = ALLOWED_CLEARTEXT_DOMAINS.some(
-        (d) => domain === d || domain.startsWith('192.168.')
-      );
-      expect(isAllowed).toBe(expected);
-    }
+    expect(hardwareServiceSource).toContain("buildLocalHttpUrl(ipAddress, '/status')");
+    expect(esp32ServiceSource).toContain("buildLocalHttpUrl(ip, '/status')");
+    expect(esp32ServiceSource).toContain("buildLocalHttpUrl(ipAddress, '/status')");
+    expect(esp32ServiceSource).toContain("buildLocalHttpUrl(this.esp32IpAddress, '/command')");
   });
 });
 
@@ -492,29 +487,23 @@ describe('AND-03: credenciais via environment/config', () => {
 // ADM-03/05 — cascade delete validação de subcoleções
 // ============================================================================
 describe('ADM-03/05: cascade delete subcollections', () => {
-  const EXPECTED_SUBCOLLECTIONS = [
-    'products',
-    'orders',
-    'payments',
-    'settings',
-    'dispensers',
-    'taps',
-    'servingSessions',
-    'wastageEvents',
-    'maintenanceLogs',
-  ];
+  const cleanupSource = readRepoFile('functions/src/cleanup/onDeleteStore.ts');
+  const match = cleanupSource.match(/const STORE_SUBCOLLECTIONS = \[([\s\S]*?)\] as const;/);
+  const expectedSubcollections = Array.from((match?.[1] ?? '').matchAll(/'([^']+)'/g)).map(([, value]) => value);
 
   it('deve deletar todas as subcoleções conhecidas', () => {
-    expect(EXPECTED_SUBCOLLECTIONS.length).toBeGreaterThanOrEqual(9);
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('products');
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('orders');
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('payments');
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('taps');
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('servingSessions');
+    expect(expectedSubcollections.length).toBeGreaterThanOrEqual(9);
+    expect(expectedSubcollections).toContain('products');
+    expect(expectedSubcollections).toContain('orders');
+    expect(expectedSubcollections).toContain('payments');
+    expect(expectedSubcollections).toContain('taps');
+    expect(expectedSubcollections).toContain('servingSessions');
   });
 
   it('deve incluir wastageEvents e maintenanceLogs na cascata', () => {
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('wastageEvents');
-    expect(EXPECTED_SUBCOLLECTIONS).toContain('maintenanceLogs');
+    expect(expectedSubcollections).toContain('wastageEvents');
+    expect(expectedSubcollections).toContain('maintenanceLogs');
+    expect(expectedSubcollections).toContain('hardware');
+    expect(expectedSubcollections).toContain('systemLogs');
   });
 });

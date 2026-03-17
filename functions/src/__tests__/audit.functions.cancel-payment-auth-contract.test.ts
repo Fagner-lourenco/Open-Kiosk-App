@@ -7,12 +7,21 @@ const mocks = vi.hoisted(() => {
     get: paymentGet,
     set: paymentSet,
   };
+  // F-11: runTransaction mock for transactional cancel
+  const runTransaction = vi.fn(async (fn: any) => {
+    const txn = {
+      get: paymentGet,
+      set: paymentSet,
+    };
+    return fn(txn);
+  });
 
   return {
     paymentGet,
     paymentSet,
     doc: vi.fn(() => paymentRef),
     serverTimestamp: vi.fn(() => 'SERVER_TIMESTAMP'),
+    runTransaction,
   };
 });
 
@@ -21,6 +30,7 @@ vi.mock('../lib', () => {
   return {
     db: {
       doc: mocks.doc,
+      runTransaction: mocks.runTransaction,
     },
     admin: {
       firestore: {
@@ -85,7 +95,9 @@ describe('Audit Functions - cancelPagBankPayment auth contracts', () => {
     });
 
     expect(result).toEqual({ canceled: false, reason: 'cancel_requested' });
+    // F-11: txn.set receives (ref, data, options) — 3 args
     expect(mocks.paymentSet).toHaveBeenCalledWith(
+      expect.anything(), // paymentRef
       expect.objectContaining({
         cancelRequested: true,
         cancelRequestedAt: 'SERVER_TIMESTAMP',

@@ -61,7 +61,15 @@ export interface FranchiseMember {
 export interface Store {
   id: string;
   name: string;
-  address?: string;
+  address?: string | {
+    street?: string;
+    number?: string;
+    neighborhood?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    country?: string;
+  };
   phone?: string;
   email?: string;
   isActive?: boolean;

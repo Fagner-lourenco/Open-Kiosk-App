@@ -31,6 +31,31 @@ interface FranchiseStoreSelectorProps {
   className?: string;
 }
 
+function formatStoreAddress(
+  address: StoreType['address'],
+): string | null {
+  if (!address) {
+    return null;
+  }
+
+  if (typeof address === 'string') {
+    const trimmedAddress = address.trim();
+    return trimmedAddress || null;
+  }
+
+  const parts = [
+    address.street,
+    address.number,
+    address.neighborhood,
+    address.city,
+    address.state,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.trim());
+
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
 export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProps) {
   const {
     franchises,
@@ -44,16 +69,22 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [switching, setSwitching] = useState(false);
+  const safeFranchises = Array.isArray(franchises) ? franchises : [];
+  const safeStores = Array.isArray(stores) ? stores : [];
 
   // Filtra franquias pelo termo de busca
   const filteredFranchises = useMemo(() => {
-    if (!search.trim()) return franchises;
+    if (safeFranchises.length === 0) {
+      return [];
+    }
+
+    if (!search.trim()) return safeFranchises;
     const searchLower = search.toLowerCase();
-    return franchises.filter((franchise) =>
+    return safeFranchises.filter((franchise) =>
       franchise.name.toLowerCase().includes(searchLower) ||
       franchise.ownerEmail?.toLowerCase().includes(searchLower)
     );
-  }, [franchises, search]);
+  }, [safeFranchises, search]);
 
   // Handler para selecionar franquia
   const handleSelectFranchise = async (franchise: Franchise) => {
@@ -128,7 +159,7 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
         </DropdownMenuTrigger>
         <DropdownMenuContent className="w-72" align="start">
           {/* Search Input */}
-          {franchises.length > 5 && (
+          {safeFranchises.length > 5 && (
             <>
               <div className="px-2 py-2">
                 <div className="relative">
@@ -191,14 +222,17 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
             </DropdownMenuGroup>
 
             {/* Lojas da Franquia Atual */}
-            {stores.length > 0 && (
+            {safeStores.length > 0 && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuLabel className="text-xs text-muted-foreground">
                     Lojas de {currentFranchise.name}
                   </DropdownMenuLabel>
-                  {stores.map((store) => (
+                  {safeStores.map((store) => {
+                    const formattedAddress = formatStoreAddress(store.address);
+
+                    return (
                     <DropdownMenuItem
                       key={store.id}
                       onClick={() => handleSelectStore(store)}
@@ -207,14 +241,15 @@ export function FranchiseStoreSelector({ className }: FranchiseStoreSelectorProp
                       <Store className="h-4 w-4 text-green-600" />
                       <div className="flex-1 min-w-0">
                         <p className="text-sm truncate">{store.name}</p>
-                        {store.address && (
+                        {formattedAddress && (
                           <p className="truncate text-xs text-muted-foreground">
-                            {store.address}
+                            {formattedAddress}
                           </p>
                         )}
                       </div>
                     </DropdownMenuItem>
-                  ))}
+                    );
+                  })}
                 </DropdownMenuGroup>
               </>
             )}

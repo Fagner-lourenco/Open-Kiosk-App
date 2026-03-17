@@ -104,6 +104,6 @@ export function useDynamicPrice(
       reason: result.reason,
       result,
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [sizePrice, sizeMl, isDpActive, dpConfig, kegLevelPercent, tick]);
 }

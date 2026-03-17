@@ -110,7 +110,7 @@ export interface PagBankProviderConfig {
 export interface PlugPagConfig {
   /** Feature flag — habilita pagamento via terminal PlugPag */
   enabled: boolean;
-  /** Bluetooth MAC address do terminal (e.g. "00:1B:66:XX:YY:ZZ") */
+  /** Identificador aceito pelo PlugPag (ex: "PRO-1733203195" ou MAC legado) */
   deviceId: string;
   /** Código de ativação do PagBank para este terminal */
   activationCode?: string;
@@ -174,6 +174,9 @@ export interface AttractVideoConfig {
   /** URL do vídeo (HTTPS obrigatório, ex: https://cdn.example.com/video.mp4) */
   videoUrl?: string;
 
+  /** Chave canônica de invalidação do asset. Deve mudar a cada upload/substituição. */
+  cacheKey?: string;
+
   /** Título customizado (substitui translate key 'attract.title') */
   displayTitle?: string;
 
@@ -190,10 +193,18 @@ export interface AttractVideoConfig {
   lastValidatedAt?: string;
 
   /** Resultado da última validação */
-  lastValidationResult?: 'valid' | 'invalid' | 'cors_warning';
+  lastValidationResult?: 'valid' | 'invalid' | 'remote_only' | 'cors_warning';
 
   /** Content-Type do vídeo (ex: 'video/mp4') */
   contentType?: string;
+  contentLength?: number;
+  width?: number;
+  height?: number;
+  durationSeconds?: number;
+  containerFormat?: 'mp4' | 'webm' | 'unknown';
+  videoCodec?: string;
+  codecProfile?: string;
+  codecLevel?: string;
 }
 
 // ============================================================================
@@ -208,6 +219,7 @@ export interface AttractVideoConfig {
 export interface Store {
   /** ID único do documento no Firestore */
   id: string;
+  storeId?: string;
 
   /** ID da franquia (obrigatório em modo multi-tenant) */
   franchiseId: string;
@@ -226,7 +238,7 @@ export interface Store {
   // =========================================
 
   /** Endereço da loja */
-  address?: StoreAddress;
+  address?: StoreAddress | string;
 
   /** Contato da loja */
   contact?: StoreContact;
@@ -355,7 +367,7 @@ export interface TapConfig {
   /** Nome do produto pré-selecionado (opcional) */
   productName?: string;
 
-  /** MAC Bluetooth do terminal PlugPag vinculado a esta torneira (ex: "90:97:D5:F1:74:B5") */
+  /** Identificador do terminal PlugPag vinculado a esta torneira (ex: "PRO-1733203195" ou MAC legado) */
   plugpagDeviceId?: string;
 }
 

@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
-import { Store } from '@/types/store';
-import { TapConfig } from '@/types/store';
+import { Store, TapConfig } from '@/types/store';
 import { storeService } from '@/services/storeService';
+import {
+  getCurrentFranchiseId,
+  getCurrentStoreId,
+  setKioskSelectedStoreId,
+  syncKioskSelectionFromStoreSettings,
+} from '@/services/firebase';
 import { useTapConfiguration } from '@/hooks/useTapConfiguration';
-
-// ============================================
-// Store Context Types
-// ============================================
 
 interface StoreContextType {
   currentStoreId: string | null;
@@ -15,8 +16,6 @@ interface StoreContextType {
   error: string | null;
   setCurrentStoreId: (storeId: string) => void;
   refreshStore: () => Promise<void>;
-
-  // ✅ Taps Configuration
   taps: TapConfig[];
   tapsVersion: number;
   tapsLoading: boolean;
@@ -24,18 +23,9 @@ interface StoreContextType {
   reportTapApplied: (version: number, result: { status: 'success' | 'error', errorMsg?: string }) => Promise<void>;
 }
 
-// Evento customizado para notificar mudança de loja
 export const STORE_CHANGED_EVENT = 'storeChanged';
 
-// ============================================
-// Context Creation
-// ============================================
-
 const StoreContext = createContext<StoreContextType | null>(null);
-
-// ============================================
-// Store Provider Component
-// ============================================
 
 interface StoreProviderProps {
   children: ReactNode;
@@ -48,7 +38,6 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // ✅ Taps Configuration from Firestore
   const {
     taps,
     version: tapsVersion,
@@ -57,18 +46,15 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
     reportApplied: reportTapApplied,
   } = useTapConfiguration({
     currentStoreId,
-    currentFranchiseId: localStorage.getItem('open-kiosk-admin:selectedFranchise'),
+    currentFranchiseId: getCurrentFranchiseId(),
   });
 
-  // 🔧 FIX: Flag para evitar fetch duplicado (previne loop infinito)
   const isFetchingRef = useRef(false);
   const lastFetchedStoreIdRef = useRef<string | null>(null);
 
-  // Carregar storeId do localStorage na inicialização (se não tiver initialStoreId)
   useEffect(() => {
     const loadStoreId = () => {
       try {
-        // Se já temos initialStoreId, usá-lo
         if (initialStoreId) {
           setCurrentStoreIdState(initialStoreId);
           console.log('[StoreContext] Using initialStoreId:', initialStoreId);
@@ -76,22 +62,11 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
           return;
         }
 
-        // Preferir seleção atual (alinhado com Admin)
-        const selectedStore = localStorage.getItem('open-kiosk-admin:selectedStore');
-        if (selectedStore) {
-          setCurrentStoreIdState(selectedStore);
-          console.log('[StoreContext] Loaded storeId from selected store:', selectedStore);
+        const resolvedStoreId = getCurrentStoreId();
+        if (resolvedStoreId) {
+          setCurrentStoreIdState(resolvedStoreId);
+          console.log('[StoreContext] Loaded storeId from resolver:', resolvedStoreId);
           return;
-        }
-
-        // Fallback: tentar carregar do storeSettings
-        const settings = localStorage.getItem('storeSettings');
-        if (settings) {
-          const parsed = JSON.parse(settings);
-          if (parsed.storeId) {
-            setCurrentStoreIdState(parsed.storeId);
-            console.log('[StoreContext] Loaded storeId from storeSettings:', parsed.storeId);
-          }
         }
       } catch (err) {
         console.error('[StoreContext] Error loading storeId:', err);
@@ -104,14 +79,16 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
     loadStoreId();
   }, [initialStoreId]);
 
-  // Função para atualizar storeId e disparar evento
+  useEffect(() => {
+    syncKioskSelectionFromStoreSettings();
+  }, []);
+
   const setCurrentStoreId = useCallback((storeId: string) => {
     console.log('[StoreContext] Setting storeId:', storeId);
     setCurrentStoreIdState(storeId);
 
-    // Atualizar localStorage
     try {
-      localStorage.setItem('open-kiosk-admin:selectedStore', storeId);
+      setKioskSelectedStoreId(storeId);
       const settings = localStorage.getItem('storeSettings');
       if (settings) {
         const parsed = JSON.parse(settings);
@@ -122,18 +99,14 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
       console.error('[StoreContext] Error updating localStorage:', err);
     }
 
-    // Disparar evento para notificar outros hooks
     window.dispatchEvent(new CustomEvent(STORE_CHANGED_EVENT, {
-      detail: { storeId }
+      detail: { storeId },
     }));
   }, []);
 
-  // Função para recarregar dados da loja do Firestore (com fallback para cache)
-  // 🔧 FIX: Removido currentStore das dependências para evitar loop infinito
   const refreshStore = useCallback(async () => {
     if (!currentStoreId) return;
 
-    // 🔧 FIX: Evitar fetch duplicado para o mesmo storeId
     if (isFetchingRef.current && lastFetchedStoreIdRef.current === currentStoreId) {
       console.log('[StoreContext] Already fetching store, skipping duplicate request');
       return;
@@ -149,59 +122,41 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
       if (storeData) {
         setCurrentStore(storeData);
         console.log('[StoreContext] Store loaded:', storeData.name);
+        setError(
+          storeService.getLastLoadSource() === 'cache'
+            ? 'Store data unavailable - using cached store configuration'
+            : null
+        );
+      } else {
+        setError('Store data unavailable - working offline');
       }
-      setError(null);
     } catch (err) {
       console.warn('[StoreContext] Error refreshing store from Firebase:', err);
 
-      // Fallback: tentar criar Store a partir do localStorage (modo offline)
       try {
-        const settingsStr = localStorage.getItem('storeSettings');
-        if (settingsStr) {
-          const settings = JSON.parse(settingsStr);
-          if (settings.storeId === currentStoreId) {
-            // Criar objeto Store mínimo a partir do cache local
-            const cachedStore: Store = {
-              id: currentStoreId,
-              storeId: currentStoreId,
-              name: settings.name || 'Loja',
-              slug: currentStoreId,
-              isActive: true,
-              taxId: settings.taxId || '',
-              currency: settings.currency || 'BRL',
-              taxPercentage: settings.taxPercentage || 0,
-              language: settings.language,
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-            setCurrentStore(cachedStore);
-            console.log('[StoreContext] Using cached store data (offline mode):', cachedStore.name);
-            setError(null);
-            return;
-          }
+        const cachedStore = storeService.getCachedStore(currentStoreId);
+        if (cachedStore) {
+          setCurrentStore(cachedStore);
+          console.log('[StoreContext] Using cached store data (offline mode):', cachedStore.name);
+          setError('Store data unavailable - using cached store configuration');
+          return;
         }
       } catch (cacheErr) {
         console.error('[StoreContext] Error loading from cache:', cacheErr);
       }
 
-      // Definir erro apenas se não temos dados em cache
       setError('Store data unavailable - working offline');
     } finally {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [currentStoreId]); // 🔧 FIX: Apenas currentStoreId - NÃO incluir currentStore!
-
-  // Carregar dados da loja quando storeId muda
-  // 🔧 FIX: Removido refreshStore das dependências - chamamos diretamente
-  useEffect(() => {
-    if (currentStoreId) {
-      // Só busca se o storeId realmente mudou
-      if (lastFetchedStoreIdRef.current !== currentStoreId) {
-        refreshStore();
-      }
-    }
   }, [currentStoreId]);
+
+  useEffect(() => {
+    if (currentStoreId && lastFetchedStoreIdRef.current !== currentStoreId) {
+      refreshStore();
+    }
+  }, [currentStoreId, refreshStore]);
 
   return (
     <StoreContext.Provider
@@ -216,7 +171,7 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
         tapsVersion,
         tapsLoading,
         tapsSource,
-        reportTapApplied
+        reportTapApplied,
       }}
     >
       {children}
@@ -224,13 +179,6 @@ export const StoreProvider: React.FC<StoreProviderProps> = ({ children, initialS
   );
 };
 
-// ============================================
-// Custom Hooks
-// ============================================
-
-/**
- * Hook principal para acessar o contexto da loja
- */
 export const useStoreContext = (): StoreContextType => {
   const context = useContext(StoreContext);
   if (!context) {
@@ -239,18 +187,11 @@ export const useStoreContext = (): StoreContextType => {
   return context;
 };
 
-/**
- * Hook para obter apenas o storeId atual (convenience)
- */
 export const useCurrentStoreId = (): string | null => {
   const { currentStoreId } = useStoreContext();
   return currentStoreId;
 };
 
-/**
- * Hook para escutar mudanças de loja
- * Útil para invalidar caches e refetch de dados
- */
 export const useStoreChangeListener = (callback: (storeId: string) => void): void => {
   useEffect(() => {
     const handleStoreChange = (event: Event) => {

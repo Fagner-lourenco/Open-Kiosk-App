@@ -1,6 +1,6 @@
 /**
  * Tests for cleanup/onDeleteStore.ts
- * Covers: cascade delete of 32 subcollections
+ * Covers: cascade delete of nested descendants when recursiveDelete is unavailable.
  */
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
@@ -8,26 +8,62 @@ const mocks = vi.hoisted(() => {
   const batchDelete = vi.fn();
   const batchCommit = vi.fn().mockResolvedValue(undefined);
   const batchFn = vi.fn(() => ({ delete: batchDelete, commit: batchCommit }));
-  const colGet = vi.fn().mockResolvedValue({ empty: true, docs: [], size: 0 });
-  const limit = vi.fn(() => ({ get: colGet }));
-  const docFn = vi.fn(() => ({ ref: 'docRef' }));
-  const collectionFn = vi.fn(() => ({ doc: docFn, limit, get: colGet }));
 
-  return { batchDelete, batchCommit, batchFn, colGet, docFn, collectionFn, limit };
+  const createSnapshot = (docs: Array<{ ref: { listCollections?: () => Promise<any[]> } }>) => ({
+    empty: docs.length === 0,
+    docs,
+    size: docs.length,
+  });
+
+  const emptyCollectionRef = {
+    limit: vi.fn(() => ({
+      get: vi.fn().mockResolvedValue(createSnapshot([])),
+    })),
+  };
+
+  const nestedDocRef = {
+    listCollections: vi.fn().mockResolvedValue([]),
+  };
+  const nestedCollectionRef = {
+    limit: vi.fn(() => ({
+      get: vi.fn().mockResolvedValue(createSnapshot([{ ref: nestedDocRef }])),
+    })),
+  };
+  const rootDocRef = {
+    listCollections: vi.fn().mockResolvedValue([nestedCollectionRef]),
+  };
+
+  const collectionsByPath: Record<string, { limit: () => { get: () => Promise<ReturnType<typeof createSnapshot>> } }> = {
+    'franchises/f1/stores/s1/products': {
+      limit: vi.fn(() => ({
+        get: vi.fn().mockResolvedValue(createSnapshot([{ ref: rootDocRef }])),
+      })),
+    },
+  };
+
+  const collectionFn = vi.fn((path: string) => collectionsByPath[path] ?? emptyCollectionRef);
+
+  return {
+    batchDelete,
+    batchCommit,
+    batchFn,
+    collectionFn,
+    nestedDocRef,
+    rootDocRef,
+  };
 });
 
 vi.mock('../lib', () => ({
   db: {
-    doc: mocks.docFn,
     collection: mocks.collectionFn,
     batch: mocks.batchFn,
   },
 }));
 
 vi.mock('firebase-functions/v2/firestore', () => ({
-  onDocumentDeleted: (path: any, handler: any) => {
-    const fn: any = {};
-    fn.run = (event: any) => handler(event);
+  onDocumentDeleted: (_path: unknown, handler: (event: unknown) => Promise<void>) => {
+    const fn: { run?: (event: unknown) => Promise<void> } = {};
+    fn.run = (event: unknown) => handler(event);
     return fn;
   },
 }));
@@ -40,7 +76,7 @@ vi.mock('firebase-functions/logger', () => ({
 
 import { onDeleteStore } from '../cleanup/onDeleteStore';
 
-const run = (onDeleteStore as any).run;
+const run = (onDeleteStore as { run: (event: unknown) => Promise<void> }).run;
 
 describe('cleanup/onDeleteStore', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -50,7 +86,7 @@ describe('cleanup/onDeleteStore', () => {
     expect(typeof run).toBe('function');
   });
 
-  it('percorre subcollections e não crasheia', async () => {
+  it('apaga descendentes aninhados quando recursiveDelete nao existe', async () => {
     const event = {
       params: { franchiseId: 'f1', storeId: 's1' },
       data: { data: () => ({ name: 'Test Store' }) },
@@ -58,9 +94,10 @@ describe('cleanup/onDeleteStore', () => {
 
     await run(event);
 
-    // Deve ter chamado collection para cada subcollection
-    expect(mocks.collectionFn).toHaveBeenCalled();
-    // At least 32 subcollections checked
-    expect(mocks.collectionFn.mock.calls.length).toBeGreaterThanOrEqual(32);
+    expect(mocks.rootDocRef.listCollections).toHaveBeenCalled();
+    expect(mocks.nestedDocRef.listCollections).toHaveBeenCalled();
+    expect(mocks.batchDelete).toHaveBeenCalledWith(mocks.nestedDocRef);
+    expect(mocks.batchDelete).toHaveBeenCalledWith(mocks.rootDocRef);
+    expect(mocks.batchCommit).toHaveBeenCalledTimes(2);
   });
 });

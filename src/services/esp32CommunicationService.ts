@@ -4,6 +4,7 @@ import esp32Serial from './esp32SerialService';  // ðŸ”§ FIX: Fallback para
 import type { ESP32Response } from './esp32SerialService';
 import { TapConfig } from '@/types/store';
 import { systemLogService } from './systemLogService';
+import { buildLocalHttpUrl } from '@/utils/localNetworkGuard';
 
 // Plugin USB Serial para Android (capacitor-usb-serial-plugin)
 // ImportaÃ§Ã£o dinÃ¢mica para nÃ£o quebrar na web
@@ -1979,6 +1980,11 @@ class ESP32CommunicationService {
    */
   async connectBluetooth(deviceId: string, deviceName?: string): Promise<boolean> {
     try {
+      const bleReady = await this.ensureBleInitialized();
+      if (!bleReady) {
+        console.error('[BLE] Failed to initialize BleClient before connect');
+        return false;
+      }
       // ðŸ”§ CORREÃ‡ÃƒO WEB: Inicializar BleClient e garantir dispositivo no mapa
       if (this.isWeb()) {
         const initialized = await this.ensureBleInitialized();
@@ -2470,7 +2476,7 @@ class ESP32CommunicationService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-      const response = await fetch(`http://${ip}/status`, {
+      const response = await fetch(buildLocalHttpUrl(ip, '/status'), {
         method: 'GET',
         signal: controller.signal,
         // Tentar sem CORS primeiro (retorna opaque response mas nÃ£o erro)
@@ -2901,7 +2907,7 @@ class ESP32CommunicationService {
       console.log(`[WiFi] Usando modo fetch: ${fetchMode} (plataforma: ${Capacitor.getPlatform()})`);
 
       // Tentar verificar conexÃ£o
-      const response = await fetch(`http://${ipAddress}/status`, {
+      const response = await fetch(buildLocalHttpUrl(ipAddress, '/status'), {
         method: 'GET',
         signal: controller.signal,
         mode: fetchMode,
@@ -2996,7 +3002,7 @@ class ESP32CommunicationService {
     const timeoutId = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const response = await fetch(`http://${this.esp32IpAddress}/command`, {
+      const response = await fetch(buildLocalHttpUrl(this.esp32IpAddress, '/command'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -3401,7 +3407,7 @@ class ESP32CommunicationService {
   async getESP32Status(): Promise<object | null> {
     if (this.connectionStatus.type === 'wifi' && this.esp32IpAddress) {
       try {
-        const response = await fetch(`http://${this.esp32IpAddress}/status`);
+        const response = await fetch(buildLocalHttpUrl(this.esp32IpAddress, '/status'));
         if (response.ok) {
           return response.json();
         }

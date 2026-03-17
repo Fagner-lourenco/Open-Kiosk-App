@@ -40,7 +40,7 @@ function saveTapToFirestore(t: any) {
 }
 
 describe('plugpagDeviceId persistence', () => {
-  const MAC = '90:97:D5:F1:74:B5';
+  const IDENTIFIER = 'PRO-1733203195';
 
   const firestoreTap = {
     id: 1,
@@ -51,12 +51,12 @@ describe('plugpagDeviceId persistence', () => {
     calibration: { pulsesPerLiter: 450, mlPerSecond: 35 },
     productId: 'prod-123',
     productName: 'Chopp Pilsen',
-    plugpagDeviceId: MAC,
+    plugpagDeviceId: IDENTIFIER,
   };
 
   it('LOAD: preserves plugpagDeviceId from Firestore', () => {
     const loaded = loadTapFromFirestore(firestoreTap);
-    expect(loaded.plugpagDeviceId).toBe(MAC);
+    expect(loaded.plugpagDeviceId).toBe(IDENTIFIER);
   });
 
   it('LOAD: handles undefined plugpagDeviceId gracefully', () => {
@@ -67,7 +67,7 @@ describe('plugpagDeviceId persistence', () => {
 
   it('SAVE: preserves plugpagDeviceId to Firestore payload', () => {
     const saved = saveTapToFirestore(firestoreTap);
-    expect(saved.plugpagDeviceId).toBe(MAC);
+    expect(saved.plugpagDeviceId).toBe(IDENTIFIER);
   });
 
   it('SAVE: handles undefined plugpagDeviceId gracefully', () => {
@@ -79,20 +79,20 @@ describe('plugpagDeviceId persistence', () => {
   it('round-trip: load -> save preserves plugpagDeviceId', () => {
     const loaded = loadTapFromFirestore(firestoreTap);
     const saved = saveTapToFirestore(loaded);
-    expect(saved.plugpagDeviceId).toBe(MAC);
+    expect(saved.plugpagDeviceId).toBe(IDENTIFIER);
   });
 
   it('round-trip: load -> edit -> save preserves plugpagDeviceId', () => {
     const loaded = loadTapFromFirestore(firestoreTap);
     loaded.name = 'Torneira Modificada';
     const saved = saveTapToFirestore(loaded);
-    expect(saved.plugpagDeviceId).toBe(MAC);
+    expect(saved.plugpagDeviceId).toBe(IDENTIFIER);
     expect(saved.name).toBe('Torneira Modificada');
   });
 
   it('multiple taps: each preserves its own plugpagDeviceId', () => {
     const taps = [
-      { ...firestoreTap, id: 1, plugpagDeviceId: '90:97:D5:F1:74:B5' },
+      { ...firestoreTap, id: 1, plugpagDeviceId: 'PRO-1733203195' },
       { ...firestoreTap, id: 2, plugpagDeviceId: 'AA:BB:CC:DD:EE:FF' },
       { ...firestoreTap, id: 3, plugpagDeviceId: undefined },
     ];
@@ -100,7 +100,7 @@ describe('plugpagDeviceId persistence', () => {
     const loaded = taps.map(loadTapFromFirestore);
     const saved = loaded.map(saveTapToFirestore);
 
-    expect(saved[0].plugpagDeviceId).toBe('90:97:D5:F1:74:B5');
+    expect(saved[0].plugpagDeviceId).toBe('PRO-1733203195');
     expect(saved[1].plugpagDeviceId).toBe('AA:BB:CC:DD:EE:FF');
     expect(saved[2].plugpagDeviceId).toBeUndefined();
   });

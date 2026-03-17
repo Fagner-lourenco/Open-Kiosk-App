@@ -1173,6 +1173,22 @@ service cloud.firestore {
     
     
     // ════════════════════════════════════════════════════════════════════════
+    // SERVER-ONLY COLLECTIONS (Cloud Functions via Admin SDK)
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // Essas collections são acessadas APENAS via Admin SDK (server-side).
+    // Deny-all explícito para client-side como defesa em profundidade.
+    // ════════════════════════════════════════════════════════════════════════
+
+    match /forecastCache/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /_webhookDedup/{docId} {
+      allow read, write: if false;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // ANALYTICS COLLECTION (Métricas Materializadas - Global)
     // ════════════════════════════════════════════════════════════════════════
     // 
