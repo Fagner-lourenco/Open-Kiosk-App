@@ -61,7 +61,6 @@ const AttractScreen = ({
   const failedPlaybackAttemptsRef = useRef<Record<string, number>>({});
   const videoPlaybackStateRef = useRef<VideoPlaybackState>('idle');
   const [shouldRender, setShouldRender] = useState(visible);
-  const [isEntering, setIsEntering] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [videoPlaybackState, setVideoPlaybackState] = useState<VideoPlaybackState>('idle');
   const startTriggeredRef = useRef(false);
@@ -449,17 +448,10 @@ const AttractScreen = ({
     if (visible) {
       setShouldRender(true);
       setIsExiting(false);
-      setIsEntering(true);
       startTriggeredRef.current = false;
-
-      const rafId = window.requestAnimationFrame(() => {
-        setIsEntering(false);
-      });
-
-      return () => window.cancelAnimationFrame(rafId);
+      return;
     }
 
-    setIsEntering(false);
     clearPlaybackWatchdog();
     clearPlaybackRetryTimer();
     videoRef.current?.pause();
@@ -504,7 +496,7 @@ const AttractScreen = ({
       aria-label={t('attract.kioskStartScreen')}
       className={
         'fixed inset-0 z-[9999] flex items-center justify-center attract-fade ' +
-        (visible && !isExiting && !isEntering ? 'opacity-100' : 'opacity-0')
+        (visible && !isExiting ? 'opacity-100' : 'opacity-0')
       }
       onKeyDown={onKeyDown}
     >

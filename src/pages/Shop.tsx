@@ -142,11 +142,13 @@ const Shop = () => {
   }, []); // Executar apenas uma vez na montagem
 
   useEffect(() => {
-    console.log('[Shop] Attract configuration updated:', {
+    console.log(`[Shop] Attract configuration updated: ${JSON.stringify({
       attractTimeoutSeconds: attractTimeout,
       attractScreenEnabled: settings?.attractScreenEnabled ?? true,
       hasVideoConfig: !!settings?.attractVideoConfig?.isEnabled,
-    });
+      videoUrl: settings?.attractVideoConfig?.videoUrl ? 'present' : 'absent',
+      lastValidation: settings?.attractVideoConfig?.lastValidationResult ?? null,
+    })}`);
   }, [attractTimeout, settings?.attractScreenEnabled, settings?.attractVideoConfig?.isEnabled]);
 
   useEffect(() => {
@@ -155,17 +157,17 @@ const Shop = () => {
       return;
     }
 
-    console.log('[Shop] Attract screen suppressed:', {
+    console.log(`[Shop] Attract screen suppressed: ${JSON.stringify({
       reasons: suppressionReasons.split(',').filter(Boolean),
-    });
+    })}`);
   }, [isSuppressed, suppressionReasons]);
 
   useEffect(() => {
-    console.log('[Shop] Attract visibility changed:', {
+    console.log(`[Shop] Attract visibility changed: ${JSON.stringify({
       visible: isAttractVisible,
       isIdle,
       attractScreenEnabled: settings?.attractScreenEnabled ?? true,
-    });
+    })}`);
   }, [isAttractVisible, isIdle, settings?.attractScreenEnabled]);
 
   useEffect(() => {

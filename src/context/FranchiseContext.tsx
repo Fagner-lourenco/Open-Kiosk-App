@@ -33,12 +33,13 @@ import {
 import { franchiseService } from '../services/franchiseService';
 import { authService } from '../services/authService';
 import {
-  KIOSK_SELECTED_FRANCHISE_KEY as SELECTED_FRANCHISE_KEY,
-  KIOSK_SELECTED_STORE_KEY as SELECTED_STORE_KEY,
-  setKioskSelectedFranchiseId,
-  setKioskSelectedStoreId,
   syncKioskSelectionFromStoreSettings,
 } from '../services/firebase';
+
+// FranchiseContext grava na chave ADMIN para não poluir as chaves kiosk
+// (que são controladas exclusivamente pelo bootstrap do dispositivo).
+const SELECTED_FRANCHISE_KEY = 'open-kiosk-admin:selectedFranchise';
+const SELECTED_STORE_KEY = 'open-kiosk-admin:selectedStore';
 
 // ============================================================================
 // TIPOS
@@ -259,7 +260,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
 
       setCurrentFranchise(franchise);
       setCurrentMembership(effectiveMembership);
-      setKioskSelectedFranchiseId(franchiseId);
+      localStorage.setItem(SELECTED_FRANCHISE_KEY, franchiseId);
     } catch (err) {
       console.error('[FranchiseContext] Erro ao carregar franquia:', err);
       throw err;
@@ -294,7 +295,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
   const clearFranchise = useCallback(() => {
     setCurrentFranchise(null);
     setCurrentMembership(null);
-    setKioskSelectedFranchiseId(null);
+    localStorage.removeItem(SELECTED_FRANCHISE_KEY);
   }, []);
 
   const refreshFranchise = useCallback(async () => {
@@ -369,7 +370,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
     
     // Define a loja atual
     setCurrentStore(store);
-    setKioskSelectedStoreId(storeId);
+    localStorage.setItem(SELECTED_STORE_KEY, storeId);
   }, [userStores, selectFranchise]);
 
   // ==========================================================================

@@ -31,7 +31,7 @@ import { TapSettingsSync } from "@/components/TapSettingsSync";
 import { usePlugPagAutoConnect } from "@/hooks/usePlugPagAutoConnect";
 import { purgeNativeWebViewRuntimeCaches } from "@/services/nativeWebViewCacheService";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
-import { getStoredKioskBootstrapSnapshot } from "@/services/kioskBootstrapService";
+import { getStoredKioskBootstrapSnapshot, hydrateKioskBootstrapState } from "@/services/kioskBootstrapService";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
@@ -104,7 +104,14 @@ const KioskGuard: React.FC<{
       return;
     }
 
-    if (!isProvisioned && location.pathname !== '/device-not-provisioned') {
+    const provisioningAllowedRoutes = [
+      '/device-not-provisioned',
+      '/login',
+      '/admin',
+      '/store-select',
+      '/invite',
+    ];
+    if (!isProvisioned && !provisioningAllowedRoutes.some(r => location.pathname.startsWith(r))) {
       console.warn('[KioskGuard] Dispositivo sem bootstrap valido, redirecionando para provisioning');
       navigate('/device-not-provisioned', { replace: true });
       return;
@@ -150,6 +157,19 @@ const hasHealthyCapacitorBridge = (): boolean => {
 
 const AppContent = () => {
   const { loading, settings } = useStoreSettings();
+  const [bootstrapHydrated, setBootstrapHydrated] = useState(false);
+
+  useEffect(() => {
+    hydrateKioskBootstrapState()
+      .then((result) => {
+        if (result) {
+          console.log('[App] Bootstrap hidratado do Capacitor Preferences:', result.storeId);
+        }
+      })
+      .catch((err) => console.warn('[App] Falha ao hidratar bootstrap:', err))
+      .finally(() => setBootstrapHydrated(true));
+  }, []);
+
   const kioskBootstrap = getStoredKioskBootstrapSnapshot();
 
   // Usar idioma salvo nas configurações da loja (Firebase) - undefined enquanto carrega
@@ -278,7 +298,7 @@ const AppContent = () => {
     >
       <AuthContextProvider isKiosk={isKiosk}>
         <AuthGate
-          isStoreLoading={loading}
+          isStoreLoading={loading || !bootstrapHydrated}
           isKiosk={isKiosk}
           hasKioskProvisioning={hasKioskProvisioning}
         >

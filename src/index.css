@@ -146,7 +146,8 @@
 /* Attract Screen - animações sutis (premium) */
 @layer utilities {
   .attract-fade {
-    transition: opacity 180ms ease, transform 180ms ease;
+    transition: opacity 200ms ease;
+    animation: attract-fade-in 200ms ease-out;
   }
 
   .attract-mug {
@@ -172,6 +173,10 @@
     animation: attract-bubble-up var(--t, 6s) infinite;
     animation-delay: var(--d, 0s);
   }
+}
+
+@keyframes attract-fade-in {
+  from { opacity: 0; }
 }
 
 @keyframes attract-float-tilt {
