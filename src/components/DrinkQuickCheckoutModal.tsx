@@ -60,6 +60,26 @@ interface DrinkQuickCheckoutModalProps {
 // Salvo em localStorage (síncrono) antes de qualquer chamada async — garante durabilidade imediata.
 const CHECKOUT_PROGRESS_KEY = 'kiosk_checkout_progress';
 
+// 🔧 P7 FIX: Retry helper para enriquecimento — evita perda de dados de cliente
+async function enrichWithRetry(
+  fn: () => Promise<void>,
+  maxRetries = 2,
+  label = 'enrich'
+): Promise<void> {
+  for (let i = 0; i <= maxRetries; i++) {
+    try {
+      await fn();
+      return;
+    } catch (e) {
+      if (i === maxRetries) {
+        console.warn(`[${label}] Final retry failed:`, e);
+        return;
+      }
+      await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
+    }
+  }
+}
+
 const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete, onCancel }: DrinkQuickCheckoutModalProps) => {
   const [selectedSizeKey, setSelectedSizeKey] = useState<string>("");
   const [quantity, setQuantity] = useState<number>(0);
@@ -92,6 +112,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   
   // Guard contra duplicação de processamento
   const saleRecordedRef = useRef(false);
+  // 🔧 B2 FIX: Guard contra double-click no botão Pay (ref porque setState é async)
+  const paymentInProgressRef = useRef(false);
   // Track which orderNumber has been recorded in Firestore (prevents duplicate sale on retry)
   const recordedOrderRef = useRef<string | null>(null);
 
@@ -102,6 +124,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const [pointStatus, setPointStatus] = useState<'idle' | 'sending' | 'at_terminal' | 'card_processing' | 'processing' | 'error'>('idle');
   // Flag: cancel não é possível quando ordem está no terminal
   const [cancelBlocked, setCancelBlocked] = useState(false);
+
+  // 🔧 B1 FIX: Refs para pointStatus e cancelBlocked — evita stale closure no emergency setTimeout
+  const pointStatusRef = useRef(pointStatus);
+  const cancelBlockedRef = useRef(cancelBlocked);
+  useEffect(() => { pointStatusRef.current = pointStatus; }, [pointStatus]);
+  useEffect(() => { cancelBlockedRef.current = cancelBlocked; }, [cancelBlocked]);
 
   const { currentCurrency } = useSettings();
   const { toast } = useToast();
@@ -178,15 +206,40 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   const [cardExpMonth, setCardExpMonth] = useState('');
   const [cardExpYear, setCardExpYear] = useState('');
   const [cardCvv, setCardCvv] = useState('');
+
+  // 🔧 P1 FIX: Helper centralizado para limpar dados sensíveis de cartão (PCI-DSS)
+  const clearSensitiveCardData = useCallback(() => {
+    setCardNumber('');
+    setCardExpMonth('');
+    setCardExpYear('');
+    setCardCvv('');
+  }, []);
+
+  // 🔧 P4 FIX: Guard contra operações em componente desmontado
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    return () => { isMountedRef.current = false; };
+  }, []);
+
+  // 🔧 P5 FIX: Mutex para impedir pagamentos PlugPag concorrentes
+  const plugpagInFlightRef = useRef<string | null>(null);
   
   // Hook unificado para comunicação ESP32
   const { releaseDrink: esp32ReleaseDrink, status: esp32Status, selectedTapId } = useESP32();
+
+  // 🔧 B3 FIX: Ref para handleCancelPayment — permite uso seguro no onTimeout (definido antes do handler)
+  const handleCancelPaymentRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   const { state: flowState, actions: flowActions } = useCheckoutFlow({
     initialTimeoutSeconds: 60,
     paymentTimeoutSeconds: 120, // Sincronizado com MERCADO_PAGO_CONFIG.POINT_EXPIRATION_TIME (PT2M = 2min)
     warningThresholdSeconds: 10,
     onTimeout: () => {
+      // 🔧 B3 FIX: Se pagamento em andamento, não fechar modal diretamente — cancela via handleCancelPayment
+      if (processingStageRef.current !== 'idle') {
+        handleCancelPaymentRef.current();
+        return;
+      }
       toast({ title: t('checkout.sessionExpired'), description: t('checkout.checkoutCancelledInactivity'), variant: "destructive" });
       onCancel();
     },
@@ -219,6 +272,18 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       console.log('[DrinkMP] Pagamento aprovado via listener', { paymentId: payment.id, providerOrderId: payment.providerOrderId });
       systemLogService.info('payment', `Pagamento aprovado: ${payment.id}`, { paymentId: payment.id, orderNumber: orderNumberRef.current });
       
+      // 🔧 P4 FIX: Ignorar se componente desmontado
+      if (!isMountedRef.current) {
+        console.log('[DrinkMP] Payment arrived after unmount, ignoring');
+        return;
+      }
+
+      // 🔧 P2 FIX: Guard contra pagamento que chega após cancel (race com CF fallback)
+      if (processingStageRef.current === 'idle') {
+        console.log('[DrinkMP] Payment arrived after cancel (stage=idle), ignoring');
+        return;
+      }
+
       // Guard contra duplicação
       if (saleRecordedRef.current) {
         console.log('[DrinkMP] Já processado, ignorando duplicação');
@@ -244,7 +309,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           .then(async (customerData) => {
             if (customerData && orderNumber) {
               lastEnrichDataRef.current = customerData;
-              await salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId());
+              // 🔧 P7 FIX: Retry enrich para não perder dados de cliente
+              await enrichWithRetry(
+                () => salesService.enrichOrderWithCustomerData(orderNumber, customerData, getCurrentStoreId()),
+                2, 'DrinkMP-enrich'
+              );
               systemLogService.info('payment', `Dados do pagador gravados: ${orderNumber}`, {
                 hasName: !!customerData.customerName,
                 hasCpf: !!customerData.customerIdentification,
@@ -263,28 +332,31 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       await finishPaymentFlow(orderNumber);
     },
     onError: (errorMsg) => {
+      // 🔧 P4 FIX: Ignorar se componente desmontado
+      if (!isMountedRef.current) return;
+
       console.error('[DrinkMP] Erro no listener:', errorMsg);
       systemLogService.error('payment', `Pagamento falhou: ${errorMsg}`, { orderNumber: orderNumberRef.current });
       
-      // Mapear mensagens de erro para português amigável
+      // Mapear mensagens de erro para i18n
       const errorMessages: Record<string, { title: string; description: string }> = {
         'Pagamento recusado': {
-          title: 'Pagamento Recusado',
-          description: 'O pagamento foi recusado. Verifique o limite do cartão ou tente outro método de pagamento.'
+          title: t('checkout.paymentDeclinedTitle'),
+          description: t('checkout.paymentDeclinedDesc')
         },
         'Pagamento expirado': {
-          title: 'Tempo Expirado',
-          description: 'O tempo para pagamento expirou. Por favor, tente novamente.'
+          title: t('checkout.timeExpiredTitle'),
+          description: t('checkout.timeExpiredDesc')
         },
         'Pagamento cancelado': {
-          title: 'Pagamento Cancelado',
-          description: 'O pagamento foi cancelado.'
+          title: t('checkout.paymentCanceledTitle'),
+          description: t('checkout.paymentCanceledDesc')
         },
       };
       
       const errorInfo = errorMessages[errorMsg] || {
-        title: 'Erro no Pagamento',
-        description: errorMsg || 'Ocorreu um erro ao processar o pagamento. Tente novamente.'
+        title: t('checkout.paymentErrorTitle'),
+        description: errorMsg || t('checkout.paymentErrorDesc')
       };
       
       // Mostrar toast de erro com mensagem clara
@@ -296,6 +368,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       
       setMpError(errorInfo.description);
       setPointStatus('error');
+      paymentInProgressRef.current = false; // 🔧 FIX: Reabilitar botão Pagar após erro do listener MP
       setIsProcessing(false);
       updateProcessingStage("idle");
       moveToStep(2);
@@ -303,6 +376,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       playGuarded('payment_error', modalScopeId.current, 10_000);
     },
     onStatusChange: (status: GatewayPaymentStatus, payment) => {
+      // 🔧 P4 FIX: Ignorar se componente desmontado
+      if (!isMountedRef.current) return;
+
       console.log('[DrinkMP] Status changed:', { status, channel: payment.channel, providerStatus: (payment as any).providerStatus });
       const providerStatus = ((payment as any).providerStatus || '').toLowerCase();
 
@@ -320,18 +396,19 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // Terminal statuses: pagamento recusado/cancelado/expirado
       if (['canceled', 'expired', 'failed'].includes(status)) {
         const errorMessages: Record<string, string> = {
-          failed: 'Pagamento recusado',
-          expired: 'Pagamento expirado',
-          canceled: 'Pagamento cancelado',
+          failed: t('checkout.paymentDeclinedStatus'),
+          expired: t('checkout.paymentExpiredStatus'),
+          canceled: t('checkout.paymentCanceledStatus'),
         };
-        const errorMsg = errorMessages[status] || 'Pagamento não aprovado';
+        const errorMsg = errorMessages[status] || t('checkout.paymentNotApprovedStatus');
         setMpError(errorMsg);
         setPointStatus('error');
         setCancelBlocked(false);
+        paymentInProgressRef.current = false; // 🔧 FIX: Reabilitar botão Pagar após cancel/expired/failed via listener MP
         setIsProcessing(false);
         updateProcessingStage('idle');
         moveToStep(2);
-        toast({ title: 'Erro no Pagamento', description: errorMsg, variant: 'destructive' });
+        toast({ title: t('checkout.paymentErrorTitle'), description: errorMsg, variant: 'destructive' });
         playGuarded('payment_error', modalScopeId.current, 10_000);
       }
     },
@@ -365,6 +442,17 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   useEffect(() => {
     processingStageRef.current = flowState.processingStage;
   }, [flowState.processingStage]);
+
+  // Garante que o timer de pagamento siga correndo no step 3 (evita ficar travado em 130s)
+  useEffect(() => {
+    if (
+      flowState.currentStep === 3 &&
+      flowState.processingStage === 'awaiting_payment' &&
+      !flowState.isTimerActive
+    ) {
+      setTimerActive(true);
+    }
+  }, [flowState.currentStep, flowState.processingStage, flowState.isTimerActive, setTimerActive]);
 
   useEffect(() => {
     return () => {
@@ -631,10 +719,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setPayerName('');
       setPayerTaxId('');
       setPayerEmail('');
-      setCardNumber('');
-      setCardExpMonth('');
-      setCardExpYear('');
-      setCardCvv('');
+      clearSensitiveCardData();
+      // 🔧 B4 FIX: Capturar flag ANTES de resetar — para decidir se precisa cancelar
+      const wasSaleRecorded = saleRecordedRef.current;
       // Reset sale guard
       saleRecordedRef.current = false;
       recordedOrderRef.current = null;
@@ -646,11 +733,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       plugpagRetryCountRef.current = 0;
       plugpagLastOrderRef.current = null;
       plugpagLastAmountRef.current = 0;
+      // 🔧 P5 FIX: Reset mutex
+      plugpagInFlightRef.current = null;
       orderNumberRef.current = '';
+      // 🔧 B2 FIX: Reset double-click guard
+      paymentInProgressRef.current = false;
       // Reset verificação de idade
       setAgeVerified(false);
       // Cleanup: cancelar pagamentos pendentes via CF
-      if (currentTransactionId && !isPagBank) {
+      // 🔧 B4 FIX: Não cancelar se o pagamento já foi completado com sucesso
+      if (currentTransactionId && !isPagBank && !wasSaleRecorded) {
         paymentService.cancelMercadoPagoPaymentCF(currentTransactionId).catch(console.error);
       }
     }
@@ -685,6 +777,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
   // Iniciar pagamento diretamente do Step 2
   const handleStartPayment = async () => {
+    // 🔧 B2 FIX: Guard contra double-click (ref previne race condition entre React batching)
+    if (paymentInProgressRef.current) return;
     resetInactivityTimer();
     if (!selectedPayment) {
       toast({ title: t('common.error'), description: t('checkout.selectPaymentMethodError'), variant: "destructive" });
@@ -710,6 +804,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   };
 
   const handleCancelPayment = async () => {
+    // 🔧 B2 FIX: Reset double-click guard ao cancelar
+    paymentInProgressRef.current = false;
     if (emergencyTimeoutRef.current) {
       clearTimeout(emergencyTimeoutRef.current);
       emergencyTimeoutRef.current = null;
@@ -728,6 +824,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       plugpagRetryCountRef.current = 0;
       plugpagLastOrderRef.current = null;
       plugpagLastAmountRef.current = 0;
+      // 🔧 B5 FIX: Limpar refs de venda no cancel
+      saleRecordedRef.current = false;
+      recordedOrderRef.current = null;
+      orderNumberRef.current = '';
+      plugpagInFlightRef.current = null;
       setPagbankError(null);
       setIsProcessing(false);
       updateProcessingStage("idle");
@@ -735,10 +836,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       resetInactivityTimer();
       moveToStep(2);
       toast({
-        title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
+        title: t('checkout.paymentCanceled'),
         description: aborted
-          ? 'Pagamento cancelado no terminal.'
-          : 'Cancelamento enviado — aguarde o terminal.',
+          ? t('checkout.canceledOnTerminal')
+          : t('checkout.cancelSentAwaitTerminal'),
       });
       return;
     }
@@ -771,8 +872,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       }
 
       toast({
-        title: t('checkout.paymentCanceled') || 'Pagamento cancelado',
-        description: 'Cancelamento solicitado ao gateway.',
+        title: t('checkout.paymentCanceled'),
+        description: t('checkout.cancelRequestedToGateway'),
         variant: 'default',
       });
       return;
@@ -799,6 +900,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           setPointStatus('idle');
           setCancelBlocked(false);
           saleRecordedRef.current = false;
+          // 🔧 B5 FIX: Limpar refs de venda no cancel success
+          recordedOrderRef.current = null;
+          orderNumberRef.current = '';
           setIsProcessing(false);
           updateProcessingStage("idle");
           setCurrentTransactionId(null);
@@ -812,22 +916,22 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           // Manter no Step 3 monitorando. O cliente deve completar ou aguardar expiração.
           setCancelBlocked(true);
           toast({ 
-            title: 'Cancelamento não disponível', 
-            description: 'Complete o pagamento na maquininha ou aguarde a expiração automática.',
+            title: t('checkout.cancelNotAvailable'), 
+            description: t('checkout.cancelNotAvailableDesc'),
             variant: 'default'
           });
         } else if (result.reason === 'already_processed') {
           toast({ 
-            title: 'Pagamento já processado', 
-            description: 'Este pagamento já foi concluído.',
+            title: t('checkout.paymentAlreadyProcessed'), 
+            description: t('checkout.paymentAlreadyProcessedDesc'),
             variant: 'default'
           });
         } else {
           // cancel_requested — manter listener para capturar resultado final
           setCancelBlocked(true);
           toast({
-            title: t('checkout.paymentCanceled'),
-            description: 'Cancelamento solicitado. Aguardando confirmação...',
+            title: t('checkout.cancelSentTitle'),
+            description: t('checkout.cancelRequestedAwaiting'),
             variant: 'default'
           });
         }
@@ -843,6 +947,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         setPointStatus('idle');
         setCancelBlocked(false);
         saleRecordedRef.current = false;
+        // 🔧 B5 FIX: Limpar refs de venda no cancel error path
+        recordedOrderRef.current = null;
+        orderNumberRef.current = '';
         setIsProcessing(false);
         updateProcessingStage("idle");
         setCurrentTransactionId(null);
@@ -862,6 +969,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       setPointStatus('idle');
       setCancelBlocked(false);
       saleRecordedRef.current = false;
+      // 🔧 B5 FIX: Limpar refs de venda no cancel no-IDs path
+      recordedOrderRef.current = null;
+      orderNumberRef.current = '';
       setIsProcessing(false);
       updateProcessingStage("idle");
       setCurrentTransactionId(null);
@@ -872,6 +982,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     }
   };
 
+  // 🔧 B3 FIX: Manter ref sincronizada com handleCancelPayment
+  handleCancelPaymentRef.current = handleCancelPayment;
+
   // KIO-02: Retry dispense para pedidos já pagos com dispense falhado
   const dispenseRetryCountRef = useRef(0);
   const MAX_DISPENSE_RETRIES = 2;
@@ -881,7 +994,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     if (dispenseRetryCountRef.current >= MAX_DISPENSE_RETRIES) {
       toast({
         title: t('checkout.dispenserWarning'),
-        description: 'Número máximo de tentativas atingido. Procure um atendente.',
+        description: t('checkout.maxRetriesReached'),
         variant: 'destructive',
       });
       return;
@@ -902,7 +1015,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       if (failedEntry?.flowStarted === true && (!failedEntry.mlDispensed || failedEntry.mlDispensed === 0)) {
         toast({
           title: t('checkout.dispenserWarning'),
-          description: 'Não foi possível confirmar o volume dispensado. Procure um atendente para verificar.',
+          description: t('checkout.ambiguousDispense'),
           variant: 'destructive',
         });
         updateProcessingStage("dispense_failed");
@@ -983,7 +1096,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         updateProcessingStage("dispense_failed");
         toast({
           title: t('checkout.dispenserWarning'),
-          description: `Tentativa ${dispenseRetryCountRef.current}/${MAX_DISPENSE_RETRIES} falhou.`,
+          description: t('checkout.retryFailed', { current: dispenseRetryCountRef.current, max: MAX_DISPENSE_RETRIES }),
           variant: 'destructive',
         });
       }
@@ -1080,6 +1193,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             totalCups: quantity,
             tapId: selectedTapId,
             sizeLabel: selectedSize.label,
+            flowStarted: false, // 🔧 P6 FIX: default false — assume no flow until ESP32 confirms
           });
           // v4.1.5: Falha persistida no IndexedDB — remover checkpoint localStorage
           localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
@@ -1111,6 +1225,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           totalCups: quantity,
           tapId: selectedTapId,
           sizeLabel: selectedSize.label,
+          flowStarted: false, // 🔧 P6 FIX: default false — assume no flow until ESP32 confirms
         });
         // v4.1.5: Falha persistida no IndexedDB — remover checkpoint localStorage
         localStorage.removeItem(CHECKOUT_PROGRESS_KEY);
@@ -1203,11 +1318,20 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       resetInactivityTimer();
       moveToStep(2);
       setIsProcessing(false);
+      // 🔧 B2 FIX: Reset double-click guard no error path
+      paymentInProgressRef.current = false;
     }
   };
 
   // ── PlugPag: Pagamento card-present via terminal Bluetooth ────────────
   const handleStartPlugPagPayment = async (orderNumber: string, totalAmount: number) => {
+    // 🔧 P5 FIX: Mutex — impedir pagamento concorrente para ordem diferente
+    if (plugpagInFlightRef.current !== null && plugpagInFlightRef.current !== orderNumber) {
+      console.warn(`[DrinkPlugPag] Order ${plugpagInFlightRef.current} still in flight, aborting before starting ${orderNumber}`);
+      await plugpagPaymentService.abortPayment().catch(() => {});
+    }
+    plugpagInFlightRef.current = orderNumber;
+
     orderNumberRef.current = orderNumber;
     // Salvar referência para retry (o pedido já foi criado — não precisa recriar)
     plugpagLastOrderRef.current = orderNumber;
@@ -1242,12 +1366,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
         const storeId = getCurrentStoreId();
         if (storeId) {
-          salesService.enrichOrderWithCustomerData(orderNumber, plugpagEnrichData, storeId)
-            .catch(e => console.warn('[DrinkPlugPag] Enrich failed (non-blocking):', e));
+          // 🔧 P7 FIX: Retry enrich
+          enrichWithRetry(
+            () => salesService.enrichOrderWithCustomerData(orderNumber, plugpagEnrichData, storeId),
+            2, 'DrinkPlugPag-enrich'
+          );
         }
 
         toast({
-          title: t('checkout.paymentApprovedToast') || 'Pagamento aprovado!',
+          title: t('checkout.paymentApprovedToast'),
           description: `${response.result.cardBrand || ''} ****${response.result.cardLast4 || ''}`,
         });
 
@@ -1265,7 +1392,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         }
       } else {
         // Pagamento negado ou erro
-        const errorMsg = response.error || 'Pagamento não aprovado no terminal';
+        const errorMsg = response.error || t('checkout.notApprovedOnTerminal');
         const errorCode = (response as any).errorCode;
 
         // AUTH_REQUIRED: não contar como retry — precisa autenticação PagBank
@@ -1275,6 +1402,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           systemLogService.warn('payment', `PlugPag AUTH_REQUIRED: ${errorMsg}`, { orderNumber });
           setPagbankError(errorMsg);
           setIsProcessing(false);
+          paymentInProgressRef.current = false;
           return;
         }
 
@@ -1287,49 +1415,55 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         systemLogService.warn('payment', `PlugPag negado: ${errorMsg}${retryInfo}`, { orderNumber, retry: plugpagRetryCountRef.current });
         setPagbankError(errorMsg);
         setIsProcessing(false);
-        updateProcessingStage("idle");
+        paymentInProgressRef.current = false;
 
         // Se esgotou retries, voltar ao step 2 (forçar recomeço)
         if (plugpagRetryCountRef.current >= MAX_PLUGPAG_RETRIES) {
           plugpagRetryCountRef.current = 0;
+          updateProcessingStage("idle");
           toast({
-            title: 'Pagamento falhou',
-            description: `${MAX_PLUGPAG_RETRIES} tentativas esgotadas. Selecione o método de pagamento novamente.`,
+            title: t('checkout.paymentFailedTitle'),
+            description: t('checkout.retriesExhausted', { count: MAX_PLUGPAG_RETRIES }),
             variant: 'destructive',
           });
           moveToStep(2);
         } else {
+          // Manter processingStage="awaiting_payment" para UI de erro com retry/cancel ficar visível
           toast({
-            title: 'Pagamento não aprovado',
+            title: t('checkout.paymentNotApprovedTitle'),
             description: errorMsg,
             variant: 'destructive',
           });
-          // Ficar no step 3 — UI mostra erro com botão "Tentar Novamente"
         }
       }
     } catch (error: any) {
       console.error('[DrinkPlugPag] Erro no pagamento:', error);
       plugpagRetryCountRef.current += 1;
       systemLogService.error('payment', `PlugPag erro: ${error?.message}`, { orderNumber, retry: plugpagRetryCountRef.current });
-      setPagbankError(error?.message || 'Erro no terminal');
+      setPagbankError(error?.message || t('checkout.terminalErrorFallback'));
       setIsProcessing(false);
-      updateProcessingStage("idle");
+      paymentInProgressRef.current = false;
 
       if (plugpagRetryCountRef.current >= MAX_PLUGPAG_RETRIES) {
         plugpagRetryCountRef.current = 0;
+        updateProcessingStage("idle");
         toast({
-          title: t('checkout.paymentError') || 'Erro no Pagamento',
-          description: `${MAX_PLUGPAG_RETRIES} tentativas esgotadas.`,
+          title: t('checkout.paymentFailedTitle'),
+          description: t('checkout.retriesExhausted', { count: MAX_PLUGPAG_RETRIES }),
           variant: 'destructive',
         });
         moveToStep(2);
       } else {
+        // Manter processingStage="awaiting_payment" para UI de erro com retry/cancel ficar visível
         toast({
-          title: t('checkout.paymentError') || 'Erro no Pagamento',
-          description: error?.message || 'Erro ao processar no terminal',
+          title: t('checkout.paymentErrorTitle'),
+          description: error?.message || t('checkout.terminalProcessError'),
           variant: 'destructive',
         });
       }
+    } finally {
+      // 🔧 P5 FIX: Liberar mutex ao finalizar (sucesso ou erro)
+      plugpagInFlightRef.current = null;
     }
   };
 
@@ -1338,14 +1472,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const result = await plugpagPaymentService.authenticateInteractive();
     if (!result.success) {
       toast({
-        title: 'Autenticação PagBank não concluída',
-        description: result.error || 'Não foi possível autenticar a conta PagBank.',
+        title: t('checkout.plugpagAuthFailed'),
+        description: result.error || t('checkout.plugpagAuthFailedDesc'),
         variant: 'destructive',
       });
       return;
     }
 
-    toast({ title: 'PagBank autenticado!', description: 'Pronto para processar pagamentos.' });
+    toast({ title: t('checkout.plugpagAuthenticated'), description: t('checkout.readyToProcess') });
 
     // Se há um pagamento pendente, retomar automaticamente
     const orderNumber = plugpagLastOrderRef.current;
@@ -1362,8 +1496,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const code = plugpagConfig?.activationCode;
     if (!code) {
       toast({
-        title: 'Código não configurado',
-        description: 'Configure o código de ativação no painel admin.',
+        title: t('checkout.activationCodeMissing'),
+        description: t('checkout.activationCodeMissingDesc'),
         variant: 'destructive',
       });
       return;
@@ -1373,14 +1507,14 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const result = await plugpagPaymentService.forceActivate(code);
     if (!result.success) {
       toast({
-        title: 'Ativação falhou',
-        description: result.error || 'Não foi possível ativar com o código fornecido.',
+        title: t('checkout.activationFailed'),
+        description: result.error || t('checkout.activationFailedDesc'),
         variant: 'destructive',
       });
       return;
     }
 
-    toast({ title: 'Terminal ativado!', description: 'Pronto para processar pagamentos.' });
+    toast({ title: t('checkout.terminalActivated'), description: t('checkout.readyToProcess') });
 
     const orderNumber = plugpagLastOrderRef.current;
     const totalAmount = plugpagLastAmountRef.current;
@@ -1417,11 +1551,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
     if (!storeId || !franchiseId) {
       toast({
-        title: t('checkout.paymentError') || 'Erro no Pagamento',
-        description: 'storeId/franchiseId ausente para criar pagamento.',
+        title: t('checkout.paymentErrorTitle'),
+        description: t('checkout.missingStoreId'),
         variant: 'destructive',
       });
       setIsProcessing(false);
+      paymentInProgressRef.current = false;
       updateProcessingStage("idle");
       moveToStep(2);
       return;
@@ -1436,11 +1571,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
     if (!isPixPayment && (!customerName || !customerTaxId)) {
       toast({
-        title: 'Dados obrigatórios',
-        description: 'Informe nome e CPF/CNPJ do pagador.',
+        title: t('checkout.payerDataRequired'),
+        description: t('checkout.payerDataRequiredDesc'),
         variant: 'destructive',
       });
       setIsProcessing(false);
+      paymentInProgressRef.current = false;
       updateProcessingStage("idle");
       moveToStep(2);
       return;
@@ -1466,11 +1602,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
       if (!cleanCardNumber || !cleanExpMonth || !cleanExpYear || !cleanCvv) {
         toast({
-          title: 'Dados do cartão',
-          description: 'Preencha número, validade e CVV.',
+          title: t('checkout.cardDataTitle'),
+          description: t('checkout.cardDataIncomplete'),
           variant: 'destructive',
         });
         setIsProcessing(false);
+        paymentInProgressRef.current = false;
         updateProcessingStage("idle");
         moveToStep(2);
         return;
@@ -1480,11 +1617,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       const pagbankPublicKey = gatewayConfig?.providers?.pagbank?.publicKey;
       if (!pagbankPublicKey) {
         toast({
-          title: 'Configuração ausente',
-          description: 'PagBank publicKey não configurada. Contate o administrador.',
+          title: t('checkout.configMissing'),
+          description: t('checkout.configMissingDesc'),
           variant: 'destructive',
         });
         setIsProcessing(false);
+        paymentInProgressRef.current = false;
         updateProcessingStage("idle");
         moveToStep(2);
         return;
@@ -1506,11 +1644,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
         };
       } catch (encErr) {
         toast({
-          title: 'Erro de criptografia',
-          description: encErr instanceof Error ? encErr.message : 'Falha ao criptografar dados do cartão.',
+          title: t('checkout.encryptionError'),
+          description: encErr instanceof Error ? encErr.message : t('checkout.encryptionErrorDesc'),
           variant: 'destructive',
         });
+        clearSensitiveCardData(); // 🔧 P1 FIX: Limpar dados sensíveis no erro
         setIsProcessing(false);
+        paymentInProgressRef.current = false;
         updateProcessingStage("idle");
         moveToStep(2);
         return;
@@ -1558,7 +1698,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           cardLastDigits: response.cardLast4 || undefined,
         };
         lastEnrichDataRef.current = pagbankEnrichData;
-        salesService.enrichOrderWithCustomerData(orderNumber, pagbankEnrichData, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
+        // 🔧 P7 FIX: Retry enrich
+        enrichWithRetry(
+          () => salesService.enrichOrderWithCustomerData(orderNumber, pagbankEnrichData, storeId),
+          2, 'DrinkPagBank-enrich'
+        );
         try {
           await finishPaymentFlow(orderNumber);
         } catch (error) {
@@ -1578,6 +1722,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       pagbankUnsubscribeRef.current = paymentService.watchPaymentStatus(
         response.paymentId,
         async (payment: PaymentRecord) => {
+          // 🔧 P4 FIX: Ignorar se componente desmontado
+          if (!isMountedRef.current) return;
+
           setPagbankStatus(payment.status);
           if (payment.pix?.qrCodeText) {
             setPagbankQrCodeText(payment.pix.qrCodeText);
@@ -1588,6 +1735,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           }
 
           if (payment.status === 'paid') {
+            // 🔧 P2 FIX: Guard contra pagamento que chega após cancel
+            if (processingStageRef.current === 'idle') {
+              console.log('[DrinkPagBank] Payment arrived after cancel (stage=idle), ignoring');
+              return;
+            }
+
             // Guard contra duplicação (idêntico ao MP)
             if (saleRecordedRef.current) {
               console.log('[DrinkPagBank] Já processado, ignorando duplicação');
@@ -1599,8 +1752,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             if ((payment as any).cancelRequested) {
               console.warn('[DrinkPagBank] Payment arrived after cancel_requested — blocking delivery. Needs refund.');
               toast({
-                title: 'Pagamento após cancelamento',
-                description: 'O pagamento foi recebido após o cancelamento. Um estorno será processado.',
+                title: t('checkout.paymentAfterCancel'),
+                description: t('checkout.paymentAfterCancelDesc'),
                 variant: 'destructive',
               });
               cleanupPagBankListener();
@@ -1626,7 +1779,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               cardLastDigits: payment.cardLast4 || undefined,
             };
             lastEnrichDataRef.current = pagbankListenerEnrichData;
-            salesService.enrichOrderWithCustomerData(orderNumberRef.current, pagbankListenerEnrichData, storeId).catch(e => console.warn('[DrinkPagBank] Enrich failed (non-blocking):', e));
+            // 🔧 P7 FIX: Retry enrich
+            const enrichOrderNum = orderNumberRef.current;
+            enrichWithRetry(
+              () => salesService.enrichOrderWithCustomerData(enrichOrderNum, pagbankListenerEnrichData, storeId),
+              2, 'DrinkPagBank-listener-enrich'
+            );
             try {
               // Guard: se modal foi desmontado e dados limpos, persistir para reconciliação
               if (!product || !selectedSizeKey) {
@@ -1645,13 +1803,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
           if (payment.status === 'failed' || payment.status === 'canceled' || payment.status === 'expired') {
             const statusMessage = payment.status === 'failed'
-              ? 'Pagamento recusado'
+              ? t('checkout.paymentDeclinedStatus')
               : payment.status === 'canceled'
-                ? 'Pagamento cancelado'
-                : 'Pagamento expirado';
+                ? t('checkout.paymentCanceledStatus')
+                : t('checkout.paymentExpiredStatus');
 
+            clearSensitiveCardData(); // 🔧 P1 FIX: Limpar dados sensíveis
             setPagbankError(statusMessage);
             setIsProcessing(false);
+            paymentInProgressRef.current = false;
             updateProcessingStage("idle");
             moveToStep(2);
             cleanupPagBankListener();
@@ -1663,8 +1823,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           onError: (error) => {
             console.error('[DrinkPagBank] Erro ao escutar PagBank:', error);
             systemLogService.error('payment', `Erro listener PagBank: ${error?.message}`);
-            setPagbankError('Erro ao acompanhar pagamento.');
+            setPagbankError(t('checkout.paymentTrackingError'));
             setIsProcessing(false);
+            paymentInProgressRef.current = false;
             updateProcessingStage("idle");
             moveToStep(2);
             // Áudio: erro de pagamento com cooldown 10s
@@ -1674,10 +1835,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       );
     } catch (error: unknown) {
       console.error('[DrinkPagBank] Erro ao criar pagamento PagBank:', error);
-      const errorMsg = error instanceof Error ? error.message : 'Erro ao criar pagamento.';
+      const errorMsg = error instanceof Error ? error.message : t('checkout.paymentCreationError');
       systemLogService.error('payment', `Erro ao criar pagamento PagBank: ${errorMsg}`);
+      clearSensitiveCardData(); // 🔧 P1 FIX: Limpar dados sensíveis no erro
       setPagbankError(errorMsg);
       setIsProcessing(false);
+      paymentInProgressRef.current = false;
       updateProcessingStage("idle");
       moveToStep(2);
       toast({
@@ -1691,8 +1854,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   };
 
   const handlePaymentComplete = async () => {
+    // 🔧 B2 FIX: Setar flag antes de qualquer async — previne segunda chamada
+    if (paymentInProgressRef.current) return;
+    paymentInProgressRef.current = true;
     setIsProcessing(true);
-    setMaxInactivityTime(300);
+    setMaxInactivityTime(130); // 120s (payment timeout PT2M) + 10s buffer segurança
     resetInactivityTimer();
     moveToStep(3);
     updateProcessingStage("awaiting_payment");
@@ -1718,15 +1884,16 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     const timeoutMs = (flowState.paymentTimeoutSeconds ?? 130) * 1000;
     emergencyTimeoutRef.current = setTimeout(() => {
       if (processingStageRef.current === "awaiting_payment") {
-        const isAtTerminal = pointStatus === 'at_terminal' || pointStatus === 'card_processing' || cancelBlocked;
-        systemLogService.warn('payment', `Emergency timeout: ${isAtTerminal ? 'at_terminal - aguardando expiração' : 'cancelando'}`, { orderNumber: orderNumberRef.current, pointStatus });
+        // 🔧 B1 FIX: Usar refs em vez de state para evitar stale closure
+        const isAtTerminal = pointStatusRef.current === 'at_terminal' || pointStatusRef.current === 'card_processing' || cancelBlockedRef.current;
+        systemLogService.warn('payment', `Emergency timeout: ${isAtTerminal ? 'at_terminal - aguardando expiração' : 'cancelando'}`, { orderNumber: orderNumberRef.current, pointStatus: pointStatusRef.current });
         
         if (isAtTerminal) {
           // Não tentar cancelar — terminal vai expirar sozinho (PT2M)
           // Mostrar aviso mas manter listener ativo
           toast({
-            title: 'Tempo quase esgotado',
-            description: 'Finalize o pagamento na maquininha ou aguarde expiração automática.',
+            title: t('checkout.almostTimeout'),
+            description: t('checkout.almostTimeoutDesc'),
             variant: "destructive",
           });
         } else {
@@ -1819,6 +1986,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           systemLogService.error('payment', `Erro ao criar QR Code: ${errorMsg}`, { orderNumber: orderNumberRef.current, amount: totalAmount });
           setMpError(errorMsg);
           setIsProcessing(false);
+          paymentInProgressRef.current = false;
           updateProcessingStage("idle");
           moveToStep(2);
           toast({
@@ -1878,6 +2046,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           setMpError(errorMsg);
           setPointStatus('error');
           setIsProcessing(false);
+          paymentInProgressRef.current = false;
           updateProcessingStage("idle");
           moveToStep(2);
           toast({
@@ -1904,6 +2073,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       resetInactivityTimer();
       moveToStep(2);
       setIsProcessing(false);
+      paymentInProgressRef.current = false;
     }
   };
 
@@ -1979,11 +2149,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open && flowState.currentStep < 2) onCancel(); }}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open && flowState.currentStep < 3) onCancel(); if (!open && flowState.currentStep >= 3) toast({ title: t('checkout.cannotCloseDuringPayment'), description: t('checkout.cannotCloseDuringPaymentDesc'), variant: 'default' }); }}>
       <DialogContent
         className="w-[95vw] sm:max-w-md md:max-w-lg max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden p-4 sm:p-6"
-        onInteractOutside={(e) => { if (flowState.currentStep >= 2) e.preventDefault(); }}
-        onEscapeKeyDown={(e) => { if (flowState.currentStep >= 2) e.preventDefault(); }}
+        onInteractOutside={(e) => { if (flowState.currentStep >= 3) e.preventDefault(); }}
+        onEscapeKeyDown={(e) => { if (flowState.currentStep >= 3) e.preventDefault(); }}
       >
         <DialogHeader>
           <DialogTitle>
@@ -2177,7 +2347,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 {!enabledMethods.pix && !enabledMethods.credit && !enabledMethods.debit && (
                   <Alert variant="destructive" className="mb-2">
                     <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Pagamentos Indisponíveis</AlertTitle>
+                    <AlertTitle>{t('checkout.paymentsUnavailable')}</AlertTitle>
                     <AlertDescription>
                       {t('admin.noPaymentMethodsEnabled')}
                     </AlertDescription>
@@ -2256,9 +2426,9 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                 <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                   <Smartphone className="h-8 w-8 text-blue-600 flex-shrink-0" />
                   <div>
-                    <p className="font-medium text-blue-900">Pagamento na maquininha</p>
+                    <p className="font-medium text-blue-900">{t('checkout.terminalPaymentHint')}</p>
                     <p className="text-sm text-blue-700">
-                      Insira ou aproxime o cartão no terminal ao clicar em pagar.
+                      {t('checkout.terminalInsertCardHint')}
                     </p>
                   </div>
                 </div>
@@ -2267,26 +2437,26 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
               {isPagBank && !usePlugPagForCard && selectedPayment !== 'pix_qr' && (
                 <Card className="border border-gray-200">
                   <div className="p-4 space-y-4">
-                    <h3 className="font-medium">Dados do pagador</h3>
+                    <h3 className="font-medium">{t('checkout.payerDataLabel')}</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
-                        <Label>Nome</Label>
+                        <Label>{t('checkout.nameLabel')}</Label>
                         <Input
                           value={payerName}
                           onChange={(e) => setPayerName(e.target.value)}
-                          placeholder="Nome completo"
+                          placeholder={t('checkout.fullNamePlaceholder')}
                         />
                       </div>
                       <div>
-                        <Label>CPF/CNPJ</Label>
+                        <Label>{t('checkout.cpfCnpjLabel')}</Label>
                         <Input
                           value={payerTaxId}
                           onChange={(e) => setPayerTaxId(e.target.value)}
-                          placeholder="Somente números"
+                          placeholder={t('checkout.numbersOnlyPlaceholder')}
                         />
                       </div>
                       <div className="md:col-span-2">
-                        <Label>Email (opcional)</Label>
+                        <Label>{t('checkout.emailOptionalLabel')}</Label>
                         <Input
                           type="email"
                           value={payerEmail}
@@ -2298,10 +2468,10 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
 
                     <>
                         <Separator />
-                        <h3 className="font-medium">Dados do cartão</h3>
+                        <h3 className="font-medium">{t('checkout.cardDataLabel')}</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="md:col-span-2">
-                            <Label>Número do cartão</Label>
+                            <Label>{t('checkout.cardNumberLabel')}</Label>
                             <Input
                               value={cardNumber}
                               onChange={(e) => setCardNumber(e.target.value)}
@@ -2309,7 +2479,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             />
                           </div>
                           <div>
-                            <Label>Mês</Label>
+                            <Label>{t('checkout.monthLabel')}</Label>
                             <Input
                               value={cardExpMonth}
                               onChange={(e) => setCardExpMonth(e.target.value)}
@@ -2317,7 +2487,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             />
                           </div>
                           <div>
-                            <Label>Ano</Label>
+                            <Label>{t('checkout.yearLabel')}</Label>
                             <Input
                               value={cardExpYear}
                               onChange={(e) => setCardExpYear(e.target.value)}
@@ -2480,7 +2650,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                         {pagbankError && (
                           <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
                             <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-                            <p className="text-red-700 font-medium">Erro no terminal</p>
+                            <p className="text-red-700 font-medium">{t('checkout.terminalErrorLabel')}</p>
                             <p className="text-red-600 text-sm mt-1">{pagbankError}</p>
                             <div className="flex gap-2 justify-center mt-4">
                               {pagbankError.includes('Autenticação PagBank') ? (
@@ -2488,7 +2658,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                                   variant="default"
                                   onClick={handleAuthenticatePlugPag}
                                 >
-                                  Autenticar PagBank
+                                  {t('checkout.authenticatePagBank')}
                                 </Button>
                               ) : (
                                 plugpagRetryCountRef.current < MAX_PLUGPAG_RETRIES && (
@@ -2496,7 +2666,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                                     variant="default"
                                     onClick={handleRetryPlugPagPayment}
                                   >
-                                    Tentar novamente ({MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current} restante{MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current !== 1 ? 's' : ''})
+                                    {t('checkout.retryRemaining', { remaining: MAX_PLUGPAG_RETRIES - plugpagRetryCountRef.current })}
                                   </Button>
                                 )
                               )}
@@ -2504,7 +2674,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                                 variant="outline"
                                 onClick={handleCancelPayment}
                               >
-                                Cancelar
+                                {t('checkout.cancel')}
                               </Button>
                             </div>
                           </div>
@@ -2519,7 +2689,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                                 variant="outline"
                                 onClick={handleCancelPayment}
                               >
-                                Cancelar
+                                {t('checkout.cancel')}
                               </Button>
                             )}
                           </>
@@ -2547,7 +2717,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                             <CreditCard className={`w-20 h-20 mx-auto animate-pulse ${
                               selectedPayment === "credit_card" ? "text-blue-500" : "text-orange-500"
                             }`} />
-                            <p className="font-medium text-gray-700">Processando pagamento no PagBank...</p>
+                            <p className="font-medium text-gray-700">{t('checkout.processingPagBank')}</p>
                             {pagbankStatus && (
                               <p className="text-sm text-gray-500">Status: {pagbankStatus}</p>
                             )}
@@ -2602,7 +2772,6 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                                 : t('checkout.insertDebitCard')
                               }
                             </p>
-                            <p className="text-sm text-gray-500">{t('checkout.awaitingTerminal')}</p>
                             
                             {isPolling && (
                               <div className={`flex items-center justify-center gap-2 ${
@@ -2619,10 +2788,18 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                               selectedPayment === "credit_card" ? "border-blue-600" : "border-orange-600"
                             }`}></div>
 
-                            {/* Cancelamento bloqueado quando no terminal */}
+                            {/* 🔧 UX2+UX3 FIX: Mensagem mais clara e botão de cancelar */}
                             <p className="text-xs text-gray-400 mt-2">
-                              Complete o pagamento na maquininha ou aguarde expiração automática.
+                              {t('checkout.insertCardTerminalCancel')}
                             </p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleCancelPayment}
+                              className="mt-2 text-xs text-gray-500"
+                            >
+                              {t('checkout.cancelPaymentAction')}
+                            </Button>
                           </>
                         )}
 
@@ -2631,8 +2808,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                           <>
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600 mx-auto"></div>
                             <CreditCard className="w-12 h-12 mx-auto text-green-600 mt-2" />
-                            <p className="text-gray-700 font-medium">Processando pagamento...</p>
-                            <p className="text-sm text-green-600 font-medium">Não remova o cartão</p>
+                            <p className="text-gray-700 font-medium">{t('checkout.processingPayment')}</p>
+                            <p className="text-sm text-green-600 font-medium">{t('checkout.doNotRemoveCard')}</p>
                           </>
                         )}
 
@@ -2699,13 +2876,13 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                     <AlertTriangle className="w-8 h-8 text-red-600" />
                   </div>
                   <p className="text-red-700 font-semibold text-lg text-center">
-                    {t('checkout.dispenserWarning') || 'Falha na entrega'}
+                    {t('checkout.dispenserWarning')}
                   </p>
                   <p className="text-sm text-gray-600 text-center">
-                    Seu pagamento foi confirmado. A bebida não foi liberada.
+                    {t('checkout.dispenseFailed')}
                     {orderNumberRef.current && (
                       <span className="block mt-1 font-mono text-xs text-gray-400">
-                        Pedido: {orderNumberRef.current}
+                        {t('checkout.orderLabel')} {orderNumberRef.current}
                       </span>
                     )}
                   </p>
@@ -2716,15 +2893,15 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                         className="w-full h-14 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-base touch-manipulation"
                       >
                         <RefreshCw className="w-5 h-5 mr-2" />
-                        Tentar novamente ({MAX_DISPENSE_RETRIES - dispenseRetryCountRef.current} restante{MAX_DISPENSE_RETRIES - dispenseRetryCountRef.current !== 1 ? 's' : ''})
+                        {t('checkout.retryRemaining', { remaining: MAX_DISPENSE_RETRIES - dispenseRetryCountRef.current })}
                       </Button>
                     )}
                     <Button
                       variant="outline"
                       onClick={() => {
                         toast({
-                          title: 'Suporte notificado',
-                          description: `Pedido ${orderNumberRef.current || ''} registrado para atendimento.`,
+                          title: t('checkout.supportNotified'),
+                          description: t('checkout.supportNotifiedDesc', { orderNumber: orderNumberRef.current || '' }),
                           variant: 'default',
                         });
                         // Fechar modal — pedido fica como failed_dispense no Firestore para reconciliação admin
@@ -2734,7 +2911,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
                       className="w-full h-14 text-base touch-manipulation"
                     >
                       <PhoneCall className="w-5 h-5 mr-2" />
-                      Chamar suporte
+                      {t('checkout.callSupport')}
                     </Button>
                   </div>
                 </div>
