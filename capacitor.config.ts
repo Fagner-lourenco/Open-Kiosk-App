@@ -40,7 +40,8 @@ const config: CapacitorConfig = {
     captureInput: true,
     // 🔒 FIX BUG-NEW-8: Hardcode false for production builds.
     // process.env.NODE_ENV is unreliable during `cap sync`.
-    webContentsDebuggingEnabled: false,
+    // TEMP: true for PlugPag debugging — revert to false after
+    webContentsDebuggingEnabled: true,
   },
   
   // Servidor (para hot reload em desenvolvimento)

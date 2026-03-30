@@ -16,7 +16,6 @@ import {
   ESP32_WIFI_SSID, 
   ESP32_WIFI_PASSWORD,
   getESP32WiFiIP,
-  ESP32_BLE_PIN,
 } from '@/services/esp32CommunicationService';
 import type { ESP32Device, ConnectionType, LastConnectionInfo, ConnectionStatus } from '@/services/esp32CommunicationService';
 
@@ -45,10 +44,6 @@ describe('ESP32CommunicationService Real Tests', () => {
 
     it('ESP32_DEFAULT_IP é definido', () => {
       expect(getESP32WiFiIP()).toBe('192.168.4.1');
-    });
-
-    it('ESP32_BLE_PIN é definido', () => {
-      expect(ESP32_BLE_PIN).toBe('123456');
     });
   });
 

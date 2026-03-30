@@ -11,13 +11,13 @@
  * - Suporte a 2 torneiras independentes por ESP32
  * - Calibração individual por torneira (NVS)
  * - LED compartilhado com padrões diferentes por tap
- * - BLE protegido por PIN (123456)
+ * - BLE aberto (PIN removido na v4.1.3)
  * - Retrocompatível: tapId opcional (default = 0)
  * 
  * COMUNICAÇÃO SUPORTADA:
  * - WiFi Access Point fixo (Kiosk_Bier) ✅ ATIVADO
  * - HTTP REST API (192.168.4.1) ✅ ATIVADO
- * - Bluetooth Low Energy (BLE) ✅ ATIVADO + PIN
+ * - Bluetooth Low Energy (BLE) ✅ ATIVADO (aberto, sem PIN)
  * - USB Serial (para testes e debug) ✅ ATIVADO
  * - mDNS: http://kiosk-bier.local ✅ ATIVADO
  * 
@@ -25,7 +25,7 @@
  * - ESP32-S3 DevKit ou XIAO ESP32S3
  * - 2x Módulo Relé 5V (para controlar as válvulas)
  * - 2x Válvula Solenóide 12V (controle de fluxo)
- * - 2x Sensor de Fluxo YF-S201 (medir volume)
+ * - 2x Sensor de Fluxo (medir volume) — calibrar empiricamente
  * - Fonte 12V 2A (alimentar as válvulas)
  * - LED indicador (GPIO21 = USER_LED interno) - COMPARTILHADO
  * 
@@ -62,7 +62,7 @@
  * 
  * AUTOR: Open Kiosk Project
  * DATA: 20/01/2026
- * VERSÃO: 4.0 (Multi-Tap + BLE Seguro)
+ * VERSÃO: 4.1.4 (Multi-Tap)
  * 
  * ============================================================================
  */
@@ -129,20 +129,21 @@ const int LED_PIN = 21;           // GPIO21 = USER_LED interno do XIAO
 
 // ----- CALIBRAÇÃO DO SENSOR DE FLUXO (valores padrão) -----
 // Estes valores podem ser alterados e salvos via NVS por torneira
-// ⚠️ YF-S201: ~450 pulsos/litro | YF-S402: ~5880 pulsos/litro | Ajustado: 1200
-const float DEFAULT_PULSOS_POR_LITRO = 660.0;  // Pulsos para 1 litro (ajustado pelo usuário)
+// ⚠️ Valor provisório para calibração empírica. NÃO usar valores de catálogo cegamente.
+// Calibre na linha real: pulsos_por_litro = pulsos_contados / (ml_real / 1000)
+const float DEFAULT_PULSOS_POR_LITRO = 660.0;  // Valor inicial provisório — calibrar na linha real
 const float DEFAULT_ML_POR_SEGUNDO = 50.0;      // Vazão média da válvula em ml/s
 
 // ----- BLUETOOTH -----
 const char* BLE_DEVICE_NAME = "Kiosk_Bier";  // Nome do dispositivo BLE (igual ao WiFi)
-const uint32_t BLE_PIN = 123456;              // 🔒 PIN para pareamento BLE
+// NOTA: BLE aberto (sem PIN) desde v4.1.3 — PIN removido
 
 // UUIDs para BLE (padrão do Open Kiosk)
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
 // ----- VERSÃO DO FIRMWARE -----
-const char* FIRMWARE_VERSION = "4.1.3";  // FIX: Remover ESP_LE_AUTH_REQ_SC_MITM_BOND — causava security timeout de ~28s no Android
+const char* FIRMWARE_VERSION = "4.1.4";  // FIX: Pinos NVS em initTaps, referências de sensor, diagnóstico GPIO
 
 // ============================================================================
 // VARIÁVEIS GLOBAIS
@@ -209,15 +210,11 @@ struct TapState {
 TapConfig tapConfig[NUM_TAPS];
 TapState tapState[NUM_TAPS];
 
-// 🆕 Spinlock para proteção de leitura atômica de pulseCount (evita race condition com ISR)
-static portMUX_TYPE pulseCountMux = portMUX_INITIALIZER_UNLOCKED;
-
 // ----- Variáveis de compatibilidade (legado - usadas em algumas funções) -----
 // NOTA: Mantidas para retrocompatibilidade com código existente
 volatile unsigned long pulseCount = 0;  // Alias para tap 0
 float totalMlDispensed = 0;
 unsigned long lastPulseTime = 0;
-float flowRate = 0;
 bool isDispensing = false;
 String currentOrderId = "";
 int currentCup = 0;
@@ -226,13 +223,6 @@ int targetMl = 0;
 unsigned long dispensingStartTime = 0;
 unsigned long firstPulseTime = 0;
 bool flowStarted = false;
-
-// Variáveis globais de calibração legadas (aponta para tap 0)
-float pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;
-float mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
-
-// Tap ativo atual (para processamento)
-int activeTap = -1;  // -1 = nenhum tap dispensando
 
 // ----- Timing -----
 // NOTA: lastStatusUpdate movido para TapState (por tap)
@@ -321,14 +311,13 @@ class MyServerCallbacks : public BLEServerCallbacks {
     connectedCount++;
     Serial.println("[BLE] Cliente conectado! Total: " + String(connectedCount));
 
-    // � FIX v4.1.1: Solicitar connection parameters otimizados para energia
+    // 🔧 FIX v4.1.1: Solicitar connection parameters otimizados para energia
     // Isso evita que Android/MIUI classifique a conexão como "alto consumo" e a mate.
     // Parâmetros: minInterval=80(100ms), maxInterval=160(200ms), latency=4, timeout=600(6s)
 #ifdef CONFIG_NIMBLE_ENABLED
     struct ble_gap_conn_desc desc;
     int rc = ble_gap_conn_find(0, &desc);
     if (rc == 0) {
-      uint16_t connHandle = desc.conn_handle;
       Serial.printf("[BLE] conn_interval=%d (%.1fms) latency=%d supervision=%d (%dms)\n",
         desc.conn_itvl, desc.conn_itvl * 1.25,
         desc.conn_latency,
@@ -380,48 +369,7 @@ class MyCallbacks : public BLECharacteristicCallbacks {
   }
 };
 
-// ============================================================================
-// 🔒 CALLBACK DE SEGURANÇA BLE (ESP32 Core 3.x)
-// ============================================================================
-
-class MySecurity : public BLESecurityCallbacks {
-  uint32_t onPassKeyRequest() override {
-    Serial.println("[BLE] 🔑 PIN solicitado: " + String(BLE_PIN));
-    return BLE_PIN;
-  }
-  
-  void onPassKeyNotify(uint32_t pass_key) override {
-    Serial.println("[BLE] 🔑 PIN para pareamento: " + String(pass_key));
-  }
-  
-  bool onConfirmPIN(uint32_t pass_key) override {
-    Serial.println("[BLE] ✅ PIN confirmado: " + String(pass_key));
-    return true;
-  }
-  
-  bool onSecurityRequest() override {
-    Serial.println("[BLE] 🔒 Solicitação de segurança aceita");
-    return true;
-  }
-  
-#ifdef CONFIG_NIMBLE_ENABLED
-  void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
-    if (desc && desc->sec_state.encrypted) {
-      Serial.println("[BLE] ✅ Conexão encriptada com sucesso!");
-    } else {
-      Serial.println("[BLE] ⚠️ Conexão não encriptada");
-    }
-  }
-#else
-  void onAuthenticationComplete(esp_ble_auth_cmpl_t cmpl) override {
-    if (cmpl.success) {
-      Serial.println("[BLE] ✅ Autenticação completa!");
-    } else {
-      Serial.println("[BLE] ❌ Falha na autenticação");
-    }
-  }
-#endif
-};
+// NOTA: Classe MySecurity removida na v4.1.3 — BLE agora usa conexão aberta sem PIN.
 
 // ============================================================================
 // INTERRUPÇÕES DOS SENSORES DE FLUXO (MULTI-TAP)
@@ -485,10 +433,7 @@ void initTaps() {
   Serial.println("[INIT] Configurando " + String(NUM_TAPS) + " torneiras...");
   
   // ----- Tap 0 (Torneira 1) -----
-  tapConfig[0].valvePin = VALVE_PIN_0;
-  tapConfig[0].sensorPin = FLOW_SENSOR_PIN_0;
-  // 🔧 NÃO sobrescrever calibração - loadSettings() já carregou do NVS
-  // tapConfig[0].pulsosPorLitro e mlPorSegundo são definidos por loadSettings()
+  // 🔧 NÃO sobrescrever pinos nem calibração — loadSettings() já carregou do NVS
   
   tapState[0].isDispensing = false;
   tapState[0].orderId = "";
@@ -508,17 +453,15 @@ void initTaps() {
   tapState[0].phaseStartTime = 0;
   tapState[0].blinkCount = 0;
   
-  pinMode(VALVE_PIN_0, OUTPUT);
-  digitalWrite(VALVE_PIN_0, LOW);
-  pinMode(FLOW_SENSOR_PIN_0, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN_0), flowPulseCounter0, FALLING);
-  Serial.println("  → Tap 0: Válvula GPIO" + String(VALVE_PIN_0) + ", Sensor GPIO" + String(FLOW_SENSOR_PIN_0));
+  pinMode(tapConfig[0].valvePin, OUTPUT);
+  digitalWrite(tapConfig[0].valvePin, LOW);
+  pinMode(tapConfig[0].sensorPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(tapConfig[0].sensorPin), flowPulseCounter0, FALLING);
+  Serial.println("  → Tap 0: Válvula GPIO" + String(tapConfig[0].valvePin) + ", Sensor GPIO" + String(tapConfig[0].sensorPin));
   Serial.println("    Calibração: " + String(tapConfig[0].pulsosPorLitro) + " pulsos/L");
   
   // ----- Tap 1 (Torneira 2) -----
-  tapConfig[1].valvePin = VALVE_PIN_1;
-  tapConfig[1].sensorPin = FLOW_SENSOR_PIN_1;
-  // 🔧 NÃO sobrescrever calibração - loadSettings() já carregou do NVS
+  // 🔧 NÃO sobrescrever pinos nem calibração — loadSettings() já carregou do NVS
   
   tapState[1].isDispensing = false;
   tapState[1].orderId = "";
@@ -538,11 +481,11 @@ void initTaps() {
   tapState[1].phaseStartTime = 0;
   tapState[1].blinkCount = 0;
   
-  pinMode(VALVE_PIN_1, OUTPUT);
-  digitalWrite(VALVE_PIN_1, LOW);
-  pinMode(FLOW_SENSOR_PIN_1, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(FLOW_SENSOR_PIN_1), flowPulseCounter1, FALLING);
-  Serial.println("  → Tap 1: Válvula GPIO" + String(VALVE_PIN_1) + ", Sensor GPIO" + String(FLOW_SENSOR_PIN_1));
+  pinMode(tapConfig[1].valvePin, OUTPUT);
+  digitalWrite(tapConfig[1].valvePin, LOW);
+  pinMode(tapConfig[1].sensorPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(tapConfig[1].sensorPin), flowPulseCounter1, FALLING);
+  Serial.println("  → Tap 1: Válvula GPIO" + String(tapConfig[1].valvePin) + ", Sensor GPIO" + String(tapConfig[1].sensorPin));
   
   Serial.println("[INIT] ✅ Torneiras configuradas!");
 }
@@ -596,7 +539,7 @@ void setup() {
   
   // 🟡 FASE 2: Iniciar Bluetooth com segurança
   Serial.println();
-  Serial.println("[INIT] FASE 2: Iniciando Bluetooth com PIN...");
+  Serial.println("[INIT] FASE 2: Iniciando Bluetooth...");
   digitalWrite(LED_PIN, HIGH);
   delay(100);
   digitalWrite(LED_PIN, LOW);
@@ -607,7 +550,7 @@ void setup() {
   initBluetooth();
   
   // 🟡 FASE 2 Concluída: piscar 3x
-  Serial.println("[INIT] ✅ Bluetooth OK (PIN: " + String(BLE_PIN) + ")!");
+  Serial.println("[INIT] ✅ Bluetooth OK (conexão aberta)!");
   for (int i = 0; i < 3; i++) {
     digitalWrite(LED_PIN, LOW);
     delay(100);
@@ -854,7 +797,7 @@ void initHTTPServer() {
     doc["num_taps"] = NUM_TAPS;  // 🆕 Número de torneiras
     doc["status"] = isDispensing ? "dispensing" : "ready";
     doc["ble_name"] = BLE_DEVICE_NAME;
-    doc["ble_pin"] = BLE_PIN;  // 🆕 Informar que BLE tem PIN
+    doc["ble_open"] = true;  // BLE aberto (sem PIN desde v4.1.3)
     doc["uptime"] = millis();
     doc["clients_connected"] = WiFi.softAPgetStationNum();
     String response;
@@ -888,7 +831,7 @@ void initHTTPServer() {
     html += "<div class='info'>";
     html += "<p>📡 WiFi: " + String(AP_SSID) + "</p>";
     html += "<p>🔑 Senha WiFi: " + String(AP_PASSWORD) + "</p>";
-    html += "<p>🔒 PIN BLE: " + String(BLE_PIN) + "</p>";
+    html += "<p>� BLE: Aberto (sem PIN)</p>";
     html += "<p>🌐 IP: " + WiFi.softAPIP().toString() + "</p>";
     html += "<p>🔗 mDNS: http://" + String(MDNS_HOSTNAME) + ".local</p>";
     html += "<p>📱 Clientes: " + String(WiFi.softAPgetStationNum()) + "</p>";
@@ -961,9 +904,9 @@ void handleStatus() {
   doc["cpu_freq_mhz"] = ESP.getCpuFreqMHz();
   doc["free_heap"] = ESP.getFreeHeap();
   
-  // Calibração
-  doc["pulsos_por_litro"] = pulsosPorLitro;
-  doc["ml_por_segundo"] = mlPorSegundo;
+  // Calibração (tap 0 para retrocompatibilidade)
+  doc["pulsos_por_litro"] = tapConfig[0].pulsosPorLitro;
+  doc["ml_por_segundo"] = tapConfig[0].mlPorSegundo;
   
   if (isDispensing) {
     JsonObject order = doc["current_order"].to<JsonObject>();
@@ -1351,7 +1294,7 @@ String handleTestValveTap(int tapId, int durationMs) {
     return "{\"type\":\"error\",\"code\":\"INVALID_TAP\",\"message\":\"tapId inválido\"}";
   }
   
-  // Limitar duração máxima a 60 segundos para segurança
+  // Limitar duração máxima a 10 segundos para segurança
   if (durationMs > 10000) durationMs = 10000;
   
   Serial.println("[TEST] 🔴 Testando válvula do Tap " + String(tapId) + " por " + String(durationMs) + "ms");
@@ -1439,8 +1382,7 @@ String handleTestFlow(int durationMs, int tapId) {
   doc["ml_calculated"] = totalMl;
   doc["tapId"] = tapId;
   doc["pulses_per_liter_configured"] = tapConfig[tapId].pulsosPorLitro;
-  doc["pulses_per_liter_measured"] = (totalMl > 0) ? (finalPulses / (totalMl / 1000.0)) : 0;
-  doc["sensor_type"] = "YF-S402";
+  doc["message"] = "Meça o volume real e calcule: pulsos_por_litro = pulses / (ml_real / 1000)";
   
   String response;
   serializeJson(doc, response);
@@ -1472,7 +1414,7 @@ String handleCalibration(int durationMs, int tapId) {
   
   Serial.println("[CALIBRATE] Iniciando calibração do Tap " + String(tapId) + "...");
   Serial.println("[CALIBRATE] Abrindo válvula por " + String(durationMs/1000) + " segundos");
-  Serial.println("[CALIBRATE] Sensor: YF-S402 (~5880 pulsos/litro esperado)");
+  Serial.println("[CALIBRATE] Calibração atual: " + String(tapConfig[tapId].pulsosPorLitro) + " pulsos/litro");
   
   // 🔧 CORREÇÃO v4.0.1: Usar função resetPulseCounter
   resetPulseCounter(tapId);
@@ -1516,8 +1458,7 @@ String handleCalibration(int durationMs, int tapId) {
   doc["pulses"] = finalPulses;
   doc["ml_estimated"] = mlEstimated;
   doc["calculated_pulses_per_liter"] = calculatedPulsesPerLiter;
-  doc["sensor_type"] = "YF-S402";
-  doc["message"] = "Meça o volume real dispensado e calcule: pulsos / (ml / 1000)";
+  doc["message"] = "Meça o volume real dispensado e calcule: pulsos_por_litro = pulses / (ml_real / 1000)";
   
   String response;
   serializeJson(doc, response);
@@ -1545,7 +1486,7 @@ String getStatusJson() {
   
   // Bluetooth
   doc["ble_name"] = BLE_DEVICE_NAME;
-  doc["ble_pin"] = BLE_PIN;
+  doc["ble_open"] = true;  // Sem PIN desde v4.1.3
   doc["ble_connected"] = (connectedCount > 0);
   
   // 🆕 Status de cada torneira
@@ -2085,72 +2026,60 @@ void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount
 
 // Carregar configurações do NVS (Multi-Tap)
 void loadSettings() {
-  // 🔧 CORREÇÃO: Inicializar tapConfig com valores padrão PRIMEIRO
+  // Inicializar tapConfig com valores padrão
   for (int i = 0; i < NUM_TAPS; i++) {
-    tapConfig[i].pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;  // Padrão ajustável via NVS/app
+    tapConfig[i].pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;
     tapConfig[i].mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
-  }
-  
-  // Carregar calibração legada (para compatibilidade)
-  if (preferences.isKey("pulsos_litro")) {
-    pulsosPorLitro = preferences.getFloat("pulsos_litro", DEFAULT_PULSOS_POR_LITRO);
-  } else {
-    pulsosPorLitro = DEFAULT_PULSOS_POR_LITRO;
-  }
-  if (preferences.isKey("ml_segundo")) {
-    mlPorSegundo = preferences.getFloat("ml_segundo", DEFAULT_ML_POR_SEGUNDO);
-  } else {
-    mlPorSegundo = DEFAULT_ML_POR_SEGUNDO;
   }
   
   // v4.1.0: Load pin assignments from NVS (set by set_config)
   for (int i = 0; i < NUM_TAPS; i++) {
     String kVP = "tap" + String(i) + "_vpin";
     String kSP = "tap" + String(i) + "_spin";
-    // Default to compile-time constants if no NVS key
     int defaultVP = (i == 0) ? VALVE_PIN_0 : VALVE_PIN_1;
     int defaultSP = (i == 0) ? FLOW_SENSOR_PIN_0 : FLOW_SENSOR_PIN_1;
     tapConfig[i].valvePin = preferences.getInt(kVP.c_str(), defaultVP);
     tapConfig[i].sensorPin = preferences.getInt(kSP.c_str(), defaultSP);
   }
 
-  // 🆕 Carregar calibração por tap
+  // Carregar calibração por tap do NVS
+  // Migração legada: se chaves per-tap não existem, tentar chaves legadas (tap 0 only)
   for (int i = 0; i < NUM_TAPS; i++) {
     String keyPulsos = "tap" + String(i) + "_pulsos";
     String keyMl = "tap" + String(i) + "_ml";
     
     if (preferences.isKey(keyPulsos.c_str())) {
       tapConfig[i].pulsosPorLitro = preferences.getFloat(keyPulsos.c_str(), DEFAULT_PULSOS_POR_LITRO);
-    } else {
-      // Usar valor legado para tap 0, padrão para outros
-      tapConfig[i].pulsosPorLitro = (i == 0) ? pulsosPorLitro : DEFAULT_PULSOS_POR_LITRO;
+    } else if (i == 0 && preferences.isKey("pulsos_litro")) {
+      // Migração: chave legada existe, usar para tap 0
+      tapConfig[0].pulsosPorLitro = preferences.getFloat("pulsos_litro", DEFAULT_PULSOS_POR_LITRO);
     }
     
     if (preferences.isKey(keyMl.c_str())) {
       tapConfig[i].mlPorSegundo = preferences.getFloat(keyMl.c_str(), DEFAULT_ML_POR_SEGUNDO);
-    } else {
-      tapConfig[i].mlPorSegundo = (i == 0) ? mlPorSegundo : DEFAULT_ML_POR_SEGUNDO;
+    } else if (i == 0 && preferences.isKey("ml_segundo")) {
+      // Migração: chave legada existe, usar para tap 0
+      tapConfig[0].mlPorSegundo = preferences.getFloat("ml_segundo", DEFAULT_ML_POR_SEGUNDO);
     }
     
     Serial.println("  → Tap " + String(i) + ": " + String(tapConfig[i].pulsosPorLitro) + " pulsos/L, " + String(tapConfig[i].mlPorSegundo) + " ml/s");
   }
   
-  Serial.println("[NVS] ✅ Configurações carregadas (YF-S402: 5880 pulsos/L padrão)");
+  Serial.println("[NVS] ✅ Configurações carregadas (default: " + String(DEFAULT_PULSOS_POR_LITRO, 0) + " pulsos/L)");
 }
 
 // Salvar configurações no NVS (Multi-Tap)
 void saveSettings() {
-  // Salvar calibração legada
-  preferences.putFloat("pulsos_litro", pulsosPorLitro);
-  preferences.putFloat("ml_segundo", mlPorSegundo);
-  
-  // 🆕 Salvar calibração por tap
+  // Salvar calibração per-tap (fonte canônica)
   for (int i = 0; i < NUM_TAPS; i++) {
     String keyPulsos = "tap" + String(i) + "_pulsos";
     String keyMl = "tap" + String(i) + "_ml";
     preferences.putFloat(keyPulsos.c_str(), tapConfig[i].pulsosPorLitro);
     preferences.putFloat(keyMl.c_str(), tapConfig[i].mlPorSegundo);
   }
+  // Manter chaves legadas para migração (espelha tap 0)
+  preferences.putFloat("pulsos_litro", tapConfig[0].pulsosPorLitro);
+  preferences.putFloat("ml_segundo", tapConfig[0].mlPorSegundo);
   
   Serial.println("[NVS] ✅ Configurações salvas");
 }
@@ -2178,12 +2107,6 @@ String handleSaveCalibration(JsonDocument& doc) {
   tapConfig[tapId].pulsosPorLitro = novoPulsos;
   tapConfig[tapId].mlPorSegundo = novoMlSeg;
   
-  // Atualizar variáveis legadas se tap 0
-  if (tapId == 0) {
-    pulsosPorLitro = novoPulsos;
-    mlPorSegundo = novoMlSeg;
-  }
-  
   // Salvar no NVS
   saveSettings();
   
@@ -2210,10 +2133,10 @@ String handleGetSettings() {
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["num_taps"] = NUM_TAPS;
   
-  // Valores legados para retrocompatibilidade
-  doc["pulsos_por_litro"] = pulsosPorLitro;
-  doc["ml_por_segundo"] = mlPorSegundo;
-  doc["ml_por_pulso"] = 1000.0 / pulsosPorLitro;
+  // Valores de tap 0 nos campos flat para retrocompatibilidade
+  doc["pulsos_por_litro"] = tapConfig[0].pulsosPorLitro;
+  doc["ml_por_segundo"] = tapConfig[0].mlPorSegundo;
+  doc["ml_por_pulso"] = 1000.0 / tapConfig[0].pulsosPorLitro;
   
   // 🆕 Array de calibração por tap
   JsonArray tapsArray = doc["taps"].to<JsonArray>();
@@ -2344,33 +2267,32 @@ String handleDiagnoseGPIO() {
   Serial.println("╔══════════════════════════════════════════════════════════╗");
   Serial.println("║     🔧 DIAGNÓSTICO COMPLETO - MULTI-TAP                  ║");
   Serial.println("╠══════════════════════════════════════════════════════════╣");
-  Serial.println("║  Tap 0: GPIO5 (D4) = Válvula | GPIO6 (D5) = Sensor       ║");
-  Serial.println("║  Tap 1: GPIO4 (D3) = Válvula | GPIO7 (D8) = Sensor       ║");
-  Serial.println("║  Comum: GPIO21 = USER_LED interno                      ║");
+  Serial.println("║  Tap 0: GPIO" + String(tapConfig[0].valvePin) + " = Válvula | GPIO" + String(tapConfig[0].sensorPin) + " = Sensor");
+  Serial.println("║  Tap 1: GPIO" + String(tapConfig[1].valvePin) + " = Válvula | GPIO" + String(tapConfig[1].sensorPin) + " = Sensor");
+  Serial.println("║  Comum: GPIO" + String(LED_PIN) + " = USER_LED interno");
   Serial.println("╚══════════════════════════════════════════════════════════╝");
   Serial.println();
   
-  // Testar todos os pinos OUTPUT (Válvulas)
-  bool gpio5_ok = testOutputPin(VALVE_PIN_0, "TAP0 VALVE (D4)");
-  bool gpio4_ok = testOutputPin(VALVE_PIN_1, "TAP1 VALVE (D3)");
-  bool gpio_led_ok = testOutputPin(LED_PIN, "LED  (D10)");
+  // Testar todos os pinos OUTPUT (Válvulas) — usa tapConfig (pode ter sido alterado via set_config)
+  bool valve0_ok = testOutputPin(tapConfig[0].valvePin, "TAP0 VALVE");
+  bool valve1_ok = testOutputPin(tapConfig[1].valvePin, "TAP1 VALVE");
+  bool led_ok = testOutputPin(LED_PIN, "LED (USER_LED)");
   
   // Testar pinos INPUT (sensores de fluxo)
-  // 🔧 CORREÇÃO v4.0.6: Passar tapId para usar contador correto
-  bool gpio6_ok = testInputPin(FLOW_SENSOR_PIN_0, "TAP0 SENSOR(D5)", 0);
-  bool gpio7_ok = testInputPin(FLOW_SENSOR_PIN_1, "TAP1 SENSOR(D8)", 1);
+  bool sensor0_ok = testInputPin(tapConfig[0].sensorPin, "TAP0 SENSOR", 0);
+  bool sensor1_ok = testInputPin(tapConfig[1].sensorPin, "TAP1 SENSOR", 1);
   
   // Testar contagem de pulsos
   Serial.println();
   Serial.println("[TEST] 🔄 Testando ISRs por 3 segundos...");
   Serial.println("[TEST] Abra uma torneira para ver os pulsos");
   
-  // 🔧 CORREÇÃO v4.0.1: Usar funções de reset e sync
   resetPulseCounter(0);
   resetPulseCounter(1);
   
   unsigned long start = millis();
   while (millis() - start < 3000) {
+    esp_task_wdt_reset();  // Evitar timeout do watchdog durante testes
     delay(500);
     syncPulseCounters();
     unsigned long p0 = tapState[0].pulseCount;
@@ -2382,43 +2304,49 @@ String handleDiagnoseGPIO() {
   unsigned long finalP0 = tapState[0].pulseCount;
   unsigned long finalP1 = tapState[1].pulseCount;
   
-  // Restaurar configurações originais
-  pinMode(VALVE_PIN_0, OUTPUT);
-  digitalWrite(VALVE_PIN_0, LOW);
-  pinMode(VALVE_PIN_1, OUTPUT);
-  digitalWrite(VALVE_PIN_1, LOW);
+  // Restaurar configurações originais (usa tapConfig, não constantes de compile-time)
+  pinMode(tapConfig[0].valvePin, OUTPUT);
+  digitalWrite(tapConfig[0].valvePin, LOW);
+  pinMode(tapConfig[1].valvePin, OUTPUT);
+  digitalWrite(tapConfig[1].valvePin, LOW);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
-  pinMode(FLOW_SENSOR_PIN_0, INPUT_PULLUP);
-  pinMode(FLOW_SENSOR_PIN_1, INPUT_PULLUP);
+  pinMode(tapConfig[0].sensorPin, INPUT_PULLUP);
+  pinMode(tapConfig[1].sensorPin, INPUT_PULLUP);
   
   // Resumo
   Serial.println();
   Serial.println("╔══════════════════════════════════════════════════════════╗");
   Serial.println("║                    📊 RESUMO MULTI-TAP                    ║");
   Serial.println("╠══════════════════════════════════════════════════════════╣");
-  Serial.println("║  Tap 0 Válvula (GPIO5):  " + String(gpio5_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
-  Serial.println("║  Tap 0 Sensor  (GPIO6):  " + String(gpio6_ok ? "✅ OK " : "⚠️ VER ") + " Pulsos: " + String(finalP0) + "           ║");
-  Serial.println("║  Tap 1 Válvula (GPIO4):  " + String(gpio4_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
-  Serial.println("║  Tap 1 Sensor  (GPIO7):  " + String(gpio7_ok ? "✅ OK " : "⚠️ VER ") + " Pulsos: " + String(finalP1) + "           ║");
-  Serial.println("║  LED           (GPIO21): " + String(gpio_led_ok ? "✅ OK " : "❌ FAIL") + "                         ║");
+  Serial.println("║  Tap 0 Válvula (GPIO" + String(tapConfig[0].valvePin) + "): " + String(valve0_ok ? "✅ OK" : "❌ FAIL"));
+  Serial.println("║  Tap 0 Sensor  (GPIO" + String(tapConfig[0].sensorPin) + "): " + String(sensor0_ok ? "✅ OK" : "⚠️ VER") + " Pulsos: " + String(finalP0));
+  Serial.println("║  Tap 1 Válvula (GPIO" + String(tapConfig[1].valvePin) + "): " + String(valve1_ok ? "✅ OK" : "❌ FAIL"));
+  Serial.println("║  Tap 1 Sensor  (GPIO" + String(tapConfig[1].sensorPin) + "): " + String(sensor1_ok ? "✅ OK" : "⚠️ VER") + " Pulsos: " + String(finalP1));
+  Serial.println("║  LED           (GPIO" + String(LED_PIN) + "): " + String(led_ok ? "✅ OK" : "❌ FAIL"));
   Serial.println("╠══════════════════════════════════════════════════════════╣");
-  Serial.println("║  Calibração: " + String(tapConfig[0].pulsosPorLitro, 0) + " pulsos/L (YF-S402)            ║");
+  Serial.println("║  Calibração Tap0: " + String(tapConfig[0].pulsosPorLitro, 0) + " pulsos/L");
+  Serial.println("║  Calibração Tap1: " + String(tapConfig[1].pulsosPorLitro, 0) + " pulsos/L");
   Serial.println("╚══════════════════════════════════════════════════════════╝");
   Serial.println();
   
   // Retornar JSON com todos os resultados
   JsonDocument doc;
   doc["type"] = "gpio_diagnostic";
-  doc["tap0_valve_gpio5"] = gpio5_ok;
-  doc["tap0_sensor_gpio6"] = gpio6_ok;
+  doc["tap0_valve_ok"] = valve0_ok;
+  doc["tap0_valve_pin"] = tapConfig[0].valvePin;
+  doc["tap0_sensor_ok"] = sensor0_ok;
+  doc["tap0_sensor_pin"] = tapConfig[0].sensorPin;
   doc["tap0_pulses"] = finalP0;
-  doc["tap1_valve_gpio4"] = gpio4_ok;
-  doc["tap1_sensor_gpio7"] = gpio7_ok;
+  doc["tap1_valve_ok"] = valve1_ok;
+  doc["tap1_valve_pin"] = tapConfig[1].valvePin;
+  doc["tap1_sensor_ok"] = sensor1_ok;
+  doc["tap1_sensor_pin"] = tapConfig[1].sensorPin;
   doc["tap1_pulses"] = finalP1;
-  doc["led_gpio21"] = gpio_led_ok;
-  doc["calibration_pulses_per_liter"] = tapConfig[0].pulsosPorLitro;
-  doc["sensor_type"] = "YF-S402";
+  doc["led_ok"] = led_ok;
+  doc["led_pin"] = LED_PIN;
+  doc["tap0_pulsos_por_litro"] = tapConfig[0].pulsosPorLitro;
+  doc["tap1_pulsos_por_litro"] = tapConfig[1].pulsosPorLitro;
   
   String result;
   serializeJson(doc, result);
@@ -2547,10 +2475,6 @@ String handleSetConfig(JsonDocument& doc) {
 
   // Re-apply pin modes and ISRs
   applyTapPins();
-
-  // Update legacy globals (tap 0)
-  pulsosPorLitro = tapConfig[0].pulsosPorLitro;
-  mlPorSegundo = tapConfig[0].mlPorSegundo;
 
   // Get tapsVersion from doc if present
   int tapsVersion = doc["tapsVersion"] | 0;

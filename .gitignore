@@ -87,3 +87,4 @@ tmpclaude-*/
 
 # Sensitive local payment scripts (manual experiments)
 functions/scripts/test-pagbank*.ts
+plugpag-master-4.x/

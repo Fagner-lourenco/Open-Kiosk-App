@@ -7,7 +7,7 @@
  * Usage:
  *   import { PlugPagTerminal } from '@/plugins/plugpagTerminal';
  *   await PlugPagTerminal.initialize({ appName: 'OpenKiosk' });
- *   await PlugPagTerminal.connect({ deviceId: 'PRO-1733203195' });
+ *   await PlugPagTerminal.connect({ deviceId: 'PRO-1733436984' });
  *   const result = await PlugPagTerminal.startPayment({ amountCents: 1500, type: 'DEBIT' });
  */
 

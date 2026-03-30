@@ -48,34 +48,19 @@ dependencies {
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
     implementation project(':capacitor-android')
 
-    // PlugPag SDK — versão estável 4.11.1 (release)
-    // Downgrade de 4.12.0-beta: o beta introduziu novo sistema de autenticação
-    // que exige login PagBank mesmo para terminais (Moderninha PRO).
-    // A documentação oficial diz: "esta biblioteca não necessita de nenhum tipo
-    // de autenticação com login e senha pois o terminal já está autenticada."
-    // O 4.11.1 é a versão release estável e respeita esse comportamento.
-    implementation(name: 'plugpag-4.11.1', ext: 'aar')
-    // Explicit deps kept to avoid regressions in our current Android setup.
-    implementation 'com.squareup.retrofit2:retrofit:2.6.2'
-    implementation 'com.squareup.okhttp3:logging-interceptor:4.4.0'
-    implementation 'io.reactivex.rxjava2:rxjava:2.2.18'
-    implementation 'io.reactivex.rxjava2:rxandroid:2.1.1'
-    implementation 'com.google.code.gson:gson:2.9.0'
-    // --- Versions upgraded to be compatible with compileSdk 36 / targetSdk 36 ---
-    implementation 'com.google.android.material:material:1.12.0'       // was 1.4.0 — fixes missing drawable/anim resources
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'  // was 2.0.4
-    // --- Previously missing PlugPag transitive deps (caused NoClassDefFoundError: sqldelight.Transacter) ---
-    implementation 'com.squareup.sqldelight:runtime:1.5.5'
-    implementation 'com.squareup.sqldelight:android-driver:1.5.5'
-    implementation 'androidx.startup:startup-runtime:1.1.1'
-    implementation 'androidx.room:room-runtime:2.6.1'                  // was 2.3.0 — compatible with SDK 36
-    implementation 'androidx.work:work-runtime-ktx:2.9.1'              // was 2.5.0 — fixes PendingIntent FLAG_IMMUTABLE crash on S+ (API 31+)
-    implementation 'androidx.legacy:legacy-support-v4:1.0.0'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
-    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.2'
-    implementation 'com.github.bumptech.glide:glide:4.15.1'
-    implementation 'com.airbnb.android:lottie:6.4.0'                   // was 3.4.0 — compatible with SDK 36
-    implementation 'com.google.zxing:core:3.5.3'                       // was 3.3.0
+    // PlugPag SDK — 4.12.0-beta (from official Maven repo)
+    // Maven repo resolves all 39 transitive deps automatically via POM.
+    // Repo URL: https://github.com/pagseguromaster/plugpag/raw/master/4.x/android
+    // (declared in root build.gradle allprojects.repositories)
+    implementation 'br.com.uol.pagseguro:plugpag:4.12.0-beta'
+    // --- Version overrides: bump PlugPag transitive deps for compileSdk 36 compat ---
+    implementation 'com.google.android.material:material:1.12.0'       // POM has 1.7.0
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'  // POM has 2.0.4
+    implementation 'androidx.room:room-runtime:2.6.1'                  // POM has 2.4.2
+    implementation 'androidx.room:room-rxjava2:2.6.1'                  // match room-runtime version
+    implementation 'androidx.work:work-runtime-ktx:2.9.1'              // POM has 2.5.0 — FLAG_IMMUTABLE fix
+    implementation 'com.airbnb.android:lottie:6.4.0'                   // POM has 3.4.0
+    implementation 'com.google.zxing:core:3.5.3'                       // POM has 3.3.0
 
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

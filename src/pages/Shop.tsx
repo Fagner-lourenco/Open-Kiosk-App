@@ -22,6 +22,7 @@ import { enterKioskMode } from "@/services/kioskModeService";
 import { systemLogService } from "@/services/systemLogService";
 import { deviceHeartbeatService } from "@/services/deviceHeartbeatService";
 import { cameraStreamService } from "@/services/cameraStreamService";
+import { terminalRelayService } from "@/services/terminalRelayService";
 import { CameraActiveIndicator } from "@/components/CameraActiveIndicator";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
 import ShopProductCard from "@/components/ShopProductCard";
@@ -114,6 +115,7 @@ const Shop = () => {
           const dId = await deviceHeartbeatService.getDeviceId();
           if (fId && sId && dId) {
             cameraStreamService.startListening(fId, sId, dId);
+            terminalRelayService.startListening(fId, sId, dId);
           }
         } catch (camErr) {
           console.warn('[Shop] Câmera remota não disponível:', camErr);
@@ -138,6 +140,7 @@ const Shop = () => {
     return () => {
       deviceHeartbeatService.stop();
       cameraStreamService.stopListening();
+      terminalRelayService.stopListening();
     };
   }, []); // Executar apenas uma vez na montagem
 

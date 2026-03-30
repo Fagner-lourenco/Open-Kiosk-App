@@ -1195,6 +1195,16 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                         </AlertDescription>
                       </Alert>
                     )}
+
+                    {/* Orientação: Terminal e POS são configurados por torneira */}
+                    {gwDef.id === 'mercado_pago' && (
+                      <Alert className="border-amber-200 bg-amber-50 mt-4">
+                        <Info className="h-4 w-4 text-amber-600" />
+                        <AlertDescription className="text-amber-800 text-sm">
+                          <strong>Terminal Point</strong> e <strong>External POS ID</strong> são configurados individualmente por torneira na seção <em>"Configuração de Torneiras (GPIO)"</em> abaixo. Cada torneira pode ter sua própria maquininha e caixa QR.
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                 );
               })()}
@@ -1676,9 +1686,9 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
 
                         {/* Mercado Pago Point — visível quando provider = mercado_pago */}
                         {gatewayConfig.provider === 'mercado_pago' && (
-                          <div className="space-y-2">
+                          <div className="space-y-3">
                             <div>
-                              <Label className="text-xs font-medium">Terminal MP Point (ID)</Label>
+                              <Label className="text-xs font-medium">Terminal Point (Maquininha)</Label>
                               <Input
                                 value={tap.mpTerminalId ?? ''}
                                 onChange={(e) => {
@@ -1687,17 +1697,16 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                                   updated[index] = { ...updated[index], mpTerminalId: val || undefined };
                                   handleChange('taps', updated);
                                 }}
-                                placeholder="Ex: GERTEC_MP35P__12345"
-                                className="w-64 font-mono"
+                                placeholder="Ex: NEWLAND_N950__N950NCB300544833"
+                                className="w-72 font-mono"
                                 maxLength={128}
                               />
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                ID do terminal Point vinculado a esta torneira. Se vazio, usa o Terminal ID global (
-                                <span className="font-mono">{gatewayConfig.providers?.mercadopago?.terminalId || '—'}</span>).
+                                ID da maquininha Point vinculada a esta torneira. Obrigatório para pagamento com cartão. Encontre em: Mercado Pago → Seus dispositivos Point.
                               </p>
                             </div>
                             <div>
-                              <Label className="text-xs font-medium">External POS ID (QR por torneira)</Label>
+                              <Label className="text-xs font-medium">External POS ID (Caixa QR)</Label>
                               <Input
                                 value={tap.mpExternalPosId ?? ''}
                                 onChange={(e) => {
@@ -1706,13 +1715,12 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
                                   updated[index] = { ...updated[index], mpExternalPosId: val || undefined };
                                   handleChange('taps', updated);
                                 }}
-                                placeholder="Ex: KIOSK-TAP-1"
-                                className="w-64 font-mono"
+                                placeholder="Ex: KIOSKPOS001"
+                                className="w-72 font-mono"
                                 maxLength={128}
                               />
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                POS ID para QR dinâmico nesta torneira. Se vazio, usa o External POS ID global (
-                                <span className="font-mono">{gatewayConfig.providers?.mercadopago?.externalPosId || '—'}</span>).
+                                Identificador do caixa (POS) registrado na API do Mercado Pago para esta torneira. Obrigatório para QR dinâmico. Cada torneira deve ter seu próprio POS.
                               </p>
                             </div>
                           </div>

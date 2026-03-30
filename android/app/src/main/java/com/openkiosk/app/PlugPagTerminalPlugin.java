@@ -126,8 +126,10 @@ public class PlugPagTerminalPlugin extends Plugin {
         try {
             // SDK 4.12.x: construtor aceita apenas Context
             // Demo oficial usa Application Context (singleton). NÃO usar Activity context.
+            // NÃO usar ContextWrapper (PlugPagCompatContext) — o SDK precisa do contexto puro
+            // para persistir token/perfil internamente.
             Context appContext = getContext().getApplicationContext();
-            plugPag = new PlugPag(new PlugPagCompatContext(appContext));
+            plugPag = new PlugPag(appContext);
 
             // Registrar identificação do app via setVersionName (doc: max 25 + 10 chars)
             plugPag.setVersionName(appName, appVersion);
@@ -468,6 +470,26 @@ public class PlugPagTerminalPlugin extends Plugin {
         if (mainActivity != null) {
             mainActivity.suspendLockTaskForExternalFlow(INTERACTIVE_AUTH_TIMEOUT_MS);
         }
+
+        // --- Pré-checks: exatamente como o demo oficial ---
+        // 1) checkRequirements: verifica permissões/requisitos do SDK
+        try {
+            int reqResult = plugPag.checkRequirements(PlugPagDevice.TYPE_TERMINAL);
+            Log.i(TAG, "requestInteractiveAuthentication: checkRequirements(TYPE_TERMINAL)=" + reqResult);
+            if (reqResult != PlugPag.RET_OK) {
+                Log.w(TAG, "checkRequirements FALHOU: " + reqResult);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "checkRequirements exception (non-fatal): " + e.getMessage());
+        }
+
+        // 2) Log de permissões relevantes
+        logPermissionStates();
+
+        // 3) isAuthenticated pré-call
+        boolean preAuth = false;
+        try { preAuth = plugPag.isAuthenticated(); } catch (Exception ignored) {}
+        Log.i(TAG, "requestInteractiveAuthentication: isAuthenticated-preCall=" + preAuth);
 
         Log.i(TAG, "requestInteractiveAuthentication: starting demo-aligned auth flow");
         final long authStartedAt = System.currentTimeMillis();
@@ -1061,9 +1083,9 @@ public class PlugPagTerminalPlugin extends Plugin {
             diagnostics.put(attemptPrefix + "Source", attempt.source);
 
             try {
-                // Manual oficial: PlugPagDevice(deviceIdentification) — construtor de 1 argumento
-                // NÃO passar activationCode no construtor do device (activation é via initializeAndActivatePinpad)
-                PlugPagDevice device = new PlugPagDevice(attempt.identifier);
+                // Demo oficial 4.x: PlugPagDevice(identification, null, null, isContactless)
+                // O 4º argumento (less/contactless) é obrigatório para PIX / QRCode ELO
+                PlugPagDevice device = new PlugPagDevice(attempt.identifier, null, null, isCless);
                 diagnostics.put(attemptPrefix + "DeviceCreated", true);
                 diagnostics.put(attemptPrefix + "DeviceType", device.getType());
                 diagnostics.put(attemptPrefix + "DeviceIdentification", safeString(device.getIdentification()));
@@ -1394,6 +1416,33 @@ public class PlugPagTerminalPlugin extends Plugin {
         return message;
     }
 
+    /**
+     * Log permission states relevant to PlugPag SDK before auth.
+     */
+    private void logPermissionStates() {
+        try {
+            Context ctx = getContext();
+            String[] perms = {
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.READ_PHONE_STATE,
+                Manifest.permission.READ_MEDIA_AUDIO,
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.ACCESS_FINE_LOCATION,
+            };
+            StringBuilder sb = new StringBuilder("Permission states:");
+            for (String perm : perms) {
+                int granted = ctx.checkSelfPermission(perm);
+                sb.append(" ").append(perm.substring(perm.lastIndexOf('.') + 1))
+                  .append("=").append(granted == 0 ? "GRANTED" : "DENIED");
+            }
+            Log.i(TAG, sb.toString());
+        } catch (Exception e) {
+            Log.w(TAG, "logPermissionStates error: " + e.getMessage());
+        }
+    }
+
     private boolean restoreLockTask(MainActivity mainActivity, String reason) {
         if (mainActivity == null) {
             return false;
@@ -1510,17 +1559,18 @@ public class PlugPagTerminalPlugin extends Plugin {
         return true;
     }
 
-    private static final class PlugPagCompatContext extends ContextWrapper {
-        PlugPagCompatContext(Context base) {
-            super(base);
-        }
-
-        @Override
-        public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && receiver != null) {
-                return super.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            }
-            return super.registerReceiver(receiver, filter);
-        }
-    }
+    // PlugPagCompatContext desativado — demo oficial usa Application Context puro.
+    // Mantido comentado como referência caso necessário no futuro.
+    // private static final class PlugPagCompatContext extends ContextWrapper {
+    //     PlugPagCompatContext(Context base) {
+    //         super(base);
+    //     }
+    //     @Override
+    //     public Intent registerReceiver(BroadcastReceiver receiver, IntentFilter filter) {
+    //         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && receiver != null) {
+    //             return super.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+    //         }
+    //         return super.registerReceiver(receiver, filter);
+    //     }
+    // }
 }

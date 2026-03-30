@@ -31,10 +31,7 @@ export function usePlugPagAutoConnect() {
     attemptedRef.current = true;
     console.log('[PlugPagAutoConnect] Iniciando auto-conexao ao terminal:', deviceId);
 
-    const activationCode = plugpagConfig.activationCode || undefined;
-    console.log(`[PlugPagAutoConnect] activationCode from Firestore: ${activationCode ? `"${activationCode}"` : 'undefined'}`);
-
-    plugpagPaymentService.connect(deviceId, activationCode).then(connected => {
+    plugpagPaymentService.connect(deviceId).then(connected => {
       if (connected) {
         console.log('[PlugPagAutoConnect] Terminal conectado com sucesso');
       } else {
@@ -59,10 +56,9 @@ export function usePlugPagAutoConnect() {
         const state = plugpagPaymentService.getState();
         if (state === 'disconnected' || state === 'error') {
           const deviceId = getPlugPagDeviceId();
-          const activationCode = gatewayConfig?.providers?.pagbank?.plugpag?.activationCode || undefined;
           if (deviceId) {
             console.log('[PlugPagAutoConnect] App voltou ao foreground, reconectando...');
-            plugpagPaymentService.connect(deviceId, activationCode).catch(() => {});
+            plugpagPaymentService.connect(deviceId).catch(() => {});
           }
         }
       }

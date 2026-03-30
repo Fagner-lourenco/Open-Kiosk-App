@@ -51,9 +51,10 @@ describe('C1: Admin → Firestore → Kiosk config round-trip', () => {
     const readBack = firestorePayload.providers?.mercadopago;
     expect(readBack).toBeDefined();
     expect(readBack?.userId).toBe('test_userId');
-    expect(readBack?.externalPosId).toBe('test_externalPosId');
+    // externalPosId e terminalId foram movidos para configuração per-tap (não mais em configFields global)
+    expect(readBack?.externalPosId).toBeUndefined();
     expect(readBack?.storeId).toBe('test_storeId');
-    expect(readBack?.terminalId).toBe('test_terminalId');
+    expect(readBack?.terminalId).toBeUndefined();
   });
 
   it('PagBank configFields produzem payload compatível', () => {

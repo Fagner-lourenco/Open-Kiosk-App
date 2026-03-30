@@ -173,6 +173,8 @@ export const createMercadoPagoProvider = (config: MercadoPagoProviderConfig): Pa
             default_type: pointPaymentType,
           },
         };
+        // 🔧 B7 FIX: Expiração explícita para kiosk — alinhado com frontend (PT2M = 120s)
+        orderPayload.expiration_time = 'PT2M';
       }
 
       const order = await mpRequest<any>(config, '/v1/orders', {

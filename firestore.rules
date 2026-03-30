@@ -529,6 +529,29 @@ service cloud.firestore {
             // Sem delete — sessões são registro de auditoria
             allow delete: if false;
           }
+
+          // Comandos de terminal remoto (Admin → Kiosk → ESP32)
+          match /terminalCommands/{commandId} {
+            // Leitura: admin/manager/technician OU dispositivo com claim
+            allow read: if isSuperAdmin() ||
+                          isFranchiseOwner(franchiseId) ||
+                          hasStoreAccess(franchiseId, storeId) ||
+                          hasDeviceStoreClaim(franchiseId, storeId);
+
+            // Criação: apenas admin/manager/technician (quem envia o comando)
+            allow create: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']);
+
+            // Atualização: admin/manager/technician OU dispositivo (kiosk escreve resposta)
+            allow update: if isSuperAdmin() ||
+                            isFranchiseOwner(franchiseId) ||
+                            canAccessStoreWithRole(franchiseId, storeId, ['owner', 'admin', 'manager', 'technician']) ||
+                            hasDeviceStoreClaim(franchiseId, storeId);
+
+            // Sem delete — comandos são registro de auditoria
+            allow delete: if false;
+          }
         }
         
         // ────────────────────────────────────────────────────────────────────

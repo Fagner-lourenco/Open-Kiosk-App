@@ -24,6 +24,7 @@
         <domain includeSubdomains="true">firebasestorage.app</domain>
         <domain includeSubdomains="true">pagbank.uol.com.br</domain>
         <domain includeSubdomains="true">api.pagseguro.com</domain>
+        <domain includeSubdomains="true">pagseguro.uol.com.br</domain>
         <!-- F-07: Adicionar domínios de pagamento e APIs externas -->
         <domain includeSubdomains="true">api.mercadopago.com</domain>
         <domain includeSubdomains="true">mercadopago.com.br</domain>

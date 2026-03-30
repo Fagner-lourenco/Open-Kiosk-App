@@ -65,13 +65,11 @@ const ESP32_CHARACTERISTIC_UUID = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
 // Exportadas para uso em outros componentes
 export const ESP32_DEVICE_NAME = 'Kiosk_Bier';      // Nome BLE do ESP32
 export const ESP32_WIFI_SSID = 'Kiosk_Bier';        // SSID do Access Point WiFi
-// 🔒 TODO Bug-22 (CWE-798): WiFi password and BLE PIN are hardcoded here AND in firmware.ino.
-// These should be moved to per-store Firestore config (e.g., stores/{storeId}/deviceConfig)
-// and provisioned to firmware via NVS at setup time. Low urgency since both are local-only
-// (BLE range ~10m, WiFi AP is direct-connect), but should be addressed before multi-tenant
-// deployments where different stores need unique credentials.
+// 🔒 TODO Bug-22 (CWE-798): WiFi password is hardcoded here AND in firmware.ino.
+// Should be moved to per-store Firestore config (e.g., stores/{storeId}/deviceConfig)
+// and provisioned to firmware via NVS at setup time. Low urgency since WiFi AP is
+// local-only (direct-connect), but should be addressed before multi-tenant deployments.
 export const ESP32_WIFI_PASSWORD = 'bier2026';      // Senha do WiFi (para referência)
-export const ESP32_BLE_PIN = '123456';              // PIN para pareamento BLE
 
 // ðŸ†• ConfiguraÃ§Ã£o dinÃ¢mica de IP WiFi (permite override)
 let ESP32_DEFAULT_IP = '192.168.4.1';               // IP padrÃ£o do Access Point (configurÃ¡vel)

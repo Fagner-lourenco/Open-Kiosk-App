@@ -29,7 +29,6 @@
 import { doc, setDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { getFirebaseDb, getCurrentStoreId, getCurrentFranchiseId } from './firebase';
 import { Device, type DeviceInfo as CapDeviceInfo } from '@capacitor/device';
-import { Geolocation } from '@capacitor/geolocation';
 import { getDefaultTapId, getPlugPagDeviceId } from '@/components/TapSettingsSync';
 
 // ============================================================================
@@ -176,14 +175,13 @@ class DeviceHeartbeatService {
    */
   private async requestLocationPermission(): Promise<void> {
     try {
-      const perm = await Geolocation.checkPermissions();
-      if (perm.location === 'granted') return;
-
-      console.log('[DeviceHeartbeat] Solicitando permissão de GPS...');
-      const req = await Geolocation.requestPermissions();
-      console.log('[DeviceHeartbeat] Permissão GPS:', req.location);
+      if (!navigator.geolocation) return;
+      const perm = await navigator.permissions.query({ name: 'geolocation' });
+      if (perm.state === 'granted') return;
+      // Permissão será solicitada implicitamente na primeira chamada a getCurrentPosition
+      console.log('[DeviceHeartbeat] GPS permission state:', perm.state);
     } catch (err) {
-      console.warn('[DeviceHeartbeat] Não foi possível solicitar permissão GPS:', (err as Error).message);
+      console.warn('[DeviceHeartbeat] Não foi possível verificar permissão GPS:', (err as Error).message);
     }
   }
 
@@ -197,20 +195,16 @@ class DeviceHeartbeatService {
       return this.cachedLocation;
     }
 
-    try {
-      const permission = await Geolocation.checkPermissions();
-      if (permission.location !== 'granted') {
-        // Solicitar permissão — em modo kiosk dedicado será concedida via provisioning
-        const req = await Geolocation.requestPermissions();
-        if (req.location !== 'granted') return null;
-      }
+    if (!navigator.geolocation) return null;
 
-      const pos = await Promise.race([
-        Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: LOCATION_TIMEOUT_MS }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('GPS timeout')), LOCATION_TIMEOUT_MS + 500)
-        ),
-      ]);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: LOCATION_TIMEOUT_MS,
+          maximumAge: LOCATION_CACHE_TTL_MS,
+        });
+      });
 
       const location: DeviceLocation = {
         lat: pos.coords.latitude,

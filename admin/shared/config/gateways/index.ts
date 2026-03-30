@@ -28,35 +28,19 @@ const mercadoPagoGateway: GatewayDefinition = {
   configFields: [
     {
       key: 'userId',
-      label: 'User ID',
+      label: 'User ID *',
       type: 'text',
       required: true,
       placeholder: 'Ex: 123456789',
       helpText: 'ID do usuário na conta Mercado Pago (encontrado em Seu Negócio > Configurações).',
     },
     {
-      key: 'externalPosId',
-      label: 'External POS ID',
-      type: 'text',
-      required: true,
-      placeholder: 'Ex: KIOSK-001',
-      helpText: 'Identificador único do ponto de venda (caixa) registrado na API do Mercado Pago.',
-    },
-    {
       key: 'storeId',
-      label: 'Store ID (Gateway)',
+      label: 'Store ID',
       type: 'text',
       required: false,
       placeholder: 'Ex: 12345678',
       helpText: 'ID da loja no Mercado Pago. Opcional para QR dinâmico.',
-    },
-    {
-      key: 'terminalId',
-      label: 'Terminal ID (Point)',
-      type: 'text',
-      required: false,
-      placeholder: 'Ex: GERTEC_MP35P__12345',
-      helpText: 'ID do terminal físico para pagamentos com cartão. Se vazio, será detectado automaticamente.',
     },
   ],
 

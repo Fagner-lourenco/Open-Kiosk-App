@@ -118,7 +118,6 @@ class PlugPagPaymentService {
   private connectedDeviceId: string | null = null;
   private requestedDeviceId: string | null = null;
   private authenticated = false;
-  private storedActivationCode: string | null = null;
   private lastAuthEvent: PlugPagAuthEvent | null = null;
 
   // --------------------------------------------------------------------------
@@ -244,16 +243,11 @@ class PlugPagPaymentService {
    * O login PagBank fica fora do boot e do auto-connect. Ele só acontece por
    * ação explícita do operador via authenticateInteractive().
    */
-  async connect(deviceId?: string, activationCode?: string): Promise<boolean> {
+  async connect(deviceId?: string): Promise<boolean> {
     const targetDeviceId = deviceId || getPlugPagDeviceId();
     if (!targetDeviceId) {
       this.setState('error', 'Nenhum identificador de terminal configurado');
       return false;
-    }
-
-    if (activationCode?.trim()) {
-      this.storedActivationCode = activationCode.trim();
-      console.log('[PlugPagService] connect: activationCode armazenado');
     }
 
     console.log(`[PlugPagService] connect: requestedDeviceId=${targetDeviceId}`);
@@ -276,7 +270,6 @@ class PlugPagPaymentService {
     try {
       const result = await PlugPagTerminal.connect({
         deviceId: targetDeviceId,
-        activationCode: this.storedActivationCode || undefined,
       });
       if (!result.connected) {
         this.setState('disconnected', 'Falha na conexão Bluetooth');
@@ -448,11 +441,17 @@ class PlugPagPaymentService {
       }
     }
 
-    // Se não autenticado, informar que precisa fazer login PagBank
+    // Bloquear pagamento se não autenticado.
+    // O SDK requer requestAuthentication() bem-sucedido antes de doPayment().
+    // Sem token válido, doPayment() falha com PP1003/PP1030 ("Profile is empty, Token len: 0").
     if (this.state === 'connected_but_unauthenticated' || !this.authenticated) {
+      console.error(
+        '[PlugPagService] startPayment: isAuthenticated=false — pagamento bloqueado.',
+        'Autenticação PagBank obrigatória. Chame authenticateInteractive() primeiro.',
+      );
       return {
         success: false,
-        error: 'Autenticação PagBank necessária. Use o botão "Autenticar PagBank" para fazer login (necessário apenas uma vez).',
+        error: 'Autenticação PagBank necessária. Faça login na conta PagBank antes de cobrar.',
         errorCode: 'AUTH_REQUIRED',
       };
     }
@@ -682,7 +681,6 @@ class PlugPagPaymentService {
 
     try {
       await PlugPagTerminal.requestAuthentication({ activationCode: activationCode.trim() });
-      this.storedActivationCode = activationCode.trim();
 
       const auth = await PlugPagTerminal.isAuthenticated();
       console.log(`[PlugPagService] forceActivate: isAuthenticated=${auth.authenticated}`);

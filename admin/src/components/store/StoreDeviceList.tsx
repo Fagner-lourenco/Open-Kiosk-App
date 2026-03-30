@@ -13,10 +13,11 @@ import { db } from '@/lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Wifi, WifiOff, MapPin, Tablet, Clock, Cpu, Beer, Video } from 'lucide-react';
+import { Wifi, WifiOff, MapPin, Tablet, Clock, Cpu, Beer, Video, Terminal } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { DeviceCameraDialog } from './DeviceCameraDialog';
+import { DeviceTerminalDialog } from './DeviceTerminalDialog';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
 
@@ -107,6 +108,7 @@ export function StoreDeviceList({ franchiseId, storeId }: StoreDeviceListProps) 
   const [devices, setDevices] = useState<DeviceDoc[]>([]);
   const [loading, setLoading] = useState(true);
   const [cameraDevice, setCameraDevice] = useState<DeviceDoc | null>(null);
+  const [terminalDevice, setTerminalDevice] = useState<DeviceDoc | null>(null);
 
   useEffect(() => {
     if (!franchiseId || !storeId) return;
@@ -186,6 +188,15 @@ export function StoreDeviceList({ franchiseId, storeId }: StoreDeviceListProps) 
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setTerminalDevice(device)}
+                    disabled={!online}
+                    title={online ? 'Terminal ESP32 remoto' : 'Dispositivo offline'}
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-accent transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    <Terminal className="h-4 w-4" />
+                  </button>
                   <button
                     type="button"
                     onClick={() => setCameraDevice(device)}
@@ -286,6 +297,18 @@ export function StoreDeviceList({ franchiseId, storeId }: StoreDeviceListProps) 
           storeId={storeId}
           deviceId={cameraDevice.deviceId}
           deviceLabel={buildDeviceLabel(cameraDevice).primary}
+        />
+      )}
+
+      {/* Dialog de terminal remoto ESP32 */}
+      {terminalDevice && (
+        <DeviceTerminalDialog
+          open={!!terminalDevice}
+          onOpenChange={(open) => { if (!open) setTerminalDevice(null); }}
+          franchiseId={franchiseId}
+          storeId={storeId}
+          deviceId={terminalDevice.deviceId}
+          deviceLabel={buildDeviceLabel(terminalDevice).primary}
         />
       )}
     </div>

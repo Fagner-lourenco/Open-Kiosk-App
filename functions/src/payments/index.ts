@@ -2,6 +2,7 @@ import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as logger from 'firebase-functions/logger';
 import { db, admin, requireAuth, requireFranchiseAccess, requireStoreAccess } from '../lib';
+import { randomUUID } from 'node:crypto';
 import type { CreatePaymentInput, PaymentStatus } from './types';
 import {
   createPaymentIntent,
@@ -311,6 +312,8 @@ export const mercadopagoWebhook = onRequest(
     const providerPaymentId = payload?.data?.transactions?.payments?.[0]?.reference?.id
       ? String(payload.data.transactions.payments[0].reference.id)
       : undefined;
+    // 🔧 UX4 FIX: Extrair status_detail para analytics (canceled_by_api, canceled_by_terminal, etc.)
+    const providerStatusDetail = payload?.data?.status_detail || payload?.status_detail || undefined;
 
     try {
       await db.runTransaction(async (txn) => {
@@ -332,6 +335,8 @@ export const mercadopagoWebhook = onRequest(
         const updateData: Record<string, unknown> = {
           status,
           providerStatus: orderStatus || undefined,
+          // 🔧 UX4 FIX: Persistir status_detail para analytics
+          providerStatusDetail: providerStatusDetail || undefined,
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           providerOrderId,
           providerPaymentId,
@@ -417,6 +422,8 @@ export const cancelMercadoPagoPayment = onCall(
           const authHeaders = {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${mpConfig.accessToken}`,
+            // 🔧 B6 FIX: X-Idempotency-Key obrigatório para POST /cancel (docs MP)
+            'X-Idempotency-Key': randomUUID(),
           };
           const cancelUrl = `https://api.mercadopago.com/v1/orders/${cancelResult.providerOrderId}/cancel`;
           const response = await fetch(cancelUrl, {

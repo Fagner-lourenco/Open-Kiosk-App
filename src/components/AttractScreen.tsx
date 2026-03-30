@@ -430,6 +430,7 @@ const AttractScreen = ({
     cachedVideoUrl,
     playbackIdentity,
     shouldAttemptVideo,
+    shouldRender,
     videoSettings?.contentLength,
     videoSettings?.cacheKey,
     videoSettings?.isEnabled,
@@ -449,11 +450,19 @@ const AttractScreen = ({
       setShouldRender(true);
       setIsExiting(false);
       startTriggeredRef.current = false;
+      failedVideoIdentityRef.current = null;
+      failedPlaybackAttemptsRef.current = {};
+      if (playbackIdentity) {
+        setVideoPlaybackState('loading');
+      }
       return;
     }
 
     clearPlaybackWatchdog();
     clearPlaybackRetryTimer();
+    failedVideoIdentityRef.current = null;
+    failedPlaybackAttemptsRef.current = {};
+    setVideoPlaybackState('idle');
     videoRef.current?.pause();
 
     const timeoutId = window.setTimeout(() => {
@@ -463,7 +472,7 @@ const AttractScreen = ({
     }, 200);
 
     return () => window.clearTimeout(timeoutId);
-  }, [visible]);
+  }, [playbackIdentity, visible]);
 
   if (!shouldRender) {
     return null;

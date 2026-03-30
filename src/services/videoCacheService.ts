@@ -418,8 +418,9 @@ const resolveCachedVideo = async (request: NormalizedVideoRequest): Promise<Vide
   }
 
   if (metadata.version !== request.version) {
-    await removeCachedVideoRecord(metadata);
-    return buildRemoteResult(request);
+    // Don't delete the native file here — it may still be playing.
+    // downloadVideo will clean up after the new version is downloaded.
+    return buildRemoteResult(request, metadata);
   }
 
   if (metadata.source === 'native-file' || metadata.nativeFilePath) {
@@ -499,11 +500,18 @@ const downloadToNativeFile = async (
   try {
     const nativeDirectory = request.nativeFilePath.split('/').slice(0, -1).join('/');
     if (nativeDirectory) {
-      await Filesystem.mkdir({
-        directory: Directory.Data,
-        path: nativeDirectory,
-        recursive: true,
-      });
+      try {
+        await Filesystem.mkdir({
+          directory: Directory.Data,
+          path: nativeDirectory,
+          recursive: true,
+        });
+      } catch (mkdirError: unknown) {
+        const msg = mkdirError instanceof Error ? mkdirError.message : String(mkdirError);
+        if (!msg.includes('already exists')) {
+          throw mkdirError;
+        }
+      }
     }
 
     const destinationUri = await Filesystem.getUri({
@@ -677,9 +685,7 @@ export const downloadVideo = async (
 
   try {
     const previousMetadata = await getMetadata(request);
-    if (previousMetadata && previousMetadata.version !== request.version) {
-      await removeCachedVideoRecord(previousMetadata);
-    }
+    const hasStalePrevious = !!(previousMetadata && previousMetadata.version !== request.version);
 
     const resolved = await resolveCachedVideo(request);
     if (resolved.isCached) {
@@ -704,6 +710,11 @@ export const downloadVideo = async (
 
     const nativeResult = await downloadToNativeFile(request, previousMetadata);
     if (nativeResult) {
+      if (hasStalePrevious && previousMetadata) {
+        // Only remove old files; metadata was already overwritten by cacheSet above.
+        await removeNativeFileIfPresent(previousMetadata.nativeFilePath).catch(() => {});
+        await removeCacheApiEntryIfPresent(previousMetadata.cacheApiKey || previousMetadata.url || undefined).catch(() => {});
+      }
       updateDownloadState(request.videoId, {
         isDownloading: false,
         progress: 100,
@@ -715,6 +726,10 @@ export const downloadVideo = async (
 
     const cacheApiResult = await downloadToCacheApi(request, onProgress);
     if (cacheApiResult) {
+      if (hasStalePrevious && previousMetadata) {
+        await removeNativeFileIfPresent(previousMetadata.nativeFilePath).catch(() => {});
+        await removeCacheApiEntryIfPresent(previousMetadata.cacheApiKey || previousMetadata.url || undefined).catch(() => {});
+      }
       updateDownloadState(request.videoId, {
         isDownloading: false,
         progress: 100,

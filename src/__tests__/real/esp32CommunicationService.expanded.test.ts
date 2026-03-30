@@ -12,7 +12,6 @@ import {
   ESP32_WIFI_SSID,
   ESP32_WIFI_PASSWORD,
   getESP32WiFiIP,
-  ESP32_BLE_PIN,
   ConnectionType,
   LastConnectionInfo,
   ESP32Device,
@@ -83,10 +82,6 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
 
     it('deve ter ESP32_DEFAULT_IP correto', () => {
       expect(getESP32WiFiIP()).toBe('192.168.4.1');
-    });
-
-    it('deve ter ESP32_BLE_PIN correto', () => {
-      expect(ESP32_BLE_PIN).toBe('123456');
     });
   });
 
@@ -218,11 +213,6 @@ describe('ESP32 Communication Service - Expansão de Cobertura', () => {
     it('deve validar formato do IP', () => {
       const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
       expect(ipRegex.test(getESP32WiFiIP())).toBe(true);
-    });
-
-    it('deve validar formato do PIN BLE', () => {
-      const pinRegex = /^\d{6}$/;
-      expect(pinRegex.test(ESP32_BLE_PIN)).toBe(true);
     });
   });
 });

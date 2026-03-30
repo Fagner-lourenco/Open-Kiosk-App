@@ -390,6 +390,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     // Processar tipos específicos
     switch (responseType) {
       case 'progress':
+        // 🔒 Multi-Tablet: Ignorar progresso de outro tap (impede contaminação cruzada)
+        if (response.tapId !== undefined && response.tapId !== selectedTapId) {
+          console.debug(`[ESP32Context] Ignorando progress de tap ${response.tapId} (local: ${selectedTapId})`);
+          break;
+        }
         setIsDispensing(true);
         {
           const progressData: ESP32DispensingProgress = {
@@ -437,6 +442,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       case 'status':
         // Persist per-cup session on cup_complete (multi-cup orders)
         if (response.stage === 'cup_complete') {
+          // 🔒 Multi-Tablet: Ignorar cup_complete de outro tap
+          if (response.tapId !== undefined && response.tapId !== selectedTapId) {
+            console.debug(`[ESP32Context] Ignorando cup_complete de tap ${response.tapId} (local: ${selectedTapId})`);
+            break;
+          }
           const cupProgressSnapshot = currentProgressRef.current;
           if (cupProgressSnapshot && cupProgressSnapshot.orderId) {
             persistSession({
@@ -452,7 +462,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         // ⚡ Detectar ESP32 reboot durante dispense ativo (brownout, watchdog, etc.)
         // Quando stage === 'ready' mas ainda temos um dispense em andamento,
         // significa que o ESP32 reiniciou e perdeu o estado da dispensação.
-        if (response.stage === 'ready' && currentProgressRef.current) {
+        // 🔒 Multi-Tablet: Só tratar reboot se o dispense local pertence ao nosso tap
+        if (response.stage === 'ready' && currentProgressRef.current
+            && (currentProgressRef.current.tapId === undefined || currentProgressRef.current.tapId === selectedTapId)) {
           const rebootProgress = currentProgressRef.current;
 
           // 🔧 FIX Bug #2: Na 1ª detecção de reboot, tentar reenvio automático transparente
@@ -569,6 +581,18 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         }
 
         if (response.stage === 'completed' || response.stage === 'error') {
+          // 🔒 Multi-Tablet: Ignorar completed/error de outro tap
+          if (response.tapId !== undefined && response.tapId !== selectedTapId) {
+            console.debug(`[ESP32Context] Ignorando ${response.stage} de tap ${response.tapId} (local: ${selectedTapId})`);
+            break;
+          }
+          // 🔒 Multi-Tablet: Verificar orderId — se a resposta tem orderId e não bate com o local, ignorar
+          if (response.orderId && currentProgressRef.current?.orderId
+              && response.orderId !== currentProgressRef.current.orderId) {
+            console.debug(`[ESP32Context] Ignorando ${response.stage} orderId ${response.orderId} (local: ${currentProgressRef.current.orderId})`);
+            break;
+          }
+
           // Limpar timeout de segurança
           if (dispenseTimeoutRef.current) {
             clearTimeout(dispenseTimeoutRef.current);
@@ -806,7 +830,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         // Se o firmware ainda está dispensando, o próximo sendProgressTap (a cada 250ms)
         // ressincronizará o display naturalmente.
         setTimeout(() => {
-          esp32Service.sendCommand('get_status', {}).catch(() => { /* next progress notify (~250ms) covers this */ });
+          esp32Service.sendCommand('status', {}).catch(() => { /* next progress notify (~250ms) covers this */ });
         }, 600);
       }
 

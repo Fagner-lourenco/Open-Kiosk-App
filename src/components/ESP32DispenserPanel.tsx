@@ -63,7 +63,7 @@ import esp32Service, {
   ESP32Device, 
   ConnectionStatus,
   ESP32_DEVICE_NAME,
-  ESP32_BLE_PIN,
+
 } from '@/services/esp32CommunicationService';
 import { Capacitor } from '@capacitor/core';
 import { TapSelector, useTapSelection } from '@/components/TapSelector';
@@ -1274,7 +1274,7 @@ export function ESP32DispenserPanel() {
                       <p className="font-medium mb-1">⚠️ Não encontrou o dispositivo?</p>
                       <ol className="list-decimal list-inside space-y-1">
                         <li>Vá nas <strong>Configurações → Bluetooth</strong> do Android</li>
-                        <li>Pareie o <strong>"{ESP32_DEVICE_NAME}"</strong> (PIN: <strong>{ESP32_BLE_PIN}</strong>)</li>
+                        <li>Pareie o <strong>"{ESP32_DEVICE_NAME}"</strong></li>
                         <li><strong className="text-red-600">DESCONECTE</strong> (mas mantenha pareado!)</li>
                         <li>Volte aqui e tente novamente</li>
                       </ol>
@@ -1285,7 +1285,7 @@ export function ESP32DispenserPanel() {
                   )}
 
                   <p className="text-xs text-gray-500 text-center">
-                    PIN: {ESP32_BLE_PIN} • {t('esp32.tipBluetooth')}
+                    {t('esp32.tipBluetooth')}
                   </p>
                 </>
               ) : (
