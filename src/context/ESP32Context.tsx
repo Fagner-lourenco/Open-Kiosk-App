@@ -146,6 +146,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   const [taps, setTaps] = useState<TapStatus[]>([]);
   const [selectedTapId, setSelectedTapId] = useState<number>(0);
 
+  // 🔧 FIX: Ref para selectedTapId — permite que handleESP32Response (useCallback [])
+  // acesse sempre o valor correto sem recriar o callback a cada render.
+  const selectedTapIdRef = useRef<number>(selectedTapId);
+  useEffect(() => { selectedTapIdRef.current = selectedTapId; }, [selectedTapId]);
+
   // Logs persistentes
   const [logs, setLogs] = useState<ESP32LogEntry[]>([]);
   const logIdRef = useRef(0);
@@ -357,14 +362,21 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
       setNumTaps(response.num_taps);
     }
 
-    // Notificar todos os listeners
-    responseListeners.current.forEach(listener => {
-      try {
-        listener(response);
-      } catch (error) {
-        console.error('[ESP32Context] Erro em listener:', error);
-      }
-    });
+    // Notificar listeners — filtrar por tapId para impedir contaminação cruzada
+    // Respostas com tapId diferente do selecionado NÃO são repassadas aos listeners
+    // (ex: DrinkPickupScreen, ESP32DispenserPanel, terminalRelayService)
+    const localTapId = selectedTapIdRef.current;
+    if (response.tapId === undefined || response.tapId === localTapId) {
+      responseListeners.current.forEach(listener => {
+        try {
+          listener(response);
+        } catch (error) {
+          console.error('[ESP32Context] Erro em listener:', error);
+        }
+      });
+    } else {
+      console.debug(`[ESP32Context] Listener skip: tapId ${response.tapId} ≠ local ${localTapId}`);
+    }
 
     // 🆕 CORREÇÃO: Detectar tipo por campos quando 'type' está ausente
     // Isso é necessário porque mensagens BLE podem chegar fragmentadas ou em ordem diferente
@@ -391,8 +403,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     switch (responseType) {
       case 'progress':
         // 🔒 Multi-Tablet: Ignorar progresso de outro tap (impede contaminação cruzada)
-        if (response.tapId !== undefined && response.tapId !== selectedTapId) {
-          console.debug(`[ESP32Context] Ignorando progress de tap ${response.tapId} (local: ${selectedTapId})`);
+        if (response.tapId !== undefined && response.tapId !== selectedTapIdRef.current) {
+          console.debug(`[ESP32Context] Ignorando progress de tap ${response.tapId} (local: ${selectedTapIdRef.current})`);
           break;
         }
         setIsDispensing(true);
@@ -443,8 +455,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         // Persist per-cup session on cup_complete (multi-cup orders)
         if (response.stage === 'cup_complete') {
           // 🔒 Multi-Tablet: Ignorar cup_complete de outro tap
-          if (response.tapId !== undefined && response.tapId !== selectedTapId) {
-            console.debug(`[ESP32Context] Ignorando cup_complete de tap ${response.tapId} (local: ${selectedTapId})`);
+          if (response.tapId !== undefined && response.tapId !== selectedTapIdRef.current) {
+            console.debug(`[ESP32Context] Ignorando cup_complete de tap ${response.tapId} (local: ${selectedTapIdRef.current})`);
             break;
           }
           const cupProgressSnapshot = currentProgressRef.current;
@@ -464,7 +476,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
         // significa que o ESP32 reiniciou e perdeu o estado da dispensação.
         // 🔒 Multi-Tablet: Só tratar reboot se o dispense local pertence ao nosso tap
         if (response.stage === 'ready' && currentProgressRef.current
-            && (currentProgressRef.current.tapId === undefined || currentProgressRef.current.tapId === selectedTapId)) {
+            && (currentProgressRef.current.tapId === undefined || currentProgressRef.current.tapId === selectedTapIdRef.current)) {
           const rebootProgress = currentProgressRef.current;
 
           // 🔧 FIX Bug #2: Na 1ª detecção de reboot, tentar reenvio automático transparente
@@ -567,23 +579,27 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           esp32Service.setDispensingInProgress(false); // 🔧 FIX: Liberar healthcheck (reboot path)
 
           // Notificar listeners como erro para DrinkPickupScreen mostrar estado de erro
+          const rebootErrorResponse = {
+            type: 'status',
+            stage: 'error',
+            orderId: rebootProgress.orderId,
+            tapId: rebootProgress.tapId,
+            message: 'ESP32 reiniciou durante dispensação (possível brownout)',
+          } as ESP32Response;
+          const localTapIdReboot = selectedTapIdRef.current;
           responseListeners.current.forEach(listener => {
             try {
-              listener({
-                type: 'status',
-                stage: 'error',
-                orderId: rebootProgress.orderId,
-                tapId: rebootProgress.tapId,
-                message: 'ESP32 reiniciou durante dispensação (possível brownout)',
-              } as ESP32Response);
+              if (rebootErrorResponse.tapId === undefined || rebootErrorResponse.tapId === localTapIdReboot) {
+                listener(rebootErrorResponse);
+              }
             } catch (e) { /* ignore */ }
           });
         }
 
         if (response.stage === 'completed' || response.stage === 'error') {
           // 🔒 Multi-Tablet: Ignorar completed/error de outro tap
-          if (response.tapId !== undefined && response.tapId !== selectedTapId) {
-            console.debug(`[ESP32Context] Ignorando ${response.stage} de tap ${response.tapId} (local: ${selectedTapId})`);
+          if (response.tapId !== undefined && response.tapId !== selectedTapIdRef.current) {
+            console.debug(`[ESP32Context] Ignorando ${response.stage} de tap ${response.tapId} (local: ${selectedTapIdRef.current})`);
             break;
           }
           // 🔒 Multi-Tablet: Verificar orderId — se a resposta tem orderId e não bate com o local, ignorar
@@ -896,9 +912,13 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
                 setCurrentProgress(null);
                 currentProgressRef.current = null;
                 dispensingStartedAtRef.current = null;
+                const waitingResponse = { type: 'status', stage: 'waiting_next', orderId: stillActive.orderId, tapId: stillActive.tapId } as ESP32Response;
+                const localTapIdGrace = selectedTapIdRef.current;
                 responseListeners.current.forEach(listener => {
                   try {
-                    listener({ type: 'status', stage: 'waiting_next', orderId: stillActive.orderId } as ESP32Response);
+                    if (waitingResponse.tapId === undefined || waitingResponse.tapId === localTapIdGrace) {
+                      listener(waitingResponse);
+                    }
                   } catch (e) { /* ignore */ }
                 });
                 return;
@@ -934,15 +954,19 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
               });
 
               // Notificar listeners como erro
+              const disconnectErrorResponse = {
+                type: 'status',
+                stage: 'error',
+                orderId: stillActive.orderId,
+                tapId: stillActive.tapId,
+                message: 'Conexão perdida durante dispensação',
+              } as ESP32Response;
+              const localTapIdDisconnect = selectedTapIdRef.current;
               responseListeners.current.forEach(listener => {
                 try {
-                  listener({
-                    type: 'status',
-                    stage: 'error',
-                    orderId: stillActive.orderId,
-                    tapId: stillActive.tapId,
-                    message: 'Conexão perdida durante dispensação',
-                  } as ESP32Response);
+                  if (disconnectErrorResponse.tapId === undefined || disconnectErrorResponse.tapId === localTapIdDisconnect) {
+                    listener(disconnectErrorResponse);
+                  }
                 } catch (e) { /* ignore */ }
               });
 
@@ -1113,7 +1137,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   // ============================================
 
   // 🆕 POLLING DE STATUS WiFi DURANTE DISPENSAÇÃO
-  // Quando conectado via WiFi, fazer polling de /status para obter progresso
+  // Quando conectado via WiFi, fazer polling de /taps para obter progresso multi-tap
   useEffect(() => {
     if (!isDispensing || status.type !== 'wifi' || !status.connected) {
       return;
@@ -1126,9 +1150,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
     const pollInterval = setInterval(async () => {
       try {
-        // Buscar status via HTTP GET /status (usando IP configurável)
+        // 🔒 Multi-Tablet: Usar /taps (multi-tap) ao invés de /status (tap-0-cêntrico)
         const wifiIP = getESP32WiFiIP();
-        const response = await fetch(buildLocalHttpUrl(wifiIP, '/status'), {
+        const response = await fetch(buildLocalHttpUrl(wifiIP, '/taps'), {
           method: 'GET',
           headers: { 'Accept': 'application/json' },
           signal: abortController.signal,
@@ -1136,10 +1160,46 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
         if (response.ok) {
           const data = await response.json();
-          console.log('[ESP32Context] 📶 Polling WiFi resposta:', data);
+          console.log('[ESP32Context] 📶 Polling WiFi /taps resposta:', data);
 
-          // Processar resposta como se viesse de USB/BLE
-          handleESP32Response(data);
+          // Extrair o tap correspondente ao nosso selectedTapId
+          const localTapId = selectedTapIdRef.current;
+          const tapData = data.taps?.find((t: { id: number }) => t.id === localTapId);
+
+          if (tapData && tapData.isDispensing) {
+            // Converter formato /taps para formato ESP32Response esperado pelo handleESP32Response
+            handleESP32Response({
+              type: 'progress',
+              tapId: tapData.id,
+              orderId: tapData.orderId,
+              cup: tapData.currentCup,
+              total_cups: tapData.totalCups,
+              ml: tapData.mlDispensed,
+              target: tapData.targetMl,
+              percent: tapData.progress,
+              flow_started: tapData.flowStarted,
+            } as ESP32Response);
+          } else if (tapData && !tapData.isDispensing) {
+            // 🔧 FIX BUG-R2: Firmware reporta isDispensing=false mas app ainda está dispensando.
+            // BLE provavelmente perdeu o evento completed — sintetizar a partir do polling WiFi.
+            const activeProgress = currentProgressRef.current;
+            if (activeProgress) {
+              console.warn('[ESP32Context] 📶 WiFi polling detectou completed (firmware isDispensing=false enquanto app isDispensing=true)');
+              handleESP32Response({
+                type: 'status',
+                stage: 'completed',
+                tapId: tapData.id,
+                orderId: activeProgress.orderId,
+                ml: tapData.mlDispensed || activeProgress.ml,
+                target: activeProgress.targetMl,
+              } as ESP32Response);
+            }
+          }
+
+          // Sempre processar num_taps
+          if (data.num_taps) {
+            handleESP32Response({ type: 'taps_status', num_taps: data.num_taps } as ESP32Response);
+          }
         } else {
           console.warn('[ESP32Context] 📶 Polling WiFi falhou:', response.status);
         }
@@ -1489,9 +1549,11 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
             });
 
             // 🔧 FIX: Enviar comando stop ao ESP32 para fechar a solenoide
+            // 🔒 Multi-Tablet: Sempre enviar tapId para não parar o outro tap
             try {
-              await esp32Service.sendCommand('stop', {});
-              addLog('sent', `stop (timeout safety) para ${orderId}`);
+              const stopTapId = progressSnap?.tapId ?? selectedTapIdRef.current;
+              await esp32Service.sendCommand('stop', { tapId: stopTapId });
+              addLog('sent', `stop tapId=${stopTapId} (timeout safety) para ${orderId}`);
             } catch (e) {
               console.error('[ESP32Context] Falha ao enviar stop no timeout:', e);
             }
@@ -1568,12 +1630,12 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   }, [selectedTapId, addLog]);
 
   const stopDispensing = useCallback(async (tapId?: number): Promise<boolean> => {
-    // 🆕 Multi-Tap: Enviar stop com tapId opcional
-    addLog('sent', tapId !== undefined ? `stop [Tap ${tapId}]` : 'stop [All Taps]');
+    // 🔒 Multi-Tablet: Sempre enviar tapId para não parar o outro tap
+    const effectiveTapId = tapId ?? currentProgressRef.current?.tapId ?? selectedTapIdRef.current;
+    addLog('sent', `stop [Tap ${effectiveTapId}]`);
 
     // 🆕 CORREÇÃO: Usar sendCommand unificado
-    const params = tapId !== undefined ? { tapId } : {};
-    await esp32Service.sendCommand('stop', params);
+    await esp32Service.sendCommand('stop', { tapId: effectiveTapId });
 
     // 🔒 FIX BUG-NEW-2: Update Firestore order status so order doesn't stay stuck in 'dispensing'
     const activeProgress = currentProgressRef.current;

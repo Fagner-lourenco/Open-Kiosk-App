@@ -36,7 +36,7 @@ import {
   type PlugPagTerminalState,
 } from "@/services/plugpagPaymentService";
 import { PlugPagTerminalStatus } from "@/components/PlugPagTerminalStatus";
-import { getPlugPagDeviceId } from "@/components/TapSettingsSync";
+import { getPlugPagDeviceId, isTapExplicitlyConfigured } from "@/components/TapSettingsSync";
 
 interface DrinkCheckoutSelection {
   product: Product;
@@ -416,7 +416,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       console.log(`[DrinkMP] Fallback tentativa ${attempt}/${maxAttempts}`);
     },
   });
-  const emergencyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const emergencyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cleanupPagBankListener = useCallback(() => {
     if (pagbankUnsubscribeRef.current) {
       pagbankUnsubscribeRef.current();
@@ -780,6 +780,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
     // 🔧 B2 FIX: Guard contra double-click (ref previne race condition entre React batching)
     if (paymentInProgressRef.current) return;
     resetInactivityTimer();
+    // 🔒 Multi-Tablet: Bloquear checkout se o tablet não tem tap explicitamente configurado
+    if (!isTapExplicitlyConfigured()) {
+      toast({ title: t('common.error'), description: 'Torneira não configurada. Configure a torneira nas configurações do dispositivo.', variant: "destructive" });
+      return;
+    }
     if (!selectedPayment) {
       toast({ title: t('common.error'), description: t('checkout.selectPaymentMethodError'), variant: "destructive" });
       return;
@@ -1151,7 +1156,8 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           currentCurrency.code,
           orderNumber,
           selectedPayment,
-          getCurrentStoreId()
+          getCurrentStoreId(),
+          selectedTapId
         );
         recordedOrderRef.current = orderNumber;
 

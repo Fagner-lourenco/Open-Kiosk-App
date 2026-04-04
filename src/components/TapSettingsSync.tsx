@@ -37,6 +37,15 @@ export const getDefaultTapId = (): number => {
   }
 };
 
+/** Returns true if the tablet has an explicitly configured tap (not just the default). */
+export const isTapExplicitlyConfigured = (): boolean => {
+  try {
+    return localStorage.getItem(LOCAL_STORAGE_KEY) !== null;
+  } catch {
+    return false;
+  }
+};
+
 export const setDefaultTapId = (tapId: number): void => {
   try {
     localStorage.setItem(LOCAL_STORAGE_KEY, tapId.toString());

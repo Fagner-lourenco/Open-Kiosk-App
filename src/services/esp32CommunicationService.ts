@@ -525,7 +525,7 @@ class ESP32CommunicationService {
       }
     }
 
-    if (this.usbReceiveBuffer.length > 2048) {
+    if (this.usbReceiveBuffer.length > 512) {
       console.warn('[ESP32][USB] Buffer muito grande (' + this.usbReceiveBuffer.length + ' bytes), tentando extrair JSONs...');
       const { jsons, remainder } = this.extractCompleteJsons(this.usbReceiveBuffer);
       for (const json of jsons) {

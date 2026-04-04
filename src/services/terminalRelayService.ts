@@ -33,8 +33,15 @@ import esp32Service from './esp32CommunicationService';
 /** Ignorar comandos pending com mais de 30s (ex: kiosk reiniciou e encontrou docs antigos) */
 const STALE_COMMAND_MS = 30_000;
 
-/** Timeout para resposta do ESP32 (BLE, USB ou WiFi) */
-const ESP32_TIMEOUT_MS = 10_000;
+/** Timeout padrão para resposta do ESP32 (BLE, USB ou WiFi) */
+const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** Timeouts por ação — comandos que levam mais tempo que o padrão */
+const ACTION_TIMEOUT_MS: Record<string, number> = {
+  diagnose_gpio: 20_000,   // Testes de hardware levam ~8.5s
+  calibrate: 35_000,       // Depende de duration (até 30s)
+  test_flow: 20_000,       // Similar ao calibrate
+};
 
 // ─── Service ────────────────────────────────────────────────────────────────
 
@@ -197,7 +204,8 @@ class TerminalRelayService {
     const url = buildLocalHttpUrl(esp32Ip, '/command');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), ESP32_TIMEOUT_MS);
+    const timeoutMs = ACTION_TIMEOUT_MS[action] ?? DEFAULT_TIMEOUT_MS;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const payload = { action, ...commandData };
@@ -215,7 +223,7 @@ class TerminalRelayService {
       return await response.json();
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error(`ESP32 não respondeu (timeout ${ESP32_TIMEOUT_MS / 1000}s)`);
+        throw new Error(`ESP32 não respondeu (timeout ${timeoutMs / 1000}s)`);
       }
       throw error;
     } finally {
@@ -255,6 +263,8 @@ class TerminalRelayService {
       };
 
       const isPingCommand = action === 'ping';
+      // 🔒 Multi-Tablet: Se o comando inclui tapId, só aceitar respostas do mesmo tap
+      const expectedTapId = (commandData as Record<string, unknown>)?.tapId;
 
       const handleLine = (line: string) => {
         const trimmed = line.trim();
@@ -268,6 +278,12 @@ class TerminalRelayService {
           // Ignorar pong do heartbeat autônomo para comandos que não sejam ping
           if (!isPingCommand && json.type === 'pong') return;
 
+          // 🔒 Multi-Tablet: Ignorar respostas de outro tap (progress/status broadcast BLE)
+          if (expectedTapId !== undefined && json.tapId !== undefined && json.tapId !== expectedTapId) {
+            console.debug(`[TerminalRelay] Ignorando resposta de tap ${json.tapId} (esperado: ${expectedTapId})`);
+            return;
+          }
+
           settle(() => resolve(json));
         } catch {
           // fragmento ou linha não-JSON — aguardar próxima
@@ -278,13 +294,15 @@ class TerminalRelayService {
       const unsubBle = esp32Service.addBleDataListener(handleLine);
       const unsubUsb = esp32Service.addUsbDataListener(handleLine);
 
+      const timeoutMs = ACTION_TIMEOUT_MS[action] ?? DEFAULT_TIMEOUT_MS;
+
       const timeoutId = setTimeout(() => {
         settle(() =>
           reject(
-            new Error(`ESP32 não respondeu (timeout ${ESP32_TIMEOUT_MS / 1000}s)`),
+            new Error(`ESP32 não respondeu (timeout ${timeoutMs / 1000}s)`),
           ),
         );
-      }, ESP32_TIMEOUT_MS);
+      }, timeoutMs);
 
       // Envio com retry: BLE não suporta writes concorrentes. Se o heartbeat estiver
       // em voo no momento do envio, sendCommand retorna false. Tentar até 3x com 400ms.

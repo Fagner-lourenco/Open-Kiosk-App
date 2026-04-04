@@ -77,7 +77,7 @@ const DrinkPickupScreen = ({
   const { settings } = useStoreSettings();
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { currentProgress, isDispensing, addResponseListener } = useESP32();
+  const { currentProgress, isDispensing, addResponseListener, selectedTapId } = useESP32();
   
   // Configurações do admin (com fallback para defaults)
   const pickupTimeout = timeoutSeconds ?? settings?.drinkPickupTimeoutSeconds ?? DEFAULT_PICKUP_TIMEOUT_SECONDS;
@@ -213,6 +213,11 @@ const DrinkPickupScreen = ({
 
     // Listener para eventos de status do ESP32
     const unsubscribe = addResponseListener((response) => {
+      // 🔒 Multi-Tablet: Defesa em profundidade — ignorar respostas de outro tap
+      if (response.tapId !== undefined && response.tapId !== selectedTapId) {
+        console.debug(`[DrinkPickupScreen] Ignorando resposta de tap ${response.tapId} (local: ${selectedTapId})`);
+        return;
+      }
       console.log('[DrinkPickupScreen] Evento recebido:', response.type, response.type === 'status' ? response.stage : `${response.percent ?? 0}%`);
       
       if (response.type === 'status') {
@@ -310,7 +315,7 @@ const DrinkPickupScreen = ({
       unsubscribe();
       // NÃO cancelar o timer de auto-close aqui - ele deve continuar rodando
     };
-  }, [isOpen, addResponseListener, playCompletionSound, toast, t]);
+  }, [isOpen, addResponseListener, playCompletionSound, toast, t, selectedTapId]);
 
   // ============================================
   // AUTO-CLOSE NO ESTADO DE ERRO (safety net)

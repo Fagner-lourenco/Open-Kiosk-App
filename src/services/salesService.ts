@@ -68,7 +68,8 @@ class SalesService {
     currency: string,
     orderNumber: string,
     paymentMethod: PaymentMethod,
-    storeId: string
+    storeId: string,
+    tapId?: number
   ): Promise<string> {
     console.log('[SalesService] Processing offline sale:', orderNumber);
 
@@ -125,6 +126,7 @@ class SalesService {
       deviceId,
       paymentMethod,
       ...timingData,
+      tapId: tapId ?? undefined,               // 🔒 Multi-Tablet: tap que dispensou (offline)
       status: 'paid_pending_dispense' as const,
       paymentStatus: 'paid' as const,
       dispenseStatus: 'pending' as DispenseStatus,
@@ -198,7 +200,8 @@ class SalesService {
     currency: string,
     orderNumber: string,
     paymentMethod: PaymentMethod,
-    storeId?: string  // Parâmetro opcional para multi-loja
+    storeId?: string,  // Parâmetro opcional para multi-loja
+    tapId?: number     // 🔒 Multi-Tablet: tap que vai dispensar
   ): Promise<string> {
     const db = getFirebaseDb();
 
@@ -218,7 +221,8 @@ class SalesService {
         currency,
         orderNumber,
         paymentMethod,
-        effectiveStoreId
+        effectiveStoreId,
+        tapId
       );
     }
 
@@ -322,6 +326,7 @@ class SalesService {
         storeId: effectiveStoreId || undefined, // Incluir storeId se disponível
         franchiseId: franchiseId || undefined,   // Incluir franchiseId para agregação
         deviceId,                                // Rastreabilidade do dispositivo
+        tapId: tapId ?? undefined,               // 🔒 Multi-Tablet: tap que dispensou
         paymentMethod,
         ...timingData,
 

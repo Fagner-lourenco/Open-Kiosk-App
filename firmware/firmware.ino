@@ -279,6 +279,7 @@ String handleGetTaps();
 // handleReleaseDrinkTap removida: nunca implementada, handleReleaseDrink é a função real
 void sendStatusTap(int tapId, const char* orderId, const char* stage, String message);
 void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount, float mlDispensed, int target, int percent, bool flowStartedFlag, int elapsedSec, int remainingSec);
+void sendBleChunked(const String& data);  // BLE chunking para respostas > MTU
 
 // Funções v3.0
 void loadSettings();
@@ -989,6 +990,43 @@ void initBluetooth() {
 }
 
 // ============================================================================
+// ENVIO BLE COM CHUNKING (respostas > MTU eram truncadas silenciosamente)
+// ============================================================================
+
+/**
+ * Envia uma string via BLE Notify com chunking automático.
+ * NimBLE notify() trunca payloads > MTU-3 bytes (~244 bytes com MTU 247).
+ * Esta função divide a resposta em chunks de BLE_CHUNK_SIZE bytes,
+ * enviando cada um como notify() separado. O kiosk remonta via buffer + '\n'.
+ */
+const int BLE_CHUNK_SIZE = 180;  // Conservador: cabe em qualquer MTU >= 185
+
+void sendBleChunked(const String& data) {
+  if (connectedCount <= 0 || pCharacteristic == NULL) return;
+
+  int len = data.length();
+  if (len <= BLE_CHUNK_SIZE) {
+    // Cabe em um único notify
+    pCharacteristic->setValue(data.c_str());
+    pCharacteristic->notify();
+  } else {
+    // Dividir em chunks
+    int chunks = 0;
+    for (int offset = 0; offset < len; offset += BLE_CHUNK_SIZE) {
+      int end = min(offset + BLE_CHUNK_SIZE, len);
+      String chunk = data.substring(offset, end);
+      pCharacteristic->setValue(chunk.c_str());
+      pCharacteristic->notify();
+      chunks++;
+      if (offset + BLE_CHUNK_SIZE < len) {
+        delay(20);  // Aguardar BLE stack processar (>= connection interval)
+      }
+    }
+    Serial.println("[BLE] Enviado em " + String(chunks) + " chunks (" + String(len) + " bytes)");
+  }
+}
+
+// ============================================================================
 // PROCESSAMENTO DE COMANDOS
 // ============================================================================
 
@@ -998,15 +1036,8 @@ void processCommand(String jsonString) {
   // Enviar via Serial (USB)
   Serial.println("[RESULT] " + result);
   
-  // 🔧 CORREÇÃO v4.0.4: Enviar também via Bluetooth (se conectado)
-  // Isso garante que o Android receba as respostas dos comandos
-  if (connectedCount > 0 && pCharacteristic != NULL) {
-    // 🔧 FIX: Adicionar \n para que o app reconheça linha completa
-    String bleResult = result + "\n";
-    pCharacteristic->setValue(bleResult.c_str());
-    pCharacteristic->notify();
-    Serial.println("[BLE] Resultado enviado (" + String(result.length()) + " bytes)");
-  }
+  // Enviar via BLE com chunking automático (FIX: respostas grandes eram truncadas)
+  sendBleChunked(result + "\n");
 }
 
 String processCommandAndGetResult(String jsonString) {
@@ -1050,11 +1081,17 @@ String processCommandAndGetResult(String jsonString) {
   
   // ----- AÇÃO: PARAR DISPENSAÇÃO -----
   else if (strcmp(action, "stop") == 0) {
-    int tapId = doc["tapId"] | -1;  // -1 = parar todas
+    int tapId = doc["tapId"] | -1;
     if (tapId >= 0 && tapId < NUM_TAPS) {
       return handleStopTap(tapId);
     }
-    return handleStop();  // Parar todas
+    // 🔒 Multi-Tablet: stop sem tapId retorna erro — impede que um tablet pare o outro
+    return "{\"type\":\"error\",\"code\":\"TAP_ID_REQUIRED\",\"message\":\"tapId obrigatório para stop. Use stop_all para emergência.\"}";
+  }
+
+  // ----- AÇÃO: PARAR TODAS (emergência/admin) -----
+  else if (strcmp(action, "stop_all") == 0) {
+    return handleStop();
   }
   
   // ----- AÇÃO: TESTAR VÁLVULA (com tapId opcional) -----
@@ -1971,13 +2008,8 @@ void sendStatusTap(int tapId, const char* orderId, const char* stage, String mes
   // Enviar via Serial
   Serial.println(json);
   
-  // Enviar via Bluetooth (se conectado)
-  if (connectedCount > 0 && pCharacteristic != NULL) {
-    // 🔧 FIX v4.0.4: Adicionar \n para que o app reconheça linha completa
-    String bleJson = json + "\n";
-    pCharacteristic->setValue(bleJson.c_str());
-    pCharacteristic->notify();
-  }
+  // Enviar via BLE com chunking automático
+  sendBleChunked(json + "\n");
 }
 
 // Enviar progresso da dispensação (legado)
@@ -2011,13 +2043,8 @@ void sendProgressTap(int tapId, const char* orderId, int cup, int totalCupsCount
   // Enviar via Serial
   Serial.println(json);
   
-  // Enviar via Bluetooth (se conectado)
-  if (connectedCount > 0 && pCharacteristic != NULL) {
-    // 🔧 FIX v4.0.4: Adicionar \n para que o app reconheça linha completa
-    String bleJson = json + "\n";
-    pCharacteristic->setValue(bleJson.c_str());
-    pCharacteristic->notify();
-  }
+  // Enviar via BLE com chunking automático
+  sendBleChunked(json + "\n");
 }
 
 // ============================================================================

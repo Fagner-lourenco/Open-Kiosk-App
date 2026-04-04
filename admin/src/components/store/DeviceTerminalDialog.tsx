@@ -47,6 +47,7 @@ import {
   Gauge,
   Cpu,
   Trash2,
+  Droplets,
 } from 'lucide-react';
 
 // ─── Tipos ──────────────────────────────────────────────────────────────────
@@ -268,6 +269,30 @@ export function DeviceTerminalDialog({
           >
             <Zap className="h-3.5 w-3.5" />
             Valve T1
+          </Button>
+
+          {/* Calibração (abre válvula e conta pulsos por 10s) */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={sending}
+            onClick={() => sendCommand('calibrate', { duration: 10000, tapId: 0 })}
+            title="Calibrar Tap 0 (10s — meça o volume dispensado)"
+            className="gap-1.5 text-xs"
+          >
+            <Droplets className="h-3.5 w-3.5" />
+            Cal T0
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={sending}
+            onClick={() => sendCommand('calibrate', { duration: 10000, tapId: 1 })}
+            title="Calibrar Tap 1 (10s — meça o volume dispensado)"
+            className="gap-1.5 text-xs"
+          >
+            <Droplets className="h-3.5 w-3.5" />
+            Cal T1
           </Button>
         </div>
 

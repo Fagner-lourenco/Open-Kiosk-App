@@ -251,6 +251,12 @@ export function ESP32DispenserPanel() {
     console.log('[ESP32DispenserPanel] Registrando listener de respostas');
     
     const unsubscribe = addResponseListener((response) => {
+      // 🔒 Multi-Tablet: Ignorar respostas de dispense de outro tap (defesa em profundidade)
+      if (response.tapId !== undefined && response.tapId !== selectedTapId) {
+        console.debug(`[ESP32DispenserPanel] Ignorando resposta de tap ${response.tapId} (local: ${selectedTapId})`);
+        return;
+      }
+
       // 🆕 CORREÇÃO: Detectar tipo por campos quando 'type' está ausente
       let responseType = response.type;
       if (!responseType) {
@@ -380,7 +386,7 @@ export function ESP32DispenserPanel() {
     });
     
     return () => unsubscribe();
-  }, [addResponseListener, toast, t, setDispensing, setIsBusy, setCurrentAction]);
+  }, [addResponseListener, toast, t, setDispensing, setIsBusy, setCurrentAction, selectedTapId]);
 
   const updateLogAutoScrollPreference = useCallback(() => {
     const container = logContainerRef.current;
