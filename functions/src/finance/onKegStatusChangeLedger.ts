@@ -41,7 +41,8 @@ interface KegData {
   volumeMl: number;
   remainingMl: number;
   status: string;
-  tapId: string | null;
+  tapIds?: string[];
+  tapId?: string | null; // legacy compat
   cost?: number;
   costPerMl?: number;
   tappedAt?: admin.firestore.Timestamp | null;
@@ -132,7 +133,8 @@ export const onKegStatusChangeLedger = onDocumentUpdated(
     const categoryId = categoriesSnap.docs[0].id;
 
     const tappedDate = after.tappedAt || admin.firestore.Timestamp.now();
-    const tapLabel = after.tapId ? ` (tap ${after.tapId})` : '';
+    const connectedTaps = Array.isArray(after.tapIds) ? after.tapIds : (after.tapId ? [after.tapId] : []);
+    const tapLabel = connectedTaps.length > 0 ? ` (tap ${connectedTaps.join(', ')})` : '';
     const batchLabel = after.batchCode ? ` lote ${after.batchCode}` : '';
 
     const ref = ledgerCol.doc();

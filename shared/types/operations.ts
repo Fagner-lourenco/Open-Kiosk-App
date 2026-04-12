@@ -51,6 +51,9 @@ export interface TapOperationalState {
  */
 export type KegStatus = 'in_stock' | 'tapped' | 'depleted' | 'returned';
 
+/** Maximum number of taps a single keg can be connected to simultaneously. */
+export const MAX_TAPS_PER_KEG = 2;
+
 export interface Keg {
   kegId: string;
   productId: string;
@@ -58,7 +61,7 @@ export interface Keg {
   volumeMl: number;
   remainingMl: number;
   status: KegStatus;
-  tapId: string | null;
+  tapIds: string[];
   tappedAt: Date | null;
   depletedAt: Date | null;
   batchCode?: string;

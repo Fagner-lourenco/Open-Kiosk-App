@@ -290,10 +290,11 @@ function ConnectTapDialog({
               <SelectContent>
                 {taps.map((tap) => {
                   const assignment = getActiveAssignment(tap.tapId);
+                  const alreadyConnected = tap.currentKegId === kegId;
                   return (
-                    <SelectItem key={tap.tapId} value={tap.tapId}>
+                    <SelectItem key={tap.tapId} value={tap.tapId} disabled={alreadyConnected}>
                       Torneira {Number(tap.tapId) + 1}
-                      {assignment ? ` (ocupada)` : ' (livre)'}
+                      {alreadyConnected ? ' (já conectado)' : assignment ? ' (ocupada)' : ' (livre)'}
                     </SelectItem>
                   );
                 })}
@@ -301,7 +302,7 @@ function ConnectTapDialog({
             </Select>
           </div>
 
-          {selectedTapAssignment && (
+          {selectedTapAssignment && selectedTapAssignment.kegId !== kegId && (
             <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
               <div className="flex items-center gap-2 text-yellow-700">
                 <AlertTriangle className="h-4 w-4" />
@@ -391,9 +392,9 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
     updateKegStatus({ kegId, status: 'returned' });
   };
 
-  /** Derive which tap a keg is on, using real-time tap.currentKegId (canonical) */
-  const getKegTapId = (kegId: string): string | undefined =>
-    realtimeTaps.find((t) => t.currentKegId === kegId)?.tapId;
+  /** Derive which taps a keg is on, using real-time tap.currentKegId (canonical) */
+  const getKegTapIds = (kegId: string): string[] =>
+    realtimeTaps.filter((t) => t.currentKegId === kegId).map((t) => t.tapId);
 
   const isLoading = loadingKegs || loadingRealtimeTaps;
 
@@ -597,7 +598,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
               <TableBody>
                 {filteredKegs.map((keg) => {
                   const pct = Math.round((keg.remainingMl / keg.volumeMl) * 100);
-                  const tapId = getKegTapId(keg.kegId);
+                  const tapIds = getKegTapIds(keg.kegId);
                   const isExpiring =
                     keg.expiresAt && keg.expiresAt.getTime() < Date.now() + 3 * 24 * 60 * 60 * 1000;
 
@@ -629,10 +630,14 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {tapId != null ? (
-                          <Badge variant="outline" className="text-xs">
-                            T{Number(tapId) + 1}
-                          </Badge>
+                        {tapIds.length > 0 ? (
+                          <div className="flex gap-1">
+                            {tapIds.map((tid) => (
+                              <Badge key={tid} variant="outline" className="text-xs">
+                                T{Number(tid) + 1}
+                              </Badge>
+                            ))}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
@@ -658,7 +663,7 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {keg.status === 'in_stock' && (
+                            {(keg.status === 'in_stock' || (keg.status === 'tapped' && tapIds.length < 2)) && (
                               <DropdownMenuItem
                                 onClick={() =>
                                   setConnectKeg({
@@ -672,13 +677,18 @@ export function StoreKegsTab({ franchiseId, storeId }: StoreKegsTabProps) {
                                 Conectar a Torneira
                               </DropdownMenuItem>
                             )}
-                            {keg.status === 'tapped' && tapId != null && (
-                              <DropdownMenuItem
-                                onClick={() => handleDisconnect(tapId, 'manual')}
-                              >
-                                <Unlink className="h-4 w-4 mr-2" />
-                                Desconectar
-                              </DropdownMenuItem>
+                            {keg.status === 'tapped' && tapIds.length > 0 && (
+                              <>
+                                {tapIds.map((tid) => (
+                                  <DropdownMenuItem
+                                    key={tid}
+                                    onClick={() => handleDisconnect(tid, 'manual')}
+                                  >
+                                    <Unlink className="h-4 w-4 mr-2" />
+                                    Desconectar T{Number(tid) + 1}
+                                  </DropdownMenuItem>
+                                ))}
+                              </>
                             )}
                             {(keg.status === 'depleted' || keg.status === 'in_stock') && (
                               <>

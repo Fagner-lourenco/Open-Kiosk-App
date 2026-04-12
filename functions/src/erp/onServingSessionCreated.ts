@@ -108,18 +108,41 @@ export const onServingSessionCreated = onDocumentCreated(
           }
         });
 
-        // [FIX BUG-OP-2] Quando keg esgota, limpar referência no tap e setar idle
-        if (kegDepleted && session.tapId) {
-          const depTapRef = db.doc(`${storePath}/taps/${session.tapId}`);
-          batch.update(depTapRef, {
-            currentKegId: null,
-            status: 'idle',
-            updatedAt: serverTimestamp(),
-            updatedBy: 'system',
-          });
-          // Também limpar tapId do keg esgotado
+        // [FIX BUG-OP-2] Quando keg esgota, limpar referência em TODOS os taps conectados
+        if (kegDepleted && session.kegId) {
+          const kegSnap2 = await kegRef.get();
+          const kegData2 = kegSnap2.data();
+          // Multi-tap: read tapIds (new) or tapId (legacy) to find all connected taps
+          const connectedTapIds: string[] = Array.isArray(kegData2?.tapIds)
+            ? kegData2!.tapIds
+            : (kegData2?.tapId ? [kegData2.tapId as string] : (session.tapId ? [session.tapId] : []));
+
+          for (const tid of connectedTapIds) {
+            const depTapRef = db.doc(`${storePath}/taps/${tid}`);
+            batch.update(depTapRef, {
+              currentKegId: null,
+              status: 'idle',
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+            });
+            needsBatch = true;
+          }
+
+          // Also ensure the triggering tap is cleared even if not in tapIds
+          if (session.tapId && !connectedTapIds.includes(session.tapId)) {
+            const depTapRef = db.doc(`${storePath}/taps/${session.tapId}`);
+            batch.update(depTapRef, {
+              currentKegId: null,
+              status: 'idle',
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+            });
+            needsBatch = true;
+          }
+
+          // Clear tapIds on the keg
           batch.update(kegRef, {
-            tapId: null,
+            tapIds: [],
             updatedAt: serverTimestamp(),
           });
           needsBatch = true;

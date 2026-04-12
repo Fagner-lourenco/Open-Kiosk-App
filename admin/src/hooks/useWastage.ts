@@ -202,7 +202,9 @@ export function useWastage(franchiseId: string, storeId: string) {
         const data = d.data();
         return {
           kegId: d.id,
-          tapId: (data.tapId as string) ?? null,
+          tapIds: Array.isArray(data.tapIds)
+            ? (data.tapIds as string[])
+            : (data.tapId ? [data.tapId as string] : []),
           productId: (data.productId as string) || '',
           batchCode: (data.batchCode as string) || '',
         };
@@ -213,7 +215,7 @@ export function useWastage(franchiseId: string, storeId: string) {
 
   /** Get kegId for a given tap (from tapped kegs) */
   const getKegForTap = (tapId: string) =>
-    tappedKegs.find((k) => k.tapId === tapId) || null;
+    tappedKegs.find((k) => k.tapIds.includes(tapId)) || null;
 
   return {
     events,

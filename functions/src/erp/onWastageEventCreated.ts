@@ -64,11 +64,11 @@ export const onWastageEventCreated = onDocumentCreated(
       const kegRef = db.doc(`${storePath}/kegs/${wastage.kegId}`);
 
       try {
-        await db.runTransaction(async (txn) => {
+        const kegDepleted = await db.runTransaction(async (txn) => {
           const kegSnap = await txn.get(kegRef);
           if (!kegSnap.exists) {
             console.warn(`[ERP:Wastage] Keg ${wastage.kegId} not found — skip debit`);
-            return;
+            return false;
           }
 
           const kegData = kegSnap.data()!;
@@ -77,7 +77,7 @@ export const onWastageEventCreated = onDocumentCreated(
           const processedEvents: string[] = kegData.processedEvents || [];
           if (processedEvents.includes(eventId)) {
             console.warn(`[ERP:Wastage] Event ${eventId} already processed for keg ${wastage.kegId} — skip (idempotent)`);
-            return;
+            return false;
           }
 
           const currentRemaining = (kegData.remainingMl as number) || 0;
@@ -94,6 +94,7 @@ export const onWastageEventCreated = onDocumentCreated(
               processedEvents: [],
             });
             console.log(`[ERP:Wastage] Keg ${wastage.kegId} marked depleted (processedEvents cleared)`);
+            return true;
           } else {
             txn.update(kegRef, {
               remainingMl: newRemaining,
@@ -101,8 +102,46 @@ export const onWastageEventCreated = onDocumentCreated(
               updatedBy: 'system',
               processedEvents: arrayUnion(eventId),
             });
+            return false;
           }
         });
+
+        // When keg depletes via wastage, clear ALL connected taps
+        if (kegDepleted) {
+          const kegSnap2 = await kegRef.get();
+          const kegData2 = kegSnap2.data();
+          const connectedTapIds: string[] = Array.isArray(kegData2?.tapIds)
+            ? kegData2!.tapIds
+            : (kegData2?.tapId ? [kegData2.tapId as string] : (wastage.tapId ? [wastage.tapId] : []));
+
+          const depBatch = db.batch();
+          let needsDepBatch = false;
+          for (const tid of connectedTapIds) {
+            depBatch.update(db.doc(`${storePath}/taps/${tid}`), {
+              currentKegId: null,
+              status: 'idle',
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+            });
+            needsDepBatch = true;
+          }
+          if (wastage.tapId && !connectedTapIds.includes(wastage.tapId)) {
+            depBatch.update(db.doc(`${storePath}/taps/${wastage.tapId}`), {
+              currentKegId: null,
+              status: 'idle',
+              updatedAt: serverTimestamp(),
+              updatedBy: 'system',
+            });
+            needsDepBatch = true;
+          }
+          depBatch.update(kegRef, {
+            tapIds: [],
+            updatedAt: serverTimestamp(),
+          });
+          needsDepBatch = true;
+          if (needsDepBatch) await depBatch.commit();
+          console.log(`[ERP:Wastage] Cleared ${connectedTapIds.length} tap(s) after keg depletion`);
+        }
       } catch (err) {
         console.error(`[ERP:Wastage] Error debiting keg ${wastage.kegId}:`, err);
       }

@@ -74,7 +74,9 @@ function normalizeKeg(id: string, data: Record<string, unknown>): Keg {
     volumeMl: (data.volumeMl as number) || 0,
     remainingMl: (data.remainingMl as number) || 0,
     status: (data.status as KegStatus) || 'in_stock',
-    tapId: (data.tapId as string) ?? null,
+    tapIds: Array.isArray(data.tapIds)
+      ? (data.tapIds as string[])
+      : (data.tapId ? [data.tapId as string] : []),
     tappedAt: toDateOrNull(data.tappedAt),
     depletedAt: toDateOrNull(data.depletedAt),
     batchCode: data.batchCode as string | undefined,
@@ -168,7 +170,7 @@ export function useKegs(franchiseId: string, storeId: string) {
         volumeMl: input.volumeMl,
         remainingMl: input.volumeMl,
         status: 'in_stock',
-        tapId: null,
+        tapIds: [],
         tappedAt: null,
         depletedAt: null,
         batchCode: input.batchCode || null,

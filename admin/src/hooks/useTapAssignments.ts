@@ -28,6 +28,8 @@ import {
   orderBy,
   serverTimestamp,
   Timestamp,
+  arrayUnion,
+  arrayRemove,
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { useAuth } from '@/context/AuthContext';
@@ -36,6 +38,7 @@ import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
 import { kegKeys } from './useKegs';
 import type { TapOperationalState, TapAssignment } from '@shared/types/operations';
+import { MAX_TAPS_PER_KEG } from '@shared/types/operations';
 
 // ============================================================================
 // QUERY KEYS
@@ -237,9 +240,22 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
         const kegRef = kegDocRef(franchiseId, storeId, kegId);
         const kegSnap = await txn.get(kegRef);
         if (!kegSnap.exists()) throw new Error('Barril não encontrado');
-        const kegStatus = kegSnap.data()?.status;
+        const kegData = kegSnap.data()!;
+        const kegStatus = kegData.status;
         if (kegStatus === 'depleted') throw new Error('Barril esgotado não pode ser conectado');
-        if (kegStatus === 'tapped') throw new Error('Barril já está conectado a outra torneira');
+
+        // Multi-tap support: allow connecting to up to MAX_TAPS_PER_KEG taps
+        // Compat layer: read tapIds (new) or tapId (legacy) field
+        const existingTapIds: string[] = Array.isArray(kegData.tapIds)
+          ? kegData.tapIds
+          : (kegData.tapId ? [kegData.tapId as string] : []);
+        if (kegStatus === 'tapped' && existingTapIds.length >= MAX_TAPS_PER_KEG) {
+          throw new Error(`Barril já conectado ao máximo de ${MAX_TAPS_PER_KEG} torneiras`);
+        }
+        // Prevent connecting same keg to same tap twice
+        if (existingTapIds.includes(tapId)) {
+          throw new Error('Barril já está conectado a esta torneira');
+        }
 
         // 2. If tap has an existing keg, find and remove the active assignment
         let existingAssignment: ReturnType<typeof normalizeAssignment> | null = null;
@@ -278,12 +294,19 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
             updatedBy: uid,
           });
 
-          // Mark old keg as depleted (or returned)
+          // Mark old keg: remove this tap from tapIds, only change status if no taps left
           const oldKegRef = kegDocRef(franchiseId, storeId, existingAssignment.kegId);
+          const oldKegSnap = await txn.get(oldKegRef);
+          const oldKegData = oldKegSnap.data();
+          const oldKegTapIds: string[] = Array.isArray(oldKegData?.tapIds)
+            ? oldKegData!.tapIds
+            : (oldKegData?.tapId ? [oldKegData.tapId as string] : []);
+          const remainingTapIds = oldKegTapIds.filter((id: string) => id !== tapId);
           txn.update(oldKegRef, {
-            status: 'depleted',
-            tapId: null,
-            depletedAt: now,
+            tapIds: remainingTapIds,
+            ...(remainingTapIds.length === 0
+              ? { status: 'depleted', depletedAt: now }
+              : {}),
             updatedAt: now,
             updatedBy: uid,
           });
@@ -313,7 +336,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
         // 3. Update Keg status to tapped (kegRef already read above for OP-5 check)
         txn.update(kegRef, {
           status: 'tapped',
-          tapId,
+          tapIds: arrayUnion(tapId),
           tappedAt: now,
           updatedAt: now,
           updatedBy: uid,
@@ -370,7 +393,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
         const kegRef = kegDocRef(franchiseId, storeId, activeAssignment.kegId);
         const tapRef = tapDocRef(franchiseId, storeId, tapId);
         await txn.get(assRef);
-        await txn.get(kegRef);
+        const kegSnap = await txn.get(kegRef);
         await txn.get(tapRef);
 
         const now = serverTimestamp();
@@ -386,12 +409,23 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
           updatedBy: uid,
         });
 
-        // 2. Update keg
-        // [FIX BUG-OP-4] Desconexão manual deve setar 'in_stock' (não 'returned')
+        // 2. Update keg — remove this specific tap from tapIds
+        // Only change keg status if no other taps remain connected
+        const kegData = kegSnap.data();
+        const currentTapIds: string[] = Array.isArray(kegData?.tapIds)
+          ? kegData!.tapIds
+          : (kegData?.tapId ? [kegData.tapId as string] : []);
+        const remainingTapIds = currentTapIds.filter((id: string) => id !== tapId);
+        const noTapsLeft = remainingTapIds.length === 0;
+
         txn.update(kegRef, {
-          status: reason === 'depleted' ? 'depleted' : 'in_stock',
-          tapId: null,
-          ...(reason === 'depleted' ? { depletedAt: now } : {}),
+          tapIds: arrayRemove(tapId),
+          ...(noTapsLeft
+            ? {
+                status: reason === 'depleted' ? 'depleted' : 'in_stock',
+                ...(reason === 'depleted' ? { depletedAt: now } : {}),
+              }
+            : {}),
           updatedAt: now,
           updatedBy: uid,
         });
@@ -423,9 +457,9 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
   const getActiveAssignment = (tapId: string): TapAssignment | undefined =>
     assignments.find((a) => a.tapId === tapId && a.status === 'active');
 
-  /** Find which tap a keg is assigned to (if any) */
-  const getKegTapId = (kegId: string): string | undefined =>
-    assignments.find((a) => a.kegId === kegId && a.status === 'active')?.tapId;
+  /** Find which taps a keg is assigned to (may be multiple) */
+  const getKegTapIds = (kegId: string): string[] =>
+    assignments.filter((a) => a.kegId === kegId && a.status === 'active').map((a) => a.tapId);
 
   return {
     taps,
@@ -433,7 +467,7 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
     assignments,
     loadingAssignments,
     getActiveAssignment,
-    getKegTapId,
+    getKegTapIds,
     connect: connectMutation.mutateAsync,
     isConnecting: connectMutation.isPending,
     disconnect: disconnectMutation.mutateAsync,

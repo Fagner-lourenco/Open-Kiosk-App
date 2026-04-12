@@ -43,7 +43,7 @@ export const KegSchema = z.object({
   volumeMl: z.number().int().min(1),
   remainingMl: z.number().min(0),
   status: KegStatusSchema,
-  tapId: z.string().nullable(),
+  tapIds: z.array(z.string()).max(2).default([]),
   tappedAt: z.date().nullable(),
   depletedAt: z.date().nullable(),
   batchCode: z.string().optional(),
