@@ -1235,6 +1235,163 @@ service cloud.firestore {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // V2 STORES COLLECTION — Ochapeleiro Bier V2 Platform
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // Tenant isolation via custom claim: request.auth.token.storeId
+    // Roles via claim: request.auth.token.role (owner|admin|cashier|device)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function hasStoreClaim(storeId) {
+      return isAuthenticated() && request.auth.token.storeId == storeId;
+    }
+
+    function isStoreStaff(storeId) {
+      return hasStoreClaim(storeId) &&
+             request.auth.token.role in ['owner', 'admin', 'cashier'];
+    }
+
+    function isStoreOwnerOrAdmin(storeId) {
+      return hasStoreClaim(storeId) &&
+             request.auth.token.role in ['owner', 'admin'];
+    }
+
+    function isStoreDevice(storeId) {
+      return hasStoreClaim(storeId) &&
+             request.auth.token.role == 'device';
+    }
+
+    match /v2_stores/{storeId} {
+      // Store doc: staff can read, owner/admin can write
+      allow read: if hasStoreClaim(storeId);
+      allow write: if isStoreOwnerOrAdmin(storeId);
+
+      // ── Products ──
+      match /products/{productId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreOwnerOrAdmin(storeId);
+        allow delete: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Taps ──
+      match /taps/{tapId} {
+        allow read: if hasStoreClaim(storeId);
+        allow write: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Kegs ──
+      match /kegs/{kegId} {
+        allow read: if hasStoreClaim(storeId);
+        allow write: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Devices ──
+      match /devices/{deviceId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create: if isStoreOwnerOrAdmin(storeId);
+        allow update: if hasStoreClaim(storeId);
+        allow delete: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Payments (write only via Admin SDK / Cloud Functions) ──
+      match /payments/{paymentId} {
+        allow read: if hasStoreClaim(storeId);
+        allow write: if false;
+      }
+
+      // ── Serving Sessions (immutable after create) ──
+      match /servingSessions/{sessionId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create: if hasStoreClaim(storeId);
+        allow update, delete: if false;
+      }
+
+      // ── Customers ──
+      match /customers/{customerId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreStaff(storeId);
+        allow delete: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Credentials ──
+      match /credentials/{credentialId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreStaff(storeId);
+        allow delete: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Credential Assignments ──
+      match /credentialAssignments/{assignmentId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreStaff(storeId);
+        allow delete: if isStoreOwnerOrAdmin(storeId);
+      }
+
+      // ── Open Accounts (comandas) ──
+      match /openAccounts/{accountId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreStaff(storeId);
+        allow delete: if false;
+      }
+
+      // ── Consumption Entries ──
+      match /consumptionEntries/{entryId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create: if hasStoreClaim(storeId);
+        allow update: if isStoreStaff(storeId);
+        allow delete: if false;
+      }
+
+      // ── Settlements ──
+      match /settlements/{settlementId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreStaff(storeId);
+        allow delete: if false;
+      }
+
+      // ── Immediate Checkouts (kiosk self-service) ──
+      match /immediateCheckouts/{checkoutId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create: if hasStoreClaim(storeId);
+        allow update: if hasStoreClaim(storeId);
+        allow delete: if false;
+      }
+
+      // ── Hosted Events ──
+      match /hostedEvents/{eventId} {
+        allow read: if hasStoreClaim(storeId);
+        allow create, update: if isStoreStaff(storeId);
+        allow delete: if isStoreOwnerOrAdmin(storeId);
+
+        // Event Participants (subcollection)
+        match /participants/{participantId} {
+          allow read: if hasStoreClaim(storeId);
+          allow create, update: if isStoreStaff(storeId);
+          allow delete: if isStoreStaff(storeId);
+        }
+
+        // Event Groups (subcollection)
+        match /groups/{groupId} {
+          allow read: if hasStoreClaim(storeId);
+          allow create, update: if isStoreStaff(storeId);
+          allow delete: if isStoreStaff(storeId);
+        }
+      }
+
+      // ── Join Tokens (server-only write, staff can read) ──
+      match /joinTokens/{tokenId} {
+        allow read: if isStoreStaff(storeId);
+        allow write: if false;
+      }
+
+      // ── Customer Sessions (server-only write, staff can read) ──
+      match /customerSessions/{sessionId} {
+        allow read: if hasStoreClaim(storeId);
+        allow write: if false;
+      }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // ANALYTICS COLLECTION (Métricas Materializadas - Global)
     // ════════════════════════════════════════════════════════════════════════
     // 
