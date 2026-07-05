@@ -142,7 +142,17 @@ function PermissionGuard({
     return null; // Renderiza nada enquanto contexto carrega
   }
 
-  const { can, canAll, canAny } = permissionContext;
+  const { can, canAll, canAny, isLoading } = permissionContext;
+
+  // Aguarda o membership carregar antes de decidir — decidir com role null
+  // redirecionava owners/admins para /dashboard em deep-link e refresh (race).
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[300px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
 
   // Verifica permissão única
   if (requiredPermission && !can(requiredPermission)) {

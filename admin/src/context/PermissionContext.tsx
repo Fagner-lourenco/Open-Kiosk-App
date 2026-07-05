@@ -28,6 +28,12 @@ export interface PermissionContextType {
   isOwner: boolean;
   /** Permissões do usuário */
   permissions: Permission[];
+  /**
+   * true enquanto o membership da franquia ainda está carregando.
+   * Guards de rota DEVEM aguardar isso antes de negar acesso — decidir com
+   * membership null causa redirect indevido em deep-link/refresh.
+   */
+  isLoading: boolean;
 }
 
 // Exportar o contexto para uso em verificações condicionais
@@ -38,7 +44,7 @@ interface PermissionProviderProps {
 }
 
 export function PermissionProvider({ children }: PermissionProviderProps) {
-  const { currentMembership: membership } = useFranchise();
+  const { currentMembership: membership, isLoading } = useFranchise();
 
   const normalizedRole =
     typeof membership?.role === 'string'
@@ -98,7 +104,8 @@ export function PermissionProvider({ children }: PermissionProviderProps) {
     isAdminOrAbove,
     isOwner,
     permissions,
-  }), [can, canAll, canAny, hasStoreAccess, role, isAdminOrAbove, isOwner, permissions]);
+    isLoading,
+  }), [can, canAll, canAny, hasStoreAccess, role, isAdminOrAbove, isOwner, permissions, isLoading]);
   
   return (
     <PermissionContext.Provider value={value}>

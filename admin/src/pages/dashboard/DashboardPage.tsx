@@ -134,10 +134,14 @@ export function DashboardPage() {
             'store.update': 'Loja atualizada',
             'user.invite': 'Convite enviado',
             'user.remove': 'Membro removido',
+            'user.login': 'Login realizado',
+            'user.logout': 'Logout realizado',
             'settings.update': 'Configurações atualizadas',
             'product.create': 'Produto criado',
             'product.update': 'Produto atualizado',
             'order.create': 'Novo pedido recebido',
+            'order.cancel': 'Pedido cancelado',
+            'order.refund': 'Pedido estornado',
           };
           description = actionLabels[data.action] || data.action;
         }
