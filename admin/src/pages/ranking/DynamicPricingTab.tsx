@@ -487,11 +487,11 @@ export function DynamicPricingTab({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="sim-keg">Nível Barril (%)</Label>
-              <Input id="sim-keg" type="number" min={0} max={100} value={simKegLevel} onChange={(e) => setSimKegLevel(Number(e.target.value))} />
+              <Input id="sim-keg" type="number" min={0} max={100} value={simKegLevel} onChange={(e) => setSimKegLevel(Number(e.target.value) || 0)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="sim-base">Preço Base (R$)</Label>
-              <Input id="sim-base" type="number" min={0} step={0.5} value={simBasePrice} onChange={(e) => setSimBasePrice(Number(e.target.value))} />
+              <Input id="sim-base" type="number" min={0} step={0.5} value={simBasePrice} onChange={(e) => setSimBasePrice(Number(e.target.value) || 0)} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="sim-ml">Volume (mL)</Label>

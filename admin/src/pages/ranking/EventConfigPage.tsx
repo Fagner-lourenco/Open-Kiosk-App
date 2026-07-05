@@ -229,13 +229,24 @@ export function TvConfigTab({
     }
     try {
       setSaving(true);
-      const milestones: GoalMilestone[] = milestoneInputs.map((m) => ({
-        targetMl: m.targetMl,
-        label: m.label.trim(),
-        reached: false,
-        activatesEventMode: m.activatesEventMode || false,
-        eventMinutes: m.eventMinutes || 10,
-      }));
+      // Preserva o flag `reached` de marcos já atingidos HOJE — senão o próximo
+      // pedido re-dispara o marco (modo evento/notificação duplicados). Busca o
+      // estado FRESCO do servidor (o `stats` local pode estar desatualizado).
+      const freshStats = await getEventStats(franchiseId, storeId);
+      const currentMilestones = freshStats.milestones || [];
+      const milestones: GoalMilestone[] = milestoneInputs.map((m) => {
+        const label = m.label.trim();
+        const existing = currentMilestones.find(
+          (cm) => cm.targetMl === m.targetMl && cm.label === label,
+        );
+        return {
+          targetMl: m.targetMl,
+          label,
+          reached: existing?.reached ?? false,
+          activatesEventMode: m.activatesEventMode || false,
+          eventMinutes: m.eventMinutes || 10,
+        };
+      });
       await setCollectiveGoal(franchiseId, storeId, goalTargetMl, goalLabel, milestones);
       setSavedGoalLabel(goalLabel);
       setSavedGoalTargetMl(goalTargetMl);
@@ -1180,7 +1191,14 @@ export function PrizesTab({
       setRedeeming(true);
       const result = await redeemPrize(franchiseId, storeId, redeemCode, user.uid);
       if (result.success) {
-        setMessage({ type: 'success', text: `Prêmio resgatado: ${result.prize?.description}` });
+        // Exibe o ganhador para o atendente CONFERIR a identidade no balcão —
+        // o código é visível no telão/API, então a conferência do nome é a
+        // defesa contra resgate de prêmio alheio.
+        const winner = result.prize?.winnerDisplayName;
+        setMessage({
+          type: 'success',
+          text: `Prêmio resgatado: ${result.prize?.description}${winner ? ` — Ganhador: ${winner} (confira a identidade)` : ''}`,
+        });
         setTimeout(() => setMessage(null), 4000);
         audit(AuditActions.PRIZE_REDEEM, { type: 'prize', id: redeemCode, name: result.prize?.description || redeemCode });
         setRedeemCode('');

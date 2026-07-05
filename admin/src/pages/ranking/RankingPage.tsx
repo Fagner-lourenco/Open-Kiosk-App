@@ -98,7 +98,11 @@ export function RankingPage() {
   const { currentFranchise, stores } = useFranchise();
 
   const [selectedStore, setSelectedStore] = useState<string>('');
-  const storeId = selectedStore || stores[0]?.id || '';
+  // Valida contra as lojas da franquia atual — ao trocar de franquia, a seleção
+  // anterior fica stale (loja de outra franquia) e causaria permission-denied.
+  const storeId = stores.some((s) => s.id === selectedStore)
+    ? selectedStore
+    : (stores[0]?.id || '');
   const storeName = stores.find((s) => s.id === storeId)?.name || storeId;
 
   const today = formatDateYMD(new Date());

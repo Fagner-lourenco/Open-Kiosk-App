@@ -63,6 +63,31 @@ export function formatDateYMD(date: Date): string {
 }
 
 /**
+ * Elegibilidade de um pedido para o ranking.
+ *
+ * Regra: cliente pagou → conta. Inclui `failed_dispense` (pago, dispensação
+ * falhou — se for reembolsado, paymentStatus vira 'refunded' e sai do ranking).
+ * Aceita ambas as grafias de cancelamento ('canceled' 1 L é o canônico em
+ * payments; 'cancelled' 2 L aparece em orders cancelados pelo Admin).
+ */
+const RANKING_ELIGIBLE_STATUSES = new Set([
+  'paid_pending_dispense',
+  'dispensing',
+  'completed',
+  'failed_dispense',
+]);
+
+const EXCLUDED_PAYMENT_STATUSES = new Set(['canceled', 'cancelled', 'refunded', 'expired', 'failed']);
+
+export function isRankingEligible(order: FirestoreOrder): boolean {
+  const hasCustomer = !!(order.customerName || order.cardholderName);
+  if (!hasCustomer) return false;
+  if (!RANKING_ELIGIBLE_STATUSES.has(order.status)) return false;
+  if (order.paymentStatus && EXCLUDED_PAYMENT_STATUSES.has(order.paymentStatus)) return false;
+  return true;
+}
+
+/**
  * Agrega orders em ranking entries
  */
 function aggregateRanking(
@@ -83,13 +108,9 @@ function aggregateRanking(
   for (const order of orders) {
     // Só incluir no ranking pedidos com nome REAL do pagador.
     // Pedidos sem customerName/cardholderName são vendas anônimas — não entram no ranking.
-    const effectiveCustomerName = order.customerName 
-      || order.cardholderName as string | undefined;
-    if (!effectiveCustomerName) continue;
-    // Apenas pedidos completados (paid ou completed) — excluir cancelados/reembolsados
-    if (order.status !== 'paid_pending_dispense' && order.status !== 'completed' && order.status !== 'dispensing') continue;
-    // Excluir pedidos cancelados/reembolsados via paymentStatus
-    if (order.paymentStatus === 'cancelled' || order.paymentStatus === 'refunded') continue;
+    if (!isRankingEligible(order)) continue;
+    const effectiveCustomerName = (order.customerName
+      || order.cardholderName) as string;
 
     const key = order.customerIdentification
       ? String(order.customerIdentification).replace(/\D/g, '') || effectiveCustomerName.toUpperCase().trim().replace(/\s+/g, '_')
@@ -239,8 +260,9 @@ export function useCustomerRanking(
     [orders, filters.metric, filters.limit]
   );
 
+  // Mesmos critérios de elegibilidade do ranking (consistência com aggregateRanking)
   const totalOrders = useMemo(
-    () => orders.filter((o) => (o.customerName || o.cardholderName) && ['completed', 'paid_pending_dispense', 'dispensing'].includes(o.status)).length,
+    () => orders.filter(isRankingEligible).length,
     [orders]
   );
 
