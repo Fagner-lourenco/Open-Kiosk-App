@@ -19,7 +19,7 @@
 
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as logger from 'firebase-functions/logger';
-import { db, admin } from '../lib';
+import { db, admin, enforceRateLimit } from '../lib';
 
 // ============================================================================
 // TIPOS
@@ -77,7 +77,15 @@ export const setAdminClaims = onCall(
         );
       }
     }
-    
+
+    // Guard contra abuso/scripts descontrolados (mesmo com token de superadmin)
+    await enforceRateLimit({
+      operation: 'setAdminClaims',
+      callerUid: context.auth.uid,
+      maxCalls: 30,
+      windowMs: 10 * 60 * 1000,
+    });
+
     const { userId, claims } = data;
     
     if (!userId) {
