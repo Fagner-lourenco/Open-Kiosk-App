@@ -1,8 +1,12 @@
 # Open Kiosk App - Mapa de Arquitetura Completo
 
-**Status:** Atualizado 2025-02-27  
+**Status:** Atualizado 2026-07-04 (auditoria `audit/final-review-202607`)  
 **Linguagem:** Português (PT-BR)  
 **Versão da App:** 1.1.0
+
+> **Nota (auditoria 2026-07):** gateway de pagamento PRIMÁRIO em produção é
+> **Mercado Pago** (terminal Point via Bluetooth + PIX QR). PlugPag/PagBank é
+> secundário. Mudanças da auditoria: ver seção "Auditoria 2026-07" no fim.
 
 ---
 
@@ -1033,6 +1037,33 @@ ESP32 Hardware
 | Manual ESP32 hardware | `/firmware/ManualCircuito.md` |
 | Admin app config | `/admin/src/` |
 | Functions backend | `/functions/src/index.ts` |
+
+---
+
+## 12. AUDITORIA 2026-07 (branch `audit/final-review-202607`)
+
+### Mudanças aplicadas
+
+| Área | Mudança |
+|------|---------|
+| Segurança | Removido `functions/src/admin/setStorageCors.ts` (token hardcoded; nunca deployado) |
+| Segurança | Rate-limit em `setAdminClaims` via `lib/rateLimit.ts` (30 chamadas/10min por uid) |
+| Pagamentos | **Novo callable `refundMercadoPagoPayment`** — estorno real via MP Orders API; Admin `refundOrder` agora devolve o dinheiro antes de marcar o pedido |
+| Admin | `lib/errors.ts` (erros tipados); zero `catch(any)`; ErrorState em Dashboard/Reports |
+| Admin | Upload real de foto de perfil (Storage `users/{uid}/avatar` + regra) |
+| Admin | Stubs "em breve" removidos (2FA, multi-sessão); ledger integrado ao saldo (`computeAccountBalances`) |
+| Admin | `StoreSettingsTab` sem `as any` (tipos de taps, toJsDate, `__gpioAdvancedMode` tipado) |
+| Kiosk | Convite mostra nome real da loja (`franchiseService`) |
+| Testes | +26 testes: rateLimit (6), refund (10), finance ledger (10 — módulo tinha zero) |
+
+### Pendências conhecidas (fora desta rodada)
+
+- **Senha WiFi do ESP32** (`bier2026`): constante de referência + firmware. Migração exige provisioning via NVS e flash físico (Bug-22). AP é local-only.
+- **Rules V2 (`v2_stores`)**: commitadas mas SEM código correspondente — **não deployar** até plataforma V2 existir.
+- **`promoteSuperAdminHTTP`**: deployado porém gated (`SUPERADMIN_ENABLED` default off). Recomendado remover do deploy quando não for mais necessário.
+- **E2E automatizado**: não implementado (exige credenciais de teste dedicadas). Smoke manual documentado no PR.
+- **Split estrutural** de `StoreSettingsTab`/`DrinkQuickCheckoutModal`: adiado — funcionam em produção; refatorar só com cobertura E2E.
+- **Dedup createPayment**: já existia (KIO-18+F-10, doc determinístico `order_{orderId}`); achado da auditoria original era falso-positivo.
 
 ---
 
