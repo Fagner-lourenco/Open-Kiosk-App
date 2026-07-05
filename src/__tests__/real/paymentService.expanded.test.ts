@@ -463,10 +463,8 @@ describe('PaymentService - Expansão de Cobertura', () => {
       expect(result.transactionId).toBe('order-123');
     });
 
-    // TODO: Corrigir teste - método não lança erro quando esperado
-    it.skip('deve lançar erro quando nenhum terminal PDV disponível', async () => {
-      // Este teste precisa ser revisado - o método pode ter lógica diferente
-    });
+    // Nota: sem terminal PDV o método NÃO lança — retorna success:false com
+    // transactionId da order criada (comportamento coberto pelo teste acima).
   });
 
   describe('checkMercadoPagoOrderStatus', () => {

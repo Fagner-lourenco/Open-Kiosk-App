@@ -175,12 +175,12 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
 
     const orderLabel = order.orderNumber || order.orderId || order.id;
     const confirmed = window.confirm(
-      `Estornar o pedido ${orderLabel}?\n\nO pagamento será marcado como estornado.`
+      `Estornar o pedido ${orderLabel}?\n\nO valor será devolvido ao cliente via gateway de pagamento.`
     );
     if (!confirmed) return;
 
     try {
-      await refundOrder({
+      const { gatewayRefunded } = await refundOrder({
         franchiseId,
         storeId,
         orderId: order.id,
@@ -190,11 +190,17 @@ export function StoreOrdersTab({ franchiseId, storeId }: StoreOrdersTabProps) {
           name: user.displayName || undefined,
         },
       });
-      toast.success('Pedido estornado com sucesso');
+      if (gatewayRefunded) {
+        toast.success('Estorno realizado — valor devolvido ao cliente');
+      } else {
+        toast.success('Pedido marcado como estornado (sem pagamento de gateway vinculado)');
+      }
       handleRefresh();
     } catch (error) {
       console.error('Error refunding order:', error);
-      toast.error('Erro ao estornar pedido');
+      toast.error('Erro ao estornar pedido', {
+        description: 'O valor NÃO foi devolvido. Verifique o pagamento no painel do Mercado Pago.',
+      });
     }
   };
 

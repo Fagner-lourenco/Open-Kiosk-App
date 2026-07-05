@@ -5,10 +5,12 @@
  */
 
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '@/lib/firebase';
 import { ordersPath } from '@/lib/pathResolver';
 import type { Order } from '@/components/orders';
 import { AuditActions, logUserAction } from '@/services/auditService';
+import { getErrorCode } from '@/lib/errors';
 
 interface OrderActionActor {
   id: string;
@@ -60,14 +62,41 @@ export async function cancelOrder({
   }
 }
 
+export interface RefundOrderResult {
+  /** true quando o gateway devolveu o dinheiro; false quando foi marcação manual. */
+  gatewayRefunded: boolean;
+}
+
 export async function refundOrder({
   franchiseId,
   storeId,
   orderId,
   actor,
-}: OrderActionParams): Promise<void> {
-  const orderRef = doc(db, ordersPath(franchiseId, storeId), orderId);
+}: OrderActionParams): Promise<RefundOrderResult> {
+  // 1) Estorno REAL no gateway (Mercado Pago) via Cloud Function.
+  //    Se não existe payment MP para o pedido (ex.: pedido legado), cai para
+  //    marcação manual — qualquer outra falha do gateway interrompe o fluxo
+  //    para não marcar como estornado sem devolver o dinheiro.
+  let gatewayRefunded = false;
+  try {
+    const refundCallable = httpsCallable<
+      { franchiseId: string; storeId: string; orderId: string },
+      { refunded: boolean; reason: string }
+    >(functions, 'refundMercadoPagoPayment');
+    const result = await refundCallable({ franchiseId, storeId, orderId });
+    gatewayRefunded = result.data.refunded;
+  } catch (error) {
+    const code = getErrorCode(error);
+    if (code === 'functions/not-found') {
+      // Sem payment MP vinculado — segue com marcação manual (auditada abaixo)
+      console.warn('[orders] Payment MP não encontrado para estorno; marcando manualmente:', orderId);
+    } else {
+      throw error;
+    }
+  }
 
+  // 2) Marca o pedido como estornado no Firestore
+  const orderRef = doc(db, ordersPath(franchiseId, storeId), orderId);
   await updateDoc(orderRef, {
     paymentStatus: 'refunded',
     refundedAt: serverTimestamp(),
@@ -80,11 +109,13 @@ export async function refundOrder({
       AuditActions.ORDER_REFUND,
       actor,
       { type: 'order', id: orderId, name: `Pedido ${orderId.slice(-8).toUpperCase()}` },
-      { storeId, operation: 'refund' }
+      { storeId, operation: 'refund', gatewayRefunded }
     );
   } catch (error) {
     console.warn('[audit] Falha ao registrar estorno de pedido:', error);
   }
+
+  return { gatewayRefunded };
 }
 
 export function printOrderReceipt(order: Order): void {

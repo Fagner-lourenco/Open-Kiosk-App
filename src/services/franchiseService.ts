@@ -780,8 +780,19 @@ class FranchiseService {
       
       if (invitation.storeAccess.length > 0 && invitation.storeAccess[0] !== '*') {
         storeId = invitation.storeAccess[0];
-        // TODO: Buscar nome da loja
+        // Busca o nome real da loja; mantém o ID como fallback legível
         storeName = storeId;
+        try {
+          const storeSnap = await getDoc(
+            doc(db(), franchisesPath(), invitation.franchiseId, 'stores', storeId)
+          );
+          const name = storeSnap.exists() ? (storeSnap.data().name as string | undefined) : undefined;
+          if (name) {
+            storeName = name;
+          }
+        } catch (storeError) {
+          console.warn('[FranchiseService] Não foi possível buscar nome da loja do convite:', storeError);
+        }
       }
 
       const pendingInvite: PendingInvite = {
