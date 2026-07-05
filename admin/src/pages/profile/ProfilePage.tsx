@@ -9,17 +9,19 @@
  * @version 1.0.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  updateProfile, 
-  updatePassword, 
-  EmailAuthProvider, 
+import {
+  updateProfile,
+  updatePassword,
+  EmailAuthProvider,
   reauthenticateWithCredential,
   sendEmailVerification,
 } from 'firebase/auth';
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { auth, db, storage } from '@/lib/firebase';
+import { getErrorMessage } from '@/lib/errors';
 import { useAuth } from '@/context/AuthContext';
 import { useFranchise } from '@/context/FranchiseContext';
 import { useAudit } from '@/hooks/useAudit';
@@ -104,6 +106,48 @@ export function ProfilePage() {
 
   // Logout confirmation
   const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+
+  // Avatar upload
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
+  const handleAvatarSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = ''; // permite re-selecionar o mesmo arquivo
+    if (!file || !auth.currentUser) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Selecione um arquivo de imagem');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Imagem muito grande (máximo 5MB)');
+      return;
+    }
+
+    setIsUploadingAvatar(true);
+    try {
+      const avatarRef = storageRef(storage, `users/${auth.currentUser.uid}/avatar`);
+      await uploadBytes(avatarRef, file, { contentType: file.type });
+      const photoURL = await getDownloadURL(avatarRef);
+
+      await updateProfile(auth.currentUser, { photoURL });
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        photoURL,
+        updatedAt: serverTimestamp(),
+      });
+
+      setProfile(prev => ({ ...prev, photoURL }));
+      toast.success('Foto de perfil atualizada');
+    } catch (err: unknown) {
+      console.error('[Profile] Erro no upload do avatar:', err);
+      toast.error('Erro ao enviar foto', {
+        description: getErrorMessage(err, 'Tente novamente'),
+      });
+    } finally {
+      setIsUploadingAvatar(false);
+    }
+  };
 
   // Carrega dados do perfil
   useEffect(() => {
@@ -285,14 +329,24 @@ export function ProfilePage() {
                       {initials}
                     </AvatarFallback>
                   </Avatar>
+                  <input
+                    ref={avatarInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleAvatarSelected}
+                  />
                   <Button
                     size="icon"
                     variant="outline"
                     className="absolute bottom-0 right-0 h-8 w-8 rounded-full bg-white shadow"
-                    onClick={() => toast.info('Upload de foto em breve')}
+                    onClick={() => avatarInputRef.current?.click()}
+                    disabled={isUploadingAvatar}
                     aria-label="Alterar foto de perfil"
                   >
-                    <Camera className="h-4 w-4" />
+                    {isUploadingAvatar
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Camera className="h-4 w-4" />}
                   </Button>
                 </div>
 

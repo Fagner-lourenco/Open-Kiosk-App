@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Mail, Loader2, AlertCircle, CheckCircle, ArrowLeft } from 'lucide-react';
+import { getErrorCode } from '@/lib/errors';
 
 export function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -29,8 +30,8 @@ export function ForgotPasswordPage() {
     try {
       await sendPasswordResetEmail(auth, email);
       setSuccess(true);
-    } catch (err: any) {
-      const errorCode = err.code;
+    } catch (err: unknown) {
+      const errorCode = getErrorCode(err);
       switch (errorCode) {
         case 'auth/user-not-found':
           setError('Nenhuma conta encontrada com este email');

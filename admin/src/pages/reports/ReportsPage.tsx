@@ -38,6 +38,8 @@ import {
 } from 'lucide-react';
 import { NoFranchiseSelected } from '@/components/common/NoFranchiseSelected';
 import { LoadingState } from '@/components/common/LoadingState';
+import { ErrorState } from '@/components/common/ErrorState';
+import { getErrorMessage } from '@/lib/errors';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { CHART_PRIMARY, CHART_SECONDARY, getChartColor } from '@/constants/chart-colors';
 import {
@@ -348,12 +350,10 @@ export function ReportsPage() {
       {isLoading ? (
         <LoadingState />
       ) : isError ? (
-        <Card>
-          <CardContent className="p-6 text-center">
-            <p className="text-destructive font-medium">Erro ao carregar relatórios</p>
-            <p className="text-sm text-muted-foreground mt-1">{(error as Error)?.message || 'Tente novamente mais tarde'}</p>
-          </CardContent>
-        </Card>
+        <ErrorState
+          title="Erro ao carregar relatórios"
+          description={getErrorMessage(error, 'Tente novamente mais tarde')}
+        />
       ) : !reportData || reportData.totalOrders === 0 ? (
         <Card>
           <CardContent className="p-6 text-center">

@@ -228,7 +228,7 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
               } as Franchise);
             }
           }
-        } catch (cgError: any) {
+        } catch (cgError: unknown) {
           console.warn('[FranchiseContext] CollectionGroup query falhou, tentando abordagem alternativa:', cgError);
           // Fallback: usuário pode não ter membership ainda
         }

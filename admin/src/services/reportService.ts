@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { storeSubPath, storeDocPath } from '@/lib/pathResolver';
+import { getErrorCode, getErrorMessage } from '@/lib/errors';
 
 export interface ReportPeriod {
   startDate: Date;
@@ -170,9 +171,9 @@ export async function getSalesReport(
         // 🔧 FIX R9-02: Loja sem dailyStats → precisa de fallback individual
         storesWithoutMaterialized.push(storeId);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Se falhar por permissão ou índice, log e continua para fallback
-      if (err?.code === 'permission-denied' || err?.message?.includes('index')) {
+      if (getErrorCode(err) === 'permission-denied' || getErrorMessage(err).includes('index')) {
         console.warn(`[ReportService] dailyStats query failed for ${storeId}, falling back to orders query`);
         storesWithoutMaterialized.push(storeId);
       } else {
@@ -377,8 +378,8 @@ export async function getStoreReport(
           revenue += stats.totalRevenue || 0;
         });
       }
-    } catch (err: any) {
-      if (err?.code === 'permission-denied' || err?.message?.includes('index')) {
+    } catch (err: unknown) {
+      if (getErrorCode(err) === 'permission-denied' || getErrorMessage(err).includes('index')) {
         console.warn(`[ReportService] dailyStats failed for ${storeId}, trying metrics/current`);
       }
     }

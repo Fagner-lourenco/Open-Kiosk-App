@@ -16,6 +16,7 @@ import {
 } from '@/services/forecastService';
 import type { ForecastInput, ForecastResult } from '@/types/forecast';
 import { useToast } from './useToast';
+import { getErrorMessage } from '@/lib/errors';
 
 interface UseForecastReturn {
     // State
@@ -70,8 +71,8 @@ export function useForecast(preferredStoreId?: string): UseForecastReturn {
             const response = await runForecast(input);
             setResult(response.result);
             return response.result;
-        } catch (err: any) {
-            const msg = err.message || 'Erro ao calcular previsão';
+        } catch (err: unknown) {
+            const msg = getErrorMessage(err, 'Erro ao calcular previsão');
             setError(msg);
             toast.error('Erro', { description: msg });
             return null;
@@ -90,8 +91,8 @@ export function useForecast(preferredStoreId?: string): UseForecastReturn {
             const data = await fetchClimateData(lat, lon, date);
             toast.success('🌤️ Clima carregado', { description: `${data.tempMax}°C máx, ${data.rainMm}mm chuva` });
             return data;
-        } catch (err: any) {
-            toast.error('Erro ao buscar clima', { description: err.message });
+        } catch (err: unknown) {
+            toast.error('Erro ao buscar clima', { description: getErrorMessage(err) });
             return null;
         } finally {
             setIsLoadingClimate(false);
@@ -117,8 +118,8 @@ export function useForecast(preferredStoreId?: string): UseForecastReturn {
             );
             toast.success('✅ Previsão salva', { description: `ID: ${id.slice(0, 8)}...` });
             return id;
-        } catch (err: any) {
-            toast.error('Erro ao salvar', { description: err.message });
+        } catch (err: unknown) {
+            toast.error('Erro ao salvar', { description: getErrorMessage(err) });
             return null;
         } finally {
             setIsSaving(false);
@@ -129,9 +130,9 @@ export function useForecast(preferredStoreId?: string): UseForecastReturn {
         if (!currentFranchise || !selectedStore) return [];
         try {
             return await listForecasts(currentFranchise.id, selectedStore.id, maxResults);
-        } catch (err: any) {
+        } catch (err: unknown) {
             toast.error('Erro ao carregar historico', {
-                description: err?.message || 'Falha ao carregar previsoes salvas',
+                description: getErrorMessage(err, 'Falha ao carregar previsoes salvas'),
             });
             return [];
         }
@@ -156,8 +157,8 @@ export function useForecast(preferredStoreId?: string): UseForecastReturn {
                 description: `Previsao ${forecastId.slice(0, 8)} atualizada`,
             });
             return true;
-        } catch (err: any) {
-            toast.error('Erro ao atualizar', { description: err.message || 'Falha ao atualizar resultado real' });
+        } catch (err: unknown) {
+            toast.error('Erro ao atualizar', { description: getErrorMessage(err, 'Falha ao atualizar resultado real') });
             return false;
         }
     }, [currentFranchise, selectedStore, toast]);

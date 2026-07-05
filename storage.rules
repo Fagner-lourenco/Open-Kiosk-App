@@ -45,6 +45,18 @@ service firebase.storage {
                        || request.resource.contentType.matches('image/.*'));
     }
 
+    // User profile avatar
+    // - Read: any authenticated user (avatars appear in team lists)
+    // - Write: only the user themselves; images only, max 5MB
+    match /users/{userId}/avatar {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated()
+                   && request.auth.uid == userId
+                   && request.resource != null
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+
     // Deny everything else by default
     match /{allPaths=**} {
       allow read, write: if false;

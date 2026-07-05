@@ -27,6 +27,8 @@ import {
   Building2
 } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { ErrorState } from '@/components/common/ErrorState';
+import { getErrorMessage } from '@/lib/errors';
 
 interface DashboardStats {
   totalStores: number;
@@ -46,7 +48,7 @@ export function DashboardPage() {
   const { currentFranchise, stores } = useFranchise();
   const { isSuperAdmin } = useAuth();
 
-  const { data: stats, isLoading } = useQuery({
+  const { data: stats, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['dashboard-stats', currentFranchise?.id],
     queryFn: async (): Promise<DashboardStats> => {
       if (!currentFranchise) {
@@ -232,6 +234,22 @@ export function DashboardPage() {
             </CardDescription>
           </CardHeader>
         </Card>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-6">
+        <PageHeader
+          title="Dashboard"
+          description={`Visão geral de ${currentFranchise.name}`}
+        />
+        <ErrorState
+          title="Erro ao carregar o dashboard"
+          description={getErrorMessage(error, 'Não foi possível carregar as métricas. Verifique sua conexão.')}
+          onRetry={() => refetch()}
+        />
       </div>
     );
   }

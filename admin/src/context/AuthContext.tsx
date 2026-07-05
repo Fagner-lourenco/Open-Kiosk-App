@@ -28,6 +28,7 @@ import {
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase';
 import { logLogin, logLogout } from '@/services/auditService';
+import { getErrorCode, getErrorMessage, mapErrorByCode } from '@/lib/errors';
 
 // Tipo de role do usuário (espelhado de shared/types/roles.ts)
 type UserRole = 'superadmin' | 'owner' | 'admin' | 'manager' | 'operator' | 'technician' | 'viewer';
@@ -224,11 +225,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const normalizedEmail = email.trim().toLowerCase();
       await signInWithEmailAndPassword(auth, normalizedEmail, password);
       return { success: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
       if (import.meta.env.DEV) {
         console.error('[auth] Login falhou', {
-          code: error?.code,
-          message: error?.message,
+          code: getErrorCode(error),
+          message: getErrorMessage(error),
         });
       }
 
@@ -258,15 +259,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
       });
 
       return { success: true };
-    } catch (error: any) {
-      const errorMessages: Record<string, string> = {
-        'auth/email-already-in-use': 'Este email já está em uso',
-        'auth/invalid-email': 'Email inválido',
-        'auth/weak-password': 'Senha muito fraca (mínimo 6 caracteres)',
-      };
+    } catch (error: unknown) {
       return {
         success: false,
-        error: errorMessages[error.code] || 'Erro ao criar conta',
+        error: mapErrorByCode(error, {
+          'auth/email-already-in-use': 'Este email já está em uso',
+          'auth/invalid-email': 'Email inválido',
+          'auth/weak-password': 'Senha muito fraca (mínimo 6 caracteres)',
+        }, 'Erro ao criar conta'),
       };
     }
   }, []);
@@ -293,14 +293,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       await sendPasswordResetEmail(auth, email);
       return { success: true };
-    } catch (error: any) {
-      const errorMessages: Record<string, string> = {
-        'auth/invalid-email': 'Email inválido',
-        'auth/user-not-found': 'Usuário não encontrado',
-      };
+    } catch (error: unknown) {
       return {
         success: false,
-        error: errorMessages[error.code] || 'Erro ao enviar email',
+        error: mapErrorByCode(error, {
+          'auth/invalid-email': 'Email inválido',
+          'auth/user-not-found': 'Usuário não encontrado',
+        }, 'Erro ao enviar email'),
       };
     }
   }, []);

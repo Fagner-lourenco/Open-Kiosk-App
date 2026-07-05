@@ -51,7 +51,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { DateRangePicker } from '@/components/ui/date-range-picker';
 import { EmptyState } from '@/components/common/EmptyState';
 import { FinanceDashboardSkeleton } from './FinanceDashboardSkeleton';
-import { useFinAccounts } from '@/hooks/useFinAccounts';
+import { useFinAccounts, computeAccountBalances } from '@/hooks/useFinAccounts';
 import { useLedger } from '@/hooks/useLedger';
 import { useInvoices } from '@/hooks/useInvoices';
 import { useBills } from '@/hooks/useBills';
@@ -159,8 +159,14 @@ function CurrTooltip({
 export function FinanceOverviewTab({ franchiseId, storeId }: Props) {
   const [dateRange, setDateRange] = useState<DateRange | undefined>(defaultRange);
 
-  const { accounts, loadingAccounts, totalBalance } = useFinAccounts(franchiseId, storeId);
+  const { accounts, loadingAccounts } = useFinAccounts(franchiseId, storeId);
   const { entries, loadingEntries, pendingEntries } = useLedger(franchiseId, storeId);
+
+  // Saldo real: openingBalance + movimento efetivado do ledger (in/out paid/reconciled)
+  const { totalBalance } = useMemo(
+    () => computeAccountBalances(accounts, entries),
+    [accounts, entries],
+  );
   const { invoices, loadingInvoices, totalReceivable, totalReceived, overdueInvoices } = useInvoices(franchiseId, storeId);
   const { bills, loadingBills, totalPayable, totalPaid, overdueBills } = useBills(franchiseId, storeId);
   const { activeParties } = useParties(franchiseId, storeId);

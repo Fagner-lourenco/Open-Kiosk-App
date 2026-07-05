@@ -364,8 +364,11 @@ interface StoreSettings {
   };
 
   // Multi-Tap versioning
-  tapsUpdatedAt?: Date | string | number;
+  tapsUpdatedAt?: Date | string | number | { toDate(): Date };
   tapsVersion?: string | number;
+
+  /** UI-only: modo avançado de GPIO (removido antes de persistir) */
+  __gpioAdvancedMode?: boolean;
 
   // Canonical Taps Configuration (source of truth)
   taps?: TapConfigLocal[];
@@ -389,6 +392,16 @@ interface StoreSettings {
 interface StoreSettingsTabProps {
   franchiseId: string;
   storeId: string;
+}
+
+/** Converte Firestore Timestamp | Date | string | number para Date JS (ou passa adiante). */
+function toJsDate(
+  value: Date | string | number | { toDate(): Date } | undefined,
+): Date | string | number | undefined {
+  if (value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function') {
+    return value.toDate();
+  }
+  return value as Date | string | number | undefined;
 }
 
 const DEFAULT_ENABLED_METHODS: EnabledPaymentMethods = {
@@ -444,16 +457,18 @@ const normalizePaymentGatewayConfig = (data?: Partial<StoreSettings> | null): Pa
 const sanitizePaymentGatewayConfigForSave = (config: PaymentGatewayConfig): PaymentGatewayConfig => {
   const sanitized = sanitizeFirestoreData(config) as PaymentGatewayConfig;
   // Remove segredos e campos legados do payload de escrita
-  delete (sanitized as any).accessToken;
-  delete (sanitized as any).mode;
-  delete (sanitized as any).userId;
-  delete (sanitized as any).storeId;
-  delete (sanitized as any).externalPosId;
-  delete (sanitized as any).terminalId;
+  const legacyFields = sanitized as unknown as Record<string, unknown>;
+  delete legacyFields.accessToken;
+  delete legacyFields.mode;
+  delete legacyFields.userId;
+  delete legacyFields.storeId;
+  delete legacyFields.externalPosId;
+  delete legacyFields.terminalId;
   // Clean dead PagBank fields
   if (sanitized.providers?.pagbank) {
-    delete (sanitized.providers.pagbank as any).clientId;
-    delete (sanitized.providers.pagbank as any).merchantId;
+    const pagbankLegacy = sanitized.providers.pagbank as unknown as Record<string, unknown>;
+    delete pagbankLegacy.clientId;
+    delete pagbankLegacy.merchantId;
   }
   return sanitized;
 };
@@ -463,7 +478,10 @@ const validatePaymentGatewayConfig = (config: PaymentGatewayConfig): string[] =>
 
   if (config.provider === 'pagbank') {
     const publicKey = config.providers?.pagbank?.publicKey;
-    const plugpagEnabled = (config.providers?.pagbank as any)?.plugpag?.enabled;
+    const pagbankProvider = config.providers?.pagbank as
+      | { plugpag?: { enabled?: boolean } }
+      | undefined;
+    const plugpagEnabled = pagbankProvider?.plugpag?.enabled;
     const needsCard = config.enabledMethods?.credit || config.enabledMethods?.debit;
 
     // publicKey is only needed for online card payments (PagBank.js SDK).
@@ -586,8 +604,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
 
       // Load taps from canonical taps[] first, fallback to legacy dispensers[]
       let loadedTaps: TapConfigLocal[] = [];
-      if (Array.isArray((storeData as any).taps) && (storeData as any).taps.length > 0) {
-        loadedTaps = (storeData as any).taps.map((t: any) => ({
+      if (Array.isArray(storeData.taps) && storeData.taps.length > 0) {
+        loadedTaps = storeData.taps.map((t: TapConfigLocal) => ({
           id: t.id,
           name: t.name,
           enabled: t.enabled ?? true,
@@ -616,9 +634,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
         paymentGatewayConfig: normalizedConfig,
         taps: loadedTaps,
         // Convert Firestore Timestamp → Date JS to avoid "Invalid Date"
-        tapsUpdatedAt: storeData.tapsUpdatedAt && typeof (storeData.tapsUpdatedAt as any).toDate === 'function'
-          ? (storeData.tapsUpdatedAt as any).toDate()
-          : storeData.tapsUpdatedAt,
+        tapsUpdatedAt: toJsDate(storeData.tapsUpdatedAt),
       });
     }
   }, [storeData]);
@@ -1475,9 +1491,9 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           <div className="flex items-center gap-2 text-xs">
             <Switch
               id="gpio-advanced-mode"
-              checked={!!(settings as any).__gpioAdvancedMode}
+              checked={!!settings.__gpioAdvancedMode}
               onCheckedChange={(checked) => {
-                handleChange('__gpioAdvancedMode' as any, checked);
+                handleChange('__gpioAdvancedMode', checked);
               }}
             />
             <Label htmlFor="gpio-advanced-mode" className="text-xs text-muted-foreground cursor-pointer">
@@ -1494,7 +1510,7 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
           ) : (
             <div className="space-y-4">
               {settings.taps.map((tap, index) => {
-                const advancedMode = !!(settings as any).__gpioAdvancedMode;
+                const advancedMode = !!settings.__gpioAdvancedMode;
                 const pinOptions = advancedMode
                   ? [...XIAO_GPIO_OPTIONS, ...XIAO_UART_OPTIONS]
                   : XIAO_GPIO_OPTIONS;
@@ -1776,8 +1792,8 @@ export function StoreSettingsTab({ franchiseId, storeId }: StoreSettingsTabProps
             Última atualização:{' '}
             {settings.tapsUpdatedAt
               ? (() => {
-                  const raw = settings.tapsUpdatedAt as any;
-                  const d = typeof raw?.toDate === 'function' ? raw.toDate() : new Date(raw);
+                  const raw = toJsDate(settings.tapsUpdatedAt);
+                  const d = raw instanceof Date ? raw : new Date(raw as string | number);
                   return isNaN(d.getTime()) ? 'Data indisponível' : d.toLocaleString('pt-BR');
                 })()
               : 'Nunca'}

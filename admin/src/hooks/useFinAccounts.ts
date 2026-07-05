@@ -29,7 +29,7 @@ import { financeSubPath, financeDocPath } from '@/lib/pathResolver';
 import { toast } from 'sonner';
 import { useAudit } from '@/hooks/useAudit';
 import { AuditActions } from '@/services/auditService';
-import type { FinAccount, FinAccountType, FinAccountStatus } from '@/types/finance';
+import type { FinAccount, FinAccountType, FinAccountStatus, LedgerEntry } from '@/types/finance';
 
 // ─── Query Keys ─────────────────────────────────────────────────────────────
 
@@ -96,6 +96,46 @@ function normalizeAccount(id: string, data: Record<string, unknown>): FinAccount
     createdAt: data.createdAt as Timestamp,
     updatedAt: data.updatedAt as Timestamp,
   };
+}
+
+// ─── Saldo com ledger ────────────────────────────────────────────────────────
+
+export interface AccountBalances {
+  /** Saldo por conta: openingBalance + movimento efetivado do ledger. */
+  balanceByAccount: Map<string, number>;
+  /** Soma dos saldos das contas ativas. */
+  totalBalance: number;
+}
+
+/**
+ * Compõe saldo real das contas a partir do ledger (fonte da verdade financeira).
+ * Considera apenas lançamentos efetivados (paid/reconciled): `in` soma, `out` subtrai.
+ * Função pura — a página compõe com os dados de useFinAccounts + useLedger.
+ */
+export function computeAccountBalances(
+  accounts: FinAccount[],
+  ledgerEntries: LedgerEntry[],
+): AccountBalances {
+  const ledgerByAccount = new Map<string, number>();
+  for (const entry of ledgerEntries) {
+    if (entry.status !== 'paid' && entry.status !== 'reconciled') continue;
+    if (!entry.accountId) continue;
+    const delta = entry.direction === 'in' ? entry.amount : -entry.amount;
+    ledgerByAccount.set(entry.accountId, (ledgerByAccount.get(entry.accountId) || 0) + delta);
+  }
+
+  const balanceByAccount = new Map<string, number>();
+  let totalBalance = 0;
+  for (const account of accounts) {
+    if (!account.id) continue;
+    const balance = (account.openingBalance || 0) + (ledgerByAccount.get(account.id) || 0);
+    balanceByAccount.set(account.id, balance);
+    if (account.status === 'active') {
+      totalBalance += balance;
+    }
+  }
+
+  return { balanceByAccount, totalBalance };
 }
 
 // ─── Hook ───────────────────────────────────────────────────────────────────
@@ -214,8 +254,9 @@ export function useFinAccounts(franchiseId: string, storeId: string) {
   );
 
   const totalBalance = useMemo(
-    // [FIX BUG-F01] totalBalance agora considera apenas openingBalance
-    // TODO: somar entradas do ledger quando integração completa estiver pronta
+    // [FIX BUG-F01] totalBalance do hook considera apenas openingBalance.
+    // Saldo real (com movimento do ledger) é composto na página via
+    // computeAccountBalances(accounts, ledgerEntries) — ver FinanceOverviewTab.
     () => activeAccounts.reduce((sum, a) => sum + (a.openingBalance || 0), 0),
     [activeAccounts],
   );

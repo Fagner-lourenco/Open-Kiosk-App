@@ -516,61 +516,12 @@ export function SettingsPage() {
         <TabsContent value="security" className="space-y-6 mt-6">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Autenticação de Dois Fatores</CardTitle>
-              <CardDescription>
-                Adicione uma camada extra de segurança à sua conta
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Alert>
-                <Shield className="h-4 w-4" />
-                <AlertDescription>
-                  A autenticação de dois fatores estará disponível em breve. 
-                  Por enquanto, mantenha sua senha segura e não a compartilhe.
-                </AlertDescription>
-              </Alert>
-              
-              <div className="flex flex-col gap-3 p-4 border rounded-lg opacity-60 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h4 className="font-medium">App Autenticador</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Use Google Authenticator, Authy ou similar
-                  </p>
-                </div>
-                <Badge variant="secondary">Em breve</Badge>
-              </div>
-
-              <div className="flex flex-col gap-3 p-4 border rounded-lg opacity-60 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h4 className="font-medium">SMS</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Receber código por mensagem de texto
-                  </p>
-                </div>
-                <Badge variant="secondary">Em breve</Badge>
-              </div>
-
-              <div className="flex flex-col gap-3 p-4 border rounded-lg opacity-60 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h4 className="font-medium">Email</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Receber código por email
-                  </p>
-                </div>
-                <Badge variant="secondary">Em breve</Badge>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
               <CardTitle className="text-base">Sessão Atual</CardTitle>
               <CardDescription>
                 Informações da sua sessão de login
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Sessão atual real */}
               <div className="flex flex-col gap-3 p-4 border rounded-lg bg-green-50 border-green-200 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
@@ -587,13 +538,6 @@ export function SettingsPage() {
                   </div>
                 </div>
               </div>
-              
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  O gerenciamento de múltiplas sessões estará disponível em breve.
-                </AlertDescription>
-              </Alert>
             </CardContent>
           </Card>
           {/* Danger Zone */}

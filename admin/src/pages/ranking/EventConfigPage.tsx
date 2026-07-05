@@ -96,6 +96,7 @@ import {
 } from '@/services/tvEventService';
 
 import { formatVolume } from '@/utils/formatVolume';
+import { getErrorMessage } from '@/lib/errors';
 
 // ============================================================================
 // HELPERS
@@ -243,9 +244,9 @@ export function TvConfigTab({
       audit(AuditActions.EVENT_GOAL_SET, { type: 'store', id: storeId, name: storeId }, { goalTargetMl, goalLabel, milestones: milestones.length });
       setMessage({ type: 'success', text: 'Meta coletiva atualizada!' });
       setTimeout(() => setMessage(null), 4000);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('[EventConfig] Erro ao salvar meta:', err);
-      setMessage({ type: 'error', text: err?.message || 'Erro ao salvar meta' });
+      setMessage({ type: 'error', text: getErrorMessage(err, 'Erro ao salvar meta') });
     } finally {
       setSaving(false);
     }

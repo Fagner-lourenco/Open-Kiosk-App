@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { LoadingState } from '@/components/common/LoadingState';
+import { getErrorCode } from '@/lib/errors';
 import { 
   Loader2, 
   AlertCircle, 
@@ -159,8 +160,8 @@ export function InvitePage() {
             expiresAt,
           });
           return;
-        } catch (err: any) {
-          if (err?.code === 'permission-denied') {
+        } catch (err: unknown) {
+          if (getErrorCode(err) === 'permission-denied') {
             await loadViaPublicValidation();
             return;
           }
