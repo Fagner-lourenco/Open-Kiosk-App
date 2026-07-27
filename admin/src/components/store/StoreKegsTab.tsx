@@ -309,7 +309,8 @@ function ConnectTapDialog({
                 <span className="text-sm font-medium">Torneira ocupada</span>
               </div>
               <p className="text-sm text-yellow-600 mt-1">
-                O barril atual sera desconectado automaticamente e marcado como vazio.
+                O barril atual será desconectado automaticamente. Se ainda tiver
+                chope, volta para o estoque; se estiver vazio, é marcado como esgotado.
               </p>
             </div>
           )}

@@ -257,14 +257,17 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
           throw new Error('Barril já está conectado a esta torneira');
         }
 
-        // 2. If tap has an existing keg, find and remove the active assignment
+        // 2. If tap has an existing keg, find the active assignment and read the
+        //    old keg — TODAS as leituras precisam vir ANTES de qualquer write
+        //    (regra do Firestore: reads-before-writes). A versão anterior lia o
+        //    barril antigo após o primeiro update, o que ABORTAVA a transação —
+        //    o swap de barril em torneira ocupada nunca completava.
         let existingAssignment: ReturnType<typeof normalizeAssignment> | null = null;
+        let oldKegRead: { ref: ReturnType<typeof kegDocRef>; data: Record<string, unknown> | undefined } | null = null;
         if (currentKegId) {
           // [FIX Bug-4] Move query outside transaction scope to find assignment doc ID,
           // then re-read inside txn for OCC safety. Client SDK doesn't support
           // transactional queries, so this is the recommended pattern.
-          // The txn.get() below ensures consistency — if the doc changed since
-          // the getDocs lookup, the transaction will retry.
           const assSnap = await getDocs(query(
             assignmentsRef(franchiseId, storeId),
             where('tapId', '==', tapId),
@@ -279,8 +282,15 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
               break; // use the first valid active assignment
             }
           }
+          if (existingAssignment) {
+            const oldKegRef = kegDocRef(franchiseId, storeId, existingAssignment.kegId);
+            const oldKegSnap = await txn.get(oldKegRef);
+            oldKegRead = { ref: oldKegRef, data: oldKegSnap.data() };
+          }
         }
-        if (existingAssignment) {
+
+        // ── A partir daqui, somente WRITES ──
+        if (existingAssignment && oldKegRead) {
           const oldAssRef = doc(
             assignmentsRef(franchiseId, storeId),
             existingAssignment.assignmentId
@@ -294,18 +304,20 @@ export function useTapAssignments(franchiseId: string, storeId: string) {
             updatedBy: uid,
           });
 
-          // Mark old keg: remove this tap from tapIds, only change status if no taps left
-          const oldKegRef = kegDocRef(franchiseId, storeId, existingAssignment.kegId);
-          const oldKegSnap = await txn.get(oldKegRef);
-          const oldKegData = oldKegSnap.data();
+          // Swap NÃO é esgotamento: barril trocado com sobra volta para 'in_stock'
+          // (mesma semântica do disconnect). Só marca 'depleted' se realmente vazio.
+          const oldKegData = oldKegRead.data;
           const oldKegTapIds: string[] = Array.isArray(oldKegData?.tapIds)
-            ? oldKegData!.tapIds
+            ? (oldKegData!.tapIds as string[])
             : (oldKegData?.tapId ? [oldKegData.tapId as string] : []);
           const remainingTapIds = oldKegTapIds.filter((id: string) => id !== tapId);
-          txn.update(oldKegRef, {
+          const oldKegEmpty = ((oldKegData?.remainingMl as number | undefined) ?? 0) <= 0;
+          txn.update(oldKegRead.ref, {
             tapIds: remainingTapIds,
             ...(remainingTapIds.length === 0
-              ? { status: 'depleted', depletedAt: now }
+              ? (oldKegEmpty
+                  ? { status: 'depleted', depletedAt: now }
+                  : { status: 'in_stock' })
               : {}),
             updatedAt: now,
             updatedBy: uid,
