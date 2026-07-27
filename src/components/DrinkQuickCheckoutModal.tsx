@@ -304,7 +304,7 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
       // Buscar dados do pagador (nome, email, cartão) via providerOrderId — não bloqueia dispense
       const orderNumber = orderNumberRef.current;
       if (payment.providerOrderId) {
-        paymentService.checkMercadoPagoOrderStatus(payment.providerOrderId)
+        paymentService.checkMercadoPagoOrderStatus(payment.providerOrderId, undefined, gatewayConfig)
           .then((order) => paymentService.fetchPayerDataFromOrder(order, gatewayConfig))
           .then(async (customerData) => {
             if (customerData && orderNumber) {
@@ -1962,10 +1962,12 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
             tapId: selectedTapId,
           });
 
+          // orderId vincula payment↔order no backend: habilita a dedup
+          // transacional (KIO-18) e o estorno por orderId no Admin.
           const result = await paymentService.processMercadoPagoQRBackend(
             totalAmount,
             cfItems,
-            undefined,
+            newOrderNumber,
             { tapId: selectedTapId != null ? String(selectedTapId) : undefined }
           );
 
@@ -2020,10 +2022,11 @@ const DrinkQuickCheckoutModal = ({ isOpen, product, currentCartItems, onComplete
           });
 
           const pointMethod = selectedPayment === 'credit_card' ? 'credit' : 'debit';
+          // orderId vincula payment↔order no backend (dedup KIO-18 + estorno por orderId)
           const result = await paymentService.processMercadoPagoPointBackend(
             totalAmount,
             cfItems,
-            undefined,
+            newOrderNumber,
             { tapId: selectedTapId != null ? String(selectedTapId) : undefined, method: pointMethod as 'credit' | 'debit' }
           );
 

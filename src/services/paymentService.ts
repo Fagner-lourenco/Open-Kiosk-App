@@ -107,9 +107,12 @@ class PaymentService {
    * Cancelar ordem anterior do terminal (se existir) para liberar para nova ordem
    * Isso é importante para self-service onde o cliente pode desistir e voltar
    */
-  async clearTerminalForNewOrder(terminalId: string): Promise<void> {
+  async clearTerminalForNewOrder(
+    terminalId: string,
+    gatewayConfig?: PaymentGatewayConfig | null
+  ): Promise<void> {
     const lastOrder = this.getLastTerminalOrder();
-    
+
     if (!lastOrder || lastOrder.terminalId !== terminalId) {
       return; // Nenhuma ordem anterior para este terminal
     }
@@ -122,7 +125,11 @@ class PaymentService {
       return;
     }
 
-    const mpAPI = createMercadoPagoAPI();
+    const resolvedCfg = getPaymentConfig(gatewayConfig);
+    const mpAPI = createMercadoPagoAPI({
+      accessToken: resolvedCfg.accessToken,
+      mode: resolvedCfg.mode,
+    });
     if (!mpAPI) {
       this.clearLastTerminalOrder();
       return;
@@ -165,7 +172,11 @@ class PaymentService {
   /**
    * Cancel active payment transaction
    */
-  async cancelPayment(transactionId: string, orderId?: string): Promise<{ canceled: boolean; reason?: string }> {
+  async cancelPayment(
+    transactionId: string,
+    orderId?: string,
+    gatewayConfig?: PaymentGatewayConfig | null
+  ): Promise<{ canceled: boolean; reason?: string }> {
     // Abortar qualquer requisição ativa localmente
     const controller = this.activeTransactions.get(transactionId);
     if (controller) {
@@ -176,7 +187,7 @@ class PaymentService {
     // Cancelar a ordem remotamente no Mercado Pago (se disponível)
     if (orderId) {
       try {
-        const result = await this.cancelMercadoPagoOrder(orderId);
+        const result = await this.cancelMercadoPagoOrder(orderId, gatewayConfig);
         console.log('[PaymentService] Resultado do cancelamento:', { orderId, ...result });
         return result;
       } catch (err) {
@@ -390,7 +401,7 @@ class PaymentService {
 
       // SELF-SERVICE: Limpar terminal de ordens anteriores pendentes ANTES de criar nova
       console.log('[PaymentService Point] Limpando terminal de ordens anteriores...');
-      await this.clearTerminalForNewOrder(finalTerminalId);
+      await this.clearTerminalForNewOrder(finalTerminalId, gatewayConfig);
 
       // Payload conforme documentação oficial Mercado Pago Point
       // CRÍTICO: amount como STRING com 2 decimais, expiration_time no formato ISO 8601 duration
@@ -470,7 +481,7 @@ class PaymentService {
             await new Promise(resolve => setTimeout(resolve, 2000)); // Esperar 2 segundos
             
             // Tentar limpar novamente antes do retry
-            await this.clearTerminalForNewOrder(finalTerminalId);
+            await this.clearTerminalForNewOrder(finalTerminalId, gatewayConfig);
             continue;
           }
           
@@ -520,14 +531,26 @@ class PaymentService {
   }
 
   /**
-   * Consultar status de uma order do Mercado Pago
+   * Consultar status de uma order do Mercado Pago.
+   *
+   * @param gatewayConfig - Config da loja (Firestore). Sem ela, usa env vars —
+   *   se a loja tiver accessToken próprio, passe SEMPRE, senão a consulta
+   *   usa token errado (401/404).
    */
-  async checkMercadoPagoOrderStatus(orderId: string, signal?: AbortSignal): Promise<Order> {
-    const mpAPI = createMercadoPagoAPI();
-    
+  async checkMercadoPagoOrderStatus(
+    orderId: string,
+    signal?: AbortSignal,
+    gatewayConfig?: PaymentGatewayConfig | null
+  ): Promise<Order> {
+    const config = getPaymentConfig(gatewayConfig);
+    const mpAPI = createMercadoPagoAPI({
+      accessToken: config.accessToken,
+      mode: config.mode,
+    });
+
     if (!mpAPI) {
       throw new PaymentError(
-        'MP_NOT_CONFIGURED', 
+        'MP_NOT_CONFIGURED',
         'Mercado Pago não configurado.'
       );
     }
@@ -669,9 +692,16 @@ class PaymentService {
    * Se a ordem já está 'at_terminal', 'processed', etc., a API retorna erro.
    * Nesses casos, apenas logamos warning e não lançamos exceção.
    */
-  async cancelMercadoPagoOrder(orderId: string): Promise<{ canceled: boolean; reason?: string }> {
-    const mpAPI = createMercadoPagoAPI();
-    
+  async cancelMercadoPagoOrder(
+    orderId: string,
+    gatewayConfig?: PaymentGatewayConfig | null
+  ): Promise<{ canceled: boolean; reason?: string }> {
+    const config = getPaymentConfig(gatewayConfig);
+    const mpAPI = createMercadoPagoAPI({
+      accessToken: config.accessToken,
+      mode: config.mode,
+    });
+
     if (!mpAPI) {
       throw new PaymentError(
         'MP_NOT_CONFIGURED', 
