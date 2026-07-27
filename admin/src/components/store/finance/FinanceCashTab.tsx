@@ -93,6 +93,7 @@ import type {
   PaymentMethod,
 } from '@/types/finance';
 import { Timestamp } from 'firebase/firestore';
+import { parseLocalDate } from '@/utils/parseLocalDate';
 
 // ============================================================================
 // CONSTANTS
@@ -285,7 +286,7 @@ function LedgerDialog({
       categoryId,
       partyId: partyId || undefined,
       method,
-      competenceDate: new Date(competenceDate),
+      competenceDate: parseLocalDate(competenceDate),
       sourceType: 'manual',
       sourceId: `manual-${Date.now()}`,
       createdBy: userId,
@@ -356,9 +357,16 @@ function LedgerDialog({
               <Select value={categoryId} onValueChange={setCategoryId}>
                 <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                 <SelectContent>
-                  {filteredCategories.filter((c) => c.id).map((c) => (
-                    <SelectItem key={c.id} value={c.id as string}>{c.name}</SelectItem>
-                  ))}
+                  {filteredCategories.filter((c) => c.id).length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-muted-foreground max-w-[260px]">
+                      Nenhuma categoria deste tipo. Crie em
+                      {' '}<span className="font-medium">Financeiro → Configurações</span>.
+                    </div>
+                  ) : (
+                    filteredCategories.filter((c) => c.id).map((c) => (
+                      <SelectItem key={c.id} value={c.id as string}>{c.name}</SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>

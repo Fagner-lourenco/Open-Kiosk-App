@@ -81,6 +81,7 @@ import {
 import { useParties } from '@/hooks/useParties';
 import type { Invoice, InvoiceStatus, InvoiceLine } from '@/types/finance';
 import { Timestamp } from 'firebase/firestore';
+import { parseLocalDate } from '@/utils/parseLocalDate';
 
 // ============================================================================
 // CONSTANTS
@@ -161,8 +162,8 @@ function InvoiceDialog({
     await onSubmit({
       partyId,
       status,
-      issueDate: new Date(issueDate),
-      dueDate: new Date(dueDate),
+      issueDate: parseLocalDate(issueDate),
+      dueDate: parseLocalDate(dueDate),
     });
     reset();
     onOpenChange(false);

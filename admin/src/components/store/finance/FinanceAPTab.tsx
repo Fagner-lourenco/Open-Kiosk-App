@@ -81,6 +81,7 @@ import { useFinAccounts } from '@/hooks/useFinAccounts';
 import { useAuth } from '@/context/AuthContext';
 import type { Bill, BillStatus } from '@/types/finance';
 import { Timestamp } from 'firebase/firestore';
+import { parseLocalDate } from '@/utils/parseLocalDate';
 
 // ============================================================================
 // CONSTANTS
@@ -172,8 +173,8 @@ function BillDialog({
     await onSubmit({
       partyId,
       status,
-      issueDate: new Date(issueDate),
-      dueDate: new Date(dueDate),
+      issueDate: parseLocalDate(issueDate),
+      dueDate: parseLocalDate(dueDate),
       total: parseFloat(total) || 0,
       categoryId,
       costCenterId: costCenterId || undefined,
