@@ -27,7 +27,7 @@ export interface StoreData {
 }
 
 export function useStoreDetail(storeId: string | undefined) {
-  const { currentFranchise } = useFranchise();
+  const { currentFranchise, franchises, selectFranchise } = useFranchise();
   const franchiseId = currentFranchise?.id;
 
   const { data: store = null, isLoading, error, refetch } = useQuery({
@@ -35,9 +35,27 @@ export function useStoreDetail(storeId: string | undefined) {
     queryFn: async (): Promise<StoreData | null> => {
       if (!franchiseId || !storeId) return null;
 
-      const storeDoc = await getDoc(
+      let storeDoc = await getDoc(
         doc(db, `franchises/${franchiseId}/stores/${storeId}`),
       );
+
+      if (!storeDoc.exists()) {
+        // Deep-link resiliente: a URL /stores/{id} não carrega o franchiseId —
+        // se a franquia selecionada não é a dona da loja (ex.: usuário com
+        // múltiplas franquias abriu um link/favorito), procura a loja nas
+        // demais franquias do usuário e troca o contexto para a dona.
+        for (const fr of franchises) {
+          if (fr.id === franchiseId) continue;
+          const candidate = await getDoc(
+            doc(db, `franchises/${fr.id}/stores/${storeId}`),
+          );
+          if (candidate.exists()) {
+            await selectFranchise(fr.id);
+            storeDoc = candidate;
+            break;
+          }
+        }
+      }
 
       if (!storeDoc.exists()) {
         throw new Error('Loja não encontrada');
