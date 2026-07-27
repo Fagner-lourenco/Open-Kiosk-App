@@ -58,7 +58,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (image && !isValidUrl(image)) {
       toast({
@@ -69,6 +69,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
       return;
     }
 
+    try {
     if (isDrink) {
       // Validação mínima para bebidas
       if (!sizes || sizes.length === 0) {
@@ -89,7 +90,14 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
           return;
         }
 
-      onSubmit({
+      // Tamanho padrão: se o usuário não escolheu (ou o escolhido foi removido),
+      // usa o primeiro tamanho — evita rejeição do hook e perda do preenchimento.
+      const effectiveDefaultSizeKey =
+        defaultSizeKey && sizes.some((s) => s.key === defaultSizeKey)
+          ? defaultSizeKey
+          : (sizes[0]?.key || "");
+
+      await onSubmit({
         title,
         description,
         image,
@@ -97,7 +105,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
         tags,
         isDrink: true,
         sizes,
-        defaultSizeKey,
+        defaultSizeKey: effectiveDefaultSizeKey,
         totalMlAvailable,
         minStock,
         // Compatibilidade com fluxo antigo
@@ -113,7 +121,7 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
         ...(accentColor ? { accentColor } : {}),
       });
     } else {
-      onSubmit({
+      await onSubmit({
         title,
         price,
         description,
@@ -125,7 +133,17 @@ const ProductForm = ({ onSubmit, initialProduct }: ProductFormProps) => {
         minStock
       });
     }
-    
+    } catch (error) {
+      // Falha ao salvar (validação do hook ou Firestore): manter o formulário
+      // preenchido e mostrar o motivo — antes o form resetava silenciosamente.
+      toast({
+        title: t('common.error'),
+        description: error instanceof Error ? error.message : t('products.saveError'),
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Reset form if not editing
     if (!initialProduct) {
       setTitle("");
