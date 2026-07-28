@@ -35,9 +35,12 @@ import { authService } from '../services/authService';
 import {
   syncKioskSelectionFromStoreSettings,
 } from '../services/firebase';
+import { persistKioskBootstrap } from '../services/kioskBootstrapService';
 
-// FranchiseContext grava na chave ADMIN para não poluir as chaves kiosk
-// (que são controladas exclusivamente pelo bootstrap do dispositivo).
+// FranchiseContext grava na chave ADMIN para não poluir as chaves kiosk.
+// A exceção é selectStore, que também provisiona o bootstrap do dispositivo:
+// sem isso, a primeira sessão após instalação só ficava provisionada no
+// próximo reinício (quando useStoreSettings reaproveita a seleção admin).
 const SELECTED_FRANCHISE_KEY = 'open-kiosk-admin:selectedFranchise';
 const SELECTED_STORE_KEY = 'open-kiosk-admin:selectedStore';
 
@@ -371,6 +374,11 @@ export function FranchiseProvider({ children }: FranchiseProviderProps) {
     // Define a loja atual
     setCurrentStore(store);
     localStorage.setItem(SELECTED_STORE_KEY, storeId);
+
+    // Provisiona o dispositivo imediatamente (sem exigir reinício do app).
+    // kioskEnabled/attract ficam com defaults até as configurações reais da
+    // loja carregarem, quando persistKioskBootstrapFromSettings sobrescreve.
+    void persistKioskBootstrap({ storeId, franchiseId });
   }, [userStores, selectFranchise]);
 
   // ==========================================================================

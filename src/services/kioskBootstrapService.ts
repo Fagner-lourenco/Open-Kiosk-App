@@ -3,6 +3,20 @@ import type { StoreSettings } from '@/types/store';
 import type { AttractVideoConfig } from '../../shared/types/store';
 
 const BOOTSTRAP_STORAGE_KEY = 'open-kiosk:bootstrap';
+
+/**
+ * Evento disparado sempre que o bootstrap muda (persist/clear).
+ * O HashRouter navega via pushState/replaceState, que NÃO emite `hashchange`;
+ * componentes acima do router (AppContent) precisam deste evento para
+ * recomputar o estado de provisionamento na mesma sessão.
+ */
+export const KIOSK_BOOTSTRAP_CHANGED_EVENT = 'open-kiosk:bootstrap-changed';
+
+const notifyBootstrapChanged = (): void => {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(KIOSK_BOOTSTRAP_CHANGED_EVENT));
+  }
+};
 const STORE_SETTINGS_STORAGE_KEY = 'storeSettings';
 const KIOSK_SELECTED_FRANCHISE_KEY = 'open-kiosk:selectedFranchise';
 const KIOSK_SELECTED_STORE_KEY = 'open-kiosk:selectedStore';
@@ -201,6 +215,7 @@ export const persistKioskBootstrap = async (
   }
 
   ensureLocalStorageMirror(bootstrap);
+  notifyBootstrapChanged();
 
   try {
     await Preferences.set({
@@ -256,6 +271,7 @@ export const clearKioskBootstrap = async (): Promise<void> => {
     localStorage.removeItem(KIOSK_SELECTED_STORE_KEY);
     localStorage.removeItem(KIOSK_SELECTED_FRANCHISE_KEY);
   }
+  notifyBootstrapChanged();
 
   try {
     await Preferences.remove({ key: BOOTSTRAP_STORAGE_KEY });

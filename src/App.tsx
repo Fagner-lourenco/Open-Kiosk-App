@@ -31,7 +31,7 @@ import { TapSettingsSync } from "@/components/TapSettingsSync";
 import { usePlugPagAutoConnect } from "@/hooks/usePlugPagAutoConnect";
 import { purgeNativeWebViewRuntimeCaches } from "@/services/nativeWebViewCacheService";
 import { getCurrentFranchiseId, getCurrentStoreId } from "@/services/firebase";
-import { getStoredKioskBootstrapSnapshot, hydrateKioskBootstrapState } from "@/services/kioskBootstrapService";
+import { getStoredKioskBootstrapSnapshot, hydrateKioskBootstrapState, KIOSK_BOOTSTRAP_CHANGED_EVENT } from "@/services/kioskBootstrapService";
 
 // PWA Update Prompt - lazy loaded para não bloquear
 const PWAUpdatePrompt = lazy(() => import("@/components/PWAUpdatePrompt"));
@@ -170,7 +170,21 @@ const AppContent = () => {
       .finally(() => setBootstrapHydrated(true));
   }, []);
 
-  const kioskBootstrap = getStoredKioskBootstrapSnapshot();
+  // Reage a persist/clear do bootstrap na MESMA sessão: o router navega via
+  // pushState (sem hashchange), então sem este listener o provisionamento
+  // feito após o login só seria visto no próximo boot do app.
+  const [bootstrapVersion, setBootstrapVersion] = useState(0);
+  useEffect(() => {
+    const onBootstrapChanged = () => setBootstrapVersion((v) => v + 1);
+    window.addEventListener(KIOSK_BOOTSTRAP_CHANGED_EVENT, onBootstrapChanged);
+    return () => window.removeEventListener(KIOSK_BOOTSTRAP_CHANGED_EVENT, onBootstrapChanged);
+  }, []);
+
+  const kioskBootstrap = useMemo(
+    () => getStoredKioskBootstrapSnapshot(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- bootstrapVersion invalida o snapshot
+    [bootstrapVersion],
+  );
 
   // Usar idioma salvo nas configurações da loja (Firebase) - undefined enquanto carrega
   const initialLanguage = settings?.language as Language | undefined;
